@@ -17,12 +17,12 @@
 //! [`Interceptor::Reads`] answers when its headers fail to decode: that status
 //! is never compared, since it is the one a handler's own extractors share.
 //!
-//! A [`When`] interceptor is compared as if it covered every operation of its
-//! scope. Which operations it covers is a run-time [`Methods`] value, so two
-//! of them scoped to disjoint methods still collide here when they share a
-//! header or a status.
-//!
-//! [`Methods`]: crate::router::group::Methods
+//! Two interceptors are compared only where the methods they cover overlap. A
+//! [`When<M, N>`](When) covers the methods its [`MethodSet`] `M` names, and
+//! every other interceptor covers all of them, so two scoped to disjoint sets
+//! are never compared: no operation runs both. Two whose sets overlap are
+//! compared even where the group declares no operation with a shared method,
+//! so mounting one later cannot turn a compiling group into a colliding one.
 
 use std::{future::Future, marker::PhantomData};
 
@@ -31,7 +31,7 @@ use crate::{
     http::{Request, header_name_eq},
     middleware::{Continued, Interceptor, Next, Placement, catch_panic::PanicPolicy},
     response::ShortCircuit,
-    router::group::Group,
+    router::group::{Group, MethodSet, Methods},
 };
 
 /// One interceptor in front of the rest.
@@ -43,14 +43,12 @@ use crate::{
 pub struct Cons<H, T>(PhantomData<fn() -> (H, T)>);
 
 /// The stack element [`Group::intercept_when`] puts in front: `N`, covering only
-/// the operations whose method its [`Methods`](crate::router::group::Methods)
-/// name.
+/// the operations whose method the [`MethodSet`] `M` names.
 ///
 /// A type and never a value: it is uninhabited, and exists so that a group's
 /// type still names every interceptor it holds, which `stack!` spells as
-/// `When<N>`. It declares exactly what `N` does, so the collision check treats
-/// it as covering every operation its scope covers — a superset of what it
-/// runs on, which never lets a real collision through.
+/// `When<M, N>`. It declares exactly what `N` does, and the collision check
+/// compares it only against the interceptors whose methods overlap `M`'s.
 ///
 /// ```no_run
 /// use kynos::{
@@ -58,30 +56,31 @@ pub struct Cons<H, T>(PhantomData<fn() -> (H, T)>);
 ///         catch_panic::Propagate, limits::body_size::BodySize, request_id::RequestId,
 ///         stack::When,
 ///     },
-///     router::group::{Group, Methods},
+///     router::group::{Group, UnsafeMethods},
 /// };
 ///
-/// fn users() -> Group<(), Propagate, kynos::stack![RequestId, When<BodySize>]> {
+/// fn users() -> Group<(), Propagate, kynos::stack![RequestId, When<UnsafeMethods, BodySize>]> {
 ///     Group::new("/users")
 ///         .intercept(RequestId::new())
-///         .intercept_when(Methods::UNSAFE, BodySize::new(64 * 1024))
+///         .intercept_when(UnsafeMethods, BodySize::new(64 * 1024))
 /// }
 /// # let _ = users();
 /// ```
-pub struct When<N> {
+pub struct When<M, N> {
     never: std::convert::Infallible,
-    _interceptor: PhantomData<fn() -> N>,
+    _interceptor: PhantomData<fn() -> (M, N)>,
 }
 
-impl<N> std::fmt::Debug for When<N> {
+impl<M, N> std::fmt::Debug for When<M, N> {
     fn fmt(&self, _: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.never {}
     }
 }
 
-impl<C, N> Interceptor<C> for When<N>
+impl<C, M, N> Interceptor<C> for When<M, N>
 where
     C: Sync + 'static,
+    M: MethodSet,
     N: Interceptor<C>,
 {
     type Reads = N::Reads;
@@ -89,6 +88,8 @@ where
     type Short = N::Short;
 
     const ADDS_ON: Placement = N::ADDS_ON;
+
+    const __METHODS: Methods = M::METHODS;
 
     fn intercept(
         &self,
@@ -323,6 +324,21 @@ where
     type Out = <L as Flatten<<R as Flatten<S>>::Out>>::Out;
 }
 
+/// Fails to evaluate where `N` claims to cover fewer than every method, which
+/// only a [`When`] may: each site mounting an interceptor value forces it, so
+/// the collision check never narrows what an interceptor runs on.
+pub(crate) const fn unscoped<C, N>()
+where
+    C: Sync + 'static,
+    N: Interceptor<C>,
+{
+    assert!(
+        N::__METHODS.is_every(),
+        "an interceptor covers every operation it is mounted over; \
+         scope it to methods with `Group::intercept_when`"
+    );
+}
+
 /// A stack that does not collide with the interceptor `N`.
 ///
 /// Implemented for every stack; [`CHECK`] is a `const` that fails to evaluate
@@ -346,23 +362,26 @@ where
     T: CompatibleWith<N, C>,
 {
     const CHECK: () = {
-        assert!(
-            header_names_disjoint(
-                <N::Adds as HeaderParams>::NAMES,
-                <H::Adds as HeaderParams>::NAMES,
-            ),
-            "two interceptors covering this route add the same response header; \
-             mount them at different scopes, or have one of them stop adding it"
-        );
+        // Disjoint methods cover no operation in common.
+        if N::__METHODS.overlaps(H::__METHODS) {
+            assert!(
+                header_names_disjoint(
+                    <N::Adds as HeaderParams>::NAMES,
+                    <H::Adds as HeaderParams>::NAMES,
+                ),
+                "two interceptors covering this route add the same response header; \
+                 mount them at different scopes, or have one of them stop adding it"
+            );
 
-        assert!(
-            statuses_disjoint(
-                <N::Short as ShortCircuit>::STATUSES,
-                <H::Short as ShortCircuit>::STATUSES,
-            ),
-            "two interceptors covering this route answer with the same status; \
-             a consumer could not tell which one replied"
-        );
+            assert!(
+                statuses_disjoint(
+                    <N::Short as ShortCircuit>::STATUSES,
+                    <H::Short as ShortCircuit>::STATUSES,
+                ),
+                "two interceptors covering this route answer with the same status; \
+                 a consumer could not tell which one replied"
+            );
+        }
 
         let () = <T as CompatibleWith<N, C>>::CHECK;
     };

@@ -187,7 +187,7 @@ use crate::{
     http::{Request, Response},
     middleware::erased::{ErasedInterceptor, ErasedTerminal},
     response::ShortCircuit,
-    router::operation::Route,
+    router::{group::Methods, operation::Route},
 };
 
 /// Middleware that can affect the exchange, and says how in its own signature.
@@ -241,6 +241,14 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     ///
     /// [`HeaderParams::DESCRIBED`]: crate::extract::params::header::HeaderParams::DESCRIBED
     const ADDS_ON: Placement = Placement::Success;
+
+    /// Not part of the API: the methods of the operations a stack element
+    /// covers, which the collision check reads.
+    ///
+    /// Every interceptor but [`When`](stack::When) leaves it at its default,
+    /// and mounting one that does not fails to compile.
+    #[doc(hidden)]
+    const __METHODS: Methods = Methods::EVERY;
 
     /// Handles a request, calling `next` to continue.
     ///

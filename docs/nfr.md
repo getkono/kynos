@@ -577,7 +577,8 @@ resolves.
 | correctness | A short circuit's description declares the body it sends, and declares none only where it sends none | `every_short_circuit_declares_the_content_it_sends` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) driving every constructible implementation against `every_short_circuit_kynos_ships_is_accounted_for`'s set, plus the declaration-of-none check in [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs) that [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) runs over a live exchange | `enforced` |
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
 | correctness | The check does not depend on the order the scopes were written in | `endpoint_interceptor_then_router_interceptor_collide`, `group_interceptor_then_router_interceptor_collide` and `group_mount_then_group_intercept_collide` mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
-| correctness | An interceptor scoped to methods runs on, and is declared on, only the operations whose method it names, with an undeclared `HEAD` covered exactly when `GET` is | `a_method_scoped_interceptor_runs_only_on_the_methods_it_names`, `an_undeclared_head_is_covered_exactly_when_get_is` and `a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs); the `guard_first` point recounted per operation in `router/group/tests.rs` | `enforced`; `by-design` that the collision check compares a scoped interceptor as covering every operation of its scope, since its methods are a value ([`middleware.md`](middleware.md#the-order-a-chain-runs-in)) |
+| correctness | An interceptor scoped to methods runs on, and is declared on, only the operations whose method it names, with an undeclared `HEAD` covered exactly when `GET` is | `a_method_scoped_interceptor_runs_only_on_the_methods_it_names`, `an_undeclared_head_is_covered_exactly_when_get_is` and `a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs); the `guard_first` point recounted per operation in `router/group/tests.rs` | `enforced` |
+| correctness | Two scoped interceptors are compared for a collision only where their methods overlap, since disjoint methods cover no operation in common | the passing and `compile_fail` doctests on `Group::intercept_when`; `interceptors_scoped_to_disjoint_methods_never_meet_on_an_operation` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs); `two_sets_overlap_exactly_where_they_share_a_method` in `router/group/tests.rs` | `enforced` at compile time, by method set rather than by mounted operation: overlapping sets collide even where no operation declares a shared method ([`middleware.md`](middleware.md#the-order-a-chain-runs-in)) |
 | correctness | An interceptor attaches exactly the header group it declared, and that group writes only the names it declared | `with_headers` on `Continued<()>` alone, pinned by `interceptor_attaches_an_undeclared_header`; the encode-subset `debug_assert` in the one writer, pinned by `a_group_encoding_an_undeclared_field_is_refused` | `enforced` in debug; the assert is compiled out of release |
 | correctness | An interceptor's described response headers land on the responses its `ADDS_ON` names, including those declared after it is described | `an_interceptors_response_header_is_declared_where_a_consumer_resolves_it`, `an_interceptor_adding_on_every_response_is_declared_on_each_one` and `an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone` in [`tests/description.rs`](../crates/kynos/tests/description.rs), over an operation whose 408 and 500 are declared after the interceptor | `enforced` for where the declaration is filed; `by-design` that `Every` and `Problems` are the author's claim, which the framework does not narrow to the responses that pass through the interceptor ([`middleware.md`](middleware.md#declaring-is-not-describing)) |
 | correctness | An endpoint-scoped interceptor reaching a router through an `Endpoints` collection is checked | — | `absent`, and recorded in [`middleware.md`](middleware.md#what-the-compile-time-check-still-cannot-see): a collection erases what its members carry, and a build-time backstop would need a declaration method on the public `Endpoint` trait — the `contribution` method the design refuses. Use `routes!`. |
@@ -1078,22 +1079,23 @@ responses. Filing a header is describing the operation, through the same
 `declare_header` an explicit `add_response_header` goes through, so the two are
 one concern: what one operation's description holds when it is finished.
 
-`router/group.rs` is `status.rs`'s shape. It declares `Group` and `Methods`, so
-a split would turn `group::Methods`, the argument `intercept_when` takes, into
-`group::methods::Methods`. What pushed it over was issue #1277's
+`router/group.rs` is `status.rs`'s shape. It declares `Group`, `Methods`,
+`MethodSet`, `SafeMethods` and `UnsafeMethods`, so a split would turn
+`group::SafeMethods`, the argument `intercept_when` takes, into
+`group::methods::SafeMethods`. What pushed it over was issue #1277's
 `intercept_when`, whose documentation says which operations a scoped
-interceptor covers and why its collision check is wider than that. `Methods`
-exists for that one method, and resolving it per operation is part of
-mounting a group, so the two are one concern: what a group puts in front of
-each operation it holds.
+interceptor covers, and issue #1331's `MethodSet`, which carries the set in the
+type so the collision check can read it. The sets exist for that one method,
+and resolving them per operation is part of mounting a group, so the two are
+one concern: what a group puts in front of each operation it holds.
 
 `middleware/stack.rs` is `status.rs`'s shape. It declares `Cons`, `When`,
 `Both`, `InterceptorList`, `Flatten`, `CompatibleWith` and `CompatibleStack`,
 so a split would turn `stack::When`, the element a group's type names, into a
-longer path. What pushed it over was issue #1277's `When`, whose documentation
-is the reason the check treats it as covering every operation. A stack element
-and the check that reads it are one concern: which interceptors a type says
-cover an operation, and whether two of them collide.
+longer path. What pushed it over was issue #1277's `When`, whose method set
+the check reads to skip two interceptors that cover no operation in common. A
+stack element and the check that reads it are one concern: which interceptors
+a type says cover an operation, and whether two of them collide.
 
 The budget, which may only shrink:
 

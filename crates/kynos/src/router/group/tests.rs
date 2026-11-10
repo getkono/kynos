@@ -34,6 +34,20 @@ fn an_empty_set_holds_no_method() {
 }
 
 #[test]
+fn two_sets_overlap_exactly_where_they_share_a_method() {
+    let get = Methods::only(&[Method::Get]);
+
+    assert!(!Methods::SAFE.overlaps(Methods::UNSAFE));
+    assert!(get.overlaps(Methods::SAFE));
+    assert!(!get.overlaps(Methods::only(&[Method::Head])));
+    assert!(Methods::EVERY.overlaps(get));
+    // An empty set covers nothing, so it meets nothing, not even every method.
+    assert!(!Methods::only(&[]).overlaps(Methods::EVERY));
+    assert!(Methods::EVERY.is_every());
+    assert!(!Methods::SAFE.is_every());
+}
+
+#[test]
 fn an_operation_takes_only_the_interceptors_its_method_is_in() {
     let scoped = [
         (Methods::EVERY, "outer"),
