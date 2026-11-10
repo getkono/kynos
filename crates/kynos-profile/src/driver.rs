@@ -11,6 +11,7 @@ use std::any::Any;
 use std::future::{Future, poll_fn};
 use std::io;
 use std::pin::{Pin, pin};
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use bytes::Bytes;
@@ -23,6 +24,7 @@ use kynos::{
     server::Server,
 };
 use tokio::io::DuplexStream;
+use tokio_rustls::server::TlsStream;
 
 /// How many frames a drained body may produce before collecting them would
 /// allocate inside the region.
@@ -184,7 +186,20 @@ pub trait Served {
     /// When the server refuses its default configuration, which no profiled
     /// service should make it do.
     fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting;
+
+    /// As [`connect`](Self::connect), for a stream that is ready only once
+    /// `handshake` resolves to it and the `Connection` it recorded: the
+    /// handshake and [`Server::serve_io`]'s call both run inside the
+    /// connection's future, so a [`tls`](crate::connection::tls) row's region
+    /// counts them, as they are on the path of a caller that terminates TLS
+    /// itself.
+    fn connect_after(self: Box<Self>, handshake: Handshake) -> Connecting;
 }
+
+/// A TLS handshake over the duplex, resolving to the decrypted stream and the
+/// `Connection` it recorded.
+pub type Handshake =
+    Pin<Box<dyn Future<Output = io::Result<(TlsStream<DuplexStream>, Connection)>>>>;
 
 /// A connection's future, boxed so that one type holds every service's, and
 /// the server it was served from.
@@ -194,9 +209,12 @@ pub trait Served {
 /// `server`, where the `Connecting` is: a region that drives `future` to its
 /// end counts no service teardown, which the in-process rows likewise leave
 /// to theirs.
+///
+/// The future is not `Send`: a row drives it on the thread that built it, and
+/// a TLS row's holds the server it calls `serve_io` on once its handshake ends.
 pub struct Connecting {
     /// The connection: what a connection row's region drives.
-    pub future: Pin<Box<dyn Future<Output = io::Result<()>> + Send>>,
+    pub future: Pin<Box<dyn Future<Output = io::Result<()>>>>,
     /// Held only so that the service outlives `future`.
     pub(crate) server: Box<dyn Any>,
 }
@@ -219,6 +237,22 @@ impl<C: 'static> Served for Service<C> {
                 .serve_io(io, connection)
                 .expect("the default configuration is accepted"),
         );
+        Connecting {
+            future,
+            server: Box::new(server),
+        }
+    }
+
+    fn connect_after(self: Box<Self>, handshake: Handshake) -> Connecting {
+        let server = Arc::new(Server::new(*self));
+        let serving = Arc::clone(&server);
+        let future = Box::pin(async move {
+            let (stream, connection) = handshake.await?;
+            serving
+                .serve_io(stream, connection)
+                .map_err(io::Error::other)?
+                .await
+        });
         Connecting {
             future,
             server: Box::new(server),

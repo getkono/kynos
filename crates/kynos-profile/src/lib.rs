@@ -11,7 +11,8 @@
 //! is driven, and what the region is, is [`driver`]'s. The exception is
 //! [`connection`]'s rows, which send a catalog request through the server's
 //! connection path over an in-memory duplex, so that the server's share of
-//! that gap is counted too.
+//! that gap is counted too, and [`connection::tls`]'s, which send it over a
+//! TLS session terminated on that duplex.
 //!
 //! A scenario may name a [`base`](Scenario::base): the scenario it differs
 //! from in one variable, whose difference the report gives as that variable's
@@ -968,4 +969,5 @@ pub fn catalog() -> impl Iterator<Item = Scenario> {
                 .iter()
                 .map(|connected| connected.scenario),
         )
+        .chain(connection::tls::TLS.iter().map(|sealed| sealed.scenario))
 }
