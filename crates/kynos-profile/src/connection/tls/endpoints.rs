@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, IsCa, KeyPair, PKCS_ED25519,
+    SerialNumber,
 };
 use tokio_rustls::{
     TlsAcceptor,
@@ -30,6 +31,11 @@ const SERVER_NAME: &str = "localhost";
 /// The protocol the client offers, so that every row is HTTP/1.1 and the
 /// `connection_h2` group's `Date` encoding stays out of an exact group.
 const ALPN_HTTP1: &[u8] = b"http/1.1";
+
+/// Both certificates' serial: 20 bytes, RFC 5280's most, with a leading byte
+/// that is neither zero nor has its top bit set, so DER encodes all 20 and
+/// adds no sign byte, as rcgen's key-derived default does for most keys.
+const SERIAL: [u8; 20] = [0x5a; 20];
 
 /// Both ends' configuration, minted in setup and shared by every connection
 /// a row opens: a server identity issued by an authority the client trusts,
@@ -56,6 +62,11 @@ impl Endpoints {
     /// ALPN `h2` then `http/1.1`, no early data, and stateless tickets under
     /// `aws-lc-rs`'s ticketer. The identity is Ed25519, whose signature has
     /// one length, so no count moves with how a signature happened to encode.
+    /// Both certificates carry a fixed serial for the same reason: rcgen's
+    /// default derives it from the fresh key, and its DER encoding drops a
+    /// leading zero byte for about one key in 128, which would shorten the
+    /// certificate the server sends. The fixed serial encodes in the default's
+    /// usual 20 bytes, so the certificate keeps that usual length.
     ///
     /// It differs from `TlsConfig` in how the certificate is chosen. rustls
     /// asks the resolver on every `ClientHello`, resumed or not, and
@@ -76,6 +87,7 @@ impl Endpoints {
 
         let mut authority = CertificateParams::new(Vec::new()).expect("no subject names");
         authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        authority.serial_number = Some(SerialNumber::from_slice(&SERIAL));
         authority
             .distinguished_name
             .push(DnType::CommonName, "kynos-profile authority");
@@ -87,6 +99,7 @@ impl Endpoints {
         let key = KeyPair::generate_for(&PKCS_ED25519).expect("an Ed25519 key");
         let mut leaf =
             CertificateParams::new(vec![SERVER_NAME.to_owned()]).expect("a valid subject name");
+        leaf.serial_number = Some(SerialNumber::from_slice(&SERIAL));
         leaf.distinguished_name
             .push(DnType::CommonName, "kynos-profile server");
         let certificate = leaf
