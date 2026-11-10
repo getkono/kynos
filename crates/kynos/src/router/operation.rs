@@ -69,7 +69,7 @@ pub struct OperationCx<'a> {
     links: Vec<crate::extract::link::Target>,
     /// Response headers whose placement reads the finished set of responses,
     /// filed by [`finish`](Self::finish) in the order they were placed.
-    placed: Vec<(Placement, String, kynos_openapi::Header)>,
+    placed: Vec<(Deferred, String, kynos_openapi::Header)>,
 }
 
 impl<'a> OperationCx<'a> {
@@ -253,12 +253,14 @@ impl OperationCx<'_> {
         name: String,
         header: &kynos_openapi::Header,
     ) {
-        match placement {
-            Placement::Success => self.add_response_header(StatusPattern::Success, name, header),
-            Placement::Every | Placement::Problems => {
-                self.placed.push((placement, name, header.clone()));
+        let deferred = match placement {
+            Placement::Success => {
+                return self.add_response_header(StatusPattern::Success, name, header);
             }
-        }
+            Placement::Every => Deferred::Every,
+            Placement::Problems => Deferred::Problems,
+        };
+        self.placed.push((deferred, name, header.clone()));
     }
 
     /// Sets the operation identifier.
@@ -334,23 +336,29 @@ fn covered_by(range: StatusPattern, declared: StatusPattern) -> bool {
     }
 }
 
-/// Whether a header deferred to [`OperationCx::finish`] under `placement` lands
-/// on `response`. A `$ref` is never reached into, so it is never reached.
-fn reached_by(placement: Placement, response: &RefOr<Response>) -> bool {
+/// A [`Placement`] that reads the finished operation, so
+/// [`OperationCx::finish`] files it.
+#[derive(Clone, Copy, Debug)]
+enum Deferred {
+    Every,
+    Problems,
+}
+
+/// Whether a header deferred under `placement` lands on `response`. A `$ref`
+/// is never reached into, so it is never reached.
+fn reached_by(placement: Deferred, response: &RefOr<Response>) -> bool {
     let RefOr::Item(response) = response else {
         return false;
     };
     match placement {
-        Placement::Every => true,
-        Placement::Problems => response.content.keys().any(|media_type| {
+        Deferred::Every => true,
+        Deferred::Problems => response.content.keys().any(|media_type| {
             media_type.split(';').next().is_some_and(|essence| {
                 essence
                     .trim()
                     .eq_ignore_ascii_case(APPLICATION_PROBLEM_JSON)
             })
         }),
-        // Filed where it was placed, and never deferred.
-        Placement::Success => false,
     }
 }
 
