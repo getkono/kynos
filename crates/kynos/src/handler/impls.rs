@@ -88,13 +88,13 @@ macro_rules! impl_handler {
             async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
                 $( let $head = or_respond!($head::from_request_parts(parts, context), parts); )*
                 let $last = or_respond!($last::from_request(parts, body, context), parts);
-                self($($head,)* $last).await.__into_response_for(parts)
+                self($($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
                 $( describe_argument!($head as FromRequestParts, operation); )*
                 describe_argument!($last as FromRequest, operation);
-                let returned = <Res as Responses>::__served_responses(operation.registry());
+                let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
         }
@@ -114,13 +114,13 @@ macro_rules! impl_handler {
             async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
                 $( let $head = or_respond!($head::from_request_parts(parts, context), parts); )*
                 let $last = or_respond!($last::from_request_parts(parts, context), parts);
-                self($($head,)* $last).await.__into_response_for(parts)
+                self($($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
                 $( describe_argument!($head as FromRequestParts, operation); )*
                 describe_argument!($last as FromRequestParts, operation);
-                let returned = <Res as Responses>::__served_responses(operation.registry());
+                let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
         }
@@ -142,14 +142,14 @@ macro_rules! impl_handler {
                 let G = guard!(G, parts, context);
                 $( let $head = or_respond!($head::from_request_parts(parts, context), parts); )*
                 let $last = or_respond!($last::from_request(parts, body, context), parts);
-                self(G, $($head,)* $last).await.__into_response_for(parts)
+                self(G, $($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
                 <G as Describe>::describe(operation);
                 $( describe_argument!($head as FromRequestParts, operation); )*
                 describe_argument!($last as FromRequest, operation);
-                let returned = <Res as Responses>::__served_responses(operation.registry());
+                let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
 
@@ -173,14 +173,14 @@ macro_rules! impl_handler {
                 let G = guard!(G, parts, context);
                 $( let $head = or_respond!($head::from_request_parts(parts, context), parts); )*
                 let $last = or_respond!($last::from_request_parts(parts, context), parts);
-                self(G, $($head,)* $last).await.__into_response_for(parts)
+                self(G, $($head,)* $last).await.into_response()
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
                 <G as Describe>::describe(operation);
                 $( describe_argument!($head as FromRequestParts, operation); )*
                 describe_argument!($last as FromRequestParts, operation);
-                let returned = <Res as Responses>::__served_responses(operation.registry());
+                let returned = <Res as Responses>::responses(operation.registry());
                 operation.add_responses(&returned);
             }
 
@@ -199,12 +199,12 @@ where
     C: Send + Sync + 'static,
 {
     async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
-        let _ = (body, context);
-        self().await.__into_response_for(parts)
+        let _ = (parts, body, context);
+        self().await.into_response()
     }
 
     fn describe(operation: &mut OperationCx<'_>) {
-        let returned = <Res as Responses>::__served_responses(operation.registry());
+        let returned = <Res as Responses>::responses(operation.registry());
         operation.add_responses(&returned);
     }
 }
@@ -222,13 +222,13 @@ where
     #[allow(non_snake_case)]
     async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
         let G = guard!(G, parts, context);
-        self(G).await.__into_response_for(parts)
+        self(G).await.into_response()
     }
 
     /// The guard declares its refusals itself, as in `impl_handler!`.
     fn describe(operation: &mut OperationCx<'_>) {
         <G as Describe>::describe(operation);
-        let returned = <Res as Responses>::__served_responses(operation.registry());
+        let returned = <Res as Responses>::responses(operation.registry());
         operation.add_responses(&returned);
     }
 

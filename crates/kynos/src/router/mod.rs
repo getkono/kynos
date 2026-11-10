@@ -819,14 +819,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Adds `M`'s extension members to every problem Kynos renders itself,
     /// and declares them on every response describing one.
     ///
-    /// Reaches each rejection a handler's argument or guard raises, a
-    /// [`RangeRejection`](crate::error::rejection::RangeRejection) a handler
-    /// returns, the 404, 405 and 501 under [`FallbackPolicy::Problem`], and
-    /// the 400 a `QUERY` naming no media type gets. An application's own
-    /// `#[derive(ApiError)]` type carries its own members, and an interceptor's
-    /// refusal, a recovered panic's 500 and a ranged
-    /// [`Delivery`](crate::response::range::served::Delivery)'s 416 carry none.
-    /// See [`ProblemMembers`] for what `M` must describe.
+    /// Reaches each rejection a handler's argument or guard raises, the 404,
+    /// 405 and 501 under [`FallbackPolicy::Problem`], and the 400 a `QUERY`
+    /// naming no media type gets. An application's own `#[derive(ApiError)]`
+    /// type carries its own members; a rejection a handler returns, an
+    /// interceptor's refusal and a recovered panic's 500 carry none. See
+    /// [`ProblemMembers`] for what `M` must describe.
     ///
     /// One application-level policy, so it is set on the root router: on a
     /// router that is then nested or merged, it is a

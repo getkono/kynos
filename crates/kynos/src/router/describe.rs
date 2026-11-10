@@ -17,6 +17,7 @@ use super::{
     DeclaredTag, Document, Error, OperationCx, PanicPolicy, PathItem, Paths, Registry, Result,
     Router, RouterError, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
+use crate::error::members::Hook;
 
 impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Checks the router without building it.
@@ -112,24 +113,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     fn name_instantiations(&self, registry: &mut Registry) {
         for name_instantiation in &self.instantiation_names {
             name_instantiation(registry);
-        }
-    }
-
-    /// Declares the members [`problem_members`](Router::problem_members)
-    /// installed before an operation describes a problem carrying them; a type
-    /// whose schema names none a problem could carry is a violation.
-    fn declare_problem_members(
-        &self,
-        registry: &mut Registry,
-        violations: &mut Vec<Violation<RouterError>>,
-    ) {
-        let Some(hook) = self.problem_members else {
-            return;
-        };
-
-        match hook.declared(registry) {
-            Ok(members) => registry.declare_problem_members(members),
-            Err(error) => violations.push(error_at("#", error)),
         }
     }
 
@@ -251,7 +234,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         self.declare_security_schemes(&mut registry, &mut violations);
         self.name_instantiations(&mut registry);
-        self.declare_problem_members(&mut registry, &mut violations);
+        // Before any operation describes a problem carrying them.
+        if let Some(error) = Hook::declare(self.problem_members, &mut registry) {
+            violations.push(error_at("#", error));
+        }
 
         // Scope-declared metadata first, so the document lists it in
         // declaration order and a tag covering no operation is still

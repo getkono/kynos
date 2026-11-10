@@ -740,16 +740,6 @@ impl IntoResponse for RangeRejection {
         crate::response::headers::write_or_refuse(&mut response, &field);
         response
     }
-
-    fn __into_response_for(self, request: &Parts) -> crate::http::Response {
-        let field = self.content_range();
-        served_response(
-            IntoProblem::into_problem(self),
-            ProblemOrigin::Range,
-            request,
-            |response| crate::response::headers::write_or_refuse(response, &field),
-        )
-    }
 }
 
 /// The 416, carrying the field it sends.
@@ -759,36 +749,27 @@ impl IntoResponse for RangeRejection {
 /// advertise it.
 impl Responses for RangeRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        range_responses(registry, false)
-    }
-
-    fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        range_responses(registry, true)
-    }
-}
-
-/// [`RangeRejection`]'s 416 and the `Content-Range` it sends, with the members
-/// the router installs where `served`.
-fn range_responses(registry: &mut Registry, served: bool) -> kynos_openapi::Responses {
-    let mut responses = problem_responses(
-        registry,
-        <RangeRejection as IntoProblem>::statuses(),
-        None,
-        served,
-    );
-
-    let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
-    if let Some(kynos_openapi::RefOr::Item(response)) = responses.responses.get_mut(&unsatisfiable)
-    {
-        response.headers.insert(
-            "Content-Range".to_owned(),
-            kynos_openapi::RefOr::Item(
-                crate::response::range::headers::ContentRange::unsatisfied_header(),
-            ),
+        let mut responses = problem_responses(
+            registry,
+            <RangeRejection as IntoProblem>::statuses(),
+            None,
+            false,
         );
-    }
 
-    responses
+        let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
+        if let Some(kynos_openapi::RefOr::Item(response)) =
+            responses.responses.get_mut(&unsatisfiable)
+        {
+            response.headers.insert(
+                "Content-Range".to_owned(),
+                kynos_openapi::RefOr::Item(
+                    crate::response::range::headers::ContentRange::unsatisfied_header(),
+                ),
+            );
+        }
+
+        responses
+    }
 }
 
 /// The connection has no IP peer for

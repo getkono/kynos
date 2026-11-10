@@ -11,7 +11,7 @@ use kynos_openapi::Method;
 
 use crate::{
     error::{
-        members::{Head, ProblemOrigin, Produce, Rendered, render},
+        members::{Head, Installed, ProblemOrigin, Produce, Rendered, render},
         problem::Problem,
     },
     extract::params::path::PathCaptures,
@@ -139,10 +139,7 @@ impl<C: Send + Sync + 'static> ErasedTerminal<C> for UntypedQuery {
             "a `QUERY` request must name its content's media type in `Content-Type` \
              (RFC 10008 section 2)",
         );
-        let members = request
-            .extensions()
-            .get::<Routed>()
-            .and_then(|routed| routed.problem_members);
+        let members = Installed::on(request.extensions());
         let response =
             render(problem, ProblemOrigin::Body, Head::from(&request), members).into_response();
         Box::pin(std::future::ready(response))
@@ -220,10 +217,6 @@ pub(crate) struct Routed {
     /// for a fallback and wherever no operation links, so a service without
     /// links pays nothing for them.
     pub(crate) links: Option<Arc<crate::extract::link::Links>>,
-    /// The members
-    /// [`Router::problem_members`](crate::router::Router::problem_members)
-    /// installed, which a rejection rendered for this request carries.
-    pub(crate) problem_members: Option<Produce>,
 }
 
 /// The `paths` key routing matched `request` to, prefixes included; `None`
@@ -331,8 +324,9 @@ pub(crate) struct Dispatch<C> {
     pub(crate) implemented: Vec<Method>,
     /// Handed to every routed request; see [`Routed::links`].
     pub(crate) links: Option<Arc<crate::extract::link::Links>>,
-    /// Handed to every routed request, and read by each problem the router
-    /// renders itself; see [`Routed::problem_members`].
+    /// What [`Router::problem_members`](crate::router::Router::problem_members)
+    /// installed: handed to every routed request as [`Installed`], and read by
+    /// each fallback the router renders itself.
     pub(crate) problem_members: Option<Produce>,
 }
 
@@ -545,8 +539,12 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             forwarded,
             secured: entry.operations[position].secured,
             links: self.links.clone(),
-            problem_members: self.problem_members,
         });
+        // An extension of its own rather than a field of the record, so a
+        // service installing none pays nothing for it.
+        if let Some(produce) = self.problem_members {
+            request.extensions_mut().insert(Installed(produce));
+        }
 
         for observer in &self.observers {
             observer.on_request(request, Some(route), &self.context);
@@ -672,7 +670,6 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 forwarded,
                 secured: false,
                 links: None,
-                problem_members: self.problem_members,
             });
         }
 

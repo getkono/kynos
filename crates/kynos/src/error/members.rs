@@ -84,9 +84,6 @@ pub enum ProblemOrigin {
     /// The request's `Accept`:
     /// [`NegotiationRejection`](crate::error::rejection::NegotiationRejection).
     Negotiation,
-    /// A range no representation satisfies:
-    /// [`RangeRejection`](crate::error::rejection::RangeRejection).
-    Range,
     /// The connection the request arrived on:
     /// [`ConnectInfoRejection`](crate::error::rejection::ConnectInfoRejection).
     Connection,
@@ -196,6 +193,19 @@ impl Hook {
             produce: produce::<M>,
             describe: M::schema,
             name: std::any::type_name::<M>(),
+        }
+    }
+
+    /// Declares the members of the type `hook` erases, where one is installed,
+    /// on `registry` for every problem Kynos renders to read; or the violation
+    /// refusing them.
+    pub(crate) fn declare(hook: Option<Self>, registry: &mut Registry) -> Option<RouterError> {
+        match hook?.declared(registry) {
+            Ok(members) => {
+                registry.declare_problem_members(members);
+                None
+            }
+            Err(refused) => Some(refused),
         }
     }
 
@@ -341,12 +351,21 @@ pub(crate) fn render(
 /// `problem`, rendered as the answer to the routed request whose head is
 /// `request`, with the members the router that routed it installed.
 pub(crate) fn served(problem: Problem, origin: ProblemOrigin, request: &Parts) -> Rendered {
-    let produce = request
-        .extensions
-        .get::<crate::router::dispatch::Routed>()
-        .and_then(|routed| routed.problem_members);
+    let produce = Installed::on(&request.extensions);
 
     render(problem, origin, Head::from(request), produce)
+}
+
+/// The members the router installed, on a routed request it inserts them
+/// into; absent from every request where none were installed.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Installed(pub(crate) Produce);
+
+impl Installed {
+    /// What the router that routed a request with `extensions` installed.
+    pub(crate) fn on(extensions: &Extensions) -> Option<Produce> {
+        extensions.get::<Self>().map(|Self(produce)| *produce)
+    }
 }
 
 /// Adds `members` beside what `extensions` already holds; a member the problem

@@ -1083,7 +1083,6 @@ fn only_a_routed_request_has_a_resolved_origin() {
             forwarded: resolved.clone(),
             secured: false,
             links: None,
-            problem_members: None,
         });
     assert_eq!(Forwarded::of(&request), Some(&resolved));
 }

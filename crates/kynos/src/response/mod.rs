@@ -71,16 +71,16 @@ pub trait IntoResponse {
     /// Writes this value as a response.
     fn into_response(self) -> Response;
 
-    /// Writes this value as the answer to the routed request whose head is
-    /// `request`.
+    /// Writes this value as the rejection of the routed request whose head is
+    /// `request`, raised by a handler's argument or guard.
     ///
     /// Not part of the stable API: a rejection Kynos renders itself answers
     /// it with the members
     /// [`Router::problem_members`](crate::router::Router::problem_members)
     /// installed, and declares them through
     /// [`Responses::__served_responses`]. Anything else writes
-    /// [`into_response`](IntoResponse::into_response), and a type holding
-    /// another forwards both halves or neither.
+    /// [`into_response`](IntoResponse::into_response); a type overrides both
+    /// halves or neither.
     #[doc(hidden)]
     fn __into_response_for(self, request: &crate::http::Parts) -> Response
     where
@@ -105,9 +105,8 @@ pub trait Responses {
     /// The responses this type may produce.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses;
 
-    /// The responses this type may produce as a handler's argument rejection
-    /// or return value, which
-    /// [`IntoResponse::__into_response_for`] writes.
+    /// The responses this type may produce as a handler's argument or guard
+    /// rejection, which [`IntoResponse::__into_response_for`] writes.
     ///
     /// Not part of the stable API, as that method: [`responses`](Responses::responses)
     /// unless the type overrides both.
@@ -202,12 +201,6 @@ where
         responses.merge_from(&E::responses(registry));
         responses
     }
-
-    fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let mut responses = T::__served_responses(registry);
-        responses.merge_from(&E::__served_responses(registry));
-        responses
-    }
 }
 
 impl<T, E> IntoResponse for Result<T, E>
@@ -219,13 +212,6 @@ where
         match self {
             Ok(value) => value.into_response(),
             Err(error) => error.into_response(),
-        }
-    }
-
-    fn __into_response_for(self, request: &crate::http::Parts) -> Response {
-        match self {
-            Ok(value) => value.__into_response_for(request),
-            Err(error) => error.__into_response_for(request),
         }
     }
 }
