@@ -213,8 +213,8 @@ pub trait Served {
     fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting;
 
     /// Hands the service to a [`Server`] serving `listener` over `tls`, and
-    /// spawns it onto `runner`'s runtime, which polls it first in the next
-    /// [`Runner::run`]: Kynos's own accept loop, acceptor and connection task,
+    /// spawns it onto `runner`'s runtime, which polls it first the next time
+    /// the runtime runs: Kynos's own accept loop, acceptor and connection task,
     /// what a [`tls`](crate::connection::tls) row's rounds drive. The server
     /// serves until the runtime is dropped; what the returned value holds
     /// must outlive it.
