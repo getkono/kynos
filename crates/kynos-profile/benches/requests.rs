@@ -248,6 +248,8 @@ fn routed(prepared: Prepared) -> Answered {
 #[bench::observer_noop("observer-noop")]
 #[bench::trace_nosub("trace-nosub")]
 #[bench::trace_sub("trace-sub")]
+#[bench::trace_span_nosub("trace-span-nosub")]
+#[bench::trace_span_sub("trace-span-sub")]
 fn scoped(prepared: Prepared) -> Answered {
     let Prepared {
         service,

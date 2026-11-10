@@ -1,6 +1,7 @@
 //! The scope group's tables, and the catalog's stacks: the table behind
 //! transparent layers at router scope, `/json/small` behind the same layers
-//! at a narrower scope, with panic recovery, or watched by an observer.
+//! at a narrower scope, with panic recovery, watched by an observer, or inside
+//! `Trace`'s per-request span.
 
 use std::any::Any;
 use std::convert::Infallible;
@@ -11,7 +12,7 @@ use http_body::Frame;
 use kynos::{
     extract::connection::Connection,
     http::{Request, Response},
-    middleware::{Continued, Interceptor, Next, Observer, trace::Trace},
+    middleware::{Continued, Interceptor, Next, Observer, catch_panic::PanicPolicy, trace::Trace},
     prelude::*,
     router::{operation::Route, service::Service},
     server::tls::TlsConfig,
@@ -146,6 +147,12 @@ pub(crate) fn traced() -> Box<dyn Served> {
     built(router().observe(Trace::new()))
 }
 
+/// The table inside `Trace`'s per-request span, declaring no field of the
+/// application's, so what is counted is the span the defaults open and close.
+pub(crate) fn traced_span() -> Box<dyn Served> {
+    built(router().intercept(Trace::new().span(&[])))
+}
+
 /// A subscriber that is interested in everything and keeps none of it, so
 /// that what is counted is `tracing` building each span and event and handing
 /// it over, and not what any real subscriber does with it.
@@ -227,14 +234,21 @@ impl Served for Subscribed {
     }
 }
 
-/// [`traced`]'s table with a subscriber installed on the serving thread.
-pub(crate) fn traced_subscribed() -> Box<dyn Served> {
-    let service = router()
-        .observe(Trace::new())
-        .build(App::new())
-        .expect("a describable router");
+/// `router` built with [`Discarding`] installed on the serving thread.
+fn subscribed<P: PanicPolicy, I, S>(router: Router<App, P, I, S>) -> Box<dyn Served> {
+    let service = router.build(App::new()).expect("a describable router");
     Box::new(Subscribed {
         service,
         _default: tracing::subscriber::set_default(Discarding),
     })
+}
+
+/// [`traced`]'s table with a subscriber installed on the serving thread.
+pub(crate) fn traced_subscribed() -> Box<dyn Served> {
+    subscribed(router().observe(Trace::new()))
+}
+
+/// [`traced_span`]'s table with a subscriber installed on the serving thread.
+pub(crate) fn traced_span_subscribed() -> Box<dyn Served> {
+    subscribed(router().intercept(Trace::new().span(&[])))
 }

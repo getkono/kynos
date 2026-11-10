@@ -76,7 +76,8 @@ tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
 tokio-rustls = { workspace = true }
 # `unchecked-layer`'s pass-through layer.
 tower-layer = { workspace = true }
-# `trace-sub`'s subscriber, installed on the serving thread in setup.
+# `trace-sub`'s and `trace-span-sub`'s subscriber, installed on the serving
+# thread in setup.
 tracing = { workspace = true }
 
 [dev-dependencies]
