@@ -5502,6 +5502,35 @@ async fn an_unserializable_constant_member_answers_500_and_is_never_declared() {
     assert!(described.is_err(), "a refusing constant is not declared");
 }
 
+/// A constant holding no value.
+const ABSENT: Option<&str> = None;
+
+/// A failure whose constant member serializes to `null`.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("rejected")]
+#[problem(status = 422, extension(absent = ABSENT))]
+struct AbsentConstant;
+
+/// A constant serializing to `null` is refused as one that refuses to
+/// serialize is: a member is never sent as `null`, and a `const` holding
+/// `None` would send nothing else on every occurrence.
+#[tokio::test]
+async fn a_null_constant_member_answers_500_and_is_never_declared() {
+    let Answered { status, body, .. } = answered(AbsentConstant.into_response()).await;
+    assert_eq!(status, 500);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body.get("absent"), None, "{body}");
+
+    let described = std::panic::catch_unwind(emitted_responses::<AbsentConstant>);
+    let message = described.expect_err("a null constant is not declared");
+    let message = message
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| message.downcast_ref::<&str>().copied())
+        .expect("a panic message");
+    assert!(message.contains("null"), "{message}");
+}
+
 /// Two failures publishing one URI, only one of which sends `errors`.
 #[derive(Debug, thiserror::Error, ApiError)]
 enum ReviewError {
