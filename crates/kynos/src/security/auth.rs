@@ -468,6 +468,7 @@ fn declare(
         refusals.forbidden_type,
         refusals.forbids,
         refusals.unavailable,
+        true,
     );
     operation.add_responses(&responses);
 

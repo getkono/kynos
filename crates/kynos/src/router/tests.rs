@@ -711,6 +711,8 @@ mod router_errors {
             RouterError::RouteConflict { .. } => "RouteConflict",
             RouterError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
             RouterError::NestedRouterPolicy { .. } => "NestedRouterPolicy",
+            RouterError::ProblemMembersNotObject { .. } => "ProblemMembersNotObject",
+            RouterError::ProblemMemberReserved { .. } => "ProblemMemberReserved",
             RouterError::MappedOperation { .. } => "MappedOperation",
         }
     }
@@ -763,6 +765,21 @@ mod router_errors {
                  applies; set it on the root router instead",
             ),
             (
+                RouterError::ProblemMembersNotObject {
+                    members: "app::Coded",
+                },
+                "problem members `app::Coded` must describe an object naming each member as a \
+                 property",
+            ),
+            (
+                RouterError::ProblemMemberReserved {
+                    members: "app::Coded",
+                    member: "status".to_owned(),
+                },
+                "problem members `app::Coded` declare `status`, which a problem Kynos renders \
+                 already sends; rename it",
+            ),
+            (
                 RouterError::MappedOperation {
                     method: Method::Get,
                     path: "/users".to_owned(),
@@ -799,6 +816,8 @@ mod router_errors {
             "RouteConflict",
             "InvalidRoutePattern",
             "NestedRouterPolicy",
+            "ProblemMembersNotObject",
+            "ProblemMemberReserved",
             "MappedOperation",
         ]
         .into_iter()

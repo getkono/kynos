@@ -163,6 +163,8 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) method_not_allowed: Option<FallbackPolicy>,
     pub(crate) trailing_slashes: Option<TrailingSlashPolicy>,
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
+    /// What [`problem_members`](Router::problem_members) installed.
+    pub(crate) problem_members: Option<crate::error::members::Hook>,
     pub(crate) deny_unchecked_schemas: bool,
     /// Each [`map_openapi`](Router::map_openapi) edit, in call order.
     pub(crate) document_edits: Vec<DocumentEdit>,
@@ -223,6 +225,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: None,
             trailing_slashes: None,
             trusted_proxies: None,
+            problem_members: None,
             deny_unchecked_schemas: false,
             document_edits: Vec::new(),
             #[cfg(feature = "unchecked")]
@@ -255,6 +258,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
+            problem_members: self.problem_members,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
             document_edits: self.document_edits,
             #[cfg(feature = "unchecked")]
@@ -374,6 +378,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.method_not_allowed.is_some(), "method_not_allowed"),
             (other.trailing_slashes.is_some(), "trailing_slashes"),
             (other.trusted_proxies.is_some(), "trusted_proxies"),
+            (other.problem_members.is_some(), "problem_members"),
             // An edit sees the whole document, which only the root assembles.
             (!other.document_edits.is_empty(), "map_openapi"),
         ] {
@@ -808,6 +813,28 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     #[must_use]
     pub fn trusted_proxies(mut self, trusted: crate::http::forwarded::TrustedProxies) -> Self {
         self.trusted_proxies = Some(trusted);
+        self
+    }
+
+    /// Adds `M`'s extension members to every problem Kynos renders itself,
+    /// and declares them on every response describing one.
+    ///
+    /// Reaches each rejection a handler's argument or guard raises, the 404,
+    /// 405 and 501 under [`FallbackPolicy::Problem`], and the 400 a `QUERY`
+    /// naming no media type gets. An application's own `#[derive(ApiError)]`
+    /// type carries its own members; a rejection a handler returns, an
+    /// interceptor's refusal and a recovered panic's 500 carry none. See
+    /// [`ProblemMembers`] for what `M` must describe.
+    ///
+    /// One application-level policy, so it is set on the root router: on a
+    /// router that is then nested or merged, it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    /// Calling it twice keeps the second.
+    ///
+    /// [`ProblemMembers`]: crate::error::members::ProblemMembers
+    #[must_use]
+    pub fn problem_members<M: crate::error::members::ProblemMembers>(mut self) -> Self {
+        self.problem_members = Some(crate::error::members::Hook::of::<M>());
         self
     }
 
