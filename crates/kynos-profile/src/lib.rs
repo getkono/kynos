@@ -392,7 +392,8 @@ pub(crate) const ROUTING: &[Scenario] = &[
 ];
 
 /// Scope: `layers-4`'s layers at the two narrower scopes, panic recovery at
-/// the widest and narrowest, and an observer.
+/// the widest and narrowest, an observer, and `Trace` as an observer and as
+/// its per-request span.
 pub(crate) const SCOPE: &[Scenario] = &[
     row!(
         "group-layers-4",
@@ -451,6 +452,24 @@ pub(crate) const SCOPE: &[Scenario] = &[
         OK,
         Poll,
         Some("trace-nosub")
+    ),
+    // `Trace`'s per-request span with no subscriber installed: the span is
+    // `Span::none()` once the level and interest checks refuse it.
+    row!(
+        "trace-span-nosub",
+        scope::traced_span,
+        || get("/json/small"),
+        OK,
+        Poll,
+        Some("json-small")
+    ),
+    row!(
+        "trace-span-sub",
+        scope::traced_span_subscribed,
+        || get("/json/small"),
+        OK,
+        Poll,
+        Some("trace-span-nosub")
     ),
 ];
 

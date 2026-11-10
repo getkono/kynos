@@ -342,17 +342,74 @@ fn every_interceptor_row_reaches_its_interceptor() {
     }
 }
 
-/// `trace-sub` differs from `trace-nosub` in a subscriber alone, so one is
-/// the thread's default while its service lives, and none is once it is
-/// dropped.
+/// `trace-sub` and `trace-span-sub` each differ from their `-nosub` base in a
+/// subscriber alone, so one is the thread's default while its service lives,
+/// and none is once it is dropped.
 #[test]
 fn trace_sub_serves_under_a_subscriber_of_its_own() {
     let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
-    assert!(unsubscribed());
-    let service = (scenario("trace-sub").service)();
-    assert!(!unsubscribed());
-    drop(service);
-    assert!(unsubscribed());
+    for name in ["trace-sub", "trace-span-sub"] {
+        assert!(unsubscribed(), "{name}");
+        let service = (scenario(name).service)();
+        assert!(!unsubscribed(), "{name}");
+        drop(service);
+        assert!(unsubscribed(), "{name}");
+    }
+}
+
+/// Counts the spans named `request` it is handed, and is interested in
+/// nothing else.
+struct RequestSpans(Arc<std::sync::atomic::AtomicUsize>);
+
+impl tracing::Subscriber for RequestSpans {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata.is_span() && metadata.name() == "request"
+    }
+
+    fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        let _ = span;
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
+        let _ = (span, values);
+    }
+
+    fn record_follows_from(&self, span: &tracing::span::Id, follows: &tracing::span::Id) {
+        let _ = (span, follows);
+    }
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let _ = event;
+    }
+
+    fn enter(&self, span: &tracing::span::Id) {
+        let _ = span;
+    }
+
+    fn exit(&self, span: &tracing::span::Id) {
+        let _ = span;
+    }
+}
+
+/// `trace-span-nosub` counts `TraceSpan` only if the request passes through
+/// it, so a subscriber that is interested is handed one `request` span per
+/// request; `trace-nosub`, the observer, opens none.
+#[test]
+fn trace_span_rows_open_one_request_span() {
+    for (name, spans) in [("trace-span-nosub", 1), ("trace-nosub", 0)] {
+        let opened = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let row = scenario(name);
+        tracing::subscriber::with_default(RequestSpans(Arc::clone(&opened)), || {
+            answered(row);
+        });
+        assert_eq!(
+            opened.load(std::sync::atomic::Ordering::Relaxed),
+            spans,
+            "{name}"
+        );
+    }
 }
 
 #[derive(Clone)]
