@@ -136,7 +136,7 @@ async fn a_problem_carries_what_the_members_read_from_its_request() {
 
     let rendered = kept(render(
         problem,
-        ProblemOrigin::Header,
+        ProblemOrigin::HeaderField,
         Head::from(&request),
         Some(Hook::of::<Echo>().produce),
     ));
@@ -148,7 +148,7 @@ async fn a_problem_carries_what_the_members_read_from_its_request() {
             "title": "Bad Request",
             "status": 400,
             "detail": "bad",
-            "code": "Header-400-about:blank-PUT-/items/7",
+            "code": "HeaderField-400-about:blank-PUT-/items/7",
             "request_id": "r-1",
             "tenant": "acme",
         })
@@ -181,7 +181,7 @@ async fn a_member_never_replaces_one_the_problem_already_sends() {
 
     let rendered = kept(render(
         problem,
-        ProblemOrigin::Body,
+        ProblemOrigin::Content,
         Head::from(&request),
         Some(Hook::of::<Clashing>().produce),
     ));

@@ -24,7 +24,7 @@
 //! impl ProblemMembers for Coded {
 //!     fn for_problem(cx: &ProblemCx<'_>) -> Self {
 //!         let code = match cx.origin() {
-//!             ProblemOrigin::Auth => "auth",
+//!             ProblemOrigin::Authentication => "auth",
 //!             ProblemOrigin::Routing => "route",
 //!             _ => "request",
 //!         };
@@ -66,30 +66,34 @@ const ERRORS: &str = "errors";
 ///
 /// What a problem's status cannot say alone: a 400 is a path parameter, a
 /// query parameter, a header or a body that would not decode.
+///
+/// No variant shares a name with a type Kynos exports: rustc prints a type by
+/// its full path wherever a second item shares its name, so a variant named
+/// `Body` or `Auth` would lengthen every diagnostic naming those types.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ProblemOrigin {
     /// A path parameter: [`PathRejection`](crate::error::rejection::PathRejection).
-    Path,
+    PathParameter,
     /// A query parameter or query string:
     /// [`QueryRejection`](crate::error::rejection::QueryRejection).
-    Query,
+    QueryParameter,
     /// A request header: [`HeaderRejection`](crate::error::rejection::HeaderRejection).
-    Header,
+    HeaderField,
     /// A cookie: `CookieRejection`, behind the `cookie` feature.
-    Cookie,
+    CookieValue,
     /// The request's content, including a `QUERY` naming no media type:
     /// [`BodyRejection`](crate::error::rejection::BodyRejection).
-    Body,
+    Content,
     /// The request's `Accept`:
     /// [`NegotiationRejection`](crate::error::rejection::NegotiationRejection).
     Negotiation,
     /// The connection the request arrived on:
     /// [`ConnectInfoRejection`](crate::error::rejection::ConnectInfoRejection).
-    Connection,
+    Transport,
     /// A credential: [`AuthRejection`](crate::error::rejection::AuthRejection)
     /// and [`ScopedRejection`](crate::error::rejection::ScopedRejection).
-    Auth,
+    Authentication,
     /// The router, for a request no operation answers: the 404, 405 and 501
     /// under [`FallbackPolicy::Problem`](crate::router::policy::FallbackPolicy::Problem).
     Routing,

@@ -318,7 +318,7 @@ macro_rules! parameter_rejection {
 
 parameter_rejection! {
     subject: "parameter",
-    origin: ProblemOrigin::Path,
+    origin: ProblemOrigin::PathParameter,
     /// A path parameter did not match its declared schema.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -340,7 +340,7 @@ parameter_rejection! {
 
 parameter_rejection! {
     subject: "parameter",
-    origin: ProblemOrigin::Query,
+    origin: ProblemOrigin::QueryParameter,
     /// A query parameter was missing or malformed.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -365,7 +365,7 @@ parameter_rejection! {
 
 parameter_rejection! {
     subject: "header",
-    origin: ProblemOrigin::Header,
+    origin: ProblemOrigin::HeaderField,
     /// A header was missing or malformed.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -388,7 +388,7 @@ parameter_rejection! {
 parameter_rejection! {
     #[cfg(feature = "cookie")]
     subject: "cookie",
-    origin: ProblemOrigin::Cookie,
+    origin: ProblemOrigin::CookieValue,
     /// A cookie was missing or malformed.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -593,7 +593,7 @@ impl IntoResponse for BodyRejection {
 
         served_response(
             IntoProblem::into_problem(self),
-            ProblemOrigin::Body,
+            ProblemOrigin::Content,
             request,
             |response| {
                 #[cfg(feature = "openapi32")]
@@ -808,7 +808,7 @@ impl IntoProblem for ConnectInfoRejection {
     }
 }
 
-rejection_response!(ConnectInfoRejection, ProblemOrigin::Connection);
+rejection_response!(ConnectInfoRejection, ProblemOrigin::Transport);
 
 /// A credential was absent, invalid, or insufficient, or could not be checked.
 ///
@@ -1110,7 +1110,7 @@ impl IntoResponse for AuthRejection {
         let fields = AuthFields::of(&self);
         served_response(
             IntoProblem::into_problem(self),
-            ProblemOrigin::Auth,
+            ProblemOrigin::Authentication,
             request,
             |response| fields.write(response),
         )

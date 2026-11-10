@@ -67,15 +67,15 @@ pub fn T::provide(&self) -> T
 pub mod kynos::error
 pub mod kynos::error::members
 #[non_exhaustive] pub enum kynos::error::members::ProblemOrigin
-pub kynos::error::members::ProblemOrigin::Auth
-pub kynos::error::members::ProblemOrigin::Body
-pub kynos::error::members::ProblemOrigin::Connection
-pub kynos::error::members::ProblemOrigin::Cookie
-pub kynos::error::members::ProblemOrigin::Header
+pub kynos::error::members::ProblemOrigin::Authentication
+pub kynos::error::members::ProblemOrigin::Content
+pub kynos::error::members::ProblemOrigin::CookieValue
+pub kynos::error::members::ProblemOrigin::HeaderField
 pub kynos::error::members::ProblemOrigin::Negotiation
-pub kynos::error::members::ProblemOrigin::Path
-pub kynos::error::members::ProblemOrigin::Query
+pub kynos::error::members::ProblemOrigin::PathParameter
+pub kynos::error::members::ProblemOrigin::QueryParameter
 pub kynos::error::members::ProblemOrigin::Routing
+pub kynos::error::members::ProblemOrigin::Transport
 impl core::clone::Clone for kynos::error::members::ProblemOrigin
 pub fn kynos::error::members::ProblemOrigin::clone(&self) -> kynos::error::members::ProblemOrigin
 impl core::cmp::Eq for kynos::error::members::ProblemOrigin

@@ -156,12 +156,20 @@ async fn every_refusal_carries_the_members_its_description_requires() {
         .assert_status(200);
 
     let refusals = [
-        (client.get("/items/x?limit=2").send().await, 400, "Path-400"),
-        (client.get("/items/7").send().await, 400, "Query-400"),
+        (
+            client.get("/items/x?limit=2").send().await,
+            400,
+            "PathParameter-400",
+        ),
+        (
+            client.get("/items/7").send().await,
+            400,
+            "QueryParameter-400",
+        ),
         (
             client.post("/items").body("text/plain", "{}").send().await,
             415,
-            "Body-415",
+            "Content-415",
         ),
         (
             client
@@ -170,7 +178,7 @@ async fn every_refusal_carries_the_members_its_description_requires() {
                 .send()
                 .await,
             400,
-            "Body-400",
+            "Content-400",
         ),
         (
             client
@@ -179,13 +187,13 @@ async fn every_refusal_carries_the_members_its_description_requires() {
                 .send()
                 .await,
             422,
-            "Body-422",
+            "Content-422",
         ),
-        (client.get("/me").send().await, 401, "Auth-401"),
+        (client.get("/me").send().await, 401, "Authentication-401"),
         (
             client.get("/me").bearer("tok_banned").send().await,
             403,
-            "Auth-403",
+            "Authentication-403",
         ),
     ];
 

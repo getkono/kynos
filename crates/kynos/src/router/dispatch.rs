@@ -140,8 +140,13 @@ impl<C: Send + Sync + 'static> ErasedTerminal<C> for UntypedQuery {
              (RFC 10008 section 2)",
         );
         let members = Installed::on(request.extensions());
-        let response =
-            render(problem, ProblemOrigin::Body, Head::from(&request), members).into_response();
+        let response = render(
+            problem,
+            ProblemOrigin::Content,
+            Head::from(&request),
+            members,
+        )
+        .into_response();
         Box::pin(std::future::ready(response))
     }
 }
