@@ -384,10 +384,11 @@ impl<C> Transport<C> {
                     );
                     (Request::from_parts(parts, body), stall)
                 };
+                let method = request.method().clone();
                 let response = service.call(request).await;
                 #[cfg(feature = "server")]
                 let response = crate::server::request_body::answer(response, stall);
-                Ok(response)
+                Ok(with_content_length(&method, response))
             }
             #[cfg(feature = "server")]
             Self::Served { server, exchange } => {
@@ -396,6 +397,39 @@ impl<C> Transport<C> {
             }
         }
     }
+}
+
+/// `response` with the `Content-Length` a connection would frame it with,
+/// so an in-process response carries the field a served one does.
+///
+/// Set only where the body states its exact length, as a connection learns
+/// it, and never over a `Content-Length` or `Transfer-Encoding` already
+/// there. RFC 9110 section 8.6 leaves a response to `HEAD` and a 304 the
+/// length of the response they stand in for, which the body here is not, and
+/// forbids one on a 1xx, a 204 and a 2xx to `CONNECT`.
+fn with_content_length(method: &HttpMethod, mut response: Response) -> Response {
+    let status = response.status();
+    if *method == HttpMethod::HEAD
+        || status.is_informational()
+        || status == StatusCode::NO_CONTENT
+        || status == StatusCode::NOT_MODIFIED
+        || (*method == HttpMethod::CONNECT && status.is_success())
+        || response
+            .headers()
+            .contains_key(crate::http::header::CONTENT_LENGTH)
+        || response
+            .headers()
+            .contains_key(crate::http::header::TRANSFER_ENCODING)
+    {
+        return response;
+    }
+    if let Some(length) = response.body_mut().exact_length() {
+        response.headers_mut().insert(
+            crate::http::header::CONTENT_LENGTH,
+            HeaderValue::from(length),
+        );
+    }
+    response
 }
 
 /// A response [`Transport::Served`] is answered with.
@@ -745,6 +779,14 @@ impl<C> TestRequest<'_, C> {
     }
 
     /// Sends the request.
+    ///
+    /// The response arrives with the `Content-Length` a connection would
+    /// frame it with, by either client: one built
+    /// [`through_server`](TestClient::through_server) reads it off the wire,
+    /// and one built with [`TestClient::new`] states the body's length where
+    /// the body knows it and RFC 9110 section 8.6 allows one, keeping any the
+    /// service set. A streamed body of unknown length states none, as a
+    /// chunked message carries none.
     ///
     /// # Panics
     ///
@@ -1184,7 +1226,8 @@ impl TestResponse {
     /// Every response header, as received.
     ///
     /// For comparing two responses field for field, or enumerating them,
-    /// without naming each one.
+    /// without naming each one. `Content-Length` is among them, as
+    /// [`TestRequest::send`] says.
     ///
     /// ```
     /// # async fn run(client: kynos::test::TestClient<()>) {
