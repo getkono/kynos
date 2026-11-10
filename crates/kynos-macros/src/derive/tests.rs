@@ -4908,7 +4908,41 @@ mod api_error {
                 ),
                 "published under its field's name",
             ),
+            case(
+                "an extension field named like a member RFC 9457 defines",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        NotFound {
+                            #[problem(extension)]
+                            title: String,
+                        },
+                    }
+                ),
+                "the field `title` would be published as a member RFC 9457 defines",
+            ),
         ]
+    }
+
+    /// A field is checked against RFC 9457's members by the name it is
+    /// published under, a raw identifier unprefixed; a second witness of the
+    /// ledger's row, so outside its count.
+    #[test]
+    fn an_extension_field_is_checked_against_the_registered_members_unprefixed() {
+        each_case_is_refused(
+            vec![case(
+                "a raw-identifier extension field published as `type`",
+                quote::quote!(
+                    #[problem(status = 404)]
+                    struct NotFound {
+                        #[problem(extension)]
+                        r#type: String,
+                    }
+                ),
+                "the field `type` would be published as a member RFC 9457 defines",
+            )],
+            expand_inner,
+        );
     }
 
     /// The refusals of a variant's `extension(name = value)` members; apart,
