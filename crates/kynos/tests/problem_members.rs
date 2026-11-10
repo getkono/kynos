@@ -758,3 +758,33 @@ async fn an_asset_s_416_carries_the_members() {
     assert_eq!(refused.header("content-range"), Some("bytes */19"));
     client.assert_conformance();
 }
+
+/// A directory route renders its 416 with the request in hand too, so it
+/// sends the members beside the `Content-Range` it owes. The route is
+/// undescribed, so there is no declaration to conform to.
+#[cfg(feature = "assets-fs")]
+#[tokio::test]
+async fn a_directory_s_416_carries_the_members() {
+    let service = Router::<App>::new()
+        .assets_directory(
+            "/files",
+            kynos::router::assets::fs::Directory::new("tests/assets"),
+        )
+        .problem_members::<Coded>()
+        .build(App)
+        .expect("a buildable router");
+    let client = TestClient::new(service);
+
+    let refused = client
+        .get("/files/css/app.css")
+        .header("range", "bytes=100-200")
+        .header("x-request-id", "req-a")
+        .send()
+        .await;
+
+    refused.assert_status(416);
+    let problem: Value = refused.json();
+    assert_eq!(problem["code"], "ByteRange-416", "{problem}");
+    assert_eq!(problem["request_id"], "req-a", "{problem}");
+    assert_eq!(refused.header("content-range"), Some("bytes */19"));
+}
