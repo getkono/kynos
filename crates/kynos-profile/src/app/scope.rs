@@ -23,7 +23,7 @@ use tracing::{
 };
 
 use super::{App, Small, built, json_small, rest, router, small};
-use crate::driver::{Connecting, Drained, Runner, Served};
+use crate::driver::{Connecting, Drained, Handshake, Runner, Served};
 
 /// An interceptor that forwards and does nothing else, so that what a stack
 /// costs is the chain's own machinery — `tests/alloc.rs`'s `Transparent`, for
@@ -201,6 +201,14 @@ impl Served for Subscribed {
 
     fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting {
         let Connecting { future, server } = Box::new(self.service).connect(io, connection);
+        Connecting {
+            future: Box::pin(future.with_subscriber(Discarding)),
+            server,
+        }
+    }
+
+    fn connect_after(self: Box<Self>, handshake: Handshake) -> Connecting {
+        let Connecting { future, server } = Box::new(self.service).connect_after(handshake);
         Connecting {
             future: Box::pin(future.with_subscriber(Discarding)),
             server,

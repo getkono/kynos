@@ -12,6 +12,9 @@
 //! The `connection_h1` and `connection_h2` groups' region is instead [`Open::serve`]: one connection
 //! through `Server::serve_io`, driven to its end, with the encoded request
 //! written into its duplex in setup and the response read back in teardown.
+//! The `connection_tls` group's is [`Tunnel::serve`], and both instruments
+//! count from each `round` it polls the server with, not from the benchmark
+//! function, so the client answering between rounds is not counted.
 //!
 //! What gungraun prints is not the number of record: its Callgrind total
 //! includes glibc's allocator, whose cost depends on the heap's history and
@@ -30,11 +33,17 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use bytes::Bytes;
-use gungraun::{Dhat, LibraryBenchmarkConfig, library_benchmark, library_benchmark_group, main};
+use gungraun::{
+    Callgrind, Dhat, EntryPoint, LibraryBenchmarkConfig, library_benchmark,
+    library_benchmark_group, main,
+};
 use http_body::Frame;
 use kynos::http::{Request, StatusCode};
 use kynos_profile::{
-    connection::{Open, connected},
+    connection::{
+        Open, connected,
+        tls::{Tunnel, sealed},
+    },
     driver::{Drained, Runner, Served, frames},
     scenario,
 };
@@ -520,12 +529,84 @@ fn http2(opened: Opened) -> Closed {
     (runner, open, black_box(ended), expected)
 }
 
+/// The function a TLS row counts from: each poll of the server, and not the
+/// client answering between them.
+const ROUND: &str = "kynos_profile::connection::tls::round";
+
+/// [`heap`], both instruments counting from [`ROUND`] rather than from the
+/// benchmark function.
+fn rounds() -> LibraryBenchmarkConfig {
+    let mut config = LibraryBenchmarkConfig::default();
+    config.tool(Callgrind::default().entry_point(EntryPoint::Custom(ROUND.to_owned())));
+    config.tool(
+        Dhat::with_args(["--num-callers=500"]).entry_point(EntryPoint::Custom(ROUND.to_owned())),
+    );
+    config
+}
+
+/// A TLS row's setup: its driver and the connection made ready, the client's
+/// first flight already in the duplex, and the status its response must carry.
+type Tunnelled = (Runner, Tunnel, StatusCode);
+
+/// What leaves a TLS row's region, to be checked and dropped outside it.
+type Untunnelled = (Runner, Tunnel, io::Result<()>, StatusCode);
+
+/// [`opened`] for a TLS row: a warming connection between the same endpoints
+/// is served at the start of a wall-clock second, for `Date`, and dropped, so
+/// the region's handshake is also not the first the server's configuration,
+/// and its ticketer, serve.
+fn tunnelled(name: &str) -> Tunnelled {
+    let sealed = sealed(name);
+    let runner = sealed.scenario.driver.runner();
+    let endpoints = sealed.endpoints();
+    let mut warm = sealed.open(&runner, &endpoints);
+    let tunnel = sealed.open(&runner, &endpoints);
+    let into_second = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .subsec_nanos();
+    thread::sleep(Duration::from_nanos(u64::from(1_000_000_000 - into_second)));
+    // `settle`, not `serve`: both instruments count from every call of
+    // `round`, inside the benchmark function or not.
+    warm.settle(&runner)
+        .expect("the warming connection closes cleanly");
+    drop(warm);
+    (runner, tunnel, sealed.scenario.expected)
+}
+
+/// As [`closed`], decrypting the status from what the server wrote.
+fn untunnelled((runner, mut tunnel, ended, expected): Untunnelled) {
+    ended.expect("the profiled connection closes cleanly");
+    assert_eq!(
+        tunnel.status(),
+        expected,
+        "the profiled request was answered wrongly"
+    );
+    drop((tunnel, runner));
+}
+
+// `connection/tls/mod.rs`'s `TLS` table: the plaintext group's request over a
+// TLS 1.3 session terminated on the duplex, counted from each poll of the
+// server so the client answering between polls is not. `aws-lc-rs`'s crypto is
+// statically linked, so `profile_report.py` reports its instructions apart
+// from the program's and compares only the rest.
+#[library_benchmark(setup = tunnelled, teardown = untunnelled, config = rounds())]
+#[bench::full("conn-tls-full")]
+#[bench::resumed("conn-tls-resumed")]
+#[bench::second("conn-tls-second")]
+fn tls(tunnelled: Tunnelled) -> Untunnelled {
+    let (runner, mut tunnel, expected) = tunnelled;
+    let ended = black_box(&mut tunnel).serve(black_box(&runner));
+    (runner, tunnel, black_box(ended), expected)
+}
+
 library_benchmark_group!(name = scenarios, benchmarks = request);
 library_benchmark_group!(name = alloc_counter_agreement, benchmarks = calibration);
 library_benchmark_group!(name = compression, benchmarks = sweep);
 library_benchmark_group!(name = runtime, benchmarks = driven);
 library_benchmark_group!(name = connection_h1, benchmarks = http1);
 library_benchmark_group!(name = connection_h2, benchmarks = http2);
+library_benchmark_group!(name = connection_tls, benchmarks = tls);
 library_benchmark_group!(name = routing, benchmarks = routed);
 library_benchmark_group!(name = scope, benchmarks = scoped);
 library_benchmark_group!(name = extract, benchmarks = extracted);
@@ -546,6 +627,7 @@ main!(
     runtime,
     connection_h1,
     connection_h2,
+    connection_tls,
     routing,
     scope,
     extract,

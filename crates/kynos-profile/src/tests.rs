@@ -14,6 +14,7 @@ use kynos::{
     response::stream::binary::BinaryStream,
 };
 
+use tokio_rustls::rustls::HandshakeKind;
 use tracing::subscriber::NoSubscriber;
 
 use super::{
@@ -21,6 +22,7 @@ use super::{
     Scenario, catalog,
     connection::{
         CONNECTION, KEPT_AFTER, connected,
+        tls::{Sealed, Session, TLS},
         wire::{http1, http1_answered},
     },
     driver::{Drained, Driver, FRAMES, Served, frames},
@@ -563,4 +565,63 @@ fn the_kept_row_measures_past_the_connection_s_first_read_buffer() {
         "{KEPT_AFTER} heads of {} octets fit hyper's first read buffer",
         head.len()
     );
+}
+
+/// A TLS row counts a request that entered `serve_io` through a TLS 1.3
+/// session, so each is answered with the status it is measured at over a
+/// session whose handshake is the one its name says, and its connection ends
+/// cleanly on its own once the client has answered every round. Opened as
+/// the benchmark opens it: after a warming connection between the same
+/// endpoints, which must not turn a full row's handshake into a resumption.
+#[test]
+fn every_tls_row_is_answered_over_the_handshake_it_names_and_closes_cleanly() {
+    for sealed in TLS {
+        let scenario = sealed.scenario;
+        assert_eq!(scenario.driver, Driver::Runtime, "{}", scenario.name);
+        let runner = scenario.driver.runner();
+        let endpoints = sealed.endpoints();
+        let mut warm = sealed.open(&runner, &endpoints);
+        let mut tunnel = sealed.open(&runner, &endpoints);
+        warm.settle(&runner)
+            .unwrap_or_else(|error| panic!("{} warming ended with {error}", scenario.name));
+        assert_eq!(warm.status(), scenario.expected, "{}", scenario.name);
+        tunnel
+            .serve(&runner)
+            .unwrap_or_else(|error| panic!("{} ended with {error}", scenario.name));
+        assert_eq!(tunnel.status(), scenario.expected, "{}", scenario.name);
+        let expected = match sealed.session {
+            Session::Full | Session::Established => HandshakeKind::Full,
+            Session::Resumed => HandshakeKind::Resumed,
+        };
+        assert_eq!(warm.handshake(), Some(expected), "{}", scenario.name);
+        assert_eq!(tunnel.handshake(), Some(expected), "{}", scenario.name);
+    }
+}
+
+/// A subscribed service opened over TLS goes through its own `connect_after`,
+/// which no TLS row reaches: it gives up the thread default before the
+/// region, as `connect` does, and still serves the handshake and the request.
+#[test]
+fn a_subscribed_service_serves_a_tls_connection_without_the_thread_default() {
+    let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
+    let traced = scenario("trace-sub");
+    let sealed = Sealed {
+        scenario: Scenario {
+            driver: Driver::Runtime,
+            ..traced
+        },
+        session: Session::Full,
+    };
+    let runner = sealed.scenario.driver.runner();
+    let endpoints = sealed.endpoints();
+    let mut tunnel = sealed.open(&runner, &endpoints);
+    assert!(
+        unsubscribed(),
+        "the thread default outlived `connect_after`"
+    );
+    tunnel
+        .serve(&runner)
+        .expect("the connection closes cleanly");
+    assert_eq!(tunnel.status(), traced.expected);
+    assert_eq!(tunnel.handshake(), Some(HandshakeKind::Full));
 }

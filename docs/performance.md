@@ -520,6 +520,30 @@ connection reaches. It names no base: it differs from `connection_h1.second`
 in its request's place on the connection, in keeping the connection open, and
 in its client's reads, so their difference is no one variable's cost.
 
+**A TLS row counts the server's polls, not the conversation.** A
+`connection_tls` row sends `connection_h1`'s request over a TLS 1.3 session
+terminated on the duplex with `rustls`, configured as `TlsConfig` builds by
+default, and handed to `serve_io` through `Connection::from_tls_peer`. The one
+difference is the certificate resolver: `TlsConfig`'s lowercases the SNI name
+into a new string on every handshake to look it up among its SNI
+certificates, and this server's returns its single certificate unread, so the
+rows leave that allocation and lookup out. A
+handshake needs a client answering inside the region, so both instruments
+count from `round`, one runtime poll of the server's connection, rather than
+from the benchmark function, and the client's work between polls is not
+counted. Setup polls through code of its own, so its warming connection,
+served between the same endpoints so the region's handshake is not the
+configuration's first, is not counted either. `full` and `second` use a
+client that keeps no ticket, and `resumed` one whose setup served a
+connection to fill its store. The certificate is Ed25519, whose signature has
+one length. aws-lc is linked into the program object, so
+[`profile_report.py`](../scripts/profile_report.py) splits its C and assembly
+off by source file and symbol and reports it beside libc, never compared: it
+is the cipher suite's and the CPU's, and its key exchange moves a few dozen
+instructions between runs. The rest measured exact. Kynos's own acceptor,
+which a listener reaches only through a socket, is not on this path
+([#1311](https://github.com/getkono/kynos/issues/1311)).
+
 ### Why the measurements live beside the features
 
 Everything in [`testing.md`](testing.md) is filed by the code it constrains, and
