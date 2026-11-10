@@ -5210,6 +5210,160 @@ async fn an_unserializable_extension_member_answers_500() {
     );
 }
 
+/// How long a busy store asks a client to wait, a `const` a constant member
+/// names by path.
+const RETRY_AFTER_SECONDS: u32 = 30;
+
+/// Failures each sending a member whose value the failure determines, beside
+/// one sent from a field.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum UploadError {
+    #[error("no such upload session")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/upload",
+        extension(code = "error.upload.session_not_found")
+    )]
+    SessionNotFound,
+
+    #[error("the upload session expired")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/upload",
+        extension(code = "error.upload.session_expired", retryable = false)
+    )]
+    SessionExpired,
+
+    #[error("the store is busy")]
+    #[problem(
+        status = 503,
+        extension(code = "error.upload.busy", retry_after = RETRY_AFTER_SECONDS)
+    )]
+    Busy {
+        #[problem(extension)]
+        queued: u32,
+    },
+}
+
+/// A struct sends its constant as an enum's variant does.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the upload is too large")]
+#[problem(status = 413, extension(limit = -1))]
+struct UploadTooLarge;
+
+/// A constant member is on the wire as its literal or its `const` serializes,
+/// beside a field's, with no construction site passing it.
+#[tokio::test]
+async fn a_constant_extension_member_is_sent_by_its_failure() {
+    let Answered { status, body, .. } =
+        answered(UploadError::Busy { queued: 4 }.into_response()).await;
+    assert_eq!(status, 503);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "https://errors.example.com/busy",
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "the store is busy",
+            "code": "error.upload.busy",
+            "retry_after": 30,
+            "queued": 4,
+        })
+    );
+
+    let Answered { body, .. } = answered(UploadError::SessionExpired.into_response()).await;
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body["code"], "error.upload.session_expired", "{body}");
+    assert_eq!(body["retryable"], false, "{body}");
+
+    let Answered { body, .. } = answered(UploadTooLarge.into_response()).await;
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body["limit"], -1, "{body}");
+}
+
+/// A constant member is declared as the `const` it is, required, on its
+/// failure's branch: a generated client learns the exact value. Failures
+/// sharing one URI union their values into an `enum`, and a member only some
+/// of them send stays optional.
+#[test]
+fn a_constant_extension_member_is_declared_as_its_value() {
+    let responses = emitted_responses::<UploadError>();
+
+    let busy = &declared_problem(&responses, "503")["allOf"][1];
+    assert_eq!(
+        busy["properties"]["code"],
+        serde_json::json!({ "type": "string", "const": "error.upload.busy" }),
+        "{busy}"
+    );
+    assert_eq!(
+        busy["properties"]["retry_after"],
+        serde_json::json!({ "type": "integer", "const": 30 }),
+        "{busy}"
+    );
+    assert_eq!(
+        busy["required"],
+        serde_json::json!(["code", "retry_after", "queued"]),
+        "{busy}"
+    );
+
+    let shared = declared_problem(&responses, "404");
+    assert_eq!(shared.get("oneOf"), None, "{shared}");
+    let narrowed = &shared["allOf"][1];
+    assert_eq!(
+        narrowed["properties"]["code"],
+        serde_json::json!({
+            "type": "string",
+            "enum": ["error.upload.session_not_found", "error.upload.session_expired"],
+        }),
+        "{shared}"
+    );
+    assert_eq!(
+        narrowed["properties"]["retryable"],
+        serde_json::json!({ "type": "boolean", "const": false }),
+        "{shared}"
+    );
+    assert_eq!(
+        narrowed["required"],
+        serde_json::json!(["code"]),
+        "{shared}"
+    );
+
+    let limit = &declared_problem(&emitted_responses::<UploadTooLarge>(), "413")["allOf"][1];
+    assert_eq!(
+        limit["properties"]["limit"],
+        serde_json::json!({ "type": "integer", "const": -1 }),
+        "{limit}"
+    );
+}
+
+/// A constant whose `Serialize` refuses.
+const REFUSING: Refusing = Refusing(3);
+
+/// A failure whose constant member cannot be sent.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("rejected")]
+#[problem(status = 422, extension(refusing = REFUSING))]
+struct RefusingConstant;
+
+/// A constant that refuses to serialize answers 500 on the wire, as a field
+/// that refuses does. It refuses every time, so the description is refused
+/// where it is built rather than declaring a member the failure never sends.
+#[tokio::test]
+async fn an_unserializable_constant_member_answers_500_and_is_never_declared() {
+    let Answered { status, body, .. } = answered(RefusingConstant.into_response()).await;
+    assert_eq!(status, 500);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(
+        body["detail"], "a problem extension member could not be serialized",
+        "{body}"
+    );
+
+    let described = std::panic::catch_unwind(emitted_responses::<RefusingConstant>);
+    assert!(described.is_err(), "a refusing constant is not declared");
+}
+
 /// Two failures publishing one URI, only one of which sends `errors`.
 #[derive(Debug, thiserror::Error, ApiError)]
 enum ReviewError {

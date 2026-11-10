@@ -648,6 +648,24 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// `Serialize` fails answers 500 in place of its problem, as a JSON body that
 /// cannot be serialized does.
 ///
+/// A member whose value the failure itself determines is not a field: the
+/// variant, or a struct, names it as `extension(name = value)`, the value a
+/// literal or the path to a `const` whose type is `Serialize`:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum SessionRejection {
+///     #[error("no such upload session")]
+///     #[problem(status = 404, extension(code = "error.upload.session_not_found"))]
+///     SessionNotFound,
+/// }
+/// ```
+///
+/// It is sent on every occurrence, and declared as a JSON Schema `const` of
+/// that value, required; failures sharing one type URI declare the values
+/// they send as one `enum`. A name RFC 9457 defines, or one a field of the
+/// same failure is published under, is refused.
+///
 /// A header only one failure sends lives on that failure: one field of a
 /// variant, or of a struct, may say `#[problem(headers)]`, its type a header
 /// group deriving `HeaderParams`:
