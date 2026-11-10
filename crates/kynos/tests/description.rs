@@ -993,6 +993,138 @@ fn a_cookie_an_interceptor_sets_is_declared_where_a_consumer_resolves_it() {
     assert!(declared.contains(&"Set-Cookie".to_owned()), "{declared:?}");
 }
 
+// --- Which responses an interceptor's header is declared on -----------------
+//
+// `Interceptor::ADDS_ON` names them. `Success`, the default, is pinned above by
+// `RequestId`. `Every` and `Problems` read the finished operation, so the
+// fixture puts a contributor after each of them in describe order: a group's
+// `Timeout` (408), described after the router's own interceptors, and the
+// router's panic recovery (500), described last of all. A placement filed when
+// its interceptor was described would miss both.
+
+/// A field written onto every response.
+#[derive(kynos::HeaderParams)]
+struct Stamp {
+    /// Which deployment answered.
+    #[header(rename = "X-Stamp")]
+    deployment: String,
+}
+
+/// A field written onto failures alone.
+#[derive(kynos::HeaderParams)]
+struct Backoff {
+    /// How long to wait before retrying.
+    #[header(rename = "X-Backoff")]
+    seconds: u64,
+}
+
+/// Declares `Stamp` on every response.
+struct Stamping;
+
+impl kynos::middleware::Interceptor<()> for Stamping {
+    type Reads = ();
+    type Adds = Stamp;
+    type Short = std::convert::Infallible;
+
+    const ADDS_ON: kynos::middleware::Placement = kynos::middleware::Placement::Every;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        (): (),
+        (): &(),
+        next: kynos::middleware::Next<'_, ()>,
+    ) -> Result<kynos::middleware::Continued<Stamp>, std::convert::Infallible> {
+        Ok(next.run(request).await.with_headers(Stamp {
+            deployment: "eu-1".to_owned(),
+        }))
+    }
+}
+
+/// Declares `Backoff` on problem responses.
+struct BackingOff;
+
+impl kynos::middleware::Interceptor<()> for BackingOff {
+    type Reads = ();
+    type Adds = Backoff;
+    type Short = std::convert::Infallible;
+
+    const ADDS_ON: kynos::middleware::Placement = kynos::middleware::Placement::Problems;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        (): (),
+        (): &(),
+        next: kynos::middleware::Next<'_, ()>,
+    ) -> Result<kynos::middleware::Continued<Backoff>, std::convert::Infallible> {
+        Ok(next.run(request).await.with_headers(Backoff { seconds: 1 }))
+    }
+}
+
+/// `/placed/reviews/{id}` under `interceptor`, with a 408 and a 500 described
+/// after it.
+fn placed<I: kynos::middleware::Interceptor<()>>(interceptor: I) -> kynos::openapi::Operation {
+    let document = Router::<()>::new()
+        .catch_panics()
+        .intercept(interceptor)
+        .group(
+            Group::<()>::new("/placed")
+                .intercept(Timeout::new(std::time::Duration::from_secs(1)))
+                .mount(kynos::routes![review]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    let operation = operation(&document, "/placed/reviews/{id}");
+    let statuses: BTreeSet<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        statuses,
+        BTreeSet::from(["204", "400", "408", "500"]),
+        "the fixture declares a success, a rejection, a later interceptor's \
+         short circuit and recovery"
+    );
+    operation
+}
+
+#[test]
+fn an_interceptor_adding_on_every_response_is_declared_on_each_one() {
+    let operation = placed(Stamping);
+
+    for status in operation.responses.responses.keys() {
+        let declared = declared_headers(&operation, status).expect("a declared status");
+        assert!(
+            declared.contains(&"X-Stamp".to_owned()),
+            "{status} declares {declared:?}"
+        );
+    }
+}
+
+#[test]
+fn an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone() {
+    let operation = placed(BackingOff);
+
+    let declaring: BTreeSet<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .filter(|status| {
+            declared_headers(&operation, status)
+                .expect("a declared status")
+                .contains(&"X-Backoff".to_owned())
+        })
+        .map(String::as_str)
+        .collect();
+
+    // 204 carries no body, so no problem document either.
+    assert_eq!(declaring, BTreeSet::from(["400", "408", "500"]));
+}
+
 // --- Scope in the document's tags -------------------------------------------
 //
 // The same question again, on the axis the sections above do not reach. A tag
