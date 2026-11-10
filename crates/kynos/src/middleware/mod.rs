@@ -265,9 +265,10 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
 /// responses actually carry them. `docs/middleware.md`, "Where a described
 /// header lands", gives the reasoning.
 ///
-/// Each placement files one entry per declared status it reaches, never under
-/// a range such as `2XX`, and leaves a response held as a `$ref` and a header
-/// that response already declares alone.
+/// Each placement files the header on the declared responses it reaches, under
+/// whatever key each is already declared at, and never mints an entry, a range
+/// included. It leaves a response held as a `$ref` and a header that response
+/// already declares alone.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Placement {
