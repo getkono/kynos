@@ -24,7 +24,7 @@ use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::{
     error::{
-        members::{ProblemOrigin, Rendered, served},
+        members::{Head, ProblemOrigin, Rendered, served},
         problem::{
             Branch, IntoProblem, Member, PointerError, Problem, narrowed_response, problem_response,
         },
@@ -98,16 +98,16 @@ fn with_installed<'a>(
     own.iter().cloned().chain(installed).collect()
 }
 
-/// `problem`, answering the routed request whose head is `request`: with the
+/// `problem`, answering the routed request whose head is `head`: with the
 /// members the router installs, then whatever `finish` writes onto it. The
 /// 500 that replaces it where those members cannot be sent gets nothing more.
 fn served_response(
     problem: Problem,
     origin: ProblemOrigin,
-    request: &Parts,
+    head: Head<'_>,
     finish: impl FnOnce(&mut crate::http::Response),
 ) -> crate::http::Response {
-    match served(problem, origin, request) {
+    match served(problem, origin, head) {
         Rendered::Kept(mut response) => {
             finish(&mut response);
             response
@@ -132,7 +132,12 @@ macro_rules! rejection_response {
             }
 
             fn __into_response_for(self, request: &Parts) -> crate::http::Response {
-                served_response(IntoProblem::into_problem(self), $origin, request, |_| {})
+                served_response(
+                    IntoProblem::into_problem(self),
+                    $origin,
+                    Head::from(request),
+                    |_| {},
+                )
             }
         }
 
@@ -594,7 +599,7 @@ impl IntoResponse for BodyRejection {
         served_response(
             IntoProblem::into_problem(self),
             ProblemOrigin::Content,
-            request,
+            Head::from(request),
             |response| {
                 #[cfg(feature = "openapi32")]
                 if refused {
@@ -742,6 +747,32 @@ impl IntoResponse for RangeRejection {
     }
 }
 
+#[cfg(feature = "assets")]
+impl RangeRejection {
+    /// The 416 an asset endpoint answers the request whose head is `head`
+    /// with: carrying the members the router installs, and the
+    /// `Content-Range` [`into_response`](IntoResponse::into_response) writes.
+    ///
+    /// Declared by [`served_responses`](Self::served_responses). A handler
+    /// returns its rejection with no request in reach, so it renders through
+    /// `into_response` and declares through `responses`.
+    pub(crate) fn served_for(self, head: Head<'_>) -> crate::http::Response {
+        let field = self.content_range();
+        served_response(
+            IntoProblem::into_problem(self),
+            ProblemOrigin::ByteRange,
+            head,
+            |response| crate::response::headers::write_or_refuse(response, &field),
+        )
+    }
+
+    /// The 416 [`served_for`](Self::served_for) answers with, declaring the
+    /// members the router installs.
+    pub(crate) fn served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        range_responses(registry, true)
+    }
+}
+
 /// The 416, carrying the field it sends.
 ///
 /// Declared through the handler's return type rather than by `Range<T>`, so
@@ -749,27 +780,32 @@ impl IntoResponse for RangeRejection {
 /// advertise it.
 impl Responses for RangeRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let mut responses = problem_responses(
-            registry,
-            <RangeRejection as IntoProblem>::statuses(),
-            None,
-            false,
-        );
-
-        let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
-        if let Some(kynos_openapi::RefOr::Item(response)) =
-            responses.responses.get_mut(&unsatisfiable)
-        {
-            response.headers.insert(
-                "Content-Range".to_owned(),
-                kynos_openapi::RefOr::Item(
-                    crate::response::range::headers::ContentRange::unsatisfied_header(),
-                ),
-            );
-        }
-
-        responses
+        range_responses(registry, false)
     }
+}
+
+/// [`RangeRejection`]'s 416 with its `Content-Range`, declaring the members the
+/// router installs where `served`.
+fn range_responses(registry: &mut Registry, served: bool) -> kynos_openapi::Responses {
+    let mut responses = problem_responses(
+        registry,
+        <RangeRejection as IntoProblem>::statuses(),
+        None,
+        served,
+    );
+
+    let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
+    if let Some(kynos_openapi::RefOr::Item(response)) = responses.responses.get_mut(&unsatisfiable)
+    {
+        response.headers.insert(
+            "Content-Range".to_owned(),
+            kynos_openapi::RefOr::Item(
+                crate::response::range::headers::ContentRange::unsatisfied_header(),
+            ),
+        );
+    }
+
+    responses
 }
 
 /// The connection has no IP peer for
@@ -1111,7 +1147,7 @@ impl IntoResponse for AuthRejection {
         served_response(
             IntoProblem::into_problem(self),
             ProblemOrigin::Authentication,
-            request,
+            Head::from(request),
             |response| fields.write(response),
         )
     }

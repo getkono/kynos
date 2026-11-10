@@ -68,6 +68,7 @@ pub mod kynos::error
 pub mod kynos::error::members
 #[non_exhaustive] pub enum kynos::error::members::ProblemOrigin
 pub kynos::error::members::ProblemOrigin::Authentication
+pub kynos::error::members::ProblemOrigin::ByteRange
 pub kynos::error::members::ProblemOrigin::Content
 pub kynos::error::members::ProblemOrigin::CookieValue
 pub kynos::error::members::ProblemOrigin::HeaderField

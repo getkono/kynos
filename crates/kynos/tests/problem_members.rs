@@ -528,11 +528,11 @@ fn branch_required(document: &Value, path: &str, method: &str, status: &str) -> 
 }
 
 /// A named constraint type's branch requires the members where an extractor
-/// refuses, since its rejection carries them, and not where an interceptor's
-/// `Reads` refuses, since that refusal is the interceptor's and carries none;
-/// each refusal on the wire conforms to its branch.
+/// refuses and where an interceptor's `Reads` refuses, since both refusals are
+/// rendered with the request in hand; each refusal on the wire conforms to its
+/// branch.
 #[tokio::test]
-async fn a_named_constraint_type_requires_the_members_only_where_they_are_sent() {
+async fn a_named_constraint_type_requires_the_members_where_they_are_sent() {
     let router = || {
         Router::<App>::new()
             .mount(kynos::routes![tag])
@@ -552,7 +552,7 @@ async fn a_named_constraint_type_requires_the_members_only_where_they_are_sent()
     );
     assert_eq!(
         branch_required(&document, "/checked/open", "get", "400"),
-        json!(["errors"])
+        json!(["errors", "code", "request_id"])
     );
 
     let client = TestClient::new(router().build(App).expect("a describable router"));
@@ -569,12 +569,222 @@ async fn a_named_constraint_type_requires_the_members_only_where_they_are_sent()
     let intercepted = client
         .get("/checked/open")
         .header("x-label", "too long")
+        .header("x-request-id", "req-r")
         .send()
         .await;
     intercepted.assert_status(400);
     let problem: Value = intercepted.json();
     assert_eq!(problem["type"], TOO_LONG, "{problem}");
-    assert!(problem.get("code").is_none(), "{problem}");
+    assert_eq!(problem["code"], "HeaderField-400", "{problem}");
+    assert_eq!(problem["request_id"], "req-r", "{problem}");
 
     client.assert_conformance();
+}
+
+/// A header an interceptor reads that does not parse at all answers the
+/// `about:blank` 400 a handler's header extractor would, carrying the members
+/// its declaration requires.
+#[tokio::test]
+async fn an_interceptor_s_reads_refusal_carries_the_members() {
+    let router = || {
+        Router::<App>::new()
+            .group(
+                Group::new("/checked")
+                    .intercept(Numbers)
+                    .mount(kynos::routes![open]),
+            )
+            .problem_members::<Coded>()
+    };
+    let document = serde_json::to_value(router().openapi().expect("a describable router"))
+        .expect("a document serializes");
+    let declared = &document["paths"]["/checked/open"]["get"]["responses"]["400"]["content"]["application/problem+json"]
+        ["schema"]["allOf"][1];
+    assert_eq!(
+        declared["required"],
+        json!(["code", "request_id"]),
+        "{declared}"
+    );
+
+    let client = TestClient::new(router().build(App).expect("a describable router"));
+    let refused = client
+        .get("/checked/open")
+        .header("x-count", "many")
+        .send()
+        .await;
+
+    refused.assert_status(400);
+    let problem: Value = refused.json();
+    assert_eq!(problem["code"], "HeaderField-400", "{problem}");
+    client.assert_conformance();
+}
+
+/// The router's own interceptor refusing a request no operation answers
+/// carries the members the 404 behind it would have.
+#[tokio::test]
+async fn an_interceptor_s_reads_refusal_in_front_of_a_fallback_carries_the_members() {
+    let service = Router::<App>::new()
+        .mount(kynos::routes![open])
+        .intercept(Numbers)
+        .problem_members::<Coded>()
+        .build(App)
+        .expect("a describable router");
+    let client = TestClient::new(service);
+
+    let refused = client
+        .get("/nowhere")
+        .header("x-count", "many")
+        .header("x-request-id", "req-n")
+        .send()
+        .await;
+
+    refused.assert_status(400);
+    let problem: Value = refused.json();
+    assert_eq!(problem["code"], "HeaderField-400", "{problem}");
+    assert_eq!(problem["request_id"], "req-n", "{problem}");
+}
+
+#[derive(HeaderParams)]
+struct Counted {
+    #[header(rename = "X-Count")]
+    count: Option<u32>,
+}
+
+/// Reads [`Counted`] ahead of the operation it covers.
+struct Numbers;
+
+impl Interceptor<App> for Numbers {
+    type Reads = Counted;
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        counted: Counted,
+        _: &App,
+        next: Next<'_, App>,
+    ) -> Result<Continued, Infallible> {
+        let _ = counted.count;
+        Ok(next.run(request).await)
+    }
+}
+
+/// Answers `OPTIONS` on a path `Cors` does not cover, so every other path's
+/// plain `OPTIONS` is a 405 rather than a 501.
+#[kynos::options("/described")]
+async fn described() -> NoContent {
+    NoContent
+}
+
+/// A plain `OPTIONS` on a path `Cors` covers is answered by the preflight in
+/// the dispatcher's place: its 501, or its 405 where something in the service
+/// answers `OPTIONS`, with the members the dispatcher's own carries.
+#[tokio::test]
+async fn a_cors_preflight_s_refusal_carries_the_members() {
+    let service = |options: bool| {
+        let router = Router::<App>::new().mount(kynos::routes![open]);
+        let router = if options {
+            router.mount(kynos::routes![described])
+        } else {
+            router
+        };
+        router
+            .intercept(
+                kynos::middleware::cors::Cors::new().allow_origins(["https://a.example.com"]),
+            )
+            .problem_members::<Coded>()
+            .build(App)
+            .expect("a describable router")
+    };
+
+    for (options, status) in [(false, 501), (true, 405)] {
+        let client = TestClient::new(service(options));
+        let refused = client
+            .options("/open")
+            .header("x-request-id", "req-o")
+            .send()
+            .await;
+
+        refused.assert_status(status);
+        let problem: Value = refused.json();
+        assert_eq!(problem["code"], format!("Routing-{status}"), "{problem}");
+        assert_eq!(problem["request_id"], "req-o", "{problem}");
+        if status == 405 {
+            assert_eq!(refused.header("allow"), Some("GET, HEAD"));
+        }
+    }
+}
+
+#[cfg(feature = "assets")]
+kynos::assets! {
+    /// The fixture set `tests/assets.rs` serves.
+    struct Fixture;
+    dir = "tests/assets",
+    exclude = [".map"],
+}
+
+/// An asset endpoint renders its 416 with the request in hand, so it carries
+/// the members its declaration requires, beside the `Content-Range` it owes.
+#[cfg(feature = "assets")]
+#[tokio::test]
+async fn an_asset_s_416_carries_the_members() {
+    let router = || {
+        Router::<App>::new()
+            .group(Group::new("/static").mount(Fixture::assets()))
+            .problem_members::<Coded>()
+    };
+    let document = serde_json::to_value(router().openapi().expect("a describable router"))
+        .expect("a document serializes");
+    let declared = &document["paths"]["/static/css/app.css"]["get"]["responses"]["416"]["content"]
+        ["application/problem+json"]["schema"]["allOf"][1];
+    assert_eq!(
+        declared["required"],
+        json!(["code", "request_id"]),
+        "{declared}"
+    );
+
+    let client = TestClient::new(router().build(App).expect("a describable router"));
+    let refused = client
+        .get("/static/css/app.css")
+        .header("range", "bytes=100-200")
+        .header("x-request-id", "req-a")
+        .send()
+        .await;
+
+    refused.assert_status(416);
+    let problem: Value = refused.json();
+    assert_eq!(problem["code"], "ByteRange-416", "{problem}");
+    assert_eq!(problem["request_id"], "req-a", "{problem}");
+    assert_eq!(refused.header("content-range"), Some("bytes */19"));
+    client.assert_conformance();
+}
+
+/// A directory route renders its 416 with the request in hand too, so it
+/// sends the members beside the `Content-Range` it owes. The route is
+/// undescribed, so there is no declaration to conform to.
+#[cfg(feature = "assets-fs")]
+#[tokio::test]
+async fn a_directory_s_416_carries_the_members() {
+    let service = Router::<App>::new()
+        .assets_directory(
+            "/files",
+            kynos::router::assets::fs::Directory::new("tests/assets"),
+        )
+        .problem_members::<Coded>()
+        .build(App)
+        .expect("a buildable router");
+    let client = TestClient::new(service);
+
+    let refused = client
+        .get("/files/css/app.css")
+        .header("range", "bytes=100-200")
+        .header("x-request-id", "req-a")
+        .send()
+        .await;
+
+    refused.assert_status(416);
+    let problem: Value = refused.json();
+    assert_eq!(problem["code"], "ByteRange-416", "{problem}");
+    assert_eq!(problem["request_id"], "req-a", "{problem}");
+    assert_eq!(refused.header("content-range"), Some("bytes */19"));
 }
