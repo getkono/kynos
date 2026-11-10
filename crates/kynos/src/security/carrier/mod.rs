@@ -32,6 +32,10 @@ use crate::{
 /// attribute that writes the description writes this, so the two cannot come
 /// apart. Implement it by hand only for a scheme whose carrier the grammar
 /// cannot express, and reach for the readers in this module when you do.
+///
+/// A carrier that reads request headers beside its credential declares them
+/// through [`SecurityScheme::reads`], which `#[security(..., reads = T)]`
+/// writes, so every operation a guard naming the scheme covers describes them.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` does not say where its credential is carried",
     label = "no declared carrier",

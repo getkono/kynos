@@ -26,7 +26,7 @@
 //! option := name = "<ComponentName>" | credential = <Type> | scope = <Type>
 //!         | description = "<CommonMark>" | challenge = "<WWW-Authenticate>"
 //!         | scopes(<expr>, ..) | deprecated | carrier = manual | carrier = optional
-//!         | unavailable | forbids = <bool>
+//!         | unavailable | forbids = <bool> | reads = <Type>
 //! ```
 //!
 //! Each kind and each flow takes only the options its row lists, each once; a
@@ -38,6 +38,12 @@
 //! enforced carrier agree; `carrier = manual` suppresses `Carries`, and
 //! `carrier = optional` presents `Option<_>`, so an absent credential reaches
 //! the authenticator rather than answering `Ok(None)`.
+//!
+//! `reads = T` names a header group the carrier reads beside the credential:
+//! it writes `SecurityScheme::reads` from `T`, and the derived carrier
+//! presents `(credential, T)`, decoding `T` only where a credential was
+//! presented. Under `carrier = manual` it writes the declaration alone, for
+//! the hand-written carrier to honour.
 //!
 //! A flow's `scopes` takes `"a"` or `"a" = "Read a"`, the strings an
 //! authorization server publishes. The scheme-level `scopes(..)` is what an
@@ -105,8 +111,13 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     });
     let forbids = args.forbids.map(|f| quote!(const FORBIDS: bool = #f;));
 
+    let reads = args.reads.as_ref().map(declare_reads);
+
     let carrier = (args.carrier != Some(Carrier::Manual)).then(|| {
         let (mut presented, mut read) = carrier_of(&args.nested, kind);
+        if let Some(reads) = &args.reads {
+            (presented, read) = alongside(&presented, &read, reads);
+        }
         // A malformed credential stays an `Err`; only absence becomes a value.
         if args.carrier == Some(Carrier::Optional) {
             presented = quote!(::core::option::Option<#presented>);
@@ -154,6 +165,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             fn insufficient_scope_challenge() -> ::core::option::Option<&'static str> {
                 #insufficient_scope
             }
+
+            #reads
         }
 
         #carrier
@@ -208,6 +221,50 @@ fn carrier_of(nested: &Nested, kind: Kind) -> (proc_macro2::TokenStream, proc_ma
             quote!(#carrier::bearer(parts)),
         ),
     }
+}
+
+/// `SecurityScheme::reads`, declaring the header group `reads`.
+fn declare_reads(reads: &Type) -> proc_macro2::TokenStream {
+    let header_params = quote!(::kynos::extract::params::header::HeaderParams);
+    quote! {
+        fn reads(
+            registry: &mut ::kynos::schema::registry::Registry,
+        ) -> ::std::vec::Vec<::kynos::openapi::Parameter> {
+            // An undescribed group declares nothing, as `Headers` does.
+            if !<#reads as #header_params>::DESCRIBED {
+                return ::std::vec::Vec::new();
+            }
+            <#reads as #header_params>::parameters(registry)
+        }
+    }
+}
+
+/// The kind's carrier with `reads` decoded beside its credential: the pair
+/// `(credential, reads)`.
+///
+/// Only a presented credential reads the group, so an anonymous request is
+/// never refused for lacking a header that accompanies one. A group that does
+/// not decode is a malformed credential, a 401 like any other.
+fn alongside(
+    presented: &proc_macro2::TokenStream,
+    read: &proc_macro2::TokenStream,
+    reads: &Type,
+) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
+    let decode = quote!(<#reads as ::kynos::extract::params::header::DecodeHeaders>::decode);
+    (
+        quote!((#presented, #reads)),
+        // Parenthesized, so `carrier = optional` can chain onto it.
+        quote! {
+            (match #read? {
+                ::core::option::Option::None => ::core::result::Result::Ok(
+                    ::core::option::Option::None,
+                ),
+                ::core::option::Option::Some(credential) => #decode(&parts.headers)
+                    .map(|reads| ::core::option::Option::Some((credential, reads)))
+                    .map_err(|_| ::kynos::error::rejection::AuthRejection::unauthenticated()),
+            })
+        },
+    )
 }
 
 /// The `describe` body: the kind, then the prose and the deprecation every kind
