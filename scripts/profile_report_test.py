@@ -21,7 +21,9 @@ the benchmark N times and hands `main` every run but the last.
 
 What a run is read *for* is tested over fixture outputs shaped after real ones:
 each row's difference from its base, a count that moves between `--repeat`
-runs, the `# trend:` declaration that exempts a group from both comparisons,
+runs, a count over the ceiling the baseline sets, which fails a compared run
+and never a recording, the `# trend:` declaration that exempts a group from
+every comparison,
 and the two attribution parsers -- `callgrind_annotate`'s ranking and DHAT's
 allocation sites, where the region is found the way gungraun finds it -- and
 `main`'s attribution, which reads each benchmark's own files and whose failure
@@ -706,6 +708,60 @@ class Trend(unittest.TestCase):
         recorded = {"runtime.json_small": (12, 2, 3)}
         self.assertIn("| 10 | trend |", report.report(rows, recorded, trend={"runtime"}))
         self.assertIn("| 10 | -2 |", report.report(rows, recorded))
+
+
+class Ceiling(unittest.TestCase):
+    """The baseline as a ceiling: what a compared run may not exceed."""
+
+    RECORDED = {"scenarios.plaintext": (2000, 11, 4057)}
+
+    def over(self, program=2000, blocks=11, octets=4057, trend=frozenset()):
+        rows = [report.Row("scenarios.plaintext", program, 0, blocks, octets)]
+        return report.exceeded(rows, self.RECORDED, trend)
+
+    def test_instructions_may_exceed_the_record_by_the_tolerance_and_no_further(self):
+        self.assertEqual(report.instruction_ceiling(2000), 2010)
+        self.assertEqual(self.over(program=2010), [])
+        problems = self.over(program=2011)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("scenarios.plaintext: 2011 program instructions", problems[0])
+        self.assertIn("ceiling 2010", problems[0])
+
+    def test_the_tolerance_rounds_down_so_a_small_row_is_held_exactly(self):
+        self.assertEqual(report.instruction_ceiling(199), 199)
+
+    def test_one_heap_block_or_byte_over_the_record_is_over(self):
+        for moved, named in (({"blocks": 12}, "12 heap blocks"), ({"octets": 4058}, "4058 heap bytes")):
+            with self.subTest(moved=moved):
+                problems = self.over(**moved)
+                self.assertEqual(len(problems), 1)
+                self.assertIn(named, problems[0])
+
+    def test_a_lower_count_is_not_over(self):
+        self.assertEqual(self.over(program=1500, blocks=9, octets=4000), [])
+
+    def test_a_trend_row_and_a_new_row_have_no_ceiling(self):
+        self.assertEqual(self.over(program=9999, blocks=99, trend={"scenarios"}), [])
+        rows = [report.Row("scenarios.new", 9999, 0, 99, 9999)]
+        self.assertEqual(report.exceeded(rows, self.RECORDED), [])
+
+    def test_main_fails_a_compared_run_over_its_ceiling_and_still_writes_it(self):
+        main = Main()
+        _, recorded = main.run_main([7, 11, 6, 11, 15], "overwrite")
+        lowered = recorded.replace("\t45\t", "\t40\t")
+        code, written = main.run_main([7, 11, 6, 11, 15], "", lowered)
+        self.assertEqual((code, written), (report.EXCEEDED, lowered))
+        self.assertEqual(main.run_written, recorded)
+        self.assertIn("ceiling 40", main.stderr.getvalue())
+
+    def test_a_recording_is_not_held_to_the_baseline_it_replaces(self):
+        main = Main()
+        _, recorded = main.run_main([7, 11, 6, 11, 15], "overwrite")
+        lowered = recorded.replace("\t45\t", "\t40\t")
+        self.assertEqual(
+            main.run_main([7, 11, 6, 11, 15], "overwrite", lowered),
+            (report.MEASURED, recorded),
+        )
 
 
 class Repeat(unittest.TestCase):

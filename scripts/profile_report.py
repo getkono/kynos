@@ -53,10 +53,19 @@ test-only feature of `kynos` would otherwise bring into every JSON row.
 Either way it is written to `profile-requests.tsv`, which CI uploads so the host
 of record's run can be copied over the baseline.
 
-Exit zero whenever a measurement was made (no threshold, per
-[`nfr.md`](../docs/nfr.md#thresholds)); non-zero when nothing could be measured
-or read (`NOTHING`), when the two instruments disagree (`DISAGREE`), or when
-two runs of an exact group disagree (`INEXACT`).
+**The baseline is a ceiling.** Each row outside a `trend` group is held to
+what `requests.tsv` records for it, the first recorded measurement
+[`nfr.md`](../docs/nfr.md#thresholds) sets a threshold from: its heap blocks
+and bytes exactly, and its program instructions to within
+`TOLERANCE_PER_MILLE` of the recorded count. A compared run that exceeds one
+fails (`EXCEEDED`); a lower count passes and is reported, since lowering the
+ceiling is re-recording. A row the baseline does not hold yet has no ceiling.
+A recording is never held to the baseline it replaces.
+
+Exit zero when a measurement was made and no row exceeded its ceiling; non-zero
+when nothing could be measured or read (`NOTHING`), when the two instruments
+disagree (`DISAGREE`), when two runs of an exact group disagree (`INEXACT`), or
+when a row exceeded its ceiling (`EXCEEDED`).
 """
 
 import argparse
@@ -87,7 +96,15 @@ ATTRIBUTION = Path("gungraun/profile-attribution.md")
 # script runs under `mise run`.
 VALGRIND = Path(os.environ["KYNOS_VALGRIND"])
 
-MEASURED, NOTHING, DISAGREE, INEXACT = 0, 1, 2, 3
+MEASURED, NOTHING, DISAGREE, INEXACT, EXCEEDED = 0, 1, 2, 3, 4
+
+# How far, in thousandths of the recorded count, a row's program instructions
+# may exceed it. Runs of one build on three CI CPU models have counted every
+# exact row identically, so this is headroom for a runner whose CPU leads a
+# dependency to another routine, not for noise: one transparent layer, the
+# smallest step a request takes, costs about 20% of a static match. A heap
+# count has none, since what is asked of the allocator is not the CPU's.
+TOLERANCE_PER_MILLE = 5
 
 # `serde_json` features no application's request path is assumed to carry: a
 # harness build with one measures a parser the applications it describes do not
@@ -429,6 +446,34 @@ def inexact(runs, trend=frozenset()):
                 f"{benchmark}: (instructions, blocks, bytes) across "
                 f"{len(runs)} runs were {measured}"
             )
+    return problems
+
+
+def instruction_ceiling(recorded):
+    """The most program instructions a row recorded at `recorded` may count."""
+    return recorded + recorded * TOLERANCE_PER_MILLE // 1000
+
+
+def exceeded(rows, recorded, trend=frozenset()):
+    """Each row outside a `trend` group whose counts pass the ceiling its
+    `recorded` counts set; a row with nothing recorded has none."""
+    problems = []
+    for row in rows:
+        if in_trend(row.benchmark, trend) or row.benchmark not in recorded:
+            continue
+        instructions, blocks, octets = recorded[row.benchmark]
+        over = []
+        if row.program > (ceiling := instruction_ceiling(instructions)):
+            over.append(
+                f"{row.program} program instructions, recorded {instructions}, "
+                f"ceiling {ceiling}"
+            )
+        if row.blocks > blocks:
+            over.append(f"{row.blocks} heap blocks, recorded and ceiling {blocks}")
+        if row.bytes > octets:
+            over.append(f"{row.bytes} heap bytes, recorded and ceiling {octets}")
+        if over:
+            problems.append(f"{row.benchmark}: " + "; ".join(over))
     return problems
 
 
@@ -840,6 +885,16 @@ def main(
     run_path.write_text(measured)
     if mode == "overwrite":
         baseline.write_text(measured)
+        return MEASURED
+    if over := exceeded(rows, recorded, trend):
+        print(
+            "profile: a count exceeds the ceiling requests.tsv records:\n    "
+            + "\n    ".join(over)
+            + "\nWhere the rise is intended, record CI's profile-requests.tsv "
+            "over requests.tsv in a commit of its own.",
+            file=sys.stderr,
+        )
+        return EXCEEDED
     return MEASURED
 
 
