@@ -19,10 +19,11 @@
 
 use std::hint::black_box;
 use std::io;
+use std::net::SocketAddr;
 
 use kynos::http::StatusCode;
 use tokio::net::TcpStream;
-use tokio_rustls::rustls::HandshakeKind;
+use tokio_rustls::rustls::{ClientConnection, HandshakeKind};
 
 use self::{client::Client, endpoints::Endpoints};
 use super::{wire::http1, wire::http1_answered};
@@ -34,6 +35,8 @@ use crate::{
 
 pub(crate) mod client;
 pub mod endpoints;
+#[cfg(test)]
+mod tests;
 
 /// How far into its life a [`Sealed`] row's connection is when its region
 /// starts.
@@ -163,19 +166,7 @@ impl Sealed {
             // Read whole, so that the tickets the server sent are stored.
             assert_eq!(priming.status(), StatusCode::OK, "the priming request");
         }
-        let socket =
-            std::net::TcpStream::connect(endpoints.address()).expect("the server is listening");
-        socket
-            .set_nonblocking(true)
-            .expect("a socket can be made nonblocking");
-        let writer = socket.try_clone().expect("a socket can be cloned");
-        let stream = {
-            let _context = runner.runtime().enter();
-            TcpStream::from_std(socket).expect("the runtime registers the socket")
-        };
-        let mut tunnel = Tunnel {
-            client: Client::new(stream, writer, endpoints.client()),
-        };
+        let mut tunnel = Tunnel::connect(runner, endpoints.address(), endpoints.client());
         if self.session == Session::Established {
             tunnel
                 .client
@@ -209,6 +200,23 @@ pub fn round(runner: &Runner, client: &TcpStream) {
 }
 
 impl Tunnel {
+    /// A `session` over a socket connected to `address` and registered with
+    /// `runner`'s runtime, that has sent nothing yet.
+    fn connect(runner: &Runner, address: SocketAddr, session: ClientConnection) -> Self {
+        let socket = std::net::TcpStream::connect(address).expect("the server is listening");
+        socket
+            .set_nonblocking(true)
+            .expect("a socket can be made nonblocking");
+        let writer = socket.try_clone().expect("a socket can be cloned");
+        let stream = {
+            let _context = runner.runtime().enter();
+            TcpStream::from_std(socket).expect("the runtime registers the socket")
+        };
+        Self {
+            client: Client::new(stream, writer, session),
+        }
+    }
+
     /// Drives the connection to its end, the client answering between
     /// rounds: the whole of what a TLS row measures. The server closes the
     /// connection once its request is answered, so the end is the client
