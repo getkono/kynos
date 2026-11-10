@@ -4911,6 +4911,45 @@ mod api_error {
         ]
     }
 
+    /// The refusal of an extension field by the name it is published under;
+    /// apart, so [`ledger`] stays one a reader can hold.
+    fn field_names_ledger() -> Vec<Case> {
+        vec![case(
+            "an extension field named like a member RFC 9457 defines",
+            quote::quote!(
+                enum StoreError {
+                    #[problem(status = 404)]
+                    NotFound {
+                        #[problem(extension)]
+                        title: String,
+                    },
+                }
+            ),
+            "the field `title` would be published as a member RFC 9457 defines",
+        )]
+    }
+
+    /// A field is checked against RFC 9457's members by the name it is
+    /// published under, a raw identifier unprefixed; a second witness of the
+    /// ledger's row, so outside its count.
+    #[test]
+    fn an_extension_field_is_checked_against_the_registered_members_unprefixed() {
+        each_case_is_refused(
+            vec![case(
+                "a raw-identifier extension field published as `type`",
+                quote::quote!(
+                    #[problem(status = 404)]
+                    struct NotFound {
+                        #[problem(extension)]
+                        r#type: String,
+                    }
+                ),
+                "the field `type` would be published as a member RFC 9457 defines",
+            )],
+            expand_inner,
+        );
+    }
+
     /// The refusals of a variant's `extension(name = value)` members; apart,
     /// so [`ledger`] stays one a reader can hold.
     fn constants_ledger() -> Vec<Case> {
@@ -5010,6 +5049,29 @@ mod api_error {
                 "the field `id` is already published as this extension member",
             ),
         ]
+    }
+
+    /// A field and a constant collide by the name both are sent under, a raw
+    /// identifier unprefixed; a second witness of the ledger's collision row,
+    /// so outside its count.
+    #[test]
+    fn a_constant_member_collides_with_a_field_by_its_unprefixed_name() {
+        each_case_is_refused(
+            vec![case(
+                "a raw-identifier constant member named like a raw-identifier field",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(r#ref = 1))]
+                        NotFound {
+                            #[problem(extension)]
+                            r#ref: u64,
+                        },
+                    }
+                ),
+                "the field `ref` is already published as this extension member",
+            )],
+            expand_inner,
+        );
     }
 
     /// A value is a literal or a path, a negated number and a forwarded
@@ -5457,6 +5519,7 @@ mod api_error {
         each_case_is_refused(headers_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
+        each_case_is_refused(field_names_ledger(), expand_inner);
     }
 
     /// One diagnostic site refuses three keys, so the ledger's single row per
@@ -5514,6 +5577,7 @@ mod api_error {
                 + headers_ledger().len()
                 + keys_ledger().len()
                 + constants_ledger().len()
+                + field_names_ledger().len()
                 - IN_ATTRIBUTE,
         );
     }

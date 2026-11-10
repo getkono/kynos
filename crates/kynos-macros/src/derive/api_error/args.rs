@@ -262,7 +262,8 @@ fn constant_value(value: &Expr) -> bool {
 }
 
 /// Checks each field's `#[problem(...)]` markers: `extension` or `headers`,
-/// each once, and `extension` only on a named field, which has a member name.
+/// each once, and `extension` only on a named field, which has a member name
+/// RFC 9457 does not define.
 /// Returns what each field carries, in declaration order.
 pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<Vec<Markers>> {
     let named = matches!(fields, Fields::Named(_));
@@ -301,7 +302,25 @@ pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<Vec<Markers>> 
                             ),
                         ));
                     }
-                    "extension" => markers.extension = Some(attr.span()),
+                    "extension" => {
+                        // Named, so checked by the member it is published as.
+                        let name = field
+                            .ident
+                            .as_ref()
+                            .map(|ident| ident.unraw().to_string())
+                            .unwrap_or_default();
+                        if REGISTERED.contains(&name.as_str()) {
+                            return Err(syn::Error::new(
+                                field.ident.span(),
+                                format!(
+                                    "the field `{name}` would be published as a member RFC 9457 \
+                                     defines, which the problem already sends; rename the field, \
+                                     since an extension member takes a name of its own"
+                                ),
+                            ));
+                        }
+                        markers.extension = Some(attr.span());
+                    }
                     "headers" => markers.headers = Some(attr.span()),
                     other => {
                         return Err(unknown(

@@ -644,7 +644,8 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// default. Its type is sent through `Serialize` and declared by its `Schema`,
 /// which follows the same serde attributes, so the two cannot drift; it is
 /// required on its failure's branch. An `Option<T>` member is sent only when
-/// it holds a value, so it is declared by `T` and optional. A member whose
+/// it holds a value, so it is declared by `T` and optional. A field named, raw
+/// prefix aside, like a member RFC 9457 defines is refused. A member whose
 /// `Serialize` fails answers 500 in place of its problem, as a JSON body that
 /// cannot be serialized does.
 ///
