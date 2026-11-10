@@ -145,7 +145,7 @@ the merge.
 **The run of record is CI's.** The committed baseline names the host it was
 taken on, and a report from another host says so. The job uploads each run in
 the baseline's format, so recording the baseline is copying that file over
-`requests.tsv` in a pull request of its own.
+`requests.tsv` in a commit of its own.
 
 **The baseline is a ceiling, and re-recording is how it moves.** A compared run
 fails when a row outside a `trend` group allocates one block or byte more than
