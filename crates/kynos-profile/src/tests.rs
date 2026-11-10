@@ -596,6 +596,7 @@ fn every_tls_row_is_answered_over_the_handshake_it_names_and_closes_cleanly() {
         };
         assert_eq!(warm.handshake(), Some(expected), "{}", scenario.name);
         assert_eq!(tunnel.handshake(), Some(expected), "{}", scenario.name);
+        drop((warm, tunnel, runner, endpoints));
     }
 }
 
@@ -603,7 +604,8 @@ fn every_tls_row_is_answered_over_the_handshake_it_names_and_closes_cleanly() {
 /// `listen`, which no TLS row reaches: its spawned tasks carry no subscriber
 /// of their own, so it keeps the thread default installed for as long as the
 /// server is kept, still serves the handshake and the request under it, and
-/// gives it up with the server.
+/// gives it up only with the endpoints, dropped after the runtime whose
+/// teardown drops the server's tasks.
 #[test]
 fn a_subscribed_service_listens_under_the_thread_default_until_dropped() {
     let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
@@ -624,6 +626,12 @@ fn a_subscribed_service_listens_under_the_thread_default_until_dropped() {
         .expect("the connection closes cleanly");
     assert_eq!(tunnel.status(), traced.expected);
     assert_eq!(tunnel.handshake(), Some(HandshakeKind::Full));
+    drop(tunnel);
+    drop(runner);
+    assert!(
+        !unsubscribed(),
+        "the thread default was given up before the server's tasks were dropped"
+    );
     drop(endpoints);
-    assert!(unsubscribed(), "the thread default outlived the server");
+    assert!(unsubscribed(), "the thread default outlived the endpoints");
 }
