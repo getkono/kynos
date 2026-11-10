@@ -1183,6 +1183,81 @@ fn an_interceptor_adding_on_problems_matches_the_problem_media_type_loosely() {
     );
 }
 
+/// The `$ref` an extractor declares its 503 as.
+fn unavailable() -> kynos::openapi::RefOr<kynos::openapi::Response> {
+    kynos::openapi::RefOr::Ref(kynos::openapi::Ref::response("Unavailable"))
+}
+
+/// An extractor declaring an inline problem 422 and a 503 held as a `$ref`.
+struct Referencing;
+
+impl kynos::extract::describe::Describe for Referencing {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        operation.add_responses(
+            &kynos::openapi::Responses::new()
+                .with(
+                    422,
+                    kynos::openapi::Response::with_content(
+                        "unprocessable",
+                        "application/problem+json",
+                        kynos::openapi::MediaType::new(kynos::openapi::Schema::Bool(true)),
+                    ),
+                )
+                .with_pattern(kynos::openapi::StatusPattern::Code(503), unavailable()),
+        );
+    }
+}
+
+impl<C: Sync> kynos::extract::FromRequestParts<C> for Referencing {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut kynos::http::Parts,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        Ok(Self)
+    }
+}
+
+#[kynos::get("/referencing")]
+async fn referencing(checked: Referencing) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// A response held as a `$ref` is left as written by both deferred
+/// placements, as `Placement` promises: its headers live where it is defined,
+/// which the operation does not own.
+#[test]
+fn an_interceptor_adding_on_every_response_or_problems_leaves_a_ref_alone() {
+    let document = Router::<()>::new()
+        .intercept(Stamping)
+        .intercept(BackingOff)
+        .mount(kynos::routes![referencing])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/referencing");
+
+    assert_eq!(
+        operation.responses.responses.get("503"),
+        Some(&unavailable()),
+        "the `$ref` was replaced or reached into"
+    );
+
+    // The controls: each placement did file its header on the inline
+    // responses it reaches, so the `$ref` above was skipped rather than never
+    // visited.
+    assert_eq!(
+        declared_headers(&operation, "422"),
+        Some(vec!["X-Stamp".to_owned(), "X-Backoff".to_owned()])
+    );
+    assert_eq!(
+        declared_headers(&operation, "204"),
+        Some(vec!["X-Stamp".to_owned()])
+    );
+}
+
 // --- Scope in the document's tags -------------------------------------------
 //
 // The same question again, on the axis the sections above do not reach. A tag
