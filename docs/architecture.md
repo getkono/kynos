@@ -363,16 +363,18 @@ exception](#what-an-upstream-fix-may-change)).
 **hyper.** hyper parses HTTP/1 with `httparse`, so owning the codec would mean
 owning framing and buffering rather than parsing — and hyper's framing is close
 to allocation-free already: header values are `Bytes` slices into the read
-buffer, and the `HeaderMap` is recycled between requests on a connection. Two
-limits are real, and are recorded here rather than argued away. hyper allocates
+buffer, and the `HeaderMap` is recycled between requests on a connection. One
+limit is real, and is recorded here rather than argued away. hyper allocates
 an 8 KiB write buffer at connection construction and never shrinks the read
 buffer below 8 KiB, with no pool and no way to supply one, so roughly 16 KiB
 per live connection is not configurable; `max_buf_size` moves the ceiling, not
 the floor, and what that ceiling costs at the defaults is
-[`nfr.md`](nfr.md#what-the-defaults-let-one-connection-hold)'s arithmetic. And hyper releases HTTP/2 flow-control capacity as soon as a frame
-is polled, so backpressure on an HTTP/2 request body is not expressible through
-it — the `h2` crate's `release_capacity` is the only remedy, and taking it
-means owning the connection driver. The question reopens on one measurement:
+[`nfr.md`](nfr.md#what-the-defaults-let-one-connection-hold)'s arithmetic. HTTP/2 request-body backpressure is not a
+second: hyper releases a frame's flow-control capacity when the body's reader
+polls it, so a reader that stops closes the window, and what a reader has
+polled but not consumed is its own buffer, bounded by the body limit whatever
+the window does, which
+[`nfr.md`](nfr.md#runtime) weighs and does not ask upstream for. The question reopens on one measurement:
 RSS delta at 100k idle keep-alive connections, with and without TLS. Until that
 number exists it stays closed.
 
