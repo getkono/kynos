@@ -245,6 +245,137 @@ mod defaults {
     }
 }
 
+/// An in-process response carries the `Content-Length` a connection frames it
+/// with, RFC 9110 section 8.6's exceptions included.
+mod content_length {
+    use bytes::Bytes;
+
+    use super::framed;
+    use crate::{
+        Router,
+        http::{HeaderValue, Method, Response, StatusCode, body::Body, header},
+        test::{TestClient, with_content_length},
+    };
+
+    fn answered(method: &Method, status: StatusCode, body: Body) -> Option<HeaderValue> {
+        let mut response = Response::new(body);
+        *response.status_mut() = status;
+        with_content_length(method, response)
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .cloned()
+    }
+
+    fn whole(bytes: &'static str) -> Body {
+        Body::from_bytes(Bytes::from_static(bytes.as_bytes()))
+    }
+
+    #[test]
+    fn a_body_of_known_length_states_it() {
+        assert_eq!(
+            answered(&Method::GET, StatusCode::OK, whole("hello")),
+            Some(HeaderValue::from_static("5"))
+        );
+    }
+
+    /// An empty body is a length of zero, as a connection frames it, not an
+    /// absent field.
+    #[test]
+    fn an_empty_body_states_zero() {
+        assert_eq!(
+            answered(&Method::POST, StatusCode::ACCEPTED, Body::empty()),
+            Some(HeaderValue::from_static("0"))
+        );
+    }
+
+    /// A streamed body's length is unknown until its end, so a connection
+    /// chunks it and states none.
+    #[test]
+    fn a_body_of_unknown_length_states_none() {
+        assert_eq!(
+            answered(
+                &Method::GET,
+                StatusCode::OK,
+                Body::from_body(framed("hello", None))
+            ),
+            None
+        );
+    }
+
+    /// Each response RFC 9110 section 8.6 either forbids the field on or
+    /// gives the length of another response, against a control that states
+    /// it.
+    #[test]
+    fn the_responses_section_8_6_excepts_state_none() {
+        for (method, status) in [
+            (Method::HEAD, StatusCode::OK),
+            (Method::GET, StatusCode::CONTINUE),
+            (Method::GET, StatusCode::NO_CONTENT),
+            (Method::GET, StatusCode::NOT_MODIFIED),
+            (Method::CONNECT, StatusCode::OK),
+        ] {
+            assert_eq!(
+                answered(&method, status, whole("hello")),
+                None,
+                "{method} -> {status}"
+            );
+        }
+        assert_eq!(
+            answered(&Method::CONNECT, StatusCode::BAD_REQUEST, whole("hello")),
+            Some(HeaderValue::from_static("5"))
+        );
+    }
+
+    /// A length the service stated stands, and a transfer coding is never
+    /// joined by one.
+    #[test]
+    fn a_framing_field_already_there_is_kept() {
+        for (name, value) in [
+            (header::CONTENT_LENGTH, "9"),
+            (header::TRANSFER_ENCODING, "chunked"),
+        ] {
+            let mut response = Response::new(whole("hello"));
+            response
+                .headers_mut()
+                .insert(name.clone(), HeaderValue::from_static(value));
+            let response = with_content_length(&Method::GET, response);
+
+            assert_eq!(
+                response.headers().get_all(&name).iter().collect::<Vec<_>>(),
+                [&HeaderValue::from_static(value)]
+            );
+            if name == header::TRANSFER_ENCODING {
+                assert!(!response.headers().contains_key(header::CONTENT_LENGTH));
+            }
+        }
+    }
+
+    /// `send` over a service carries the field, the same value a served
+    /// response arrives with.
+    #[tokio::test]
+    async fn an_in_process_response_states_what_a_served_one_does() {
+        let service = || {
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable")
+        };
+        let direct = TestClient::new(service()).get("/a").send().await;
+        let length = direct
+            .header("content-length")
+            .expect("an in-process response states its length");
+        assert_eq!(length, direct.bytes().len().to_string());
+
+        #[cfg(feature = "server")]
+        {
+            let served = TestClient::through_server(crate::server::Server::new(service()))
+                .get("/a")
+                .send()
+                .await;
+            assert_eq!(served.header("content-length"), Some(length));
+        }
+    }
+}
+
 /// Each `assert_*` helper fails, once per way its `# Panics` section names,
 /// with the message a test author reads.
 ///
@@ -285,6 +416,47 @@ mod assertions {
     )]
     fn assert_status_fails_on_another_status_and_shows_the_body() {
         received(StatusCode::NOT_FOUND, &[], b"gone").assert_status(StatusCode::OK);
+    }
+
+    /// The response comes back whole, so it stays readable after the
+    /// assertion.
+    #[test]
+    fn expect_status_hands_back_the_response_it_asserted() {
+        let response = received(StatusCode::CREATED, &[("x-id", "7")], b"made").expect_status(201);
+
+        assert_eq!(response.status(), StatusCode::CREATED);
+        assert_eq!(response.header("x-id"), Some("7"));
+        assert_eq!(response.text(), "made");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 404: expected 200 OK, received 404 Not Found\n\
+                               body: gone"
+    )]
+    fn expect_status_fails_as_assert_status_does() {
+        let _ = received(StatusCode::NOT_FOUND, &[], b"gone").expect_status(StatusCode::OK);
+    }
+
+    /// Every field, repeated ones included, with no name given.
+    #[test]
+    fn header_map_holds_every_field_received() {
+        let response = received(
+            StatusCode::OK,
+            &[("set-cookie", "a=1"), ("set-cookie", "b=2"), ("x-id", "7")],
+            b"",
+        );
+        let map = response.header_map();
+
+        assert_eq!(map.len(), 3);
+        assert_eq!(
+            map.get_all("set-cookie").iter().collect::<Vec<_>>(),
+            [
+                &HeaderValue::from_static("a=1"),
+                &HeaderValue::from_static("b=2")
+            ]
+        );
+        assert_eq!(map.get("x-id"), Some(&HeaderValue::from_static("7")));
     }
 
     /// An unsuffixed literal is a `u16`, read as the status it numbers.
