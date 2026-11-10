@@ -968,7 +968,8 @@ timers, and what the per-connection handler in
 [`server/connection.rs`](../crates/kynos/src/server/connection.rs) adds — the
 connection metadata it inserts into the request's extensions and the incoming
 body it erases — are counted to the duplex ([`nfr.md`](nfr.md)'s
-`connection_*` row), as a trend with no gate. A per-request figure over a real
+`connection_*` row), as a trend with no gate; `connection_tls` alone reaches
+a TLS listener over a loopback socket, since `serve_io` terminates no TLS. A per-request figure over a real
 socket is the general measurement
 [`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
 Kynos's routing path adds is also gated, against the ceilings

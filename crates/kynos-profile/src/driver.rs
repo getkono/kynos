@@ -240,8 +240,8 @@ pub trait Served {
 /// end counts no service teardown, which the in-process rows likewise leave
 /// to theirs.
 ///
-/// The future is not `Send`: a row drives it on the thread that built it, and
-/// a TLS row's holds the server it calls `serve_io` on once its handshake ends.
+/// The future is not required to be `Send`: a row drives it on the thread
+/// that built it.
 pub struct Connecting {
     /// The connection: what a connection row's region drives.
     pub future: Pin<Box<dyn Future<Output = io::Result<()>>>>,
