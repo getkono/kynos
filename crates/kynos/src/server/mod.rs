@@ -74,6 +74,7 @@ pub mod tcp;
 pub mod tls;
 
 use std::{
+    convert::Infallible,
     future::pending,
     io,
     net::SocketAddr,
@@ -85,8 +86,8 @@ use std::{
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpListener,
-    sync::{Semaphore, mpsc, watch},
-    task::{JoinError, JoinSet},
+    sync::{Semaphore, mpsc, oneshot, watch},
+    task::{JoinError, JoinHandle, JoinSet},
 };
 
 #[cfg(unix)]
@@ -1009,6 +1010,103 @@ impl<C: 'static> BoundServer<C> {
             }
             .into()),
             Drain::Forced => Err(ServerError::ShutdownForced.into()),
+        }
+    }
+
+    /// Serves on a spawned task, as [`serve`](Self::serve) would, and
+    /// returns the handle that stops it.
+    ///
+    /// The listeners are already bound, so a client may connect to
+    /// [`Running::local_addr`] at once. [`Running::shutdown`] begins graceful
+    /// shutdown alongside any [`Server::graceful_shutdown`] trigger: whichever
+    /// comes first begins it, under the
+    /// [`deregistration_delay`](Server::deregistration_delay) and the
+    /// [`shutdown_timeout`](Server::shutdown_timeout) either would. Begun by
+    /// the handle, a built-in trigger still forces the drain on its second
+    /// signal.
+    ///
+    /// ```
+    /// use kynos::{Router, server::Server};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> kynos::Result<()> {
+    /// let running = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("127.0.0.1", 0))
+    ///     .prepare()
+    ///     .await?
+    ///     .spawn();
+    /// let address = running.local_addr().expect("one TCP listener is bound");
+    /// # let _ = address;
+    /// // ...drive a client against `address`...
+    /// running.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Outside a tokio runtime, as `tokio::spawn` does.
+    #[must_use = "dropping the handle begins shutdown at once"]
+    pub fn spawn(mut self) -> Running {
+        let (trigger, triggered) = oneshot::channel::<Infallible>();
+        self.shutdown = Some(Shutdown::or_on(self.shutdown.take(), async move {
+            let _ = triggered.await;
+        }));
+        Running {
+            local_addrs: self.local_addrs.clone(),
+            trigger,
+            task: tokio::spawn(self.serve()),
+        }
+    }
+}
+
+/// A server serving on its own task, from [`BoundServer::spawn`].
+///
+/// Dropping it begins graceful shutdown without waiting for the drain, whose
+/// result is then discarded; [`shutdown`](Self::shutdown) waits for it.
+#[derive(Debug)]
+pub struct Running {
+    local_addrs: Vec<SocketAddr>,
+    /// Never sent: dropping it is the trigger.
+    trigger: oneshot::Sender<Infallible>,
+    task: JoinHandle<Result<()>>,
+}
+
+impl Running {
+    /// The first address [`local_addrs`](Self::local_addrs) lists, or `None`
+    /// where only Unix domain socket listeners were bound.
+    #[must_use]
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addrs.first().copied()
+    }
+
+    /// The addresses the TCP listeners are bound to, as
+    /// [`BoundServer::local_addrs`] lists them.
+    #[must_use]
+    pub fn local_addrs(&self) -> &[SocketAddr] {
+        &self.local_addrs
+    }
+
+    /// Begins graceful shutdown, unless the server already stopped, and waits
+    /// for it to end.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`BoundServer::serve`] reports, including a failure that
+    /// stopped the server before this was called. A task the runtime
+    /// cancelled, as it does every task when it shuts down, is reported as
+    /// [`ServerError::ShutdownForced`].
+    ///
+    /// # Panics
+    ///
+    /// Where the serving task panicked, with its panic.
+    pub async fn shutdown(self) -> Result<()> {
+        let Self { trigger, task, .. } = self;
+        drop(trigger);
+        match task.await {
+            Ok(served) => served,
+            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+            Err(_) => Err(ServerError::ShutdownForced.into()),
         }
     }
 }

@@ -10357,6 +10357,7 @@ pub struct kynos::server::BoundServer<C>
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
 pub async fn kynos::server::BoundServer<C>::serve(self) -> kynos::error::Result<()>
+pub fn kynos::server::BoundServer<C>::spawn(self) -> kynos::server::Running
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::openapi(&self) -> &kynos_openapi::model::document::Document
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::BoundServer<C>
@@ -10368,6 +10369,20 @@ impl<C> core::marker::Unpin for kynos::server::BoundServer<C>
 impl<C> core::marker::UnsafeUnpin for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::BoundServer<C>
+pub struct kynos::server::Running
+impl kynos::server::Running
+pub fn kynos::server::Running::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
+pub fn kynos::server::Running::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
+pub async fn kynos::server::Running::shutdown(self) -> kynos::error::Result<()>
+impl core::fmt::Debug for kynos::server::Running
+pub fn kynos::server::Running::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kynos::server::Running
+impl core::marker::Send for kynos::server::Running
+impl core::marker::Sync for kynos::server::Running
+impl core::marker::Unpin for kynos::server::Running
+impl core::marker::UnsafeUnpin for kynos::server::Running
+impl !core::panic::unwind_safe::RefUnwindSafe for kynos::server::Running
+impl !core::panic::unwind_safe::UnwindSafe for kynos::server::Running
 pub struct kynos::server::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
