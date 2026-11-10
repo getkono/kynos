@@ -2,6 +2,7 @@
 //! transparent layers at router scope, `/json/small` behind the same layers
 //! at a narrower scope, with panic recovery, or watched by an observer.
 
+use std::any::Any;
 use std::convert::Infallible;
 use std::time::Duration;
 
@@ -13,6 +14,7 @@ use kynos::{
     middleware::{Continued, Interceptor, Next, Observer, trace::Trace},
     prelude::*,
     router::{operation::Route, service::Service},
+    server::tls::TlsConfig,
 };
 use tokio::io::DuplexStream;
 use tracing::{
@@ -23,7 +25,7 @@ use tracing::{
 };
 
 use super::{App, Small, built, json_small, rest, router, small};
-use crate::driver::{Connecting, Drained, Handshake, Runner, Served};
+use crate::driver::{Connecting, Drained, Runner, Served};
 
 /// An interceptor that forwards and does nothing else, so that what a stack
 /// costs is the chain's own machinery — `tests/alloc.rs`'s `Transparent`, for
@@ -207,12 +209,21 @@ impl Served for Subscribed {
         }
     }
 
-    fn connect_after(self: Box<Self>, handshake: Handshake) -> Connecting {
-        let Connecting { future, server } = Box::new(self.service).connect_after(handshake);
-        Connecting {
-            future: Box::pin(future.with_subscriber(Discarding)),
-            server,
-        }
+    /// The listener's tasks are spawned, so no future of this one's carries
+    /// [`Discarding`] to them; the thread default does instead, kept
+    /// installed for as long as the server is.
+    fn listen(
+        self: Box<Self>,
+        runner: &Runner,
+        listener: std::net::TcpListener,
+        tls: TlsConfig,
+    ) -> Box<dyn Any> {
+        let Self {
+            service,
+            _default: default,
+        } = *self;
+        let server = Box::new(service).listen(runner, listener, tls);
+        Box::new((server, default))
     }
 }
 

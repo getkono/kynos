@@ -12,7 +12,7 @@
 //! [`connection`]'s rows, which send a catalog request through the server's
 //! connection path over an in-memory duplex, so that the server's share of
 //! that gap is counted too, and [`connection::tls`]'s, which send it over a
-//! TLS session terminated on that duplex.
+//! TLS session to Kynos's own TLS listener on a loopback socket.
 //!
 //! A scenario may name a [`base`](Scenario::base): the scenario it differs
 //! from in one variable, whose difference the report gives as that variable's

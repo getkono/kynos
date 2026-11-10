@@ -12,9 +12,10 @@
 //! The `connection_h1` and `connection_h2` groups' region is instead [`Open::serve`]: one connection
 //! through `Server::serve_io`, driven to its end, with the encoded request
 //! written into its duplex in setup and the response read back in teardown.
-//! The `connection_tls` group's is [`Tunnel::serve`], and both instruments
-//! count from each `round` it polls the server with, not from the benchmark
-//! function, so the client answering between rounds is not counted.
+//! The `connection_tls` group's is [`Tunnel::serve`]: one connection through
+//! Kynos's TLS listener on a loopback socket, and both instruments count from
+//! each `round` it runs the runtime for, not from the benchmark function, so
+//! the client answering between rounds is not counted.
 //!
 //! What gungraun prints is not the number of record: its Callgrind total
 //! includes glibc's allocator, whose cost depends on the heap's history and
@@ -42,7 +43,7 @@ use kynos::http::{Request, StatusCode};
 use kynos_profile::{
     connection::{
         Open, connected,
-        tls::{Tunnel, sealed},
+        tls::{Tunnel, endpoints::Endpoints, sealed},
     },
     driver::{Drained, Runner, Served, frames},
     scenario,
@@ -544,23 +545,24 @@ fn rounds() -> LibraryBenchmarkConfig {
     config
 }
 
-/// A TLS row's setup: its driver and the connection made ready, the client's
-/// first flight already in the duplex, and the status its response must carry.
-type Tunnelled = (Runner, Tunnel, StatusCode);
+/// A TLS row's setup: its driver, the listening server, the connection made
+/// ready with the client's first flight already in its socket, and the status
+/// its response must carry.
+type Tunnelled = (Runner, Endpoints, Tunnel, StatusCode);
 
 /// What leaves a TLS row's region, to be checked and dropped outside it.
-type Untunnelled = (Runner, Tunnel, io::Result<()>, StatusCode);
+type Untunnelled = (Runner, Endpoints, Tunnel, io::Result<()>, StatusCode);
 
 /// [`opened`] for a TLS row: a warming connection between the same endpoints
 /// is served at the start of a wall-clock second, for `Date`, and dropped, so
 /// the region's handshake is also not the first the server's configuration,
-/// and its ticketer, serve.
+/// and its ticketer, serve. The measured connection is opened after it, since
+/// the warming connection's turns would otherwise accept it.
 fn tunnelled(name: &str) -> Tunnelled {
     let sealed = sealed(name);
     let runner = sealed.scenario.driver.runner();
-    let endpoints = sealed.endpoints();
+    let endpoints = sealed.endpoints(&runner);
     let mut warm = sealed.open(&runner, &endpoints);
-    let tunnel = sealed.open(&runner, &endpoints);
     let into_second = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("the clock is past the epoch")
@@ -571,33 +573,36 @@ fn tunnelled(name: &str) -> Tunnelled {
     warm.settle(&runner)
         .expect("the warming connection closes cleanly");
     drop(warm);
-    (runner, tunnel, sealed.scenario.expected)
+    let tunnel = sealed.open(&runner, &endpoints);
+    (runner, endpoints, tunnel, sealed.scenario.expected)
 }
 
-/// As [`closed`], decrypting the status from what the server wrote.
-fn untunnelled((runner, mut tunnel, ended, expected): Untunnelled) {
+/// As [`closed`], reading the status from what the client decrypted; the
+/// server stops with the runtime, dropped last.
+fn untunnelled((runner, endpoints, tunnel, ended, expected): Untunnelled) {
     ended.expect("the profiled connection closes cleanly");
     assert_eq!(
         tunnel.status(),
         expected,
         "the profiled request was answered wrongly"
     );
-    drop((tunnel, runner));
+    drop((tunnel, endpoints, runner));
 }
 
 // `connection/tls/mod.rs`'s `TLS` table: the plaintext group's request over a
-// TLS 1.3 session terminated on the duplex, counted from each poll of the
-// server so the client answering between polls is not. `aws-lc-rs`'s crypto is
-// statically linked, so `profile_report.py` reports its instructions apart
-// from the program's and compares only the rest.
+// TLS 1.3 session accepted by Kynos's own TLS listener on a loopback socket,
+// counted from each round of the runtime so the client answering between
+// rounds is not. `aws-lc-rs`'s crypto is statically linked, so
+// `profile_report.py` reports its instructions apart from the program's and
+// compares only the rest.
 #[library_benchmark(setup = tunnelled, teardown = untunnelled, config = rounds())]
 #[bench::full("conn-tls-full")]
 #[bench::resumed("conn-tls-resumed")]
 #[bench::second("conn-tls-second")]
 fn tls(tunnelled: Tunnelled) -> Untunnelled {
-    let (runner, mut tunnel, expected) = tunnelled;
+    let (runner, endpoints, mut tunnel, expected) = tunnelled;
     let ended = black_box(&mut tunnel).serve(black_box(&runner));
-    (runner, tunnel, black_box(ended), expected)
+    (runner, endpoints, tunnel, black_box(ended), expected)
 }
 
 library_benchmark_group!(name = scenarios, benchmarks = request);

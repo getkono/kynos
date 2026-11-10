@@ -1,29 +1,27 @@
-//! Both ends' TLS configuration: an authority, the Ed25519 server identity
-//! it issues, the server's configuration as `TlsConfig` builds it by default
-//! except for its certificate resolver, and a client that trusts the
-//! authority.
+//! Both ends: an authority, the Ed25519 server identity it issues, Kynos's
+//! TLS listener serving that identity on a loopback port as `TlsConfig`
+//! configures it by default, and a client that trusts the authority.
 //!
 //! Apart from [the rows](super) because the two change for different reasons:
 //! a row is added when what is measured changes, and this when what either
 //! end offers does.
 
+use std::any::Any;
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::Arc;
 
+use kynos::server::tls::TlsConfig;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, IsCa, KeyPair, PKCS_ED25519,
     SerialNumber,
 };
-use tokio_rustls::{
-    TlsAcceptor,
-    rustls::{
-        ClientConfig, ClientConnection, RootCertStore, ServerConfig,
-        client::Resumption,
-        crypto::aws_lc_rs,
-        pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
-    },
+use tokio_rustls::rustls::{
+    ClientConfig, ClientConnection, RootCertStore, client::Resumption, crypto::aws_lc_rs,
+    pki_types::ServerName,
 };
 
 use super::Session;
+use crate::driver::{Runner, Served};
 
 /// The name the server's certificate is issued for, and the client's SNI.
 const SERVER_NAME: &str = "localhost";
@@ -37,13 +35,16 @@ const ALPN_HTTP1: &[u8] = b"http/1.1";
 /// adds no sign byte, as rcgen's key-derived default does for most keys.
 const SERIAL: [u8; 20] = [0x5a; 20];
 
-/// Both ends' configuration, minted in setup and shared by every connection
-/// a row opens: a server identity issued by an authority the client trusts,
-/// and the server's ticketer, which the warming connection uses first, so
-/// that the region's handshake is not the configuration's first.
+/// Both ends, readied in setup and shared by every connection a row opens: a
+/// server listening with an identity issued by an authority the client
+/// trusts, whose configuration and ticketer the warming connection uses
+/// first, so that the region's handshake is not the configuration's first.
 pub struct Endpoints {
-    server: Arc<ServerConfig>,
+    /// Where the server listens.
+    address: SocketAddr,
     client: Arc<ClientConfig>,
+    /// What the server needs kept alive while it listens.
+    _server: Box<dyn Any>,
 }
 
 impl std::fmt::Debug for Endpoints {
@@ -53,36 +54,29 @@ impl std::fmt::Debug for Endpoints {
 }
 
 impl Endpoints {
-    /// Mints an authority and a server identity, and configures both ends for
-    /// `session`: a client that keeps tickets for [`Session::Resumed`], and
-    /// one that keeps none otherwise, so that however often the server served
-    /// it, its every handshake is full.
+    /// Mints an authority and a server identity, serves `service` over TLS on
+    /// a loopback port under `runner`, and configures a client for `session`:
+    /// one that keeps tickets for [`Session::Resumed`], and one that keeps
+    /// none otherwise, so that however often the server served it, its every
+    /// handshake is full.
     ///
-    /// The server is `TlsConfig`'s default: `aws-lc-rs`, TLS 1.2 and 1.3,
-    /// ALPN `h2` then `http/1.1`, no early data, and stateless tickets under
-    /// `aws-lc-rs`'s ticketer. The identity is Ed25519, whose signature has
-    /// one length, so no count moves with how a signature happened to encode.
+    /// The server is [`TlsConfig::from_pem`]'s default, built by the server's
+    /// own `prepare`: its certificate resolver, its stateless tickets, and its
+    /// handshake deadline. The identity is Ed25519, whose signature has one
+    /// length, so no count moves with how a signature happened to encode.
     /// Both certificates carry a fixed serial for the same reason: rcgen's
     /// default derives it from the fresh key, and its DER encoding drops a
     /// leading zero byte for about one key in 128, which would shorten the
     /// certificate the server sends. The fixed serial encodes in the default's
     /// usual 20 bytes, so the certificate keeps that usual length.
     ///
-    /// It differs from `TlsConfig` in how the certificate is chosen. rustls
-    /// asks the resolver on every `ClientHello`, resumed or not, and
-    /// `TlsConfig`'s resolver lowercases the SNI name into a new `String` and
-    /// looks it up among its SNI certificates before falling back to its
-    /// default; `with_single_cert`'s returns its one certificate without
-    /// reading the name. Each row's handshake therefore leaves out that
-    /// allocation and lookup, which only Kynos's own acceptor would count
-    /// (#1311).
-    ///
     /// # Panics
     ///
-    /// When a key, a certificate or a configuration cannot be built, which
-    /// no host should make happen.
+    /// When a key, a certificate, a configuration or the listener cannot be
+    /// built, which no host should make happen, or when `runner` is not a
+    /// runtime.
     #[must_use]
-    pub fn new(session: Session) -> Self {
+    pub fn new(session: Session, service: Box<dyn Served>, runner: &Runner) -> Self {
         let provider = Arc::new(aws_lc_rs::default_provider());
 
         let mut authority = CertificateParams::new(Vec::new()).expect("no subject names");
@@ -106,18 +100,14 @@ impl Endpoints {
             .signed_by(&key, &authority)
             .expect("an issued certificate");
 
-        let mut server = ServerConfig::builder_with_provider(Arc::clone(&provider))
-            .with_safe_default_protocol_versions()
-            .expect("aws-lc-rs supports the default versions")
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![certificate.der().clone()],
-                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
-            )
+        let tls = TlsConfig::from_pem(certificate.pem().as_bytes(), key.serialize_pem().as_bytes())
             .expect("the server identity is usable");
-        server.alpn_protocols = vec![b"h2".to_vec(), ALPN_HTTP1.to_vec()];
-        server.max_early_data_size = 0;
-        server.ticketer = aws_lc_rs::Ticketer::new().expect("a ticketer");
+        let listener =
+            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("a loopback port is free");
+        let address = listener
+            .local_addr()
+            .expect("a bound listener has an address");
+        let server = service.listen(runner, listener, tls);
 
         let mut roots = RootCertStore::empty();
         roots
@@ -134,14 +124,15 @@ impl Endpoints {
         }
 
         Self {
-            server: Arc::new(server),
+            address,
             client: Arc::new(client),
+            _server: server,
         }
     }
 
-    /// The server's acceptor, sharing its configuration with every other.
-    pub(super) fn acceptor(&self) -> TlsAcceptor {
-        TlsAcceptor::from(Arc::clone(&self.server))
+    /// Where the server listens.
+    pub(super) fn address(&self) -> SocketAddr {
+        self.address
     }
 
     /// A new client session, which takes a ticket from the store where its

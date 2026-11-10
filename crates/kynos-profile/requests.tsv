@@ -1,7 +1,7 @@
 # Written by `mise run profile:record`; read by `mise run profile:requests`.
 # toolchain: rustc 1.97.1 (8bab26f4f 2026-07-14)
 # host: AMD EPYC 9V74 80-Core Processor, valgrind-3.27.1
-# trend: connection_h2 form_echo rate_limit request_id_random
+# trend: connection_h2 connection_tls form_echo rate_limit request_id_random
 benchmark	program_instructions	heap_blocks	heap_bytes
 alloc_counter_agreement.capture	2616	5	1100
 alloc_counter_agreement.miss	2282	5	1175
