@@ -1077,6 +1077,23 @@ responses. Filing a header is describing the operation, through the same
 `declare_header` an explicit `add_response_header` goes through, so the two are
 one concern: what one operation's description holds when it is finished.
 
+`router/group.rs` is `status.rs`'s shape. It declares `Group` and `Methods`, so
+a split would turn `group::Methods`, the argument `intercept_when` takes, into
+`group::methods::Methods`. What pushed it over was issue #1277's
+`intercept_when`, whose documentation says which operations a scoped
+interceptor covers and why its collision check is wider than that. `Methods`
+exists for that one method, and resolving it per operation is part of
+mounting a group, so the two are one concern: what a group puts in front of
+each operation it holds.
+
+`middleware/stack.rs` is `status.rs`'s shape. It declares `Cons`, `When`,
+`Both`, `InterceptorList`, `Flatten`, `CompatibleWith` and `CompatibleStack`,
+so a split would turn `stack::When`, the element a group's type names, into a
+longer path. What pushed it over was issue #1277's `When`, whose documentation
+is the reason the check treats it as covering every operation. A stack element
+and the check that reads it are one concern: which interceptors a type says
+cover an operation, and whether two of them collide.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1100,11 +1117,13 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
+- `crates/kynos/src/middleware/stack.rs`
 - `crates/kynos/src/middleware/trace.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`
 - `crates/kynos/src/router/dispatch.rs`
+- `crates/kynos/src/router/group.rs`
 - `crates/kynos/src/router/mod.rs`
 - `crates/kynos/src/router/operation.rs`
 - `crates/kynos/src/schema/constraints.rs`
