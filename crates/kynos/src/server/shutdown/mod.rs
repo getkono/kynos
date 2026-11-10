@@ -69,4 +69,37 @@ impl Shutdown {
             }),
         }
     }
+
+    /// Begins shutdown on `configured` or on `trigger`, whichever resolves
+    /// first.
+    ///
+    /// Where `trigger` begins it, `configured` keeps its own meaning through
+    /// the drain: its first resolution asks for the shutdown already under
+    /// way, and the force it then yields forces, so a built-in trigger still
+    /// forces on its second signal and a custom one never does. Polling
+    /// `configured` first surfaces a signal that cannot be registered even
+    /// where `trigger` is already resolved.
+    pub(in crate::server) fn or_on(
+        configured: Option<Self>,
+        trigger: impl Future<Output = ()> + Send + 'static,
+    ) -> Self {
+        let Some(Self { mut future }) = configured else {
+            return Self::on(trigger);
+        };
+        Self {
+            future: Box::pin(async move {
+                let trigger = std::pin::pin!(trigger);
+                tokio::select! {
+                    biased;
+                    begun = &mut future => begun,
+                    () = trigger => Ok(Box::pin(async move {
+                        match future.await {
+                            Ok(force) => force.await,
+                            Err(_) => pending().await,
+                        }
+                    }) as ForceFuture),
+                }
+            }),
+        }
+    }
 }
