@@ -4908,20 +4908,25 @@ mod api_error {
                 ),
                 "published under its field's name",
             ),
-            case(
-                "an extension field named like a member RFC 9457 defines",
-                quote::quote!(
-                    enum StoreError {
-                        #[problem(status = 404)]
-                        NotFound {
-                            #[problem(extension)]
-                            title: String,
-                        },
-                    }
-                ),
-                "the field `title` would be published as a member RFC 9457 defines",
-            ),
         ]
+    }
+
+    /// The refusal of an extension field by the name it is published under;
+    /// apart, so [`ledger`] stays one a reader can hold.
+    fn field_names_ledger() -> Vec<Case> {
+        vec![case(
+            "an extension field named like a member RFC 9457 defines",
+            quote::quote!(
+                enum StoreError {
+                    #[problem(status = 404)]
+                    NotFound {
+                        #[problem(extension)]
+                        title: String,
+                    },
+                }
+            ),
+            "the field `title` would be published as a member RFC 9457 defines",
+        )]
     }
 
     /// A field is checked against RFC 9457's members by the name it is
@@ -5514,6 +5519,7 @@ mod api_error {
         each_case_is_refused(headers_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
+        each_case_is_refused(field_names_ledger(), expand_inner);
     }
 
     /// One diagnostic site refuses three keys, so the ledger's single row per
@@ -5571,6 +5577,7 @@ mod api_error {
                 + headers_ledger().len()
                 + keys_ledger().len()
                 + constants_ledger().len()
+                + field_names_ledger().len()
                 - IN_ATTRIBUTE,
         );
     }
