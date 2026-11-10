@@ -2299,9 +2299,11 @@ async fn a_configured_force_still_forces_a_drain_the_handle_began() {
     let (service, started, _release) = blocking_service();
     let (begin_sender, begin_receiver) = tokio::sync::oneshot::channel();
     let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+    let (observed_sender, observed_receiver) = tokio::sync::oneshot::channel();
     let shutdown = crate::server::shutdown::Shutdown {
         future: Box::pin(async move {
             let _ = begin_receiver.await;
+            let _ = observed_sender.send(());
             Ok(Box::pin(async move {
                 let _ = force_receiver.await;
             }) as crate::server::shutdown::ForceFuture)
@@ -2321,11 +2323,21 @@ async fn a_configured_force_still_forces_a_drain_the_handle_began() {
     tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
         .await
         .expect("the request reaches the handler");
-    let stopping = tokio::spawn(running.shutdown());
+    let mut stopping = tokio::spawn(running.shutdown());
     until_refused(address).await;
     let _ = begin_sender.send(());
-    tokio::task::yield_now().await;
-    assert!(!stopping.is_finished(), "a first signal does not force");
+    tokio::time::timeout(std::time::Duration::from_secs(5), observed_receiver)
+        .await
+        .expect("the serving task observes the first signal")
+        .expect("the trigger reports its first signal");
+    // The serving task reacts to the first signal on the poll that observed
+    // it, so a drain it forced would end well inside this window.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), &mut stopping)
+            .await
+            .is_err(),
+        "a first signal does not force"
+    );
 
     let _ = force_sender.send(());
     let error = tokio::time::timeout(std::time::Duration::from_secs(5), stopping)
