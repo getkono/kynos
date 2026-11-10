@@ -10,7 +10,7 @@ error: `subset_of` takes some of a wider enum's variants, so it belongs on an en
 31 | #[problem(subset_of = ChunkRejection)]
    |           ^^^^^^^^^
 
-error: a subset answers with the wider enum's declarations, so `subset_of` takes no `status`, `title`, `type` or `base` of its own
+error: a subset answers with the wider enum's declarations, so `subset_of` takes no `status`, `title`, `type`, `base` or `extension` of its own
   --> tests/ui/macros/api_error_subset_refusals.rs:35:11
    |
 35 | #[problem(subset_of = ChunkRejection, base = "https://errors.example.com/")]

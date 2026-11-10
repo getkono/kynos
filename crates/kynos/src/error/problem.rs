@@ -594,9 +594,11 @@ fn narrowed_branch(
     for (name, schemas, sent) in &branch.members {
         let schema = match schemas.as_slice() {
             [only] => (*only).clone(),
-            several => object(SchemaObject {
-                any_of: Some(several.iter().map(|schema| (*schema).clone()).collect()),
-                ..SchemaObject::default()
+            several => value_set(several).unwrap_or_else(|| {
+                object(SchemaObject {
+                    any_of: Some(several.iter().map(|schema| (*schema).clone()).collect()),
+                    ..SchemaObject::default()
+                })
             }),
         };
         properties.insert((*name).to_owned(), schema);
@@ -617,6 +619,78 @@ fn narrowed_branch(
             }),
         ]),
         ..SchemaObject::default()
+    })
+}
+
+/// The schema a constant extension member is declared by: `const` its value,
+/// beside the JSON type that value has where it is a scalar.
+pub(crate) fn constant(value: Value) -> OpenApiSchema {
+    let ty = match &value {
+        Value::Null => Some(SchemaType::Null),
+        Value::Bool(_) => Some(SchemaType::Boolean),
+        Value::Number(number) if number.is_i64() || number.is_u64() => Some(SchemaType::Integer),
+        Value::Number(_) => Some(SchemaType::Number),
+        Value::String(_) => Some(SchemaType::String),
+        Value::Array(_) | Value::Object(_) => None,
+    };
+
+    object(SchemaObject {
+        ty: ty.map(TypeSet::One),
+        const_value: Some(value),
+        ..SchemaObject::default()
+    })
+}
+
+/// `schemas` as one `enum` of every value they admit, where each is only a
+/// `const` or an `enum` and all of them name one `type`; `None` otherwise,
+/// and they stay an `anyOf`.
+///
+/// Several failures publishing one URI and each sending its own constant
+/// under one name are the case: the value set a client switches on.
+fn value_set(schemas: &[&OpenApiSchema]) -> Option<OpenApiSchema> {
+    let mut ty: Option<&Option<TypeSet>> = None;
+    let mut values: Vec<Value> = Vec::new();
+
+    for schema in schemas {
+        let OpenApiSchema::Object(only) = schema else {
+            return None;
+        };
+        let bare = SchemaObject {
+            ty: only.ty.clone(),
+            const_value: only.const_value.clone(),
+            enumeration: only.enumeration.clone(),
+            ..SchemaObject::default()
+        };
+        if **only != bare || ty.is_some_and(|ty| *ty != only.ty) {
+            return None;
+        }
+        ty = Some(&only.ty);
+
+        let admitted = match (&only.const_value, &only.enumeration) {
+            (Some(value), None) => std::slice::from_ref(value),
+            (None, Some(values)) => values.as_slice(),
+            _ => return None,
+        };
+        for value in admitted {
+            if !values.contains(value) {
+                values.push(value.clone());
+            }
+        }
+    }
+
+    let ty = ty.cloned().flatten();
+    Some(if let [only] = values.as_slice() {
+        object(SchemaObject {
+            ty,
+            const_value: Some(only.clone()),
+            ..SchemaObject::default()
+        })
+    } else {
+        object(SchemaObject {
+            ty,
+            enumeration: Some(values),
+            ..SchemaObject::default()
+        })
     })
 }
 
