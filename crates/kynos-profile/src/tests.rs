@@ -22,7 +22,7 @@ use super::{
     Scenario, catalog,
     connection::{
         CONNECTION, KEPT_AFTER, connected,
-        tls::{Session, TLS},
+        tls::{Sealed, Session, TLS},
         wire::{http1, http1_answered},
     },
     driver::{Drained, Driver, FRAMES, Served, frames},
@@ -596,4 +596,32 @@ fn every_tls_row_is_answered_over_the_handshake_it_names_and_closes_cleanly() {
         assert_eq!(warm.handshake(), Some(expected), "{}", scenario.name);
         assert_eq!(tunnel.handshake(), Some(expected), "{}", scenario.name);
     }
+}
+
+/// A subscribed service opened over TLS goes through its own `connect_after`,
+/// which no TLS row reaches: it gives up the thread default before the
+/// region, as `connect` does, and still serves the handshake and the request.
+#[test]
+fn a_subscribed_service_serves_a_tls_connection_without_the_thread_default() {
+    let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
+    let traced = scenario("trace-sub");
+    let sealed = Sealed {
+        scenario: Scenario {
+            driver: Driver::Runtime,
+            ..traced
+        },
+        session: Session::Full,
+    };
+    let runner = sealed.scenario.driver.runner();
+    let endpoints = sealed.endpoints();
+    let mut tunnel = sealed.open(&runner, &endpoints);
+    assert!(
+        unsubscribed(),
+        "the thread default outlived `connect_after`"
+    );
+    tunnel
+        .serve(&runner)
+        .expect("the connection closes cleanly");
+    assert_eq!(tunnel.status(), traced.expected);
+    assert_eq!(tunnel.handshake(), Some(HandshakeKind::Full));
 }
