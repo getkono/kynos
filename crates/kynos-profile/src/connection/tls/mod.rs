@@ -51,7 +51,7 @@ pub mod endpoints;
 pub enum Session {
     /// A client the server never met: a full handshake, then the request.
     Full,
-    /// A client resuming, with a ticket, the session a full handshake in setup
+    /// A client resuming a session with a ticket a connection served in setup
     /// issued it: a resumed handshake, then the request.
     Resumed,
     /// The request as the second on a session whose handshake and first
