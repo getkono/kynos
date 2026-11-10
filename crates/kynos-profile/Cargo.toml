@@ -55,8 +55,9 @@ http = { workspace = true }
 http-body = { workspace = true }
 # `protobuf-echo`'s message, which `prost::Message`'s derive names by path.
 prost = { workspace = true }
-# The authority and Ed25519 server identity `src/connection/tls.rs` mints in
-# setup, so no fixture expires and no key is committed.
+# The authority and Ed25519 server identity
+# `src/connection/tls/endpoints.rs` mints in setup, so no fixture expires and
+# no key is committed.
 rcgen = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 # Builds the `echo-post` body outside the measured region, and writes the
@@ -68,7 +69,7 @@ serde_json = { workspace = true }
 # connection over. This package is unpublished, so `architecture.md`'s runtime
 # allowance, which governs the published crates, does not read it.
 tokio = { workspace = true, features = ["rt", "time", "io-util"] }
-# `src/connection/tls.rs`'s server, which terminates TLS over the duplex before
+# `src/connection/tls/`'s server, which terminates TLS over the duplex before
 # `Server::serve_io` is handed the stream, and, through its `rustls`, the
 # client that drives it; `aws-lc-rs`, the provider `kynos`'s `tls` names.
 tokio-rustls = { workspace = true }

@@ -585,9 +585,9 @@ fn untunnelled((runner, mut tunnel, ended, expected): Untunnelled) {
     drop((tunnel, runner));
 }
 
-// `connection/tls.rs`'s `TLS` table: the plaintext group's request over a TLS
-// 1.3 session terminated on the duplex, counted from each poll of the server
-// so the client answering between polls is not. `aws-lc-rs`'s crypto is
+// `connection/tls/mod.rs`'s `TLS` table: the plaintext group's request over a
+// TLS 1.3 session terminated on the duplex, counted from each poll of the
+// server so the client answering between polls is not. `aws-lc-rs`'s crypto is
 // statically linked, so `profile_report.py` reports its instructions apart
 // from the program's and compares only the rest.
 #[library_benchmark(setup = tunnelled, teardown = untunnelled, config = rounds())]
