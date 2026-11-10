@@ -2157,6 +2157,240 @@ async fn a_second_termination_signal_forces_the_drain() {
     client.await.expect("client task joins");
 }
 
+/// Connects to `address` until it is refused, as a closed listener is.
+///
+/// Windows answers a reset by retrying the SYN, so a connect to a closed port
+/// is refused only after about two seconds where Linux and macOS refuse it at
+/// once. Each attempt is bounded past that.
+async fn until_refused(address: std::net::SocketAddr) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::net::TcpStream::connect(address),
+            )
+            .await
+            {
+                Ok(Err(_)) => break,
+                Ok(Ok(stream)) => drop(stream),
+                Err(_) => {}
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the listener closes");
+}
+
+/// `Running::shutdown` drains the request in flight before it resolves, to
+/// the clean result `serve` returns, and the handle names the address it
+/// serves on.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spawned_server_drains_its_request_when_its_handle_shuts_it_down() {
+    let (service, started, release) = blocking_service();
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    assert_eq!(running.local_addrs(), [address]);
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    let stopping = tokio::spawn(running.shutdown());
+    until_refused(address).await;
+    assert!(!stopping.is_finished(), "the request is still draining");
+
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(5), stopping)
+        .await
+        .expect("the drain completes")
+        .expect("the shutdown task joins")
+        .expect("a complete drain is clean");
+    let response = client.await.expect("client task joins");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("ok"), "{response}");
+}
+
+/// The drain `Running::shutdown` begins is bounded by the server's
+/// `shutdown_timeout`, and the timeout is what it reports.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spawned_server_reports_its_shutdown_timeout() {
+    let timeout = std::time::Duration::from_millis(50);
+    let (service, started, _release) = blocking_service();
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(timeout)
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), running.shutdown())
+        .await
+        .expect("the drain deadline ends the shutdown")
+        .expect_err("an incomplete drain is reported");
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout: reported })
+                if *reported == timeout
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
+/// Dropping the handle begins shutdown without anyone waiting for it.
+#[tokio::test]
+async fn dropping_a_spawned_servers_handle_shuts_it_down() {
+    let running = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    drop(running);
+    until_refused(address).await;
+}
+
+/// A configured trigger stops a spawned server while its handle is still
+/// held, and the handle then reports that shutdown's result.
+#[tokio::test]
+async fn a_configured_trigger_still_stops_a_spawned_server() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let running = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+
+    let _ = shutdown_sender.send(());
+    until_refused(address).await;
+    running
+        .shutdown()
+        .await
+        .expect("the configured shutdown drained cleanly");
+}
+
+/// Once the handle has begun shutdown, a configured trigger keeps its own
+/// meaning: its first signal asks for the shutdown already under way, and the
+/// force it then yields forces the drain, as a second built-in signal does.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_configured_force_still_forces_a_drain_the_handle_began() {
+    let (service, started, _release) = blocking_service();
+    let (begin_sender, begin_receiver) = tokio::sync::oneshot::channel();
+    let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async move {
+            let _ = begin_receiver.await;
+            Ok(Box::pin(async move {
+                let _ = force_receiver.await;
+            }) as crate::server::shutdown::ForceFuture)
+        }),
+    };
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(std::time::Duration::from_secs(25))
+        .graceful_shutdown(shutdown)
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    let stopping = tokio::spawn(running.shutdown());
+    until_refused(address).await;
+    let _ = begin_sender.send(());
+    tokio::task::yield_now().await;
+    assert!(!stopping.is_finished(), "a first signal does not force");
+
+    let _ = force_sender.send(());
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), stopping)
+        .await
+        .expect("the force ends the drain promptly")
+        .expect("the shutdown task joins")
+        .expect_err("the forced drain is reported");
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
+/// A configured trigger that fails ends a spawned server with its error,
+/// which the handle reports rather than discards.
+#[tokio::test]
+async fn a_spawned_server_reports_a_failing_shutdown_trigger() {
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async { Err(std::io::Error::other("no signal for you")) }),
+    };
+    let running = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(shutdown)
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), running.shutdown())
+        .await
+        .expect("the failed trigger ends serving")
+        .expect_err("the failed trigger is reported");
+    let crate::Error::Server(crate::server::error::ServerError::Signal(source)) = &error else {
+        panic!("not a signal failure: {error:?}");
+    };
+    assert_eq!(source.to_string(), "no signal for you");
+}
+
+/// A server listening on Unix domain sockets alone has no TCP address for
+/// its handle to name.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_spawned_unix_only_server_has_no_local_addr() {
+    let directory = SocketDirectory::new("spawn");
+    let listener = std::os::unix::net::UnixListener::bind(directory.0.join("api.sock"))
+        .expect("the socket binds");
+    let running = crate::server::Server::new(test_service())
+        .unix_listener(listener)
+        .prepare()
+        .await
+        .expect("a Unix listener alone is something to listen on")
+        .spawn();
+
+    assert_eq!(running.local_addr(), None);
+    assert!(running.local_addrs().is_empty());
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
 /// The open-file limit `prepare` fits to the connection cap. The cases that
 /// set a limit do so in-process, which is sound only because nextest runs
 /// every test in its own process.
