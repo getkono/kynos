@@ -1087,7 +1087,8 @@ request on an HTTP/1.1 connection through `Server::serve_io` over a duplex,
 without a body and with one, and holds each beside the same request's
 in-process count: exactly on Linux and Windows, where it was read, and as a
 floor elsewhere, macOS's `pthread`-backed std locks each adding a block. The `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
-count the rest of the connection path to the duplex, as a trend.
+count the rest of the connection path to the duplex, as a trend, save
+`connection_tls`, which reaches a TLS listener over a loopback socket.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
 — zero for `Body::empty`, one for `Body::from_bytes` — and
 [`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a

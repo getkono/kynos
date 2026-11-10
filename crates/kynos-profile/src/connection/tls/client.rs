@@ -54,7 +54,7 @@ impl Client {
     }
 
     /// Queues `octets` as application data and writes what the client can
-    /// send into the duplex: before the handshake ends, only its first
+    /// send into the socket: before the handshake ends, only its first
     /// flight, and the octets with its `Finished`.
     pub(crate) fn send(&mut self, octets: &[u8]) {
         self.session
