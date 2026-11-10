@@ -277,7 +277,7 @@ fn constants(constants: Vec<Constant>, extensions: &[Extension]) -> syn::Result<
     for constant in &constants {
         if extensions
             .iter()
-            .any(|extension| extension.name == constant.name)
+            .any(|extension| extension.wire_name() == constant.name)
         {
             return Err(syn::Error::new(
                 constant.span,

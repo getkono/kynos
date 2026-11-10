@@ -253,7 +253,7 @@ fn problem(failure: &Failure) -> TokenStream2 {
     // An `Option` member is sent only when it holds a value, as `detail` is.
     let with_extensions = failure.extensions.iter().map(|extension| {
         let binding = &extension.name;
-        let name = binding.to_string();
+        let name = extension.wire_name();
         let (ty, value) = extension.optional().map_or_else(
             || (&extension.ty, quote!(#binding)),
             |inner| (inner, quote!(value)),

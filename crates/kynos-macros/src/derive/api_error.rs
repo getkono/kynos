@@ -65,7 +65,7 @@ mod subset;
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote, quote_spanned};
-use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, spanned::Spanned};
+use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, ext::IdentExt, spanned::Spanned};
 
 use args::{Constant, Position, parse_problem};
 use describe::responses;
@@ -269,14 +269,20 @@ struct Failure {
     doc: Option<String>,
 }
 
-/// A `#[problem(extension)]` field: the name it is published under, which is
-/// also the binding the pattern gives it, and its type.
+/// A `#[problem(extension)]` field: its name, which is the binding the pattern
+/// gives it and, unprefixed, the member it is published under, and its type.
 struct Extension {
     name: Ident,
     ty: Type,
 }
 
 impl Extension {
+    /// The member's name on the wire and in the schema, a raw identifier
+    /// unprefixed, as serde and the `Schema` derive spell it.
+    fn wire_name(&self) -> String {
+        self.name.unraw().to_string()
+    }
+
     /// The `T` of an `Option<T>` member, which is sent only when it holds a
     /// value; the recognition is syntactic, so an alias for it is sent always.
     fn optional(&self) -> Option<&Type> {

@@ -205,7 +205,7 @@ fn constant(constant: &Constant) -> TokenStream2 {
 /// schema, and whether every occurrence sends it. An `Option<T>` is described
 /// by `T`, since `None` is not sent rather than sent as `null`.
 fn member(extension: &Extension) -> TokenStream2 {
-    let name = extension.name.to_string();
+    let name = extension.wire_name();
     let (ty, sent) = extension
         .optional()
         .map_or((&extension.ty, true), |inner| (inner, false));
