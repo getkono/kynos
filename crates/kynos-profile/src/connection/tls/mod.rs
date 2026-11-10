@@ -4,13 +4,11 @@
 //! [`Connection::from_tls_peer`] as a caller that terminates TLS itself
 //! records it.
 //!
-//! The server's `rustls` configuration is the one `TlsConfig` builds by
-//! default: `aws-lc-rs`, TLS 1.2 and 1.3, ALPN `h2` then `http/1.1`, no early
-//! data, and stateless tickets under `aws-lc-rs`'s ticketer. It is restated
-//! here because `serve_io` terminates no TLS and a listener's acceptor is
-//! reached only through a socket, so these rows count `rustls`'s handshake and
-//! record layer and the serving path behind them, and not Kynos's own
-//! acceptor.
+//! The server's configuration, [`endpoints`]', is the one `TlsConfig` builds
+//! by default, restated because `serve_io` terminates no TLS and a listener's
+//! acceptor is reached only through a socket: these rows count `rustls`'s
+//! handshake and record layer and the serving path behind them, and not
+//! Kynos's own acceptor.
 //!
 //! A handshake is a conversation, so unlike [`super`]'s rows a client runs
 //! inside the region: [`Tunnel::serve`] polls the server in rounds, each one
@@ -19,50 +17,33 @@
 //! itself, so the client's work, its handshake and its encryption, is never
 //! counted; what is, is what a runtime's poll of the server's task would run
 //! each time the client's bytes arrived.
-//!
-//! The server's identity is an Ed25519 certificate, whose signature has one
-//! length, so no count moves with how a signature happened to encode.
 
 use std::future::{Future, poll_fn};
 use std::hint::black_box;
-use std::io::{self, Read as _, Write as _};
+use std::io;
 use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll, Waker};
+use std::task::Poll;
 
-use bytes::BytesMut;
 use kynos::{
     extract::connection::{Connection, TlsIdentity},
     http::StatusCode,
 };
-use rcgen::{
-    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, IsCa, KeyPair, PKCS_ED25519,
-};
 use tokio::io::DuplexStream;
 use tokio_rustls::{
     TlsAcceptor,
-    rustls::{
-        ClientConfig, ClientConnection, HandshakeKind, RootCertStore, ServerConfig,
-        ServerConnection,
-        client::Resumption,
-        crypto::aws_lc_rs,
-        pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer, ServerName},
-    },
+    rustls::{HandshakeKind, ServerConnection},
 };
 
-use super::{CAPACITY, LOCAL, PEER, read, warm, wire::http1, wire::http1_answered, write};
+use self::{client::Client, endpoints::Endpoints};
+use super::{CAPACITY, LOCAL, PEER, warm, wire::http1, wire::http1_answered};
 use crate::{
     Scenario,
     app::{get, service},
     driver::{Connecting, Driver, Handshake, Runner},
 };
 
-/// The name the server's certificate is issued for, and the client's SNI.
-const SERVER_NAME: &str = "localhost";
-
-/// The protocol the client offers, so that every row is HTTP/1.1 and the
-/// `connection_h2` group's `Date` encoding stays out of an exact group.
-const ALPN_HTTP1: &[u8] = b"http/1.1";
+pub(crate) mod client;
+pub mod endpoints;
 
 /// How far into its life a [`Sealed`] row's connection is when its region
 /// starts.
@@ -139,88 +120,6 @@ pub fn sealed(name: &str) -> Sealed {
         .unwrap_or_else(|| panic!("no TLS row is named {name:?}"))
 }
 
-/// Both ends' configuration, minted in setup and shared by every connection
-/// a row opens: a server identity issued by an authority the client trusts,
-/// and the server's ticketer, which the warming connection uses first, so
-/// that the region's handshake is not the configuration's first.
-pub struct Endpoints {
-    server: Arc<ServerConfig>,
-    client: Arc<ClientConfig>,
-}
-
-impl std::fmt::Debug for Endpoints {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("Endpoints").finish_non_exhaustive()
-    }
-}
-
-impl Endpoints {
-    /// Mints an authority and a server identity, and configures both ends for
-    /// `session`: a client that keeps tickets for [`Session::Resumed`], and
-    /// one that keeps none otherwise, so that however often the server served
-    /// it, its every handshake is full.
-    ///
-    /// # Panics
-    ///
-    /// When a key, a certificate or a configuration cannot be built, which
-    /// no host should make happen.
-    #[must_use]
-    pub fn new(session: Session) -> Self {
-        let provider = Arc::new(aws_lc_rs::default_provider());
-
-        let mut authority = CertificateParams::new(Vec::new()).expect("no subject names");
-        authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-        authority
-            .distinguished_name
-            .push(DnType::CommonName, "kynos-profile authority");
-        let authority = CertifiedIssuer::self_signed(
-            authority,
-            KeyPair::generate_for(&PKCS_ED25519).expect("an Ed25519 key"),
-        )
-        .expect("a self-signed authority");
-        let key = KeyPair::generate_for(&PKCS_ED25519).expect("an Ed25519 key");
-        let mut leaf =
-            CertificateParams::new(vec![SERVER_NAME.to_owned()]).expect("a valid subject name");
-        leaf.distinguished_name
-            .push(DnType::CommonName, "kynos-profile server");
-        let certificate = leaf
-            .signed_by(&key, &authority)
-            .expect("an issued certificate");
-
-        let mut server = ServerConfig::builder_with_provider(Arc::clone(&provider))
-            .with_safe_default_protocol_versions()
-            .expect("aws-lc-rs supports the default versions")
-            .with_no_client_auth()
-            .with_single_cert(
-                vec![certificate.der().clone()],
-                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.serialize_der())),
-            )
-            .expect("the server identity is usable");
-        server.alpn_protocols = vec![b"h2".to_vec(), ALPN_HTTP1.to_vec()];
-        server.max_early_data_size = 0;
-        server.ticketer = aws_lc_rs::Ticketer::new().expect("a ticketer");
-
-        let mut roots = RootCertStore::empty();
-        roots
-            .add(authority.der().clone())
-            .expect("the authority is a usable trust anchor");
-        let mut client = ClientConfig::builder_with_provider(provider)
-            .with_safe_default_protocol_versions()
-            .expect("aws-lc-rs supports the default versions")
-            .with_root_certificates(roots)
-            .with_no_client_auth();
-        client.alpn_protocols = vec![ALPN_HTTP1.to_vec()];
-        if session != Session::Resumed {
-            client.resumption = Resumption::disabled();
-        }
-
-        Self {
-            server: Arc::new(server),
-            client: Arc::new(client),
-        }
-    }
-}
-
 /// A TLS connection made ready outside the region: the server's future
 /// unpolled, or for [`Session::Established`] polled until the first request
 /// was answered, and the client's end of the duplex holding every octet the
@@ -228,14 +127,6 @@ impl Endpoints {
 pub struct Tunnel {
     connection: Connecting,
     client: Client,
-}
-
-/// The client's half: its end of the duplex and its session.
-struct Client {
-    stream: DuplexStream,
-    session: ClientConnection,
-    /// What the client has decrypted since the last request it sent.
-    received: Vec<u8>,
 }
 
 impl std::fmt::Debug for Tunnel {
@@ -274,29 +165,20 @@ impl Sealed {
         }
         let (mut client, mut io) = tokio::io::duplex(CAPACITY);
         warm(&mut io, &mut client);
-        let acceptor = TlsAcceptor::from(Arc::clone(&endpoints.server));
         let mut tunnel = Tunnel {
-            connection: (self.scenario.service)().connect_after(accept(acceptor, io)),
-            client: Client {
-                stream: client,
-                session: ClientConnection::new(
-                    Arc::clone(&endpoints.client),
-                    ServerName::try_from(SERVER_NAME).expect("a DNS name"),
-                )
-                .expect("a client session"),
-                received: Vec::new(),
-            },
+            connection: (self.scenario.service)().connect_after(accept(endpoints.acceptor(), io)),
+            client: Client::new(client, endpoints.client()),
         };
-        let request = http1((self.scenario.request)(), false, true);
         if self.session == Session::Established {
-            let first = http1((self.scenario.request)(), false, false);
-            tunnel.client.send(&first);
+            tunnel
+                .client
+                .send(&http1((self.scenario.request)(), false, false));
             tunnel.answer_first(runner);
             tunnel.client.received.clear();
         }
-        // Before the handshake ends, rustls holds the request until it can be
-        // sent, which is with the client's `Finished`.
-        tunnel.client.send(&request);
+        tunnel
+            .client
+            .send(&http1((self.scenario.request)(), false, true));
         tunnel
     }
 }
@@ -415,7 +297,7 @@ impl Tunnel {
     /// How the measured session's handshake went, once it has.
     #[must_use]
     pub fn handshake(&self) -> Option<HandshakeKind> {
-        self.client.session.handshake_kind()
+        self.client.handshake()
     }
 
     /// Polls, the client answering between polls, until the client has
@@ -435,53 +317,5 @@ impl Tunnel {
                 }
             }
         }));
-    }
-}
-
-impl Client {
-    /// Queues `octets` as application data and writes what the client can
-    /// send into the duplex.
-    fn send(&mut self, octets: &[u8]) {
-        self.session
-            .writer()
-            .write_all(octets)
-            .expect("the client buffers its request");
-        self.flush();
-    }
-
-    /// The client's turn: decrypts what the server wrote, then writes what
-    /// that let it send. `true` when it wrote anything.
-    fn exchange(&mut self) -> bool {
-        let mut octets = BytesMut::new();
-        let mut context = Context::from_waker(Waker::noop());
-        while let Poll::Ready(true) = read(&mut self.stream, &mut octets, &mut context) {}
-        let mut unread = &octets[..];
-        while !unread.is_empty() {
-            self.session
-                .read_tls(&mut unread)
-                .expect("the client reads what the server wrote");
-            self.session
-                .process_new_packets()
-                .expect("the server speaks TLS the client accepts");
-        }
-        match self.session.reader().read_to_end(&mut self.received) {
-            Ok(_) => {}
-            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
-            Err(error) => panic!("the client could not read the response: {error}"),
-        }
-        self.flush()
-    }
-
-    /// Writes every record the client has ready into the duplex; `true` when
-    /// there was one.
-    fn flush(&mut self) -> bool {
-        let mut octets = Vec::new();
-        while self.session.wants_write() {
-            self.session
-                .write_tls(&mut octets)
-                .expect("a Vec accepts every record");
-        }
-        write(&mut self.stream, &octets);
-        !octets.is_empty()
     }
 }

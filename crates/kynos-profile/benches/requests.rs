@@ -12,6 +12,9 @@
 //! The `connection_h1` and `connection_h2` groups' region is instead [`Open::serve`]: one connection
 //! through `Server::serve_io`, driven to its end, with the encoded request
 //! written into its duplex in setup and the response read back in teardown.
+//! The `connection_tls` group's is [`Tunnel::serve`], and both instruments
+//! count from each `round` it polls the server with, not from the benchmark
+//! function, so the client answering between rounds is not counted.
 //!
 //! What gungraun prints is not the number of record: its Callgrind total
 //! includes glibc's allocator, whose cost depends on the heap's history and
