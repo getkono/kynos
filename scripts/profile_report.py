@@ -102,7 +102,7 @@ MEASURED, NOTHING, DISAGREE, INEXACT, EXCEEDED = 0, 1, 2, 3, 4
 # may exceed it. Runs of one build on three CI CPU models have counted every
 # exact row identically, so this is headroom for a runner whose CPU leads a
 # dependency to another routine, not for noise: one transparent layer, the
-# smallest step a request takes, costs about 20% of a static match. A heap
+# smallest step a request takes, costs 315, a sixth of a static match. A heap
 # count has none, since what is asked of the allocator is not the CPU's.
 TOLERANCE_PER_MILLE = 5
 
