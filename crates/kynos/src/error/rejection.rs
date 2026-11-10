@@ -747,6 +747,7 @@ impl IntoResponse for RangeRejection {
     }
 }
 
+#[cfg(feature = "assets")]
 impl RangeRejection {
     /// The 416 an asset endpoint answers the request whose head is `head`
     /// with: carrying the members the router installs, and the
