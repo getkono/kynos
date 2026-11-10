@@ -6186,6 +6186,15 @@ mod security_scheme {
                     "`scope` is already set",
                 ),
                 case(
+                    "a read header group written twice",
+                    quote::quote!(
+                        #[security(bearer, reads = A)]
+                        #[security(reads = B)]
+                        struct Bearer;
+                    ),
+                    "`reads` is already set",
+                ),
+                case(
                     "a challenge written twice",
                     quote::quote!(
                         #[security(bearer, challenge = "Bearer")]

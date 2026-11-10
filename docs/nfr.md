@@ -468,6 +468,7 @@ rewrite.
 | correctness | A member `Router::problem_members` installs is sent on every problem whose response declares it, and declared on every response whose problem sends it | [`tests/problem_members.rs`](../crates/kynos/tests/problem_members.rs) validating each refusal's body with `assert_conformance` against the schema requiring the members; a hidden `IntoResponse` and `Responses` pair that a type overrides both halves of or neither | `enforced` for extractor and guard rejections and the router's fallbacks; `absent` for a returned rejection, an interceptor's refusal, a recovered panic's 500, a ranged `Delivery`'s 416 and a CORS preflight's 405, which carry none and declare none ([`errors.md`](errors.md#members-on-the-problems-kynos-renders), [#1325](https://github.com/getkono/kynos/issues/1325)) |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
+| security | A header a carrier reads beside its credential is declared on every operation a guard naming the scheme covers, required only where every admitted request presents that credential | A derived `reads = T` writes `SecurityScheme::reads` and the carrier from one `T`; [`tests/derives.rs`](../crates/kynos/tests/derives.rs) reads the group only beside a presented credential and declares it, and [`security/auth/tests.rs`](../crates/kynos/src/security/auth/tests.rs) declares it required under `Auth`, `Scoped` and `AllOf` and optional under `MaybeAuth` and `AnyOf`. A hand-written `Carries` reading more than its credential is held to its own override | `enforced` for a derived carrier; `absent` for a hand-written one, which the type system cannot tie to its declaration |
 | performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
 | performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures in [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
 
@@ -876,8 +877,10 @@ way: `Router::build` and the match table it fills sit in a private
 `derive/api_error/` and
 `derive/security_scheme/` were split because each held two concerns, a derive's
 attribute grammar and the code that expands it, and since nothing in
-`kynos-macros` is public but the derives, the split cost no path. The rest were
-not.
+`kynos-macros` is public but the derives, the split cost no path.
+`derive/security_scheme/carrier.rs` later took the derived `Carries` and the
+`reads` declaring what it reads beside the credential, which change when a
+carrier reads more rather than when the description does. The rest were not.
 
 `middleware/limits/` was split at the path cost, because it was never one
 family: four interceptors sharing no type, each with its own response and its

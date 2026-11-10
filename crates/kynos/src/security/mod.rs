@@ -79,11 +79,14 @@ pub mod schemes;
 
 use std::future::Future;
 
+use kynos_openapi::Parameter;
+
 use crate::{
     error::rejection::AuthRejection,
     extract::describe::Describe,
     http::Parts,
     response::{IntoResponse, Responses},
+    schema::registry::Registry,
 };
 
 /// What closes the set of guards.
@@ -377,6 +380,26 @@ pub trait SecurityScheme: Send + Sync + 'static {
     #[must_use]
     fn insufficient_scope_challenge() -> Option<&'static str> {
         None
+    }
+
+    /// The request headers this scheme's carrier reads beside its
+    /// credential, as header parameters.
+    ///
+    /// Declared on every operation a guard naming the scheme covers, so a
+    /// header the guard depends on — a signature over the request, say — is in
+    /// the description without a handler argument that only declares it. A
+    /// guard that admits a request without this scheme's credential —
+    /// [`MaybeAuth`](auth::MaybeAuth), or an [`AnyOf`](requirement::AnyOf)
+    /// alternative — declares each as not required.
+    ///
+    /// `#[security(..., reads = T)]` writes this from a header group `T` and
+    /// reads `T` beside the credential; a hand-written
+    /// [`Carries`](carrier::Carries) that reads more than its credential
+    /// declares it here. The default reads nothing more.
+    #[must_use]
+    fn reads(registry: &mut Registry) -> Vec<Parameter> {
+        let _ = registry;
+        Vec::new()
     }
 }
 

@@ -16,7 +16,8 @@
 //! ASCII, its reading of an absent optional header as `None`, the value a
 //! fixed header is written, compared and described as, and the 500 a value
 //! that is no field value is refused with; the text a derived `ParamValue`
-//! reads and writes; and the response a derived `Reply` or `ApiError` writes.
+//! reads and writes; the response a derived `Reply` or `ApiError` writes; and
+//! a derived carrier's reading of its `reads` group beside the credential.
 //! Their tests call the derived code directly, with no server. What *is*
 //! checked beyond compiling is the description a derive emits, and what the
 //! default `QueryParams::parameters` makes of a derived schema.
@@ -268,6 +269,33 @@ fn every_derive_implements_its_trait() {
     implements_responses::<CreateReply>();
 }
 
+/// The signature a signed request carries beside its bearer token.
+#[derive(HeaderParams)]
+struct RequestSignature {
+    #[header(rename = "Signature")]
+    signature: String,
+}
+
+/// A carrier reading a header beside its credential.
+#[derive(SecurityScheme)]
+#[security(bearer, reads = RequestSignature)]
+struct SignedRequest;
+
+/// The same, handing absence to the authenticator.
+#[derive(SecurityScheme)]
+#[security(bearer, carrier = optional, reads = RequestSignature)]
+struct OptionalSignedRequest;
+
+/// A hand-written carrier's declaration, written by the derive alone.
+#[derive(SecurityScheme)]
+#[security(bearer, carrier = manual, reads = RequestSignature)]
+struct ManualSignedRequest;
+
+/// A group that reads headers it does not describe.
+#[derive(SecurityScheme)]
+#[security(bearer, reads = Provenance)]
+struct ProvenancedBearer;
+
 fn presents<S: Carries<Presented = P>, P>() {}
 
 /// Each scheme kind is read back as its own credential type, so a kind that
@@ -280,6 +308,75 @@ fn each_scheme_kind_presents_its_own_credential() {
     presents::<DigestLogin, SchemeCredentials>();
     presents::<PartnerCertificate, PeerCertificates>();
     presents::<OptionalBearer, Option<BearerToken>>();
+    presents::<SignedRequest, (BearerToken, RequestSignature)>();
+    presents::<OptionalSignedRequest, Option<(BearerToken, RequestSignature)>>();
+}
+
+/// The head of a request carrying `fields`.
+fn request_parts(fields: &[(&str, &str)]) -> kynos::http::Parts {
+    let fields: Vec<(&str, &[u8])> = fields
+        .iter()
+        .map(|(name, value)| (*name, value.as_bytes()))
+        .collect();
+    let mut request = kynos::http::Request::new(kynos::http::body::Body::empty());
+    *request.headers_mut() = header_map(&fields);
+    request.into_parts().0
+}
+
+/// A derived carrier with `reads` decodes the group only beside a presented
+/// credential: an anonymous request is absent whatever else it carries, and a
+/// credential whose group does not decode is refused as malformed.
+#[test]
+fn a_derived_carrier_reads_its_group_beside_the_credential() {
+    let signed = request_parts(&[("authorization", "Bearer t-1"), ("signature", "s-1")]);
+    let (token, read) = SignedRequest::present(&signed)
+        .expect("a signed request is read")
+        .expect("a credential was presented");
+    assert_eq!(token.as_str(), "t-1");
+    assert_eq!(read.signature, "s-1");
+
+    for anonymous in [request_parts(&[]), request_parts(&[("signature", "s-1")])] {
+        assert!(matches!(SignedRequest::present(&anonymous), Ok(None)));
+        assert!(matches!(
+            OptionalSignedRequest::present(&anonymous),
+            Ok(Some(None))
+        ));
+    }
+
+    let unsigned = request_parts(&[("authorization", "Bearer t-1")]);
+    for refused in [
+        SignedRequest::present(&unsigned).err(),
+        OptionalSignedRequest::present(&unsigned).err(),
+    ] {
+        let refused = refused.expect("a credential missing its signature is refused");
+        assert_eq!(refused.status(), kynos::http::StatusCode::UNAUTHORIZED);
+    }
+
+    // A malformed credential is refused before the group is read.
+    let malformed = request_parts(&[("authorization", "Basic dTpw"), ("signature", "s-1")]);
+    assert!(SignedRequest::present(&malformed).is_err());
+}
+
+/// The header names `S` declares it reads beside its credential, each with
+/// whether it is required.
+fn declared_reads<S: SecuritySchemeTrait>() -> Vec<(String, Option<bool>)> {
+    let mut registry = kynos::schema::registry::Registry::new();
+    S::reads(&mut registry)
+        .into_iter()
+        .map(|parameter| (parameter.name, parameter.required))
+        .collect()
+}
+
+/// `reads = T` declares `T`'s headers, with or without the derived carrier,
+/// and only where `T` is described; a scheme naming none declares none.
+#[test]
+fn a_derived_scheme_declares_the_group_it_reads() {
+    let signature = vec![("Signature".to_owned(), Some(true))];
+    assert_eq!(declared_reads::<SignedRequest>(), signature);
+    assert_eq!(declared_reads::<OptionalSignedRequest>(), signature);
+    assert_eq!(declared_reads::<ManualSignedRequest>(), signature);
+    assert_eq!(declared_reads::<ProvenancedBearer>(), []);
+    assert_eq!(declared_reads::<BearerAuth>(), []);
 }
 
 #[test]

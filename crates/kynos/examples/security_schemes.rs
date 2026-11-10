@@ -37,11 +37,12 @@
 //!   once, so neither is a string a handler passes or an authorizer parses.
 //!   And both are checked: every guard naming `DelegatedAccess` hands its
 //!   scopes to `authorize`, exactly as `/reports` hands it `ReadReports`.
-//! * **A context declares what it can verify.** One `App`, seven
+//! * **A context declares what it can verify.** One `App`, eight
 //!   implementations, so the set of schemes an application supports is visible
 //!   in one place rather than spread across the handlers requiring them. Only
-//!   one of them verifies for real, one reports its store down, and the other
-//!   five say so in their name.
+//!   one of them verifies for real, one reports its store down, one is handed
+//!   a header its carrier read beside the token, and the other five say so in
+//!   their name.
 //! * **An operation takes one guard.** A second credential argument does not
 //!   compile, because both would run while the description listed them as
 //!   alternatives. `/exports` accepts either of two schemes through `AnyOf`,
@@ -315,6 +316,53 @@ impl Authenticates<SessionCookie> for App {
     }
 }
 
+/// A peer's bearer token, sent with a signature beside it.
+///
+/// `reads = RequestSignature` names the header the signature travels in. The
+/// carrier reads it beside the token, so the authenticator is handed both, and
+/// every operation this scheme guards declares `Signature` without a handler
+/// argument that exists only to declare it.
+#[derive(SecurityScheme)]
+#[security(bearer, reads = RequestSignature)]
+struct PeerToken;
+
+/// The header `PeerToken`'s carrier reads beside the token.
+#[derive(HeaderParams)]
+struct RequestSignature {
+    #[header(rename = "Signature")]
+    signature: String,
+}
+
+/// A stand-in for a peer's signature check.
+///
+/// A real one verifies the signature with the peer's key. One computed over
+/// the method and path needs the request line as well, which the derived
+/// carrier does not present: such a scheme writes `carrier = manual` and keeps
+/// `reads` for the declaration.
+struct Peers;
+
+impl<C: Sync> Authenticator<PeerToken, C> for Peers {
+    async fn authenticate(
+        &self,
+        (token, signed): (BearerToken, RequestSignature),
+        context: &C,
+    ) -> Result<String, AuthRejection> {
+        let _ = context;
+        if signed.signature.is_empty() {
+            return Err(AuthRejection::unauthenticated());
+        }
+        Ok(token.into_inner())
+    }
+}
+
+impl Authenticates<PeerToken> for App {
+    type Authenticator = Peers;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Peers
+    }
+}
+
 /// One stand-in, for the five schemes whose verifier would be arbitrary.
 ///
 /// A client certificate is checked against a CA, a federated identity against
@@ -352,7 +400,7 @@ impl<C: Sync> Authorizer<DelegatedAccess, C, Grant> for Rejects {
 
 /// The application context.
 ///
-/// Two fields, seven implementations. A context declares what it can verify, so
+/// Two fields, eight implementations. A context declares what it can verify, so
 /// the set of schemes an application supports is visible in one place rather
 /// than spread across the handlers that happen to require them.
 struct App {
@@ -466,6 +514,13 @@ async fn federated_me(auth: Auth<Federated>) -> NoContent {
     NoContent
 }
 
+/// Accepts a peer's signed sync, declaring `Signature` beside the token.
+#[kynos::post("/peers/sync")]
+async fn peer_sync(auth: Auth<PeerToken>) -> NoContent {
+    let _ = auth.into_inner();
+    NoContent
+}
+
 /// The scopes one operation demands, as a type.
 ///
 /// Distinct from the scopes on `DelegatedAccess`: those are what every
@@ -555,6 +610,7 @@ async fn main() -> kynos::Result<()> {
         partner_event,
         delegated_users,
         federated_me,
+        peer_sync,
         reports,
         report_summary,
         exports,

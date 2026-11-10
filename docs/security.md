@@ -102,6 +102,33 @@ request, so it *cannot* reach for a field the scheme did not declare. The
 constraint is the feature: every framework that configures a credential finder
 beside its documentation has two statements that agree until someone edits one.
 
+### A carrier may read headers beside its credential
+
+A signed request carries a signature header next to its token, and a guard that
+checks one depends on a header the credential's own field does not name.
+`#[security(bearer, reads = Signature)]` names a `HeaderParams` group: the
+derived carrier decodes it beside the credential and presents
+`(BearerToken, Signature)`, and `SecurityScheme::reads` declares its fields on
+every operation a guard naming the scheme covers. No handler takes a `Headers`
+argument it never reads to put the header in the description.
+
+| Guard | The read headers are declared |
+| --- | --- |
+| `Auth<S>`, `Scoped<S, R>`, `AllOf` | as the group declares them |
+| `MaybeAuth<S>`, an `AnyOf` alternative | none required: a request may present no credential, or another scheme's |
+
+The group is read only where the credential was presented, so an anonymous
+request is never refused for lacking it; one that does not decode is a 401,
+as a malformed credential is. A hand-written `Carries` that reads more than its
+credential overrides `SecurityScheme::reads` to say so; under
+`carrier = manual`, `reads = T` writes that override alone.
+
+`reads` is a provided method on `SecurityScheme` rather than a defaulted
+associated type on `Carries`. Associated type defaults are unstable, so a
+`type Reads` would be one more item every hand-written carrier names, and
+every guard's description is written over `SecurityScheme`, the bound
+`Requirement` and `Describe` hold, where `Carries` is out of reach.
+
 ### A derived scheme's challenge follows from its kind
 
 The kind fixes the `WWW-Authenticate` a 401 carries, and `challenge = "..."`
