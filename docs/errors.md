@@ -578,19 +578,36 @@ problem as built, a `ProblemOrigin` saying which part of Kynos refused (a path
 parameter, the body, a credential, the router), and the request head the
 operation saw, interceptors' extensions included.
 
-**What it reaches.** Every rejection a handler's argument or guard raises, the
-404, 405 and 501 under `FallbackPolicy::Problem`, and the 400 a `QUERY` naming
-no media type gets. Each such response's narrowed branch declares `M`'s
-properties, required as `M`'s schema requires them; the wide 403
-`AuthRejection` declares stays wide, since it already admits them. What it
-does not reach carries none and declares none: an application's own
-`ApiError`, which has `#[problem(extension)]`, a rejection a handler *returns*
-(a `RangeRejection` from `Range::apply`), an interceptor's refusal, a
-recovered panic's 500, a ranged `Delivery`'s 416 and a CORS preflight's 405.
-A returned rejection is left out on cost: rendering it with the request would
-keep the head borrowed across the handler's own await, eight bytes in every
-endpoint future ([`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds that
-width).
+**What it reaches.** Every problem Kynos renders while the request head is in
+hand: each rejection a handler's argument or guard raises, the 400 an
+interceptor's `Reads` header group answers with, an asset endpoint's 416, the
+404, 405 and 501 under `FallbackPolicy::Problem`, a CORS preflight's 405 and
+501 for an `OPTIONS` that is not one, and the 400 a `QUERY` naming no media
+type gets. Each such response an operation declares narrows its branch to
+`M`'s properties, required as `M`'s schema requires them; the wide 403
+`AuthRejection` declares stays wide, since it already admits them. The
+router's and the preflight's answers belong to no operation, so they are sent
+and declared nowhere, as they always were.
+
+**What it does not reach**, which carries none and declares none, and why:
+
+- An application's own `ApiError`, which has `#[problem(extension)]`.
+- A rejection a handler *returns* (a `RangeRejection` from `Range::apply`) and
+  a ranged `Delivery`'s 416, which the handler renders before it returns.
+  Rendering either with the request would keep the head borrowed across the
+  handler's own await, eight bytes in every endpoint future
+  ([`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds that width), and
+  declaring it would need a served form of every return type that can hold
+  one.
+- An interceptor's own refusal — `BodySizeExceeded`, `BodyTooSlow`,
+  `RateLimited`, `AtCapacity`, `TimedOut`, `Undecodable`, `NotAcceptable`,
+  `UntrustedHost`, `CrossSite` and any `Short` an application writes. The
+  interceptor takes the request by value and renders its `Short` after it has
+  given the request away, so no head is left to read; keeping a copy would
+  cost every request through every interceptor.
+- A recovered panic's 500. The request moved into the future that unwound,
+  at every scope a recovery branch covers, so the same copy would be paid on
+  every request that could panic.
 
 **Sending and declaring are one switch.** A rejection reaches the request only
 where the handler renders it, so `IntoResponse` and `Responses` carry a hidden
@@ -613,7 +630,8 @@ policy.
 refused, and eight bytes in the future of an endpoint whose last argument
 reads a body: the handler keeps the head it lent that extractor, to render its
 rejection ([`nfr.md`](nfr.md#routing) records the width). With it, a routed
-request carries one extension more, holding a function pointer: its own block,
+request, and one no operation answers that the root router's interceptors
+see, carries one extension more, holding a function pointer: its own block,
 since `http::Extensions` boxes every value, so an application that did not ask
 for members does not pay it.
 
