@@ -255,8 +255,11 @@ jobs:
             cost-codec.tsv
             cost-codegen.tsv
 
+  # Fails when an exact row exceeds the ceiling `requests.tsv` records for it;
+  # the report and the run still upload, so an intended rise is recorded from
+  # this run's `profile-requests.tsv`.
   profile:
-    name: Profile trend
+    name: Profile
     needs: gate
     if: needs.gate.outputs.full == 'true'
     runs-on: ubuntu-latest
