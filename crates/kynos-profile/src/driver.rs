@@ -216,8 +216,9 @@ pub trait Served {
     /// spawns it onto `runner`'s runtime, which polls it first the next time
     /// the runtime runs: Kynos's own accept loop, acceptor and connection task,
     /// what a [`tls`](crate::connection::tls) row's rounds drive. The server
-    /// serves until the runtime is dropped; what the returned value holds
-    /// must outlive it.
+    /// serves until the runtime is dropped, and its tasks are dropped with it,
+    /// so drop the returned value only after `runner`: what it holds, such as
+    /// a subscriber guard, must outlive the server's last task.
     ///
     /// # Panics
     ///

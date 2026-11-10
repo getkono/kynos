@@ -578,7 +578,8 @@ fn tunnelled(name: &str) -> Tunnelled {
 }
 
 /// As [`closed`], reading the status from what the client decrypted; the
-/// server stops with the runtime, dropped last.
+/// server stops with the runtime, dropped before the endpoints that hold what
+/// [`listen`](Served::listen) keeps alive for it.
 fn untunnelled((runner, endpoints, tunnel, ended, expected): Untunnelled) {
     ended.expect("the profiled connection closes cleanly");
     assert_eq!(
@@ -586,7 +587,7 @@ fn untunnelled((runner, endpoints, tunnel, ended, expected): Untunnelled) {
         expected,
         "the profiled request was answered wrongly"
     );
-    drop((tunnel, endpoints, runner));
+    drop((tunnel, runner, endpoints));
 }
 
 // `connection/tls/mod.rs`'s `TLS` table: the plaintext group's request over a
