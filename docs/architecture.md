@@ -371,8 +371,9 @@ per live connection is not configurable; `max_buf_size` moves the ceiling, not
 the floor, and what that ceiling costs at the defaults is
 [`nfr.md`](nfr.md#what-the-defaults-let-one-connection-hold)'s arithmetic. HTTP/2 request-body backpressure is not a
 second: hyper releases a frame's flow-control capacity when the body's reader
-polls it, so a reader that stops closes the window, and releasing on
-consumption instead would hold back at most one more frame per stream, which
+polls it, so a reader that stops closes the window, and what a reader has
+polled but not consumed is its own buffer, bounded by the body limit whatever
+the window does, which
 [`nfr.md`](nfr.md#runtime) weighs and does not ask upstream for. The question reopens on one measurement:
 RSS delta at 100k idle keep-alive connections, with and without TLS. Until that
 number exists it stays closed.

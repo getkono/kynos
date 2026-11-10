@@ -715,9 +715,13 @@ window was never going to bound:
   2 MiB by default, which is the last row of the table below; lowering
   `Http2Config`'s windows leaves it untouched.
 - A streaming reader such as `Records<T>` releases a frame's capacity when it
-  polls the frame, so release on consumption would hold the peer back by at
-  most one more DATA frame per stream: 16 KiB at RFC 9113's default
-  `SETTINGS_MAX_FRAME_SIZE`, which Kynos does not raise.
+  polls the frame, but polls one only once its buffer holds no whole record.
+  What it holds released and undecoded is that buffer: the records the last
+  frame carried that it has not yet yielded, and the partial record behind
+  them, which spans as many frames as the record does. That is up to one
+  record's bytes per stream, beside what is left of the last frame, so it is
+  bounded by the body limit rather than by a frame: the buffering extractors'
+  bound again.
 - A handler reading `Body` itself holds what it chooses to hold.
 
 So no upstream change is asked for. No issue in `hyperium/hyper` or
@@ -728,9 +732,12 @@ from the peer's side, and
 [hyperium/hyper#2901](https://github.com/hyperium/hyper/issues/2901), a
 low-level pull API that would expose `h2`'s streams. Were hyper to let a body's
 reader release capacity itself, Kynos would change nothing in the buffering
-extractors and would release per decoded record in the streaming ones, buying
-back one frame per stream. That is not worth owning the connection driver
-[`architecture.md`](architecture.md#what-does-not-move-and-why) keeps with hyper.
+extractors, and could not release per decoded record in the streaming ones:
+a record wider than the stream window would then close the window on its own
+unfinished bytes and never complete. The streaming readers would have to
+release as bytes enter their buffer, which is what poll-time release already
+does, so the body limit stays the bound either way. That is not worth owning
+the connection driver [`architecture.md`](architecture.md#what-does-not-move-and-why) keeps with hyper.
 The row is `planned` rather than `enforced` because no test yet watches the
 window close.
 
