@@ -526,6 +526,57 @@ log line and rate-limit bucket believes, and an `Option` would put a branch
 for every IP-only deployment into every handler. A handler that runs over
 either transport takes `Connection` and matches `Connection::peer`.
 
+## Members on the problems Kynos renders
+
+A rejection is Kynos's type, so an application whose problem contract puts a
+member on *every* problem — a stable code a client localizes offline, the
+request ID — has no field to put it in. `Router::problem_members::<M>()` names
+one [`ProblemMembers`](../crates/kynos/src/error/members.rs) type that both
+produces those members and declares them, so the description cannot drift
+from the wire (RFC 9457 section 3.2). `M::for_problem` reads a `ProblemCx`: the
+problem as built, a `ProblemOrigin` saying which part of Kynos refused (a path
+parameter, the body, a credential, the router), and the request head the
+operation saw, interceptors' extensions included.
+
+**What it reaches.** Every rejection a handler's argument or guard raises, the
+404, 405 and 501 under `FallbackPolicy::Problem`, and the 400 a `QUERY` naming
+no media type gets. Each such response's narrowed branch declares `M`'s
+properties, required as `M`'s schema requires them; the wide 403
+`AuthRejection` declares stays wide, since it already admits them. What it
+does not reach carries none and declares none: an application's own
+`ApiError`, which has `#[problem(extension)]`, a rejection a handler *returns*
+(a `RangeRejection` from `Range::apply`), an interceptor's refusal, a
+recovered panic's 500, a ranged `Delivery`'s 416 and a CORS preflight's 405.
+A returned rejection is left out on cost: rendering it with the request would
+keep the head borrowed across the handler's own await, eight bytes in every
+endpoint future ([`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds that
+width).
+
+**Sending and declaring are one switch.** A rejection reaches the request only
+where the handler renders it, so `IntoResponse` and `Responses` carry a hidden
+pair the handler calls for an argument's or guard's rejection instead of the
+public methods. A type overriding both sends and declares the members; every
+other type, an `ApiError` holding a rejection transparently included, does
+neither. A status two contributors share keeps a member required only where
+both send it, by [the union rule](#what-the-declared-response-narrows-to).
+
+**What `M` must be.** An object naming each member as a property — a struct
+deriving `Schema` and `Serialize`, with no `flatten`. A member named like one
+RFC 9457 registers, or `errors`, is a `ProblemMemberReserved` violation while
+the router is described, and a schema of another shape is
+`ProblemMembersNotObject`. A value whose `Serialize` fails answers 500 in place
+of the problem, as an `ApiError` member does. Set on the root router: a nested
+one's is a `NestedRouterPolicy` violation, as for every application-wide
+policy.
+
+**What it costs.** Without it, the lookup a rejection makes once it has
+refused, and eight bytes in the future of an endpoint whose last argument
+reads a body: the handler keeps the head it lent that extractor, to render its
+rejection ([`nfr.md`](nfr.md#routing) records the width). With it, a routed
+request carries one extension more, holding a function pointer: its own block,
+since `http::Extensions` boxes every value, so an application that did not ask
+for members does not pay it.
+
 ## What is not an error type
 
 **Interceptor statuses.** A status an interceptor refuses with — a 429 from
@@ -629,9 +680,11 @@ the refusal it rests on is recorded there.
 
 `IntoResponse::into_response(self)` takes no context, and an extraction
 rejection short-circuits to a response before any handler runs. **There is no
-point in the pipeline where a request and a `Problem` coexist.** So localizing
-an error is something done *to* a finished response, and an interceptor is the
-only thing that holds one.
+point in the pipeline where a request and an application's `Problem`
+coexist.** [`problem_members`](#members-on-the-problems-kynos-renders) is one
+for Kynos's own, and it only adds members. So localizing an error is something
+done *to* a finished response, and an interceptor is the only thing that holds
+one.
 
 That is a design constraint rather than a preference, and it has a payoff: an
 interceptor reaches every problem the service can produce, because a rejection's

@@ -387,12 +387,15 @@ handed the body, and lends the head on to each extractor; a body extractor's
 `FromRequest::from_request` takes the same pair rather than a request rebuilt
 for it. A handler taking nothing boxes 320 bytes, from 536 when
 `Endpoint::call` and the handler each kept a request of their own, and 808
-before that; one taking a JSON body boxes 632, from 1528 and 1800, and what it
-holds past the head is the codec's read: the collector buffering the body,
-with its frame queue and trailer map.
+before that; one taking a JSON body boxes 584, from 576 before the handler
+kept the head it lent the body extractor, to render that extractor's
+rejection with the members `Router::problem_members` installs
+([`errors.md`](errors.md#members-on-the-problems-kynos-renders)), and from
+632, 1528 and 1800 before that. What it holds past the head is the codec's
+read: the body, its first frame, and the buffer later frames are joined into.
 [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the first to under
 two requests everywhere and to its 320 on Linux, and the second to under
-three, the read being just over one request wide, and to its 632. An endpoint
+three, the read being just over one request wide, and to its 584. An endpoint
 with interceptors of its own still keeps the head beside the request it
 rebuilds for its chain, since `Next::run` takes a whole request; nothing
 guards that width.
@@ -460,6 +463,7 @@ rewrite.
 | security | Per-IP connection caps | — | `absent`, and recorded below and in [`middleware.md`](middleware.md#what-bounds-a-request-before-an-interceptor-runs): a connection is counted before any header is read, and `Router::trusted_proxies` applies only after routing. A per-IP request rate, `RateLimit` keyed `ByClientAddress`, is the supported bound |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
+| correctness | A member `Router::problem_members` installs is sent on every problem whose response declares it, and declared on every response whose problem sends it | [`tests/problem_members.rs`](../crates/kynos/tests/problem_members.rs) validating each refusal's body with `assert_conformance` against the schema requiring the members; a hidden `IntoResponse` and `Responses` pair that a type overrides both halves of or neither | `enforced` for extractor and guard rejections and the router's fallbacks; `absent` for a returned rejection, an interceptor's refusal, a recovered panic's 500, a ranged `Delivery`'s 416 and a CORS preflight's 405, which carry none and declare none ([`errors.md`](errors.md#members-on-the-problems-kynos-renders)) |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
 | performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
