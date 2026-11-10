@@ -68,7 +68,7 @@ fn every_scenario_is_answered_with_the_status_it_is_measured_at() {
         answered(scenario);
         drivers.insert(format!("{:?}", scenario.driver));
     }
-    assert_eq!(drivers.len(), 2, "both drivers are exercised: {drivers:?}");
+    assert_eq!(drivers.len(), 3, "every driver is exercised: {drivers:?}");
 }
 
 /// A base names the scenario a report subtracts, so one naming nothing would
@@ -567,24 +567,25 @@ fn the_kept_row_measures_past_the_connection_s_first_read_buffer() {
     );
 }
 
-/// A TLS row counts a request that entered `serve_io` through a TLS 1.3
+/// A TLS row counts a request Kynos's TLS listener accepted over a TLS 1.3
 /// session, so each is answered with the status it is measured at over a
 /// session whose handshake is the one its name says, and its connection ends
-/// cleanly on its own once the client has answered every round. Opened as
-/// the benchmark opens it: after a warming connection between the same
-/// endpoints, which must not turn a full row's handshake into a resumption.
+/// cleanly, the server's `close_notify` ahead of the socket's end, once the
+/// client has answered every round. Opened as the benchmark opens it: after a
+/// warming connection between the same endpoints, which must not turn a full
+/// row's handshake into a resumption.
 #[test]
 fn every_tls_row_is_answered_over_the_handshake_it_names_and_closes_cleanly() {
     for sealed in TLS {
         let scenario = sealed.scenario;
-        assert_eq!(scenario.driver, Driver::Runtime, "{}", scenario.name);
+        assert_eq!(scenario.driver, Driver::Network, "{}", scenario.name);
         let runner = scenario.driver.runner();
-        let endpoints = sealed.endpoints();
+        let endpoints = sealed.endpoints(&runner);
         let mut warm = sealed.open(&runner, &endpoints);
-        let mut tunnel = sealed.open(&runner, &endpoints);
         warm.settle(&runner)
             .unwrap_or_else(|error| panic!("{} warming ended with {error}", scenario.name));
         assert_eq!(warm.status(), scenario.expected, "{}", scenario.name);
+        let mut tunnel = sealed.open(&runner, &endpoints);
         tunnel
             .serve(&runner)
             .unwrap_or_else(|error| panic!("{} ended with {error}", scenario.name));
@@ -598,30 +599,31 @@ fn every_tls_row_is_answered_over_the_handshake_it_names_and_closes_cleanly() {
     }
 }
 
-/// A subscribed service opened over TLS goes through its own `connect_after`,
-/// which no TLS row reaches: it gives up the thread default before the
-/// region, as `connect` does, and still serves the handshake and the request.
+/// A subscribed service served by a TLS listener goes through its own
+/// `listen`, which no TLS row reaches: its spawned tasks carry no subscriber
+/// of their own, so it keeps the thread default installed for as long as the
+/// server is kept, still serves the handshake and the request under it, and
+/// gives it up with the server.
 #[test]
-fn a_subscribed_service_serves_a_tls_connection_without_the_thread_default() {
+fn a_subscribed_service_listens_under_the_thread_default_until_dropped() {
     let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
     let traced = scenario("trace-sub");
     let sealed = Sealed {
         scenario: Scenario {
-            driver: Driver::Runtime,
+            driver: Driver::Network,
             ..traced
         },
         session: Session::Full,
     };
     let runner = sealed.scenario.driver.runner();
-    let endpoints = sealed.endpoints();
+    let endpoints = sealed.endpoints(&runner);
     let mut tunnel = sealed.open(&runner, &endpoints);
-    assert!(
-        unsubscribed(),
-        "the thread default outlived `connect_after`"
-    );
+    assert!(!unsubscribed(), "`listen` gave up the thread default");
     tunnel
         .serve(&runner)
         .expect("the connection closes cleanly");
     assert_eq!(tunnel.status(), traced.expected);
     assert_eq!(tunnel.handshake(), Some(HandshakeKind::Full));
+    drop(endpoints);
+    assert!(unsubscribed(), "the thread default outlived the server");
 }

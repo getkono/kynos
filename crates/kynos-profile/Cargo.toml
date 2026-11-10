@@ -65,13 +65,14 @@ serde = { workspace = true, features = ["derive"] }
 # row reaches serde_json only through `kynos`.
 serde_json = { workspace = true }
 # `Driver::Runtime`'s current-thread runtime and its timer, named in
-# `src/driver.rs`, and the in-memory duplex `src/connection/` serves a
-# connection over. This package is unpublished, so `architecture.md`'s runtime
-# allowance, which governs the published crates, does not read it.
-tokio = { workspace = true, features = ["rt", "time", "io-util"] }
-# `src/connection/tls/`'s server, which terminates TLS over the duplex before
-# `Server::serve_io` is handed the stream, and, through its `rustls`, the
-# client that drives it; `aws-lc-rs`, the provider `kynos`'s `tls` names.
+# `src/driver.rs`, the in-memory duplex `src/connection/` serves a connection
+# over, and `Driver::Network`'s I/O driver and the loopback socket
+# `src/connection/tls/`'s client connects with. This package is unpublished,
+# so `architecture.md`'s runtime allowance, which governs the published
+# crates, does not read it.
+tokio = { workspace = true, features = ["rt", "time", "io-util", "net"] }
+# Through its `rustls`, the client `src/connection/tls/` drives Kynos's TLS
+# listener with; `aws-lc-rs`, the provider `kynos`'s `tls` names.
 tokio-rustls = { workspace = true }
 # `unchecked-layer`'s pass-through layer.
 tower-layer = { workspace = true }
