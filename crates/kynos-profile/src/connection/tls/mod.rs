@@ -229,10 +229,25 @@ impl Tunnel {
     ///
     /// # Panics
     ///
-    /// When the client cannot read its socket or the server's TLS; a server
-    /// waiting on a client with nothing to send leaves it waiting forever
-    /// rather than miscounting it.
+    /// When the client cannot read its socket or the server's TLS.
+    ///
+    /// A server waiting on a client with nothing to send is not a panic here:
+    /// the round waits until the server's own deadline ends the connection,
+    /// the handshake's or HTTP/1's header read, both at the defaults the
+    /// endpoints serve with, and that end is what this returns, an error or a
+    /// clean close with no response, which [`status`](Self::status) panics
+    /// on.
     pub fn serve(&mut self, runner: &Runner) -> io::Result<()> {
+        // No check here says the server waits on the client, as one did when a
+        // round polled the connection's future: a round now waits on the
+        // client's socket, which never says what the server waits on. Rejected
+        // are a timeout around the round, which would put a timer in the
+        // region and move every TLS row's count, and failing on a turn that
+        // read and wrote nothing, which a spurious readiness or a record split
+        // across reads also makes. Were the endpoints to disable either
+        // deadline, the reversal is a `tokio::time::timeout` around `settle`'s
+        // and `answer_first`'s waits, which count nothing, and a failing
+        // `serve` run under the same bound in a test.
         loop {
             round(runner, &self.client.stream);
             self.client.exchange();
