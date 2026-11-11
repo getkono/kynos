@@ -968,7 +968,11 @@ timers, and what the per-connection handler in
 [`server/connection.rs`](../crates/kynos/src/server/connection.rs) adds — the
 connection metadata it inserts into the request's extensions and the incoming
 body it erases — are counted to the duplex ([`nfr.md`](nfr.md)'s
-`connection_*` row), as a trend with no gate; `connection_tls` alone reaches
+`connection_*` row). `connection_h1` is exact, so its recorded counts are its
+ceiling, which `full.yml`'s `profile` job enforces like any other exact row's;
+`connection_h2` and `connection_tls` are trends, reported and never compared,
+since what the first counts reads the wall clock and what the second counts
+depends on a key the process draws at random. `connection_tls` alone reaches
 a TLS listener over a loopback socket, since `serve_io` terminates no TLS. A per-request figure over a real
 socket is the general measurement
 [`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
@@ -1087,8 +1091,9 @@ request on an HTTP/1.1 connection through `Server::serve_io` over a duplex,
 without a body and with one, and holds each beside the same request's
 in-process count: exactly on Linux and Windows, where it was read, and as a
 floor elsewhere, macOS's `pthread`-backed std locks each adding a block. The `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
-count the rest of the connection path to the duplex, as a trend, save
-`connection_tls`, which reaches a TLS listener over a loopback socket.
+count the rest of the connection path to the duplex, `connection_h1` held to
+its recorded ceiling and `connection_h2` as a trend, save `connection_tls`, a
+trend too, which reaches a TLS listener over a loopback socket.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
 — zero for `Body::empty`, one for `Body::from_bytes` — and
 [`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a
