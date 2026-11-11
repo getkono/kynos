@@ -56,12 +56,88 @@ trigger.
 
 ## What to do, and why
 
-An entry belongs here only once a recorded
+Each entry here follows from a bound stated above, the deployment's own
+topology, or a standard, so none rests on a measurement. Advice whose case is a
+cost (worker threads under a CPU quota, blocking work, the allocator,
+compression) belongs here only once a recorded
 [kynos-bench](https://github.com/getkono/kynos-bench) result justifies it:
 advice copied from another framework, or reasoned without a measurement, is
-what this page exists to replace. kynos-bench has not yet recorded the results
-these depend on, so there is no entry yet, and the application needs no tuning
-beyond the shutdown trigger above.
+what this page exists to replace. kynos-bench has not yet recorded those
+results, so none of that advice is here, and nothing below tunes a cost.
+
+### Operating system limits
+
+- Size the hard `RLIMIT_NOFILE` for the connection cap: `LimitNOFILE=` under
+  systemd, `ulimit -Hn`, or the container runtime's `nofile` limit. Startup
+  raises the soft limit only as far as the hard one allows, and past it
+  accepts fail and are retried, so clients stall while the server runs.
+  Several `Server`s in one process need the sum of their caps.
+- Raise `net.core.somaxconn` only where a burst at the connection cap must
+  queue more than its value, 4096 by default: it caps the queue
+  `listen_backlog` asks for. It belongs to the network namespace, so a
+  container sets it in its own (`docker run --sysctl`, a pod's
+  `securityContext.sysctls`) rather than inheriting the host's.
+- Leave `server::Server::accept_shards`, on Linux and Android, at one until
+  your own measurement shows accepting is the bottleneck. Each listener has one accept task, which
+  is enough unless connections are both many and short-lived. Shards are
+  `SO_REUSEPORT` sockets, which any process of the same user may join, so run
+  a sharded server as a user of its own.
+
+### Behind a proxy or CDN
+
+- Name the proxies, or every client address is the proxy's.
+  `Router::trusted_proxies` takes `http::forwarded::TrustedProxies`: `hops`
+  where the proxies' addresses change under you, as a managed load balancer's
+  do, and `networks` or `addresses` where they are known. Name the
+  `ProxyHeader` the proxy appends to, since the other passes through whatever
+  the client sent. `everyone` is right only where nothing but the proxies can
+  reach the service. A balancer that relays TCP rather than HTTP names the
+  client only through `server::Server::proxy_protocol`.
+- Set the proxy's upstream idle timeout below 30 seconds. Kynos closes an idle
+  HTTP/1 connection 30 seconds after its last response, and an idle HTTP/2
+  one 30 seconds after its last stream; a proxy that keeps one pooled longer
+  can send a request down a connection Kynos is closing, and answers it with
+  a `502`. nginx's upstream `keepalive_timeout` and an AWS Application Load
+  Balancer's idle timeout both default to 60 seconds. Raising
+  `header_read_timeout` and `idle_timeout` above the proxy's instead also
+  lengthens what a slow client may hold, so do that only where the proxy alone
+  reaches the service.
+- Size the proxy's upstream pool, summed across every proxy instance, below
+  `max_connections`: each pooled connection holds a permit and a descriptor
+  while idle, and connections past the cap wait in the listen queue.
+- Retry only what may be retried. A proxy must not automatically retry a
+  request with a non-idempotent method (RFC 9110 §9.2.2), however its
+  connection failed, so enable proxy retries for idempotent methods alone.
+
+### At the edge
+
+- TLS terminated by Kynos, under `tls`: resumption needs nothing on one
+  instance. Where a balancer spreads a client's connections across replicas,
+  or a restart should keep sessions, give every replica the same keys through
+  `SessionResumption::SharedTickets`, and rotate them yourself: Kynos rotates
+  none it was given. A mutual-TLS service that cannot let a ticket key vouch
+  for a client's identity uses `SessionResumption::Cache` or `Disabled`
+  instead; `server::tls::SessionResumption` says why.
+- TLS terminated by the proxy, under `http2`: the proxy may speak HTTP/2 to
+  Kynos over plaintext with prior knowledge, since a plaintext connection's
+  protocol is read from its first bytes. Each such connection carries at most
+  `max_concurrent_streams` requests at once, 200 by default, so a proxy
+  multiplexing every client onto few connections sizes its pool by it, or the
+  application raises it.
+
+### Load balancers
+
+- Answer the readiness probe from `server::lifecycle::Readiness`, and never
+  the liveness probe: not ready is the right answer while the instance leaves
+  rotation, and a failed liveness probe asks for a restart instead.
+- Set `server::Server::deregistration_delay` to how long the balancer takes to
+  stop routing once readiness fails: its probe interval times its failure
+  threshold, plus its own propagation, such as Kubernetes removing the
+  instance from a Service's endpoints.
+- Fit that delay plus `shutdown_timeout` inside the orchestrator's
+  termination window, 30 seconds by default under Kubernetes
+  (`terminationGracePeriodSeconds`); widen the window rather than shortening
+  the drain where in-flight requests need it.
 
 kynos-bench runs on a Linux rig. Nothing it records speaks for another
 operating system or for a shape it has not measured; its
