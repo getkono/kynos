@@ -15,6 +15,18 @@ annotated as such in the document, and the named escape hatches behind the
 The emitted document is therefore not documentation that drifts from the code.
 It is a checked contract derived from the same types the server runs on.
 
+## Install
+
+```bash
+cargo add kynos
+cargo add tokio --features macros,rt-multi-thread
+cargo add serde --features derive
+```
+
+Kynos re-exports neither tokio nor serde; the
+[repository README](https://github.com/getkono/kynos#quickstart) has a
+quickstart that compiles against exactly these three.
+
 ## What it costs you
 
 Several things other Rust frameworks offer are absent: arbitrary `tower`

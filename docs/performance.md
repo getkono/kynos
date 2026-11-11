@@ -50,12 +50,12 @@ What each kind of measurement proves that no other kind does.
 
 | Kind | Lives in | Runs under | Proves | Status |
 | --- | --- | --- | --- | --- |
-| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at four targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, for what an unchecked layer and an observer add, and for why a response's header map is grown rather than presized, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
+| Allocation count | its own integration target | `cargo nextest`, over `alloc_counter` | that a path allocates a bounded number of times | in use, at five targets: [`kynos/tests/alloc.rs`](../crates/kynos/tests/alloc.rs) for the routing path, for what an unchecked layer and an observer add, and for why a response's header map is grown rather than presized, [`kynos/tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) for body erasure, [`kynos/tests/alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs) for a request served through `Server::serve_io`, the server path's erasure with it, [`kynos/tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs) for what a payload codec adds, and [`kynos-openapi/tests/alloc.rs`](../crates/kynos-openapi/tests/alloc.rs) for what producing a description costs at 10, 100 and 1000 operations. Several rather than one because an integration binary cannot be depended on, so a second crate that counts cannot reach the first one's harness |
 | Size guard | [`tests/size.rs`](../crates/kynos/tests/size.rs), or a sibling `tests.rs`, or beside the count that shares its fixture | `cargo nextest` | that a type or a future did not grow | in use for types, and for the futures every request carries: the one `Service::call` returns and an endpoint's at [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), and the one that call boxes at [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs), since only the crate can name it. A guard outside a box sees only the pointer to it |
 | Off-path proof | a sibling `tests.rs`, and a table [`containment:check`](../scripts/containment.py) reads | `python3 scripts/containment.py`, `cargo nextest` | that a feature is unreachable from the request path | in use, for the off-path flags and for the document, the registry, the validators and `jsonschema`: a table in [`testing.md`](testing.md#the-off-path-proof) held by `mise run containment:check`, plus the field witness in [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs); `describe` is the one off-path shape no row holds, and the emitters are held by the `yaml` flag's row rather than by one of their own |
 | Codegen delta | a feature sweep | `cargo llvm-lines` | what a feature costs in monomorphized IR | in use, via `mise run cost:features` over [`cost/fixture.rs`](../crates/kynos/cost/fixture.rs); reports a trend once master settles, refuses a release whose numbers are not the recorded ones, and sets no ceiling, and sees the generics that fixture instantiates rather than the whole surface — so a feature that grows the dependency graph can shrink this number by sharing instantiations out of upstream rlibs, and a negative row is a relocation rather than a saving |
 | Binary delta | a feature sweep | `.text` of a fixed fixture | what a feature costs a linked artifact | in use, over [`cost/binary.tsv`](../crates/kynos/cost/binary.tsv); reports a trend once master settles, refuses a release whose numbers are not the recorded ones, and sets no ceiling. The fixture uses none of these features, so a zero row says the linker stripped — or the collector never instantiated — what nothing called, rather than that the feature is free to a program that uses it. A second sweep answers the question that fixture structurally cannot, over [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv): what mounting a codec costs, weighed on a fixture that mounts one |
-| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a drained response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in; what one variable costs, as a scenario's difference from the *base* it differs from in that variable alone; and, in a compression sweep of Kynos's own, what an encode adds at each body size, which [`middleware.md`](middleware.md) reads `min_size`'s default from | in use, in process and, for the `connection_*` groups, through `Server::serve_io` over an in-memory duplex, so hyper's parse and per-connection state are on the measured path and the socket is not. Every request-path feature is built; a scenario is driven by one poll or, where it needs timers or wakeups, by a current-thread runtime. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); held exact across `--repeat` runs except in a group marked `trend`; reports a trend once master settles and sets no ceiling |
+| Instruction count | [`kynos-profile`](../crates/kynos-profile/), an unpublished member | `mise run profile:requests`: gungraun over Callgrind and DHAT, read by [`profile_report.py`](../scripts/profile_report.py) | what a request of each [`kynos-bench`](https://github.com/getkono/kynos-bench) scenario executes between a built request and a drained response, once the process has served one — instructions in the program object, and heap blocks and bytes — and which functions they were spent in; what one variable costs, as a scenario's difference from the *base* it differs from in that variable alone; and, in a compression sweep of Kynos's own, what an encode adds at each body size, which [`middleware.md`](middleware.md) reads `min_size`'s default from | in use, in process and, for the `connection_*` groups, through `Server::serve_io` over an in-memory duplex, so hyper's parse and per-connection state are on the measured path and the socket is not, save `connection_tls`, which reaches Kynos's TLS listener over a loopback socket and counts its userspace side. Every request-path feature is built; a scenario is driven by one poll or, where it needs timers or wakeups, by a current-thread runtime. Recorded in [`requests.tsv`](../crates/kynos-profile/requests.tsv); held exact across `--repeat` runs except in a group marked `trend`; reports a trend once master settles and sets no ceiling |
 
 **An allocation count needs its own target because a global allocator is
 process-wide.** Installing one in the library's unit-test binary would perturb
@@ -511,7 +511,8 @@ a client `GOAWAY` over HTTP/2 — and the server's direction of the duplex is
 grown in setup, so writing the response reuses memory as a socket's send
 would. Its difference from its in-process base is the server path's;
 [`nfr.md`](nfr.md#routing) attributes it. A socket, a syscall and a kernel
-buffer stay `kynos-bench`'s. `connection_h1.kept` is the one row whose
+buffer stay `kynos-bench`'s, save the TLS rows' loopback socket below.
+`connection_h1.kept` is the one row whose
 connection outlives its region: its setup serves 256 requests on the
 connection, and the region ends once the next is answered and the server
 waits for another head, so the client reads that response inside it, into a
@@ -520,6 +521,38 @@ request costs on a long-lived connection, which no row that closes its
 connection reaches. It names no base: it differs from `connection_h1.second`
 in its request's place on the connection, in keeping the connection open, and
 in its client's reads, so their difference is no one variable's cost.
+
+**A TLS row counts the server's rounds, not the conversation.** A
+`connection_tls` row sends `connection_h1`'s request over a TLS 1.3 session
+to Kynos's own TLS listener: `Server::listener` handed a loopback socket and
+`Server::tls` a default `TlsConfig`, so its accept loop, the acceptor
+`prepare` builds once for every connection, the handshake deadline and drain
+beside it, its certificate resolver and its tickets are on the path. That is
+the one place this harness opens a socket, because a listener's acceptor is
+reached through nothing else and `serve_io` terminates no TLS; it is the
+`Network` driver, a current-thread runtime with its I/O driver, kept apart so
+no other `Runtime` row's count moves. A handshake needs a client answering
+inside the region, so both instruments count from `round`, which runs the
+runtime until the server has written to the client, rather than from the
+benchmark function: the runtime's scheduler and its I/O driver's userspace
+work, the accept loop, and the connection's task are counted, and the
+client's work between rounds is not, nor is anything the kernel does. The
+client connects and writes its first flight before any round, so a `full` or
+`resumed` region starts at the accept. Setup runs the runtime through code of
+its own, so its warming connection, served between the same endpoints so the
+region's handshake is not the configuration's first, is not counted either.
+`full` and `second` use a client that keeps no ticket, and `resumed` one
+whose setup served a connection to fill its store. The certificate is
+Ed25519, whose signature has one length. aws-lc is linked into the program
+object, so [`profile_report.py`](../scripts/profile_report.py) splits its C
+and assembly off by source file and symbol and reports it beside libc, never
+compared: it is the cipher suite's and the CPU's, and its key exchange moves a
+few dozen instructions between runs. The group is `trend`: a listener's
+connections share one lifecycle channel with its accept loop, and tokio
+files each wait on it under one of eight shards drawn at random, so a
+connection's wait costs 15 instructions more in the program whenever it
+lands on a shard another receiver is waiting on; its blocks and bytes held
+exact.
 
 ### Why the measurements live beside the features
 

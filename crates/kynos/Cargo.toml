@@ -19,8 +19,9 @@ categories = [
 ]
 
 # Files whose oracle lives above this package (`references/`, `kynos-macros`,
-# `scripts/`), so they would only fail from the tarball. The two tests are
-# auto-discovered, since a declared target cannot have its path excluded.
+# `scripts/`, the repository README), so they would only fail from the tarball.
+# The three tests are auto-discovered, since a declared target cannot have its
+# path excluded.
 exclude = [
   "cost/binary.tsv",
   "cost/codec.tsv",
@@ -28,6 +29,7 @@ exclude = [
   "public-api.txt",
   "tests/ledger.rs",
   "tests/metaschema.rs",
+  "tests/readme_quickstart.rs",
 ]
 
 [[test]]
@@ -298,6 +300,7 @@ pattern = ["macros", "kynos-macros/pattern", "kynos-openapi/pattern", "dep:regex
 # --- Runtime ---------------------------------------------------------------
 server = [
   "dep:hyper-util",
+  "dep:rustix",
   "dep:socket2",
   "dep:tracing",
   "tokio/net",
@@ -486,6 +489,11 @@ uuid1 = { workspace = true, features = ["serde"] }
 # The protobuf implementation the tests and examples derive messages with, as
 # an application would; `kynos` itself never names it.
 prost = { workspace = true }
+
+# `getrlimit` and `setrlimit` under `server`, which fits the open-file limit to
+# the connection cap.
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, optional = true, features = ["process"] }
 
 # `setrlimit` for `connection_adversarial.rs`, and `kill_process` for the
 # server's signal test.

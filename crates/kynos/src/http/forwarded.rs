@@ -225,6 +225,15 @@ impl TrustedProxies {
             || (self.hops == 0 && self.addresses.is_empty() && self.networks.is_empty())
     }
 
+    /// Whether a socket peer at `address` is a hop this configuration
+    /// believes: one it names, or any peer where it counts a hop. The field
+    /// it names plays no part, so a policy that names none still trusts
+    /// nobody.
+    #[cfg(feature = "server")]
+    pub(crate) fn trusts_peer(&self, address: IpAddr) -> bool {
+        self.header().is_some() && (self.hops > 0 || self.names(address.to_canonical()))
+    }
+
     /// Whether `address` is one of the hops this configuration names.
     fn names(&self, address: IpAddr) -> bool {
         self.addresses.contains(&address)

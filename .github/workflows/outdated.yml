@@ -1,0 +1,42 @@
+name: Outdated
+
+# Every direct dependency with a newer incompatible version, each night. A
+# report, never a failure: what moves under it is the registry, not a change,
+# and adopting a major is a decision `mise.toml`'s `deps:outdated` leaves to
+# the dependency's tier. It files nothing; the job summary and the artifact
+# are where it lands.
+on:
+  schedule:
+    # 06:13 UTC, off the hour and clear of the mutants, fuzz and minimal
+    # versions runs.
+    - cron: "13 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A night's run queues behind the last rather than being cancelled by it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  outdated:
+    name: Outdated dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      # No `cargo-cache-key`: nothing here builds the workspace.
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: List newer incompatible versions of direct dependencies
+        run: mise run deps:outdated
+      - name: Add outdated summary
+        run: cat target/outdated-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload outdated report
+        uses: actions/upload-artifact@v7
+        with:
+          name: outdated-report
+          path: target/outdated-report.md

@@ -300,7 +300,7 @@ fn a_named_constraint_type_declares_a_branch_of_its_own() {
 
     let registry = &mut Registry::new();
     assert!(
-        super::constraint_responses(registry, StatusCode::BAD_REQUEST, &[])
+        super::constraint_responses(registry, StatusCode::BAD_REQUEST, &[], true)
             .responses
             .is_empty()
     );
@@ -311,6 +311,7 @@ fn a_named_constraint_type_declares_a_branch_of_its_own() {
         registry,
         StatusCode::UNPROCESSABLE_ENTITY,
         &[first, second, first],
+        true,
     ))
     .expect("responses serialize");
 
@@ -779,7 +780,7 @@ fn the_503_is_declared_only_where_asked_for() {
     use crate::{response::Responses, schema::registry::Registry};
 
     let mut registry = Registry::default();
-    let asked = serde_json::to_value(super::auth_responses(&mut registry, None, true, true))
+    let asked = serde_json::to_value(super::auth_responses(&mut registry, None, true, true, true))
         .expect("a set of responses serializes");
     let declared = &asked["503"];
     assert_eq!(
@@ -795,7 +796,7 @@ fn the_503_is_declared_only_where_asked_for() {
         "a 503 need not say when to retry"
     );
 
-    let unasked = super::auth_responses(&mut registry, None, true, false);
+    let unasked = super::auth_responses(&mut registry, None, true, false, true);
     assert!(!unasked.responses.contains_key("503"));
     assert!(
         !AuthRejection::responses(&mut registry)
@@ -817,12 +818,13 @@ fn the_403_is_left_out_only_where_no_scheme_forbids() {
         Some("https://errors.example.com/no-scope"),
         false,
         false,
+        true,
     );
     assert!(!unforbidding.responses.contains_key("403"));
     assert!(unforbidding.responses.contains_key("401"));
 
     assert!(
-        super::auth_responses(&mut registry, None, true, false)
+        super::auth_responses(&mut registry, None, true, false, true)
             .responses
             .contains_key("403")
     );

@@ -17,6 +17,7 @@ An argument that contributes nothing to the contract says so, by implementing
 | [`Connection`](../crates/kynos/src/extract/connection.rs) | nothing | it is the connection itself — peer, local address, TLS — not the API |
 | [`Forwarded`](../crates/kynos/src/http/forwarded.rs) | nothing | it is what the deployment's proxies say about the connection, not the API |
 | [`Draining`](../crates/kynos/src/server/lifecycle.rs) | nothing | it is the server's state, not the API |
+| [`Readiness`](../crates/kynos/src/server/lifecycle.rs) | nothing | it is the server's state, not the API; a probe's 503 is its own operation's to declare |
 
 [`Link<E>`](../crates/kynos/src/extract/link.rs) adds nothing to the document
 either — another operation's `paths` key is already there — but its body is not
@@ -192,7 +193,7 @@ when the one before cannot carry the body:
 | --- | --- | --- |
 | [`Binary<M>`](../crates/kynos/src/extract/body/binary.rs) | bytes, under any media type | nothing |
 | `JsonAs<M, T>`, `TextAs<M>` | a typed JSON document or UTF-8 text, under a declared type | decoding it |
-| [`Encoded<C, T>`](../crates/kynos/src/extract/body/codec.rs) | any other format, through a `BodyCodec` the application implements | its codec's decoding |
+| [`Encoded<C, T>`](../crates/kynos/src/extract/body/codec.rs) | any other format, or JSON through another library, by a `BodyCodec` the application implements | its codec's decoding |
 
 `Binary<M>` never checks its bytes against `M`: `M` is the sender's claim, and
 checking it would need a parser per media type, a policy for which ones count,
@@ -206,7 +207,10 @@ the description, so an implementor cannot skip any of them. What Kynos cannot
 check is that `T`'s schema describes the codec's data form, which OpenAPI 3.2
 reads a non-JSON body through; the implementor asserts it, and a codec whose
 format cannot carry a value the schema admits refuses it rather than let the
-document lie.
+document lie. A codec may also name `application/json`, which is how an
+application reads and writes JSON with a library other than serde_json, and
+[`architecture.md`](architecture.md#json-codecs-other-than-serde_json-refused)
+records why Kynos does not do so itself.
 
 The third row is the counter-case to the second, and the difference is the
 specification's rather than a preference.

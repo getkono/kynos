@@ -20,17 +20,21 @@ use kynos::{
         body::text::Text,
         params::header::{EncodeHeaders, HeaderParams, Headers, UnencodableHeader},
     },
-    http::{HeaderName, HeaderValue, StatusCode},
+    http::{HeaderName, HeaderValue, Method, StatusCode},
     middleware::{
+        catch_panic::Propagate,
         cors::Cors,
+        limits::body_size::BodySize,
         request_id::{CorrelationHeaders, RequestId, RequestIdSource, XRequestId},
     },
+    openapi::Method as OperationMethod,
+    router::group::{Group, MethodSet, Methods, SafeMethods, UnsafeMethods},
 };
 
 #[path = "support/mod.rs"]
 mod support;
 
-use support::{App, get};
+use support::{App, get, post};
 
 /// The response headers a bare service sends, so a later comparison can name
 /// what an interceptor *added* rather than what was there anyway.
@@ -434,6 +438,146 @@ async fn security_headers_add_only_the_names_they_declare() {
     }
 }
 
+// --- An interceptor scoped to methods ---------------------------------------
+
+/// The four operations in one group, behind a `RequestId` and a `BodySize`
+/// covering only `methods`.
+fn scoped<M: MethodSet + Copy>(methods: M) -> Router<App, Propagate, (), impl Sized> {
+    Router::<App>::new().group(
+        Group::new("/")
+            .intercept_when(methods, RequestId::new())
+            .intercept_when(methods, BodySize::new(1 << 10))
+            .mount(kynos::routes![
+                support::get_user,
+                support::list_users,
+                support::create_user,
+                support::delete_user
+            ]),
+    )
+}
+
+/// A scoped interceptor runs on the operations whose method it names, and an
+/// operation it does not name is served as if it were not mounted.
+#[tokio::test]
+async fn a_method_scoped_interceptor_runs_only_on_the_methods_it_names() {
+    let service = scoped(UnsafeMethods)
+        .build(App::new())
+        .expect("a describable router");
+
+    let read = get(&service, "/users/1").call().await;
+    assert_eq!(read.status, StatusCode::OK);
+    assert_eq!(read.field("x-request-id"), None);
+
+    let removed = support::send(&service, Method::DELETE, "/users/1")
+        .call()
+        .await;
+    assert!(removed.field("x-request-id").is_some());
+
+    // Over the scoped `BodySize`, so it is the interceptor that answers.
+    let created = post(&service, "/users")
+        .header("content-type", "application/json")
+        .body(vec![b' '; 2 << 10])
+        .call()
+        .await;
+    assert_eq!(created.status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+/// A `HEAD` the group does not declare is answered by the `GET` operation, so a
+/// scope naming `GET` covers it and one naming only `HEAD` does not.
+#[tokio::test]
+async fn an_undeclared_head_is_covered_exactly_when_get_is() {
+    #[derive(Clone, Copy)]
+    struct Get;
+    impl MethodSet for Get {
+        const METHODS: Methods = Methods::only(&[OperationMethod::Get]);
+    }
+
+    #[derive(Clone, Copy)]
+    struct Head;
+    impl MethodSet for Head {
+        const METHODS: Methods = Methods::only(&[OperationMethod::Head]);
+    }
+
+    for (service, covered) in [
+        (scoped(Get).build(App::new()), true),
+        (scoped(Head).build(App::new()), false),
+    ] {
+        let service = service.expect("a describable router");
+
+        let reply = support::send(&service, Method::HEAD, "/users/1")
+            .call()
+            .await;
+
+        assert_eq!(reply.status, StatusCode::OK);
+        assert_eq!(reply.field("x-request-id").is_some(), covered);
+    }
+}
+
+/// Two interceptors adding the same header compose when scoped to disjoint
+/// methods, and each operation runs and declares exactly the one covering it.
+#[tokio::test]
+async fn interceptors_scoped_to_disjoint_methods_never_meet_on_an_operation() {
+    let router = Router::<App>::new().group(
+        Group::new("/")
+            .intercept_when(SafeMethods, RequestId::new())
+            .intercept_when(UnsafeMethods, RequestId::new())
+            .mount(kynos::routes![support::get_user, support::create_user]),
+    );
+    let document = serde_json::to_value(router.openapi().expect("a describable router"))
+        .expect("a serializable document");
+    let service = router.build(App::new()).expect("a describable router");
+
+    for (path, method) in [("/users/{id}", "get"), ("/users", "post")] {
+        let declared = document["paths"][path][method]["responses"]
+            .as_object()
+            .expect("a responses object")
+            .values()
+            .any(|response| response["headers"].get("X-Request-Id").is_some());
+        assert!(declared, "{method} {path}");
+    }
+
+    let read = get(&service, "/users/1").call().await;
+    let created = post(&service, "/users")
+        .header("content-type", "application/json")
+        .body(r#"{"id":2,"name":"a"}"#)
+        .call()
+        .await;
+    assert_eq!(created.status, StatusCode::CREATED);
+    for reply in [read, created] {
+        assert_eq!(reply.fields("x-request-id").len(), 1);
+    }
+}
+
+/// What a scoped interceptor declares lands on the operations it covers and on
+/// no other: the `413` its `Short` answers, and the header it `Adds`.
+#[test]
+fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
+    let document = serde_json::to_value(
+        scoped(UnsafeMethods)
+            .openapi()
+            .expect("a describable router"),
+    )
+    .expect("a serializable document");
+
+    for (path, method, covered) in [
+        ("/users/{id}", "get", false),
+        ("/users", "get", false),
+        ("/users", "post", true),
+        ("/users/{id}", "delete", true),
+    ] {
+        let responses = &document["paths"][path][method]["responses"];
+        let declares_413 = responses.get("413").is_some();
+        let declares_header = responses
+            .as_object()
+            .expect("a responses object")
+            .values()
+            .any(|response| response["headers"].get("X-Request-Id").is_some());
+
+        assert_eq!(declares_413, covered, "{method} {path}: the 413");
+        assert_eq!(declares_header, covered, "{method} {path}: X-Request-Id");
+    }
+}
+
 // --- The two closed sets --------------------------------------------------
 
 /// Every interceptor Kynos ships, named against the set this suite accounts
@@ -473,6 +617,9 @@ fn every_interceptor_kynos_ships_is_accounted_for() {
         "SetCookies",
         "Timeout",
         "TrustedHosts",
+        // A stack marker with no value, so it writes nothing; the
+        // method-scoped cases above read what its `N` declares.
+        "When",
     ];
 
     let declared = implementors_of("> Interceptor<C> for ");

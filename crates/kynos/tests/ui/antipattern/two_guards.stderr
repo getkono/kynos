@@ -1,7 +1,7 @@
 error[E0277]: `fn(Auth<ServiceKey>, Auth<Bearer>) -> impl Future<Output = NoContent> {both}` is not a Kynos handler
-  --> tests/ui/antipattern/two_guards.rs:61:26
+  --> tests/ui/antipattern/two_guards.rs:52:26
    |
-61 |     is_handler::<App, _, _>(both);
+52 |     is_handler::<App, _, _>(both);
    |                          ^ not a handler
    |
    = help: the trait `Handler<App, _>` is not implemented for fn item `fn(Auth<ServiceKey>, Auth<Bearer>) -> impl Future<Output = NoContent> {both}`
@@ -10,7 +10,7 @@ error[E0277]: `fn(Auth<ServiceKey>, Auth<Bearer>) -> impl Future<Output = NoCont
    = note: the return type must implement `IntoResponse` and `Responses`, and a codec such as `Json<T>` implements `Responses` only when `T` implements `Schema`: `#[derive(kynos::Schema)]` on `T` is the usual fix
    = note: the handler's future must be `Send`: nothing that is not — an `Rc`, a `RefCell` borrow, a lock guard — may be held across an `.await`
 note: required by a bound in `is_handler`
-  --> tests/ui/antipattern/two_guards.rs:58:24
+  --> tests/ui/antipattern/two_guards.rs:49:24
    |
-58 | fn is_handler<C, A, H: kynos::handler::Handler<C, A>>(_: H) {}
+49 | fn is_handler<C, A, H: kynos::handler::Handler<C, A>>(_: H) {}
    |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `is_handler`

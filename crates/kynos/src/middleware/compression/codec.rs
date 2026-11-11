@@ -8,8 +8,9 @@ use std::{io, pin::Pin, task::Poll};
 
 use async_compression::{
     Level,
+    brotli::EncoderParams,
     tokio::bufread::{BrotliEncoder, GzipEncoder, ZstdEncoder},
-    zstd::CParameter,
+    zstd::{CParameter, DParameter},
 };
 use bytes::{Bytes, BytesMut};
 use tokio::io::{AsyncRead, ReadBuf};
@@ -214,7 +215,7 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
         }
         Coding::Brotli => {
             Box::pin(drain(
-                BrotliEncoder::with_quality(io::Cursor::new(bytes), levels.for_coding(coding)),
+                BrotliEncoder::with_params(io::Cursor::new(bytes), brotli_params(levels)),
                 None,
                 capacity,
                 yield_after,
@@ -246,11 +247,45 @@ pub(super) async fn encode(coding: Coding, bytes: Bytes, levels: Levels) -> io::
 pub(super) fn zstd_window(level: ZstdLevel) -> Option<CParameter> {
     /// The highest level whose own window fits in 8 MB.
     const WITHIN_WINDOW: i32 = 19;
-    /// 8 MB, as the base-2 logarithm zstd takes.
-    const HTTP_WINDOW_LOG: u32 = 23;
 
-    (level.get() > WITHIN_WINDOW).then(|| CParameter::window_log(HTTP_WINDOW_LOG))
+    (level.get() > WITHIN_WINDOW).then(|| CParameter::window_log(ZSTD_HTTP_WINDOW_LOG))
 }
+
+/// RFC 9659 section 3's 8 MB `Window_Size`, as the base-2 logarithm zstd
+/// takes: the most an encoder may require, and the least a decoder may refuse.
+const ZSTD_HTTP_WINDOW_LOG: u32 = 23;
+
+/// What the request-body zstd decoder is built with: a frame whose header
+/// declares a window past [`ZSTD_HTTP_WINDOW_LOG`] fails before that window is
+/// allocated, rather than under libzstd's own 2^27 default.
+///
+/// Not narrowed to the route's limit: section 3 has a decoder support the full
+/// 8 MB, and an encoder that does not know its input's size declares its
+/// level's window however short the body turns out to be.
+pub(crate) fn zstd_decoder_window() -> [DParameter; 1] {
+    [DParameter::window_log_max(ZSTD_HTTP_WINDOW_LOG)]
+}
+
+/// What brotli is built with: the quality `levels` sets for it, and a window
+/// of [`BROTLI_WINDOW_LOG`] at every quality.
+///
+/// The window is what bounds an encoder's memory. brotli holds the input of a
+/// meta-block until it emits one, and a meta-block runs to twice the window
+/// (its `lgblock`, the input block, is 2^16 already at the default quality and
+/// is not what grows). Under the encoder's own 2^22 window, an encoder fed
+/// 16 MiB without a flush holds about 27 to 31 MiB; under 2^20, 8 to 11 MiB,
+/// for 0.4% more octets on a 1.6 MB JSON document and none on the compression
+/// sweep's. `docs/middleware.md` records the measurement.
+pub(super) fn brotli_params(levels: Levels) -> EncoderParams {
+    EncoderParams::default()
+        .quality(levels.for_coding(Coding::Brotli))
+        .window_size(BROTLI_WINDOW_LOG)
+}
+
+/// brotli's window, as the base-2 logarithm `lgwin` it takes: 1 MiB less 16
+/// octets. RFC 7932 sections 9.1 and 9.2 leave it to the encoder, and every
+/// decoder accepts it, since every decoder accepts 2^24.
+const BROTLI_WINDOW_LOG: i32 = 20;
 
 /// The level as `async-compression` spells one. The fallback is unreachable:
 /// both levels reaching here are bounded at 11.
@@ -272,7 +307,8 @@ pub(crate) struct Levels {
 impl Levels {
     /// What `coding` is asked for, as `async-compression` spells a level.
     ///
-    /// zstd's window cap is [`zstd_window`]'s, passed beside it.
+    /// zstd's window cap is [`zstd_window`]'s, passed beside it, and brotli's
+    /// window is [`brotli_params`]'.
     pub(super) fn for_coding(self, coding: Coding) -> Level {
         Level::Precise(match coding {
             Coding::Zstd => self.zstd.get(),

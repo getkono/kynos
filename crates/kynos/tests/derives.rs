@@ -17,8 +17,9 @@
 //! fixed header is written, compared and described as, and the 500 a value
 //! that is no field value is refused with; the text a derived `ParamValue`
 //! reads and writes; the octets a derived `ProtobufMessage` reads and writes,
-//! and the syntax error it makes of a body `prost` refuses; and the response a
-//! derived `Reply` or `ApiError` writes.
+//! and the syntax error it makes of a body `prost` refuses; the response a
+//! derived `Reply` or `ApiError` writes; and a derived carrier's reading of
+//! its `reads` group beside the credential.
 //! Their tests call the derived code directly, with no server. What *is*
 //! checked beyond compiling is the description a derive emits, and what the
 //! default `QueryParams::parameters` makes of a derived schema.
@@ -333,6 +334,33 @@ fn a_derived_protobuf_message_is_the_one_prost_reads_and_writes() {
     );
 }
 
+/// The signature a signed request carries beside its bearer token.
+#[derive(HeaderParams)]
+struct RequestSignature {
+    #[header(rename = "Signature")]
+    signature: String,
+}
+
+/// A carrier reading a header beside its credential.
+#[derive(SecurityScheme)]
+#[security(bearer, reads = RequestSignature)]
+struct SignedRequest;
+
+/// The same, handing absence to the authenticator.
+#[derive(SecurityScheme)]
+#[security(bearer, carrier = optional, reads = RequestSignature)]
+struct OptionalSignedRequest;
+
+/// A hand-written carrier's declaration, written by the derive alone.
+#[derive(SecurityScheme)]
+#[security(bearer, carrier = manual, reads = RequestSignature)]
+struct ManualSignedRequest;
+
+/// A group that reads headers it does not describe.
+#[derive(SecurityScheme)]
+#[security(bearer, reads = Provenance)]
+struct ProvenancedBearer;
+
 fn presents<S: Carries<Presented = P>, P>() {}
 
 /// Each scheme kind is read back as its own credential type, so a kind that
@@ -345,6 +373,75 @@ fn each_scheme_kind_presents_its_own_credential() {
     presents::<DigestLogin, SchemeCredentials>();
     presents::<PartnerCertificate, PeerCertificates>();
     presents::<OptionalBearer, Option<BearerToken>>();
+    presents::<SignedRequest, (BearerToken, RequestSignature)>();
+    presents::<OptionalSignedRequest, Option<(BearerToken, RequestSignature)>>();
+}
+
+/// The head of a request carrying `fields`.
+fn request_parts(fields: &[(&str, &str)]) -> kynos::http::Parts {
+    let fields: Vec<(&str, &[u8])> = fields
+        .iter()
+        .map(|(name, value)| (*name, value.as_bytes()))
+        .collect();
+    let mut request = kynos::http::Request::new(kynos::http::body::Body::empty());
+    *request.headers_mut() = header_map(&fields);
+    request.into_parts().0
+}
+
+/// A derived carrier with `reads` decodes the group only beside a presented
+/// credential: an anonymous request is absent whatever else it carries, and a
+/// credential whose group does not decode is refused as malformed.
+#[test]
+fn a_derived_carrier_reads_its_group_beside_the_credential() {
+    let signed = request_parts(&[("authorization", "Bearer t-1"), ("signature", "s-1")]);
+    let (token, read) = SignedRequest::present(&signed)
+        .expect("a signed request is read")
+        .expect("a credential was presented");
+    assert_eq!(token.as_str(), "t-1");
+    assert_eq!(read.signature, "s-1");
+
+    for anonymous in [request_parts(&[]), request_parts(&[("signature", "s-1")])] {
+        assert!(matches!(SignedRequest::present(&anonymous), Ok(None)));
+        assert!(matches!(
+            OptionalSignedRequest::present(&anonymous),
+            Ok(Some(None))
+        ));
+    }
+
+    let unsigned = request_parts(&[("authorization", "Bearer t-1")]);
+    for refused in [
+        SignedRequest::present(&unsigned).err(),
+        OptionalSignedRequest::present(&unsigned).err(),
+    ] {
+        let refused = refused.expect("a credential missing its signature is refused");
+        assert_eq!(refused.status(), kynos::http::StatusCode::UNAUTHORIZED);
+    }
+
+    // A malformed credential is refused before the group is read.
+    let malformed = request_parts(&[("authorization", "Basic dTpw"), ("signature", "s-1")]);
+    assert!(SignedRequest::present(&malformed).is_err());
+}
+
+/// The header names `S` declares it reads beside its credential, each with
+/// whether it is required.
+fn declared_reads<S: SecuritySchemeTrait>() -> Vec<(String, Option<bool>)> {
+    let mut registry = kynos::schema::registry::Registry::new();
+    S::reads(&mut registry)
+        .into_iter()
+        .map(|parameter| (parameter.name, parameter.required))
+        .collect()
+}
+
+/// `reads = T` declares `T`'s headers, with or without the derived carrier,
+/// and only where `T` is described; a scheme naming none declares none.
+#[test]
+fn a_derived_scheme_declares_the_group_it_reads() {
+    let signature = vec![("Signature".to_owned(), Some(true))];
+    assert_eq!(declared_reads::<SignedRequest>(), signature);
+    assert_eq!(declared_reads::<OptionalSignedRequest>(), signature);
+    assert_eq!(declared_reads::<ManualSignedRequest>(), signature);
+    assert_eq!(declared_reads::<ProvenancedBearer>(), []);
+    assert_eq!(declared_reads::<BearerAuth>(), []);
 }
 
 #[test]
@@ -5224,6 +5321,47 @@ fn an_extension_member_is_sent_under_the_names_its_schema_declares() {
     );
 }
 
+/// A failure publishing a field whose name is a keyword.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum LinkError {
+    #[error("dangling link")]
+    #[problem(status = 404)]
+    Dangling {
+        #[problem(extension)]
+        r#ref: u64,
+    },
+}
+
+/// A raw-identifier field is sent and declared under its unprefixed name, as
+/// serde and the `Schema` derive spell it.
+#[test]
+fn a_raw_identifier_extension_member_is_sent_and_declared_unprefixed() {
+    use kynos::error::problem::IntoProblem;
+
+    let problem = LinkError::Dangling { r#ref: 7 }.into_problem();
+    assert_eq!(
+        problem.extensions.keys().collect::<Vec<_>>(),
+        ["ref"],
+        "{problem:?}"
+    );
+
+    let declared = &declared_problem(&emitted_responses::<LinkError>(), "404")["allOf"][1];
+    assert_eq!(
+        declared["properties"]
+            .as_object()
+            .expect("an object schema")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["ref", "type"],
+        "{declared}"
+    );
+    assert_eq!(
+        declared["required"],
+        serde_json::json!(["ref"]),
+        "{declared}"
+    );
+}
+
 /// A member type whose `Serialize` refuses, as one with a non-string map key
 /// does.
 #[derive(Debug, Schema)]
@@ -5273,6 +5411,189 @@ async fn an_unserializable_extension_member_answers_500() {
             "detail": "a problem extension member could not be serialized",
         })
     );
+}
+
+/// How long a busy store asks a client to wait, a `const` a constant member
+/// names by path.
+const RETRY_AFTER_SECONDS: u32 = 30;
+
+/// Failures each sending a member whose value the failure determines, beside
+/// one sent from a field.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum UploadError {
+    #[error("no such upload session")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/upload",
+        extension(code = "error.upload.session_not_found")
+    )]
+    SessionNotFound,
+
+    #[error("the upload session expired")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/upload",
+        extension(code = "error.upload.session_expired", retryable = false)
+    )]
+    SessionExpired,
+
+    #[error("the store is busy")]
+    #[problem(
+        status = 503,
+        extension(code = "error.upload.busy", retry_after = RETRY_AFTER_SECONDS)
+    )]
+    Busy {
+        #[problem(extension)]
+        queued: u32,
+    },
+}
+
+/// A struct sends its constant as an enum's variant does.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the upload is too large")]
+#[problem(status = 413, extension(limit = -1))]
+struct UploadTooLarge;
+
+/// A constant member is on the wire as its literal or its `const` serializes,
+/// beside a field's, with no construction site passing it.
+#[tokio::test]
+async fn a_constant_extension_member_is_sent_by_its_failure() {
+    let Answered { status, body, .. } =
+        answered(UploadError::Busy { queued: 4 }.into_response()).await;
+    assert_eq!(status, 503);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "https://errors.example.com/busy",
+            "title": "Service Unavailable",
+            "status": 503,
+            "detail": "the store is busy",
+            "code": "error.upload.busy",
+            "retry_after": 30,
+            "queued": 4,
+        })
+    );
+
+    let Answered { body, .. } = answered(UploadError::SessionExpired.into_response()).await;
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body["code"], "error.upload.session_expired", "{body}");
+    assert_eq!(body["retryable"], false, "{body}");
+
+    let Answered { body, .. } = answered(UploadTooLarge.into_response()).await;
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body["limit"], -1, "{body}");
+}
+
+/// A constant member is declared as the `const` it is, required, on its
+/// failure's branch: a generated client learns the exact value. Failures
+/// sharing one URI union their values into an `enum`, and a member only some
+/// of them send stays optional.
+#[test]
+fn a_constant_extension_member_is_declared_as_its_value() {
+    let responses = emitted_responses::<UploadError>();
+
+    let busy = &declared_problem(&responses, "503")["allOf"][1];
+    assert_eq!(
+        busy["properties"]["code"],
+        serde_json::json!({ "type": "string", "const": "error.upload.busy" }),
+        "{busy}"
+    );
+    assert_eq!(
+        busy["properties"]["retry_after"],
+        serde_json::json!({ "type": "integer", "const": 30 }),
+        "{busy}"
+    );
+    assert_eq!(
+        busy["required"],
+        serde_json::json!(["code", "retry_after", "queued"]),
+        "{busy}"
+    );
+
+    let shared = declared_problem(&responses, "404");
+    assert_eq!(shared.get("oneOf"), None, "{shared}");
+    let narrowed = &shared["allOf"][1];
+    assert_eq!(
+        narrowed["properties"]["code"],
+        serde_json::json!({
+            "type": "string",
+            "enum": ["error.upload.session_not_found", "error.upload.session_expired"],
+        }),
+        "{shared}"
+    );
+    assert_eq!(
+        narrowed["properties"]["retryable"],
+        serde_json::json!({ "type": "boolean", "const": false }),
+        "{shared}"
+    );
+    assert_eq!(
+        narrowed["required"],
+        serde_json::json!(["code"]),
+        "{shared}"
+    );
+
+    let limit = &declared_problem(&emitted_responses::<UploadTooLarge>(), "413")["allOf"][1];
+    assert_eq!(
+        limit["properties"]["limit"],
+        serde_json::json!({ "type": "integer", "const": -1 }),
+        "{limit}"
+    );
+}
+
+/// A constant whose `Serialize` refuses.
+const REFUSING: Refusing = Refusing(3);
+
+/// A failure whose constant member cannot be sent.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("rejected")]
+#[problem(status = 422, extension(refusing = REFUSING))]
+struct RefusingConstant;
+
+/// A constant that refuses to serialize answers 500 on the wire, as a field
+/// that refuses does. It refuses every time, so the description is refused
+/// where it is built rather than declaring a member the failure never sends.
+#[tokio::test]
+async fn an_unserializable_constant_member_answers_500_and_is_never_declared() {
+    let Answered { status, body, .. } = answered(RefusingConstant.into_response()).await;
+    assert_eq!(status, 500);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(
+        body["detail"], "a problem extension member could not be serialized",
+        "{body}"
+    );
+
+    let described = std::panic::catch_unwind(emitted_responses::<RefusingConstant>);
+    assert!(described.is_err(), "a refusing constant is not declared");
+}
+
+/// A constant holding no value.
+const ABSENT: Option<&str> = None;
+
+/// A failure whose constant member serializes to `null`.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("rejected")]
+#[problem(status = 422, extension(absent = ABSENT))]
+struct AbsentConstant;
+
+/// A constant serializing to `null` is refused as one that refuses to
+/// serialize is: a member is never sent as `null`, and a `const` holding
+/// `None` would send nothing else on every occurrence.
+#[tokio::test]
+async fn a_null_constant_member_answers_500_and_is_never_declared() {
+    let Answered { status, body, .. } = answered(AbsentConstant.into_response()).await;
+    assert_eq!(status, 500);
+    let body: serde_json::Value = serde_json::from_slice(&body).expect("a JSON body");
+    assert_eq!(body.get("absent"), None, "{body}");
+
+    let described = std::panic::catch_unwind(emitted_responses::<AbsentConstant>);
+    let message = described.expect_err("a null constant is not declared");
+    let message = message
+        .downcast_ref::<String>()
+        .map(String::as_str)
+        .or_else(|| message.downcast_ref::<&str>().copied())
+        .expect("a panic message");
+    assert!(message.contains("null"), "{message}");
 }
 
 /// Two failures publishing one URI, only one of which sends `errors`.
@@ -5495,6 +5816,337 @@ fn a_transparent_only_enum_describes_what_it_holds() {
         responses["422"],
         emitted_responses::<ValidationFailed>()["422"],
         "{responses}"
+    );
+}
+
+/// The wider enum `subset_of` cases narrow: an extension member, a status two
+/// variants share, a header group on one of two variants sharing a status,
+/// and a transparent variant whose 404 joins one of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum ChunkRejection {
+    #[error("no chunk {id}")]
+    #[problem(status = 404, title = "Chunk unknown")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+    },
+
+    #[error("the chunk was written concurrently")]
+    #[problem(status = 409, title = "Chunk conflict")]
+    Conflict,
+
+    #[error("the range overlaps chunk {0}")]
+    #[problem(status = 409, title = "Range conflict")]
+    RangeConflict(u64),
+
+    #[error("chunks are unavailable")]
+    #[problem(status = 503)]
+    Unavailable(#[problem(headers)] RetryAfter),
+
+    #[error("the chunk store is draining")]
+    #[problem(status = 503, title = "Draining")]
+    Draining,
+
+    #[error(transparent)]
+    #[problem(transparent)]
+    Lookup(LookupError),
+}
+
+/// What a `HEAD` answers: every status but 409. No `Display`, since the
+/// problem's `detail` is the wider enum's.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum HeadRejection {
+    NotFound { id: u64 },
+    Unavailable(RetryAfter),
+    Lookup(LookupError),
+}
+
+/// One of the two variants sharing 409.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum ConflictSubset {
+    Conflict,
+}
+
+/// A generic wider enum outside the module its subset is declared in.
+mod generic_wide {
+    use kynos::ApiError;
+
+    #[derive(Debug, thiserror::Error, ApiError)]
+    pub(crate) enum Wide<T: std::fmt::Debug> {
+        #[error("the chunk is gone")]
+        #[problem(status = 410)]
+        Gone(std::marker::PhantomData<T>),
+
+        #[error("the chunk is locked")]
+        #[problem(status = 423)]
+        Locked,
+    }
+}
+
+/// A subset of a generic wider enum named through a module path, which the
+/// conversion names its variants through in turbofish form.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = generic_wide::Wide<u32>)]
+enum GoneSubset {
+    Gone(std::marker::PhantomData<u32>),
+}
+
+/// A subset naming its wider enum as a parenthesized type, not a path, which
+/// the conversion names its variants through as `Self`. The parentheses reach
+/// the generated `impl` headers, hence the module-wide `allow`.
+#[allow(unused_parens)]
+mod parenthesized {
+    use kynos::ApiError;
+
+    use super::ChunkRejection;
+
+    #[derive(Debug, ApiError)]
+    #[problem(subset_of = (ChunkRejection))]
+    pub(crate) enum ParenthesizedSubset {
+        Conflict,
+    }
+}
+
+use parenthesized::ParenthesizedSubset;
+
+/// The one of the two variants sharing 503 that sends no header group.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum DrainingSubset {
+    Draining,
+}
+
+/// A subset of a subset.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = HeadRejection)]
+enum MissingChunk {
+    NotFound { id: u64 },
+}
+
+/// Every variant, in another order.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum EveryChunkRejection {
+    Lookup(LookupError),
+    Draining,
+    Unavailable(RetryAfter),
+    RangeConflict(u64),
+    Conflict,
+    NotFound { id: u64 },
+}
+
+/// `ChunkRejection`'s `Conflict` and `NotFound` declared without the rest, as
+/// the references a subset holding one of them is described against.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum ChunkAlone {
+    #[error("the chunk was written concurrently")]
+    #[problem(status = 409, title = "Chunk conflict")]
+    Conflict,
+}
+
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum NotFoundAlone {
+    #[error("no chunk {id}")]
+    #[problem(status = 404, title = "Chunk unknown")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+    },
+}
+
+/// A subset answers as the wider enum's variant it converts into: status,
+/// type, title, `detail` from the wider `Display`, extension members, header
+/// group, and a transparent variant's held error.
+#[tokio::test]
+async fn a_subset_answers_as_the_wider_variant() {
+    use kynos::error::problem::IntoProblem;
+
+    async fn same(subset: HeadRejection, wide: ChunkRejection) {
+        let subset = answered(subset.into_response()).await;
+        let wide = answered(wide.into_response()).await;
+        assert_eq!(subset.status, wide.status);
+        assert_eq!(subset.headers, wide.headers);
+        assert_eq!(subset.body, wide.body);
+    }
+
+    same(
+        HeadRejection::NotFound { id: 7 },
+        ChunkRejection::NotFound { id: 7 },
+    )
+    .await;
+    same(
+        HeadRejection::Unavailable(RetryAfter { retry_after: 9 }),
+        ChunkRejection::Unavailable(RetryAfter { retry_after: 9 }),
+    )
+    .await;
+    same(
+        HeadRejection::Lookup(LookupError::UserUnknown),
+        ChunkRejection::Lookup(LookupError::UserUnknown),
+    )
+    .await;
+
+    let problem = serde_json::to_value(HeadRejection::NotFound { id: 7 }.into_problem())
+        .expect("a problem serializes");
+    assert_eq!(
+        problem,
+        serde_json::json!({
+            "type": "https://errors.example.com/not-found",
+            "title": "Chunk unknown",
+            "status": 404,
+            "detail": "no chunk 7",
+            "id": 7,
+        })
+    );
+    assert_eq!(
+        retry_after(&HeadRejection::Unavailable(RetryAfter { retry_after: 9 }).into_response()),
+        (503, Some("9".to_owned()))
+    );
+}
+
+/// A subset declares the statuses its variants answer with and no other, in
+/// its declaration order without repeats, and describes each as the wider
+/// enum does where it holds every variant answering with it, as it holds the
+/// 404's.
+#[test]
+fn a_subset_declares_only_what_its_variants_answer_with() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    assert_eq!(HeadRejection::STATUSES, &[404, 503]);
+    let codes: Vec<u16> = HeadRejection::statuses()
+        .iter()
+        .map(kynos::http::StatusCode::as_u16)
+        .collect();
+    assert_eq!(codes, [404, 503]);
+
+    let subset = emitted_responses::<HeadRejection>();
+    let wide = emitted_responses::<ChunkRejection>();
+    let described: Vec<&String> = subset
+        .as_object()
+        .expect("responses serialize as an object")
+        .keys()
+        .collect();
+    assert_eq!(described, ["404", "503"], "{subset}");
+    assert_eq!(subset["404"], wide["404"], "{subset}");
+}
+
+/// A header group only some of a status's wider variants send is declared by
+/// the ones a subset keeps: required where every kept variant sends it, and
+/// not declared where none does.
+#[test]
+fn a_subset_declares_a_shared_status_header_by_the_variants_it_holds() {
+    let wide = emitted_responses::<ChunkRejection>();
+    assert_eq!(
+        wide["503"]["headers"],
+        retry_after_declared(false),
+        "{wide}"
+    );
+
+    let sending = emitted_responses::<HeadRejection>();
+    assert_eq!(
+        sending["503"]["headers"],
+        retry_after_declared(true),
+        "{sending}"
+    );
+
+    let silent = emitted_responses::<DrainingSubset>();
+    assert!(silent["503"].is_object(), "{silent}");
+    assert_eq!(silent["503"].get("headers"), None, "{silent}");
+}
+
+/// A status two wider variants share, or one a held error joins, is described
+/// by the variants a subset holds, as those variants declared alone are; a
+/// subset of a subset included.
+#[test]
+fn a_subset_describes_a_shared_status_by_the_variants_it_holds() {
+    use kynos::response::ShortCircuit;
+
+    let wide = emitted_responses::<ChunkRejection>();
+
+    let conflict = emitted_responses::<ConflictSubset>();
+    assert_eq!(conflict, emitted_responses::<ChunkAlone>());
+    assert_ne!(conflict["409"], wide["409"]);
+
+    let missing = emitted_responses::<MissingChunk>();
+    assert_eq!(MissingChunk::STATUSES, &[404]);
+    assert_eq!(missing, emitted_responses::<NotFoundAlone>());
+    assert_ne!(missing["404"], wide["404"]);
+}
+
+/// A subset holding every variant is described as the wider enum is, whatever
+/// order it lists them in.
+#[test]
+fn a_subset_of_every_variant_is_the_wider_enum() {
+    use kynos::response::ShortCircuit;
+
+    assert_eq!(
+        emitted_responses::<EveryChunkRejection>(),
+        emitted_responses::<ChunkRejection>()
+    );
+    let mut every = EveryChunkRejection::STATUSES.to_vec();
+    every.sort_unstable();
+    let mut wide = ChunkRejection::STATUSES.to_vec();
+    wide.sort_unstable();
+    assert_eq!(every, wide);
+}
+
+/// The conversion moves each variant's fields into the wider variant of its
+/// name, and a subset of a subset converts into the subset.
+#[test]
+fn a_subset_converts_into_the_wider_enum() {
+    assert!(matches!(
+        ChunkRejection::from(HeadRejection::NotFound { id: 3 }),
+        ChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        ChunkRejection::from(EveryChunkRejection::RangeConflict(4)),
+        ChunkRejection::RangeConflict(4)
+    ));
+    assert!(matches!(
+        ChunkRejection::from(ConflictSubset::Conflict),
+        ChunkRejection::Conflict
+    ));
+    assert!(matches!(
+        HeadRejection::from(MissingChunk::NotFound { id: 5 }),
+        HeadRejection::NotFound { id: 5 }
+    ));
+}
+
+/// A wider enum named by a generic path in another module, or by a type that
+/// is not a path, converts and is described as one named by a plain path.
+#[test]
+fn a_subset_names_a_generic_or_parenthesized_wider_enum() {
+    use kynos::response::ShortCircuit;
+
+    assert!(matches!(
+        generic_wide::Wide::<u32>::from(GoneSubset::Gone(std::marker::PhantomData)),
+        generic_wide::Wide::Gone(_)
+    ));
+    assert_eq!(GoneSubset::STATUSES, &[410]);
+    let gone = emitted_responses::<GoneSubset>();
+    let described: Vec<&String> = gone
+        .as_object()
+        .expect("responses serialize as an object")
+        .keys()
+        .collect();
+    assert_eq!(described, ["410"], "{gone}");
+    assert_eq!(
+        gone["410"],
+        emitted_responses::<generic_wide::Wide<u32>>()["410"]
+    );
+
+    assert!(matches!(
+        ChunkRejection::from(ParenthesizedSubset::Conflict),
+        ChunkRejection::Conflict
+    ));
+    assert_eq!(ParenthesizedSubset::STATUSES, &[409]);
+    assert_eq!(
+        emitted_responses::<ParenthesizedSubset>(),
+        emitted_responses::<ConflictSubset>()
     );
 }
 

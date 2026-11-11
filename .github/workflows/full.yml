@@ -164,8 +164,10 @@ jobs:
     needs: gate
     if: needs.gate.outputs.full == 'true'
     runs-on: ubuntu-latest
-    # Advisory before 1.0 (docs/nfr.md): a break goes to the job summary and
-    # passes; no verdict at all fails, which `semver:check` decides. Not
+    # Blocking on a release branch, advisory elsewhere (docs/nfr.md): the tool
+    # reads the release type from the version release-plz bumped, so only there
+    # does a break mean an undeclared one. Elsewhere it goes to the job summary
+    # and passes; no verdict at all fails, which `semver:check` decides. Not
     # `continue-on-error`, which still marks the check run red.
     steps:
       - name: Checkout repository
@@ -174,8 +176,19 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: semver
+      # Decided on the branch whatever the event, as `cost` decides its gate, so
+      # a manual run there cannot pass in place of a refusal.
       - name: Compare the public API against the last published release
-        run: mise run semver:check --advisory
+        env:
+          RELEASE: >-
+            ${{ startsWith(github.head_ref, 'release-plz-')
+            || startsWith(github.ref_name, 'release-plz-') }}
+        run: |
+          if [ "$RELEASE" = true ]; then
+            mise run semver:check
+          else
+            mise run semver:check --advisory
+          fi
       - name: Add API compatibility summary
         if: ${{ !cancelled() && hashFiles('semver-summary.md') != '' }}
         run: cat semver-summary.md >> "$GITHUB_STEP_SUMMARY"

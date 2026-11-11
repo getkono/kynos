@@ -11,7 +11,8 @@
 //! is driven, and what the region is, is [`driver`]'s. The exception is
 //! [`connection`]'s rows, which send a catalog request through the server's
 //! connection path over an in-memory duplex, so that the server's share of
-//! that gap is counted too.
+//! that gap is counted too, and [`connection::tls`]'s, which send it over a
+//! TLS session to Kynos's own TLS listener on a loopback socket.
 //!
 //! A scenario may name a [`base`](Scenario::base): the scenario it differs
 //! from in one variable, whose difference the report gives as that variable's
@@ -391,7 +392,8 @@ pub(crate) const ROUTING: &[Scenario] = &[
 ];
 
 /// Scope: `layers-4`'s layers at the two narrower scopes, panic recovery at
-/// the widest and narrowest, and an observer.
+/// the widest and narrowest, an observer, and `Trace` as an observer and as
+/// its per-request span.
 pub(crate) const SCOPE: &[Scenario] = &[
     row!(
         "group-layers-4",
@@ -450,6 +452,24 @@ pub(crate) const SCOPE: &[Scenario] = &[
         OK,
         Poll,
         Some("trace-nosub")
+    ),
+    // `Trace`'s per-request span with no subscriber installed: the span is
+    // `Span::none()` once the level and interest checks refuse it.
+    row!(
+        "trace-span-nosub",
+        scope::traced_span,
+        || get("/json/small"),
+        OK,
+        Poll,
+        Some("json-small")
+    ),
+    row!(
+        "trace-span-sub",
+        scope::traced_span_subscribed,
+        || get("/json/small"),
+        OK,
+        Poll,
+        Some("trace-span-nosub")
     ),
 ];
 
@@ -620,7 +640,8 @@ pub(crate) const CODECS: &[Scenario] = &[
 ];
 
 /// Responses: `plaintext`'s octets as a representation answering ranges and
-/// preconditions, and `json-small`'s negotiated or created.
+/// preconditions, `json-small`'s negotiated or created, and both JSON
+/// documents serialized by `serde_json` alone.
 pub(crate) const RESPOND: &[Scenario] = &[
     row!(
         "binary-full",
@@ -661,6 +682,25 @@ pub(crate) const RESPOND: &[Scenario] = &[
         CREATED,
         Poll,
         Some("json-small")
+    ),
+    // The bare-`serde_json` controls: the same document and headers, written by
+    // `serde_json::to_vec` rather than `Json`'s writer, so the difference from
+    // the base is what `Json` spends past serialization itself.
+    row!(
+        "json-small-bare",
+        service,
+        || get("/json/small/bare"),
+        OK,
+        Poll,
+        Some("json-small")
+    ),
+    row!(
+        "json-large-bare",
+        service,
+        || get("/json/large/bare"),
+        OK,
+        Poll,
+        Some("json-large")
     ),
 ];
 
@@ -948,4 +988,5 @@ pub fn catalog() -> impl Iterator<Item = Scenario> {
                 .iter()
                 .map(|connected| connected.scenario),
         )
+        .chain(connection::tls::TLS.iter().map(|sealed| sealed.scenario))
 }

@@ -1,0 +1,17 @@
+error[E0277]: `Tokens` does not authorize the `Grant` scopes of `Bearer<std::string::String, Grant>`
+  --> tests/ui/traits/authorizer.rs:32:26
+   |
+32 |     type Authenticator = Tokens;
+   |                          ^^^^^^ no `Authorizer<Bearer<std::string::String, Grant>, App, Grant>` impl
+   |
+help: the trait `Authorizer<Bearer<std::string::String, Grant>, App, Grant>` is not implemented for `Tokens`
+  --> tests/ui/traits/authorizer.rs:21:1
+   |
+21 | struct Tokens;
+   | ^^^^^^^^^^^^^
+   = note: a scheme whose `Scope` is not `Unscoped` needs `impl Authorizer<Bearer<std::string::String, Grant>, App, Grant> for Tokens` beside its `Authenticator` impl
+note: required by a bound in `kynos::security::Authenticates::Authenticator`
+  --> src/security/mod.rs
+   |
+   |     type Authenticator: Authorizer<S, Self, S::Scope>;
+   |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `Authenticates::Authenticator`

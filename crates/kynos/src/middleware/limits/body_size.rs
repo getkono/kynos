@@ -235,7 +235,9 @@ impl<T: ProblemType, U: ProblemType> Responses for BodyRefused<T, U> {
 /// is the only bound there is and the whole body is materialised here before
 /// the handler is entered, so the 413 precedes any side effect of the payload.
 /// Records then still arrive one at a time, but the memory the streaming was
-/// for has already been spent.
+/// for has already been spent. Where no `BodySize` covers the operation,
+/// `Records` holds a chunked body to the operation's limit itself, and its 413
+/// follows whatever records arrived within it, mid-stream.
 ///
 /// # Naming what the 413 is
 ///

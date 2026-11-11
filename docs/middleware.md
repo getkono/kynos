@@ -152,6 +152,31 @@ at all — a redirect — gets no entry rather than an invented one: the header 
 still sent, and understating a description by one header beats claiming a
 response that does not exist.
 
+That is the default, `Placement::Success`, and `Interceptor::ADDS_ON` changes
+it. The type cannot say which responses carry the group: `with_headers` writes
+it onto whatever the rest of the chain produced, a 4xx included, and an
+interceptor may write the same fields onto its own `Short` response. Only the
+author knows, so the author declares it:
+
+| `ADDS_ON` | Described on | For |
+| --- | --- | --- |
+| `Success` | each `2XX` the operation declares when the interceptor is described | a header meaningful on a success alone |
+| `Every` | every response the finished operation declares | a request identifier, a protocol version |
+| `Problems` | every response the finished operation declares with an `application/problem+json` body | `Retry-After` on a refusal |
+
+`Every` and `Problems` read the *finished* operation, after every interceptor's
+`Short` and panic recovery's 500 are declared, so a response contributed after
+the interceptor is described is still reached. `Success` is filed on the spot,
+as it always was, so a default interceptor's document is unchanged. None of the
+three mints a response or reaches into a `$ref`, and a header the response
+already declares under that name keeps its entry.
+
+`Every` and `Problems` are claims, and the framework does not narrow them to
+what passes through the interceptor. They overstate by any response its
+`with_headers` never sees and it writes nothing onto itself — an outer
+interceptor's short circuit, for one — as `Success` understates by every
+failure the group rides.
+
 A body is declared nowhere at all — `Continued::take_body` and
 `Continued::set_body` need no declaration, because a body has no name to collide
 on. Two interceptors rewriting one compose; two setting one header do not. An
@@ -317,15 +342,87 @@ arrived, never past its cap. An output expected to fit one 8 KiB read is not
 presized: that read's own allocation is then exactly its length, and a guess
 could only add a second one.
 
-**An encoder's fixed cost is mostly the memory it sets up, and zstd's is the
-largest.** Each encode allocates its context afresh — megabytes for zstd,
-hundreds of kilobytes for gzip and brotli — and most of what glibc executes for
-an encode is that memory being prepared. So at the small end zstd is the most
-expensive coding in total, whatever the body, and brotli the cheapest;
+**An encoder's fixed cost is mostly the memory it sets up.** Each encode
+allocates its context afresh, and most of what glibc executes for an encode is
+that memory being prepared. So at the small end zstd is the most expensive
+coding in total, whatever the body, and brotli the cheapest;
 only at the large end, where the fixed cost is amortised, does zstd's program
-work — the smallest per octet saved — make it the cheapest. On a service
-answering many concurrent compressed requests zstd's context is also resident
-memory to budget for.
+work — the smallest per octet saved — make it the cheapest.
+
+**What one encoder keeps resident grows with what it has been fed, up to a
+plateau.** Measured as the resident-set growth per encoder of 32 held at once,
+at the default levels, over the sweep's JSON shape, on x86_64 glibc. A body is
+handed over in one write, as a collected encode hands it, except where the
+column says 16 KiB writes, as a stream of frames hands it; memory an encoder
+has allocated and not yet touched is not resident, and is not counted:
+
+| Coding | 2 KiB fed | 64 KiB | 1 MiB | 16 MiB, flushed per 16 KiB write | 16 MiB in 16 KiB writes, unflushed | 16 MiB, unflushed |
+| --- | --- | --- | --- | --- | --- | --- |
+| zstd 3 | 0.8 MiB | 0.9 MiB | 1.8 MiB | 2.8 MiB | 3.0 MiB | 3.0 MiB |
+| brotli 4 | < 0.1 MiB | 1.4 MiB | 6.1 MiB | 2.8 MiB | 7.7 MiB | 11.2 MiB |
+| gzip 6 | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB | 0.3 MiB |
+
+So brotli, not zstd, is the largest past the first few kilobytes. Its unflushed
+columns are a collected body of several megabytes, or a `Throughput` stream:
+brotli holds the input of a meta-block until it emits one, and a meta-block
+runs to twice its window. Told up front of a megabyte or more, as a collected
+body's single write tells it, it also chooses a hash table of 4 MiB, which is
+most of its 1 MiB column. `Interactive` flushes after every frame, which closes
+the meta-block, so a stream of frames near the measured 16 KiB flush interval,
+such as an event stream, stays in the flushed column. A frame is fed whole
+before that flush, so a stream of frames of a megabyte or more holds each one
+first, and reaches between the 1 MiB and unflushed columns.
+
+**Brotli's window is 2^20, not the encoder's own 2^22
+([#1302](https://github.com/getkono/kynos/issues/1302)).** Under 2^22 a
+meta-block runs to 8 MiB, and the same three brotli columns read 8.8, 27.3 and
+30.7 MiB. Its input block, `lgblock`, is not the lever: at quality 4 it already
+resolves to 2^16, and a larger one only grows the meta-block further. A smaller
+window loses ratio steadily only on a body with repeats more than a window
+apart. Elsewhere it moves the output about 1% either way and not monotonically,
+because the window also sets the meta-block size, and each meta-block carries
+its own block split and prefix codes. The 16 MiB row is that case: its shape
+repeats locally, as the 59395-octet row encoding identically at every window
+shows, and 2^20 lands 1.1% above 2^22 while 2^18 lands 1.5% below it. Encoded octets at quality 4, by window:
+
+| Body | 2^22 | 2^21 | 2^20 | 2^19 | 2^18 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| the sweep's 59395 octets | 1334 | 1334 | 1334 | 1334 | 1334 |
+| its shape at 16 MiB | 233602 | 232629 | 236176 | 232610 | 230140 |
+| `cargo metadata` of this workspace, 1.6 MB | 131977 | 131977 | 132499 | 149955 | 168458 |
+
+2^20 is the smallest window that costs a real document under 1% — 0.4% here,
+and 0.7% at quality 11 — where 2^19 costs it 14%. Every quality takes the same
+window. RFC 7932 sections 9.1 and 9.2 leave both sizes to the encoder, and a
+decoder accepts any window up to 2^24.
+
+**How many encoders are resident at once is bounded by what bounds requests,
+and by nothing of its own.** A collected body up to 1 MiB is encoded in the poll
+that starts it, so at most one such encoder is live per runtime worker however
+many requests are in flight. A collected body past 1 MiB yields between reads,
+and a streamed body holds its encoder until the stream ends, so those are
+bounded only by the responses in flight: by default the connection cap times
+200 streams on each HTTP/2 connection, and `Concurrency` where it is mounted.
+The sizing rule is the worker count times the 1 MiB column, plus the large or
+streamed responses the deployment lets be in flight at once times the widest
+column they can reach for the codings they negotiate. Where that does not fit
+the memory budget, cap those responses with `Concurrency` outside `Compression`
+— intercepted before it, or at an enclosing scope — since its slot is held
+until the body it sees ends, and inside `Compression` that is the handler's
+body, which a collected encode has already read. A stream of small frames keeps
+brotli out of the unflushed column under `Interactive`; a stream whose frames
+reach a megabyte, and a collected body of several megabytes, do not, so size
+those by the widest unflushed column.
+
+There is no cap on concurrent encodes. One that passed responses through
+uncompressed when full would drop compression at peak load, when bandwidth
+matters most, and would hold a slot for the life of every event stream; it
+could not apply to `Encoding::Required`, which excludes identity; and
+`Concurrency` already bounds the responses an encoder belongs to. Nor are
+contexts pooled: `async-compression` builds each encoder's context itself and
+offers no way to hand it one to reuse. What would reopen this is
+`kynos-bench`'s compression scenario (getkono/kynos-bench#121) finding a peak
+that `Concurrency` and this rule do not predict.
 
 **A body still being produced is encoded as it arrives.** A response whose
 length is known is collected and encoded once. One whose length is not — an
@@ -698,6 +795,24 @@ fn writes(
 exactly as that call would be. It is on `Group` only: a group is the unit a
 chain is shared between, and a router takes its own scope's chain once.
 
+**An interceptor that acts on some methods is scoped to them, not split into
+groups.** `Group::intercept_when(UnsafeMethods, guard)` runs `guard` on, and
+declares it on, only the group's operations whose method is in the set, so a
+`425` refusing replayed writes stays off the `GET` beside them. The set is
+resolved per operation when the group is mounted: an operation it does not name
+runs a chain without it, and a request pays no method check. An undeclared
+`HEAD` is answered by the `GET` operation, so it is covered exactly when `GET`
+is. The set is a type, a `MethodSet`, and the stack names the element
+`When<UnsafeMethods, N>`, so the collision check reads it: two scoped
+interceptors are compared only where their sets share a method. Disjoint sets
+cover no operation in common, so two sharing a status compose. Overlapping sets
+are compared even where the group declares no operation with a shared method,
+so mounting one later never turns a group that compiled into one that does not.
+A set being a type is what costs a custom one a declaration of its own, a unit
+type implementing `MethodSet`: a value the compiler cannot read would leave the
+check comparing every pair, and a check moved to `build` would trade a compile
+error for a run-time one.
+
 ## What bounds a request before an interceptor runs
 
 An interceptor covers the operations in its subtree, which means it runs after
@@ -720,6 +835,7 @@ four different answers depending on which layer is asked.
 | Response body stall | — | — | — | `BodyTimeout::idle`, when mounted | **no** |
 | Response body total time | — | — | — | `BodyTimeout::deadline`, when mounted | **no** |
 | Total connections | — | — | `max_connections`, 10 000 | — | yes |
+| Connections queued past the cap | — | — | `listen_backlog`, as many as the kernel allows (`somaxconn`) | — | yes, by the kernel |
 | Per-IP connections | — | — | — | — | **no**, and see below |
 | Per-IP request rate | — | — | — | `RateLimit` keyed `ByClientAddress`, with a trust policy set | no |
 | Concurrent in flight | — | `max_concurrent_streams`, 200 per connection | — | `Concurrency`, when mounted | partial |
@@ -728,6 +844,7 @@ four different answers depending on which layer is asked.
 | Reset flood | — | `max_pending_accept_reset_streams`, `max_local_error_reset_streams` | — | — | yes |
 | TLS handshake stall | — | — | `handshake_timeout`, 10 s | — | yes, with `tls` |
 | Decompression bomb | — | — | — | `Decompression`, when mounted | **no** |
+| Response encoders resident at once | — | — | — | `Concurrency` outside `Compression`, when mounted; one per worker for a collected body up to 1 MiB | partial |
 
 Five rows are worth reading twice.
 
@@ -1618,9 +1735,10 @@ cardinality is bounded and the label cannot disagree with the description.
 
 It is *not* handed one while declaring, because there is no declaring step left
 to hand it to. Declaring differently per operation is expressed by mounting
-different instances at different scopes — which is the same principle as above,
-and which every interceptor Kynos ships was already doing: not one of them
-consulted the `Route` argument the old `contribution` method gave it.
+different instances at different scopes, or one instance scoped to methods with
+`Group::intercept_when` — which is the same principle as above, and which every
+interceptor Kynos ships was already doing: not one of them consulted the
+`Route` argument the old `contribution` method gave it.
 
 ## Conformance
 

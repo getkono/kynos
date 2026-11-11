@@ -43,6 +43,7 @@ use crate::{
     driver::{Connecting, Driver, Runner, Served},
 };
 
+pub mod tls;
 pub(crate) mod wire;
 
 /// How a connection row's request reaches the server.

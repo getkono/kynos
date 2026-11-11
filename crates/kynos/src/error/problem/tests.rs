@@ -3,8 +3,9 @@
 //! The shapes a declared status takes -- the `allOf` and the `oneOf` -- are
 //! asserted through the derive in `crates/kynos/tests/derives.rs`, which is
 //! where a reader meets them. What is left here is what no declaration reaches
-//! as readably: two failures publishing one type, two sharing one summary, a
-//! status whose failures gave no summary at all, and a status with no failure
+//! as readably: two failures publishing one type, the constants they union
+//! and the unions that stay an `anyOf`, two sharing one summary, a status
+//! whose failures gave no summary at all, and a status with no failure
 //! answering it -- which no caller can emit and this refuses.
 //!
 //! One case is about the wire rather than a declaration: an extension keyed
@@ -12,7 +13,7 @@
 
 use serde_json::Value;
 
-use crate::error::problem::{Branch, Member, narrowed_response};
+use crate::error::problem::{Branch, Member, constant, narrowed_response};
 
 /// The `Problem` component, as `Registry::resolve` hands it over.
 fn component() -> kynos_openapi::Schema {
@@ -45,12 +46,12 @@ fn typed(ty: &str) -> kynos_openapi::Schema {
 /// sent, so it is not declared either.
 #[test]
 fn one_branch_declares_every_member_its_failures_send() {
-    let invalid: [Member; 3] = [
+    let invalid: [Member<'_>; 3] = [
         ("code", typed("string"), true),
         ("errors", typed("array"), true),
         ("detail", typed("integer"), true),
     ];
-    let empty: [Member; 3] = [
+    let empty: [Member<'_>; 3] = [
         ("code", typed("integer"), true),
         ("errors", typed("array"), false),
         ("hint", typed("string"), true),
@@ -78,6 +79,92 @@ fn one_branch_declares_every_member_its_failures_send() {
         narrowing["required"],
         serde_json::json!(["code"]),
         "{narrowing}"
+    );
+}
+
+/// The members of one URI's branch, from failures each sending `members`.
+fn members_of(members: &[&[Member<'_>]]) -> Value {
+    let branches: Vec<Branch<'_>> = members
+        .iter()
+        .map(|members| (Some("https://errors.example.com/upload"), None, *members))
+        .collect();
+    declared_with(404, &branches)["content"]["application/problem+json"]["schema"]["allOf"][1]
+        ["properties"]
+        .clone()
+}
+
+/// Failures publishing one URI, each sending its own constant under one name,
+/// declare the set of those values as one `enum`, written in declaration order
+/// and once each, the type they share kept: what a client switches on. One
+/// value all of them send stays a `const`.
+#[test]
+fn constants_one_type_publishes_are_unioned_into_an_enum() {
+    let missing = [("code", constant(serde_json::json!("upload.missing")), true)];
+    let expired = [("code", constant(serde_json::json!("upload.expired")), true)];
+    let both = members_of(&[&missing, &expired, &missing]);
+    assert_eq!(
+        both["code"],
+        serde_json::json!({ "type": "string", "enum": ["upload.missing", "upload.expired"] }),
+        "{both}"
+    );
+
+    let numbered = [("code", constant(serde_json::json!(7)), true)];
+    let alike = members_of(&[&numbered, &numbered]);
+    assert_eq!(
+        alike["code"],
+        serde_json::json!({ "type": "integer", "const": 7 }),
+        "{alike}"
+    );
+}
+
+/// A union is an `enum` only where every side is a bare value set of one
+/// type: a constant beside an open type, or beside a constant of another type,
+/// stays the `anyOf` it was, since an `enum` dropping `type` would admit what
+/// neither side's `type` did.
+#[test]
+fn a_constant_beside_anything_else_stays_an_any_of() {
+    let constant_code = [("code", constant(serde_json::json!("upload.missing")), true)];
+    let open = [("code", typed("string"), true)];
+    let numbered = [("code", constant(serde_json::json!(7)), true)];
+
+    assert_eq!(
+        members_of(&[&constant_code, &open])["code"],
+        serde_json::json!({ "anyOf": [
+            { "type": "string", "const": "upload.missing" },
+            { "type": "string" },
+        ] })
+    );
+    assert_eq!(
+        members_of(&[&constant_code, &numbered])["code"],
+        serde_json::json!({ "anyOf": [
+            { "type": "string", "const": "upload.missing" },
+            { "type": "integer", "const": 7 },
+        ] })
+    );
+}
+
+/// A constant is declared by its value and the JSON type that value has; a
+/// number with a fraction is a `number`, and a structured value carries no
+/// `type`, since its `const` already says everything.
+#[test]
+fn a_constant_names_the_type_of_its_value() {
+    let declared = |value: Value| serde_json::to_value(constant(value)).expect("a schema");
+
+    assert_eq!(
+        declared(serde_json::json!(false)),
+        serde_json::json!({ "type": "boolean", "const": false })
+    );
+    assert_eq!(
+        declared(serde_json::json!(1.5)),
+        serde_json::json!({ "type": "number", "const": 1.5 })
+    );
+    assert_eq!(
+        declared(serde_json::json!(-3)),
+        serde_json::json!({ "type": "integer", "const": -3 })
+    );
+    assert_eq!(
+        declared(serde_json::json!(["a"])),
+        serde_json::json!({ "const": ["a"] })
     );
 }
 

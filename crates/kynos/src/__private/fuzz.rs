@@ -62,6 +62,213 @@ pub fn percent_decoded_utf8(text: &str) -> Result<(), usize> {
     crate::__private::uri::check_percent_decoded_utf8(text)
 }
 
+/// How far the start of a connection reads as a PROXY protocol header.
+#[cfg(feature = "server")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProxyRead {
+    /// A header may still follow.
+    Partial,
+    /// A whole header this long, naming the client where it names one.
+    Complete(Option<std::net::SocketAddr>, usize),
+    /// No header the specification admits starts the connection.
+    Malformed,
+}
+
+/// What `bytes`, the start of a connection, reads as: a PROXY protocol header
+/// of either version, part of one, or none.
+#[cfg(feature = "server")]
+#[must_use]
+pub fn proxy_header(bytes: &[u8]) -> ProxyRead {
+    use crate::server::proxy_protocol::{Header, Parsed, parse};
+
+    match parse(bytes) {
+        Ok(Parsed::Partial) => ProxyRead::Partial,
+        Ok(Parsed::Complete(Header::Local, length)) => ProxyRead::Complete(None, length),
+        Ok(Parsed::Complete(Header::Relayed(client), length)) => {
+            ProxyRead::Complete(Some(client), length)
+        }
+        Err(_) => ProxyRead::Malformed,
+    }
+}
+
+/// The weight an `Accept-Encoding` field `accept` gives the coding `token`,
+/// its own or else `*`'s, in thousandths; `None` where neither appears.
+#[cfg(any(feature = "compression", feature = "assets"))]
+#[must_use]
+pub fn coding_quality(accept: &str, token: &str) -> Option<u16> {
+    crate::http::coding::quality(accept, token)
+}
+
+/// The coding of `available` an `Accept-Encoding` field `accept` prefers to
+/// identity, or `None` to send identity.
+#[cfg(any(feature = "compression", feature = "assets"))]
+#[must_use]
+pub fn preferred_coding<'a>(accept: &str, available: &[&'a str]) -> Option<&'a str> {
+    crate::http::coding::preferred(accept, available)
+}
+
+/// The weight an `Accept-Encoding` field `accept` gives identity, in
+/// thousandths.
+#[cfg(any(feature = "compression", feature = "assets"))]
+#[must_use]
+pub fn identity_quality(accept: &str) -> u16 {
+    crate::http::coding::identity_quality(accept)
+}
+
+/// What a `Cors` permitting `origins` and every origin ending in `suffix`,
+/// with credentials where `credentials` says, and every request header where
+/// `any_header` does or else `x-trace`, answers a request carrying `headers`.
+///
+/// The first map is the CORS fields of an actual response. The status and the
+/// second map are the answer to an `OPTIONS` carrying `headers`, on a path
+/// serving `GET` and `POST` under that `Cors` and `DELETE` under none.
+#[must_use]
+pub fn cors(
+    origins: &[&str],
+    suffix: &str,
+    credentials: bool,
+    any_header: bool,
+    headers: &HeaderMap,
+) -> (HeaderMap, crate::http::StatusCode, HeaderMap) {
+    use kynos_openapi::Method;
+
+    use crate::{
+        extract::params::header::EncodeHeaders,
+        http::{Request, body::Body},
+        middleware::cors::{
+            Cors,
+            preflight::{Preflight, Scope},
+        },
+        router::policy::FallbackPolicy,
+    };
+
+    let suffix = suffix.to_owned();
+    let mut cors = Cors::new()
+        .allow_origins(origins.iter().map(|origin| (*origin).to_owned()))
+        .allow_origins_matching(move |origin| origin.ends_with(&suffix));
+    if credentials {
+        cors = cors.allow_credentials();
+    }
+    cors = if any_header {
+        cors.allow_any_header()
+    } else {
+        cors.allow_headers(["x-trace"])
+    };
+    let config = cors.config();
+
+    let actual = config
+        .headers_for(headers)
+        .encode()
+        .expect("CORS fields are field values")
+        .into_iter()
+        .collect();
+
+    let preflight = Preflight::new(
+        vec![Scope::new(config.clone(), vec![Method::Get, Method::Post])],
+        vec![Method::Get, Method::Post, Method::Delete],
+        Some(HeaderValue::from_static("GET, POST, DELETE")),
+        FallbackPolicy::Problem,
+    );
+    let mut request = Request::new(Body::empty());
+    *request.method_mut() = crate::http::Method::OPTIONS;
+    *request.headers_mut() = headers.clone();
+    let answer = preflight.answer(&request);
+
+    (actual, answer.status(), answer.headers().clone())
+}
+
+/// Whether a `TrustedHosts` allowing `allowed`, and loopback where `loopback`
+/// says, admits a request carrying `headers` whose target states `authority`;
+/// `None` where `authority` is not one.
+#[must_use]
+pub fn trusted_host(
+    allowed: &[&str],
+    loopback: bool,
+    headers: &HeaderMap,
+    authority: Option<&str>,
+) -> Option<bool> {
+    use ::http::uri::Authority;
+
+    use crate::middleware::trusted_hosts::TrustedHosts;
+
+    let authority = match authority {
+        Some(authority) => Some(Authority::try_from(authority).ok()?),
+        None => None,
+    };
+    let mut hosts = allowed.iter().fold(TrustedHosts::new(), |hosts, host| {
+        hosts.allow((*host).to_owned())
+    });
+    if loopback {
+        hosts = hosts.allow_loopback();
+    }
+    Some(hosts.admits(headers, authority.as_ref()))
+}
+
+/// Whether a request carrying `headers` forbids `Cache` from answering it
+/// from the store, and from storing its response: its `Cache-Control`
+/// `no-cache` and `no-store`.
+#[cfg(feature = "cache")]
+#[must_use]
+pub fn request_cache_control(headers: &HeaderMap) -> (bool, bool) {
+    let requested = crate::middleware::cache::freshness::Requested::of(headers);
+    (requested.forbids_reuse(), requested.forbids_storing())
+}
+
+/// The delimiter a multipart request carrying `headers` declares, or the
+/// status refusing it: 415 for a media type `MultipartForm` does not accept,
+/// 400 for no `boundary`.
+#[cfg(feature = "multipart")]
+pub fn multipart_boundary(headers: &HeaderMap) -> Result<String, u16> {
+    crate::extract::body::multipart::boundary(headers).map_err(|refused| refused.status().as_u16())
+}
+
+/// What a `QueryString<Unchecked<serde_json::Value>, Json>` reads from a
+/// request whose target has the query `query`, or none at all; `None` where
+/// `/?query` is not a request target.
+#[cfg(all(feature = "json", feature = "openapi32"))]
+#[must_use]
+pub fn querystring(
+    query: Option<&str>,
+) -> Option<Result<serde_json::Value, crate::error::rejection::QueryRejection>> {
+    use crate::{
+        extract::{FromRequestParts, params::querystring::QueryString},
+        http::{Request, Uri, body::Body, media::Json},
+        schema::unchecked::Unchecked,
+    };
+
+    let target = match query {
+        Some(query) => format!("/?{query}"),
+        None => "/".to_owned(),
+    };
+    let mut request = Request::new(Body::empty());
+    *request.uri_mut() = Uri::try_from(target).ok()?;
+    let (mut parts, _) = request.into_parts();
+    let read = ready(
+        <QueryString<Unchecked<serde_json::Value>, Json> as FromRequestParts<()>>::from_request_parts(
+            &mut parts,
+            &(),
+        ),
+    );
+    Some(read.map(|read| read.into_inner().0))
+}
+
+/// `bytes` read as one JSON document by the reader every JSON input shares,
+/// which reads a struct only from an object.
+///
+/// # Errors
+///
+/// Whether the document was well-formed JSON that did not fit `T`, and the
+/// JSON Pointer of the position that failed.
+#[cfg(any(feature = "json", feature = "openapi32"))]
+pub fn strict_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, (bool, String)> {
+    crate::extract::strict_json::from_slice(bytes).map_err(|failure| {
+        (
+            failure.is_schema_failure(),
+            failure.pointer(crate::schema::constraints::Pointer::root()),
+        )
+    })
+}
+
 /// Whether a request carrying `headers` offers a body codec's `media_type`.
 #[must_use]
 pub fn offers(headers: &HeaderMap, media_type: &str) -> bool {

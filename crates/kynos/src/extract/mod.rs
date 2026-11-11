@@ -11,7 +11,8 @@
 //! [`MatchedPath`](connection::MatchedPath),
 //! [`ConnectInfo`](connection::ConnectInfo),
 //! [`Forwarded`](crate::http::forwarded::Forwarded) and, under `server`,
-//! [`Draining`](crate::server::lifecycle::Draining) all do: none of them is
+//! [`Draining`](crate::server::lifecycle::Draining) and
+//! [`Readiness`](crate::server::lifecycle::Readiness) all do: none of them is
 //! visible to a consumer.
 //!
 //! **There is no extractor that yields the whole request**: no `Request`, no

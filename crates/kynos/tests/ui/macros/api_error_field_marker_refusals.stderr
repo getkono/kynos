@@ -1,23 +1,29 @@
 error: `extension` is already set, and a field's `#[problem(...)]` takes each marker once
-  --> tests/ui/macros/api_error_field_marker_refusals.rs:29:19
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:31:19
    |
-29 |         #[problem(extension)]
+31 |         #[problem(extension)]
    |                   ^^^^^^^^^
 
 error: `extension` is a bare marker and takes no value; write `#[problem(extension)]`
-  --> tests/ui/macros/api_error_field_marker_refusals.rs:39:19
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:41:19
    |
-39 |         #[problem(extension = "user_id")]
+41 |         #[problem(extension = "user_id")]
    |                   ^^^^^^^^^
 
 error: a header group is sent as response fields, not published in the body. Mark this field `extension` or `headers`, not both
-  --> tests/ui/macros/api_error_field_marker_refusals.rs:49:9
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:51:9
    |
-49 |         #[problem(extension, headers)]
+51 |         #[problem(extension, headers)]
    |         ^
 
 error: this failure already sends the header group in `retry`; one group holds every header it sends
-  --> tests/ui/macros/api_error_field_marker_refusals.rs:60:5
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:62:5
    |
-60 |     #[problem(headers)]
+62 |     #[problem(headers)]
    |     ^
+
+error: the field `title` would be published as a member RFC 9457 defines, which the problem already sends; rename the field, since an extension member takes a name of its own
+  --> tests/ui/macros/api_error_field_marker_refusals.rs:72:9
+   |
+72 |         title: String,
+   |         ^^^^^

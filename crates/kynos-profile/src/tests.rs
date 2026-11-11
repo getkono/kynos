@@ -14,6 +14,7 @@ use kynos::{
     response::stream::binary::BinaryStream,
 };
 
+use tokio_rustls::rustls::HandshakeKind;
 use tracing::subscriber::NoSubscriber;
 
 use super::{
@@ -21,6 +22,7 @@ use super::{
     Scenario, catalog,
     connection::{
         CONNECTION, KEPT_AFTER, connected,
+        tls::{Sealed, Session, TLS},
         wire::{http1, http1_answered},
     },
     driver::{Drained, Driver, FRAMES, Served, frames},
@@ -66,7 +68,7 @@ fn every_scenario_is_answered_with_the_status_it_is_measured_at() {
         answered(scenario);
         drivers.insert(format!("{:?}", scenario.driver));
     }
-    assert_eq!(drivers.len(), 2, "both drivers are exercised: {drivers:?}");
+    assert_eq!(drivers.len(), 3, "every driver is exercised: {drivers:?}");
 }
 
 /// A base names the scenario a report subtracts, so one naming nothing would
@@ -340,17 +342,74 @@ fn every_interceptor_row_reaches_its_interceptor() {
     }
 }
 
-/// `trace-sub` differs from `trace-nosub` in a subscriber alone, so one is
-/// the thread's default while its service lives, and none is once it is
-/// dropped.
+/// `trace-sub` and `trace-span-sub` each differ from their `-nosub` base in a
+/// subscriber alone, so one is the thread's default while its service lives,
+/// and none is once it is dropped.
 #[test]
 fn trace_sub_serves_under_a_subscriber_of_its_own() {
     let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
-    assert!(unsubscribed());
-    let service = (scenario("trace-sub").service)();
-    assert!(!unsubscribed());
-    drop(service);
-    assert!(unsubscribed());
+    for name in ["trace-sub", "trace-span-sub"] {
+        assert!(unsubscribed(), "{name}");
+        let service = (scenario(name).service)();
+        assert!(!unsubscribed(), "{name}");
+        drop(service);
+        assert!(unsubscribed(), "{name}");
+    }
+}
+
+/// Counts the spans named `request` it is handed, and is interested in
+/// nothing else.
+struct RequestSpans(Arc<std::sync::atomic::AtomicUsize>);
+
+impl tracing::Subscriber for RequestSpans {
+    fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+        metadata.is_span() && metadata.name() == "request"
+    }
+
+    fn new_span(&self, span: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+        let _ = span;
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        tracing::span::Id::from_u64(1)
+    }
+
+    fn record(&self, span: &tracing::span::Id, values: &tracing::span::Record<'_>) {
+        let _ = (span, values);
+    }
+
+    fn record_follows_from(&self, span: &tracing::span::Id, follows: &tracing::span::Id) {
+        let _ = (span, follows);
+    }
+
+    fn event(&self, event: &tracing::Event<'_>) {
+        let _ = event;
+    }
+
+    fn enter(&self, span: &tracing::span::Id) {
+        let _ = span;
+    }
+
+    fn exit(&self, span: &tracing::span::Id) {
+        let _ = span;
+    }
+}
+
+/// `trace-span-nosub` counts `TraceSpan` only if the request passes through
+/// it, so a subscriber that is interested is handed one `request` span per
+/// request; `trace-nosub`, the observer, opens none.
+#[test]
+fn trace_span_rows_open_one_request_span() {
+    for (name, spans) in [("trace-span-nosub", 1), ("trace-nosub", 0)] {
+        let opened = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let row = scenario(name);
+        tracing::subscriber::with_default(RequestSpans(Arc::clone(&opened)), || {
+            answered(row);
+        });
+        assert_eq!(
+            opened.load(std::sync::atomic::Ordering::Relaxed),
+            spans,
+            "{name}"
+        );
+    }
 }
 
 #[derive(Clone)]
@@ -563,4 +622,73 @@ fn the_kept_row_measures_past_the_connection_s_first_read_buffer() {
         "{KEPT_AFTER} heads of {} octets fit hyper's first read buffer",
         head.len()
     );
+}
+
+/// A TLS row counts a request Kynos's TLS listener accepted over a TLS 1.3
+/// session, so each is answered with the status it is measured at over a
+/// session whose handshake is the one its name says, and its connection ends
+/// cleanly, the server's `close_notify` ahead of the socket's end, once the
+/// client has answered every round. Opened as the benchmark opens it: after a
+/// warming connection between the same endpoints, which must not turn a full
+/// row's handshake into a resumption.
+#[test]
+fn every_tls_row_is_answered_over_the_handshake_it_names_and_closes_cleanly() {
+    for sealed in TLS {
+        let scenario = sealed.scenario;
+        assert_eq!(scenario.driver, Driver::Network, "{}", scenario.name);
+        let runner = scenario.driver.runner();
+        let endpoints = sealed.endpoints(&runner);
+        let mut warm = sealed.open(&runner, &endpoints);
+        warm.settle(&runner)
+            .unwrap_or_else(|error| panic!("{} warming ended with {error}", scenario.name));
+        assert_eq!(warm.status(), scenario.expected, "{}", scenario.name);
+        let mut tunnel = sealed.open(&runner, &endpoints);
+        tunnel
+            .serve(&runner)
+            .unwrap_or_else(|error| panic!("{} ended with {error}", scenario.name));
+        assert_eq!(tunnel.status(), scenario.expected, "{}", scenario.name);
+        let expected = match sealed.session {
+            Session::Full | Session::Established => HandshakeKind::Full,
+            Session::Resumed => HandshakeKind::Resumed,
+        };
+        assert_eq!(warm.handshake(), Some(expected), "{}", scenario.name);
+        assert_eq!(tunnel.handshake(), Some(expected), "{}", scenario.name);
+        drop((warm, tunnel, runner, endpoints));
+    }
+}
+
+/// A subscribed service served by a TLS listener goes through its own
+/// `listen`, which no TLS row reaches: its spawned tasks carry no subscriber
+/// of their own, so it keeps the thread default installed for as long as the
+/// server is kept, still serves the handshake and the request under it, and
+/// gives it up only with the endpoints, dropped after the runtime whose
+/// teardown drops the server's tasks.
+#[test]
+fn a_subscribed_service_listens_under_the_thread_default_until_dropped() {
+    let unsubscribed = || tracing::dispatcher::get_default(tracing::Dispatch::is::<NoSubscriber>);
+    let traced = scenario("trace-sub");
+    let sealed = Sealed {
+        scenario: Scenario {
+            driver: Driver::Network,
+            ..traced
+        },
+        session: Session::Full,
+    };
+    let runner = sealed.scenario.driver.runner();
+    let endpoints = sealed.endpoints(&runner);
+    let mut tunnel = sealed.open(&runner, &endpoints);
+    assert!(!unsubscribed(), "`listen` gave up the thread default");
+    tunnel
+        .serve(&runner)
+        .expect("the connection closes cleanly");
+    assert_eq!(tunnel.status(), traced.expected);
+    assert_eq!(tunnel.handshake(), Some(HandshakeKind::Full));
+    drop(tunnel);
+    drop(runner);
+    assert!(
+        !unsubscribed(),
+        "the thread default was given up before the server's tasks were dropped"
+    );
+    drop(endpoints);
+    assert!(unsubscribed(), "the thread default outlived the endpoints");
 }

@@ -22,7 +22,8 @@ kynos-openapi = { version = "0.5.0", path = "crates/kynos-openapi", default-feat
 
 # See `docs/architecture.md` (Dependencies). `std` carries `AllocCounterSystem`.
 alloc_counter = { version = "0.0.4", default-features = false, features = ["std"] }
-async-compression = "0.4.19"
+# 0.4.28 is the first with `BrotliEncoder::with_params`, which sets brotli's window.
+async-compression = "0.4.28"
 # Scalar-format crates are keyed by the major Kynos implements for, so the next
 # one can sit beside it (docs/architecture.md), and declared without defaults:
 # only the type is wanted.
@@ -64,7 +65,7 @@ quote = "1.0.40"
 regex = "1.13.1"
 regex-syntax = "0.8.11"
 rust_decimal1 = { package = "rust_decimal", version = "1.42.1", default-features = false }
-# A safe `setrlimit` for a test; `unsafe_code` is forbidden, so not `libc`.
+# A safe `getrlimit` and `setrlimit`; `unsafe_code` is forbidden, so not `libc`.
 rustix = { version = "1.1.4", default-features = false }
 # A test-only dependency that unifies `ring` beside `aws-lc-rs`, the graph
 # `server/tls/` must survive.

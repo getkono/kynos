@@ -20,7 +20,7 @@ use kynos::{
     extract::connection::Connection,
     http::{Request, Response, StatusCode, body::Body},
     router::service::Service,
-    server::Server,
+    server::{Server, tls::TlsConfig},
 };
 use tokio::io::DuplexStream;
 
@@ -54,6 +54,13 @@ pub enum Driver {
     /// group of these may be inexact; `requests.tsv` marks such a group
     /// `trend`.
     Runtime,
+    /// [`Runtime`](Self::Runtime) with its I/O driver enabled too, for a row a
+    /// listener serves over a loopback socket.
+    ///
+    /// Apart from `Runtime` because the I/O driver changes how the runtime
+    /// parks, so enabling it there would move every `Runtime` row's count with
+    /// nothing those rows serve having changed.
+    Network,
 }
 
 impl Driver {
@@ -69,6 +76,13 @@ impl Driver {
             Self::Poll => Runner(Engine::Poll),
             Self::Runtime => Runner(Engine::Runtime(
                 tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .expect("a current-thread runtime builds"),
+            )),
+            Self::Network => Runner(Engine::Runtime(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
                     .enable_time()
                     .build()
                     .expect("a current-thread runtime builds"),
@@ -104,6 +118,19 @@ impl Runner {
                 }
             }
             Engine::Runtime(runtime) => runtime.block_on(future),
+        }
+    }
+
+    /// The runtime, for spawning a listener's server onto it and registering
+    /// a client's socket with its I/O driver.
+    ///
+    /// # Panics
+    ///
+    /// When this is [`Driver::Poll`]'s, which has none.
+    pub(crate) fn runtime(&self) -> &tokio::runtime::Runtime {
+        match &self.0 {
+            Engine::Poll => panic!("a listener is served only under a runtime"),
+            Engine::Runtime(runtime) => runtime,
         }
     }
 }
@@ -184,6 +211,25 @@ pub trait Served {
     /// When the server refuses its default configuration, which no profiled
     /// service should make it do.
     fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting;
+
+    /// Hands the service to a [`Server`] serving `listener` over `tls`, and
+    /// spawns it onto `runner`'s runtime, which polls it first the next time
+    /// the runtime runs: Kynos's own accept loop, acceptor and connection task,
+    /// what a [`tls`](crate::connection::tls) row's rounds drive. The server
+    /// serves until the runtime is dropped, and its tasks are dropped with it,
+    /// so drop the returned value only after `runner`: what it holds, such as
+    /// a subscriber guard, must outlive the server's last task.
+    ///
+    /// # Panics
+    ///
+    /// When `runner` is not a runtime, or the server refuses `listener` or
+    /// `tls`, which no profiled service should make it do.
+    fn listen(
+        self: Box<Self>,
+        runner: &Runner,
+        listener: std::net::TcpListener,
+        tls: TlsConfig,
+    ) -> Box<dyn Any>;
 }
 
 /// A connection's future, boxed so that one type holds every service's, and
@@ -194,9 +240,12 @@ pub trait Served {
 /// `server`, where the `Connecting` is: a region that drives `future` to its
 /// end counts no service teardown, which the in-process rows likewise leave
 /// to theirs.
+///
+/// The future is not required to be `Send`: a row drives it on the thread
+/// that built it.
 pub struct Connecting {
     /// The connection: what a connection row's region drives.
-    pub future: Pin<Box<dyn Future<Output = io::Result<()>> + Send>>,
+    pub future: Pin<Box<dyn Future<Output = io::Result<()>>>>,
     /// Held only so that the service outlives `future`.
     pub(crate) server: Box<dyn Any>,
 }
@@ -223,6 +272,19 @@ impl<C: 'static> Served for Service<C> {
             future,
             server: Box::new(server),
         }
+    }
+
+    fn listen(
+        self: Box<Self>,
+        runner: &Runner,
+        listener: std::net::TcpListener,
+        tls: TlsConfig,
+    ) -> Box<dyn Any> {
+        let server = runner
+            .run(Server::new(*self).listener(listener).tls(tls).prepare())
+            .expect("the listener and the TLS configuration are accepted");
+        runner.runtime().spawn(server.serve());
+        Box::new(())
     }
 }
 

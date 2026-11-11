@@ -79,11 +79,14 @@ pub mod schemes;
 
 use std::future::Future;
 
+use kynos_openapi::Parameter;
+
 use crate::{
     error::rejection::AuthRejection,
     extract::describe::Describe,
     http::Parts,
     response::{IntoResponse, Responses},
+    schema::registry::Registry,
 };
 
 /// What closes the set of guards.
@@ -113,9 +116,6 @@ mod sealed {
 /// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
-/// #     async fn authorize(&self, _: &String, _: &[kynos::security::Unscoped], _: &C) -> Result<(), AuthRejection> {
-/// #         Ok(())
-/// #     }
 /// # }
 /// # struct App;
 /// # impl Authenticates<Bearer> for App {
@@ -143,9 +143,6 @@ mod sealed {
 /// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
-/// #     async fn authorize(&self, _: &String, _: &[kynos::security::Unscoped], _: &C) -> Result<(), AuthRejection> {
-/// #         Ok(())
-/// #     }
 /// # }
 /// # struct App;
 /// # impl Authenticates<Bearer> for App {
@@ -172,9 +169,6 @@ mod sealed {
 /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
 /// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
-/// #     }
-/// #     async fn authorize(&self, _: &String, _: &[kynos::security::Unscoped], _: &C) -> Result<(), AuthRejection> {
-/// #         Ok(())
 /// #     }
 /// # }
 /// # struct App;
@@ -233,7 +227,7 @@ pub(crate) async fn guard_ahead<C, G: Guard<C>>(
                 .insert(Admitted(std::sync::Mutex::new(Some(guard))));
             None
         }
-        Err(rejection) => Some(rejection.into_response()),
+        Err(rejection) => Some(rejection.__into_response_for(parts)),
     }
 }
 
@@ -337,7 +331,7 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// Named once, here, so every [`Scopes`](auth::Scopes) set a
     /// [`Scoped`](auth::Scoped) argument pairs with this scheme is checked
     /// against it at compile time, and
-    /// [`Authenticator::authorize`] receives the demanded scopes as this type
+    /// [`Authorizer::authorize`] receives the demanded scopes as this type
     /// rather than as strings to parse back. [`Unscoped`] where the scheme
     /// demands none.
     type Scope: Scope;
@@ -348,7 +342,7 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// The scopes this scheme requires by default.
     ///
     /// Declared on every requirement naming the scheme, and handed to
-    /// [`Authenticator::authorize`] by every guard naming it, so a credential
+    /// [`Authorizer::authorize`] by every guard naming it, so a credential
     /// lacking one is refused wherever the description says it is demanded.
     /// A scheme with none is never authorized but by a
     /// [`Scoped`](auth::Scoped) argument. OAuth 2.0 and OpenID
@@ -380,12 +374,32 @@ pub trait SecurityScheme: Send + Sync + 'static {
     /// bearer token lacking a scope the request demands, so
     /// [`Bearer`](schemes::Bearer) and a derived `bearer`, `oauth2` or
     /// `openid_connect` scheme answer that. Any other scheme has no registered
-    /// error to send. Only a refusal from [`Authenticator::authorize`] carries
+    /// error to send. Only a refusal from [`Authorizer::authorize`] carries
     /// it; a 403 from [`Authenticator::authenticate`] declines a credential
     /// rather than a scope, and sends none.
     #[must_use]
     fn insufficient_scope_challenge() -> Option<&'static str> {
         None
+    }
+
+    /// The request headers this scheme's carrier reads beside its
+    /// credential, as header parameters.
+    ///
+    /// Declared on every operation a guard naming the scheme covers, so a
+    /// header the guard depends on — a signature over the request, say — is in
+    /// the description without a handler argument that only declares it. A
+    /// guard that admits a request without this scheme's credential —
+    /// [`MaybeAuth`](auth::MaybeAuth), or an [`AnyOf`](requirement::AnyOf)
+    /// alternative — declares each as not required.
+    ///
+    /// `#[security(..., reads = T)]` writes this from a header group `T` and
+    /// reads `T` beside the credential; a hand-written
+    /// [`Carries`](carrier::Carries) that reads more than its credential
+    /// declares it here. The default reads nothing more.
+    #[must_use]
+    fn reads(registry: &mut Registry) -> Vec<Parameter> {
+        let _ = registry;
+        Vec::new()
     }
 }
 
@@ -421,7 +435,7 @@ pub trait SecurityScheme: Send + Sync + 'static {
 ///
 /// `Clone`, so a [`Scoped`](auth::Scoped) argument can join its scheme's
 /// default scopes and its set's into the one slice
-/// [`Authenticator::authorize`] receives.
+/// [`Authorizer::authorize`] receives.
 pub trait Scope: Clone + Send + Sync + 'static {
     /// The scope as a description and a token spell it.
     fn name(&self) -> &'static str;
@@ -461,7 +475,7 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// application declines, which is a 403 and not a 401. Such a refusal is
     /// the application's own, so [`AuthRejection::forbidden_as`] names it where
     /// there is a problem type for it, exactly as in
-    /// [`authorize`](Authenticator::authorize). The challenge is left unset:
+    /// [`Authorizer::authorize`]. The challenge is left unset:
     /// [`Auth`](auth::Auth) attaches
     /// [`challenge`](SecurityScheme::challenge) on the way out, so the wire and
     /// the description cannot name different ones.
@@ -478,7 +492,92 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
         presented: S::Presented,
         context: &C,
     ) -> impl Future<Output = Result<S::Credential, AuthRejection>> + Send;
+}
 
+/// Checks an authenticated credential's scopes.
+///
+/// Implemented for every [`Authenticator`] of a scheme whose
+/// [`Scope`](SecurityScheme::Scope) is [`Unscoped`], admitting every
+/// credential: no scope of such a scheme can be demanded, so there is nothing
+/// to refuse. A scheme with a scope type of its own has no such impl, and a
+/// context [`Authenticates`] it only once its authenticator implements this
+/// too, so a scope check cannot be forgotten.
+///
+/// `P` is always the scheme's own scope type, which the `where` clause holds
+/// it to. It is spelled out in the impl rather than read off `S` because the
+/// compiler tells two impls apart by their headers alone: an impl naming
+/// `Grant` cannot overlap the one every [`Unscoped`] scheme's authenticator
+/// has, whatever `S` is. So one authorizer may also serve every scheme sharing
+/// a scope type, as `impl<S, C> Authorizer<S, C, Grant>`.
+///
+/// ```
+/// use kynos::{
+///     error::rejection::AuthRejection,
+///     security::{Authenticator, Authorizer, Scope, carrier::BearerToken, schemes::Bearer},
+/// };
+///
+/// #[derive(Clone, Copy)]
+/// enum Grant {
+///     ReadReports,
+/// }
+///
+/// impl Scope for Grant {
+///     fn name(&self) -> &'static str {
+///         "reports:read"
+///     }
+/// }
+///
+/// struct Tokens;
+///
+/// impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Tokens {
+///     async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
+///         Ok(token.as_str().to_owned())
+///     }
+/// }
+///
+/// impl<C: Sync> Authorizer<Bearer<String, Grant>, C, Grant> for Tokens {
+///     async fn authorize(&self, subject: &String, scopes: &[Grant], _: &C) -> Result<(), AuthRejection> {
+///         let granted = scopes.iter().all(|scope| match scope {
+///             Grant::ReadReports => subject == "auditor",
+///         });
+///         if granted { Ok(()) } else { Err(AuthRejection::forbidden()) }
+///     }
+/// }
+/// ```
+///
+/// An unscoped scheme's authenticator is already one, and writing it again
+/// overlaps that impl:
+///
+/// ```compile_fail
+/// use kynos::{
+///     error::rejection::AuthRejection,
+///     security::{Authenticator, Authorizer, Unscoped, carrier::BearerToken, schemes::Bearer},
+/// };
+///
+/// struct Tokens;
+///
+/// impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+///     async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
+///         Ok(token.as_str().to_owned())
+///     }
+/// }
+///
+/// impl<C: Sync> Authorizer<Bearer, C, Unscoped> for Tokens {
+///     async fn authorize(&self, _: &String, _: &[Unscoped], _: &C) -> Result<(), AuthRejection> {
+///         Ok(())
+///     }
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` does not authorize the `{P}` scopes of `{S}`",
+    label = "no `Authorizer<{S}, {C}, {P}>` impl",
+    note = "a scheme whose `Scope` is not `Unscoped` needs \
+            `impl Authorizer<{S}, {C}, {P}> for {Self}` beside its `Authenticator` impl"
+)]
+pub trait Authorizer<S, C: Sync, P>: Authenticator<S, C>
+where
+    S: carrier::Carries + SecurityScheme<Scope = P>,
+{
     /// Checks that an authenticated credential has every requested scope.
     ///
     /// `scopes` are the scheme's own [`Scope`](SecurityScheme::Scope) values,
@@ -487,22 +586,42 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     ///
     /// A refusal is [`AuthRejection::forbidden`], or
     /// [`AuthRejection::forbidden_as`] where the application has a problem type
-    /// for the rule that refused, and [`AuthRejection::unavailable`] as above.
+    /// for the rule that refused, and [`AuthRejection::unavailable`] as in
+    /// [`authenticate`](Authenticator::authenticate).
     fn authorize(
         &self,
         credential: &S::Credential,
-        scopes: &[S::Scope],
+        scopes: &[P],
         context: &C,
     ) -> impl Future<Output = Result<(), AuthRejection>> + Send;
+}
+
+impl<S, C, A> Authorizer<S, C, Unscoped> for A
+where
+    S: carrier::Carries + SecurityScheme<Scope = Unscoped>,
+    C: Sync,
+    A: Authenticator<S, C>,
+{
+    /// Admits: an [`Unscoped`] slice is empty.
+    fn authorize(
+        &self,
+        _: &S::Credential,
+        _: &[Unscoped],
+        _: &C,
+    ) -> impl Future<Output = Result<(), AuthRejection>> + Send {
+        std::future::ready(Ok(()))
+    }
 }
 
 /// An application context that supplies an authenticator for scheme `S`.
 ///
 /// A router using `Auth<S>` cannot be mounted with a context that does not
-/// prove it can authenticate `S`.
+/// prove it can authenticate `S`, and, for a scheme with scopes, authorize
+/// them: the authenticator is an [`Authorizer`], which every authenticator of
+/// an [`Unscoped`] scheme already is.
 pub trait Authenticates<S: carrier::Carries>: Sync + Sized {
     /// The concrete authenticator owned by this context.
-    type Authenticator: Authenticator<S, Self>;
+    type Authenticator: Authorizer<S, Self, S::Scope>;
 
     /// Borrows the authenticator used for this scheme.
     fn authenticator(&self) -> &Self::Authenticator;

@@ -15,9 +15,11 @@
 //! # How this module is laid out
 //!
 //! [`Error`] is the framework's own build-time failure and lives here.
-//! [`problem`] holds the wire representation every error takes, and
-//! [`rejection`] the ways a built-in extractor can fail.
+//! [`problem`] holds the wire representation every error takes,
+//! [`rejection`] the ways a built-in extractor can fail, and [`members`] the
+//! extension members an application adds to the problems Kynos renders itself.
 
+pub mod members;
 pub mod problem;
 pub mod rejection;
 

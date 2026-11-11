@@ -626,13 +626,15 @@ fn a_transport_config_is_cheap_to_clone_per_connection() {
 /// What `Server::new` starts from, read off the server it builds rather than
 /// off the constants it was meant to read: the drain deadline its setter
 /// documents, leaving a margin under a 30-second termination window, and the
-/// connection cap `max_connections` documents.
+/// connection cap `max_connections` documents, and the backlog
+/// `listen_backlog` leaves to the kernel's ceiling.
 #[test]
 fn a_new_server_starts_from_its_documented_limits() {
     let server = crate::server::Server::new(test_service());
 
     assert_eq!(server.shutdown_timeout, std::time::Duration::from_secs(25));
     assert_eq!(server.max_connections.get(), 10_000);
+    assert_eq!(server.listen_backlog.get(), u32::MAX);
     #[cfg(any(target_os = "linux", target_os = "android"))]
     assert_eq!(server.accept_shards.get(), 1);
 }
@@ -819,6 +821,85 @@ async fn accept_shards_refuse_a_listener_bound_elsewhere() {
         .await
         .expect_err("a Unix listener is refused");
     assert!(refused(error));
+}
+
+/// Connects to `address`, which nothing accepts from, until an attempt goes
+/// unanswered, and returns how many completed first.
+///
+/// Linux completes one connection past the listen backlog and then drops each
+/// further SYN while the queue stays full, so the count reads the backlog the
+/// socket was given back off the kernel. A SYN is retransmitted only after a
+/// second, so half a second unanswered is the drop.
+#[cfg(target_os = "linux")]
+async fn connections_queued_before_overflow(address: std::net::SocketAddr) -> usize {
+    tokio::task::spawn_blocking(move || {
+        let mut queued = Vec::new();
+        while let Ok(stream) =
+            std::net::TcpStream::connect_timeout(&address, std::time::Duration::from_millis(500))
+        {
+            queued.push(stream);
+            assert!(queued.len() <= 64, "the queue never overflowed");
+        }
+        queued.len()
+    })
+    .await
+    .expect("the connecting task joins")
+}
+
+/// The backlog `listen_backlog` sets is the one the kernel queues to, rather
+/// than the fixed 128 `tokio::net::TcpListener::bind` would give.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn listen_backlog_sets_the_queue_of_a_bound_address() {
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .listen_backlog(std::num::NonZeroU32::new(2).expect("two is non-zero"))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+
+    assert_eq!(
+        connections_queued_before_overflow(bound.local_addrs()[0]).await,
+        3
+    );
+}
+
+/// Every accept shard is given the backlog too. One shard, since the kernel
+/// spreads connections across several by hash, and which of them a connection
+/// joins is not the test's to choose.
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn listen_backlog_sets_the_queue_of_each_accept_shard() {
+    let (address, shards) = crate::server::address::bind_shards(
+        (std::net::Ipv4Addr::LOCALHOST, 0).into(),
+        std::num::NonZeroUsize::MIN,
+        std::num::NonZeroU32::new(2).expect("two is non-zero"),
+    )
+    .expect("a loopback shard binds");
+
+    assert_eq!(connections_queued_before_overflow(address).await, 3);
+    drop(shards);
+}
+
+/// The backlog `TcpSocket::listen` is handed never passes `i32::MAX`: tokio
+/// before 1.54 casts it to the `int` `listen(2)` takes, so the default
+/// `u32::MAX` would reach the kernel as -1 under the workspace's tokio floor.
+#[test]
+fn the_backlog_handed_to_listen_is_clamped_to_i32_max() {
+    use crate::server::address::kernel_backlog;
+    use std::num::NonZeroU32;
+
+    let ceiling = i32::MAX.unsigned_abs();
+    assert_eq!(kernel_backlog(NonZeroU32::MAX), ceiling);
+    assert_eq!(
+        kernel_backlog(NonZeroU32::new(ceiling + 1).expect("non-zero")),
+        ceiling
+    );
+    assert_eq!(
+        kernel_backlog(NonZeroU32::new(ceiling).expect("non-zero")),
+        ceiling
+    );
+    assert_eq!(kernel_backlog(NonZeroU32::MIN), 1);
 }
 
 /// Every shard accepts and serves under one graceful shutdown. Which shard the
@@ -1607,6 +1688,195 @@ async fn draining_outside_a_server_lifecycle_never_resolves() {
     }
 }
 
+/// `Deregistering` is not ready and not yet draining: `Readiness` flips at
+/// it, and the `Draining` latch, the accept loops' and connections' stop, and
+/// a waiter on it all ignore it until `Draining`.
+#[tokio::test(start_paused = true)]
+async fn deregistering_is_not_ready_and_not_draining() {
+    use super::lifecycle::{Draining, Readiness, wait_until_stopping};
+
+    let (sender, receiver) = tokio::sync::watch::channel(super::Lifecycle::Running);
+    let readiness = Readiness::of(receiver.clone());
+    let draining = Draining::of(receiver.clone());
+    let mut stopping = receiver.clone();
+    let stopping = tokio::spawn(async move { wait_until_stopping(&mut stopping).await });
+    assert!(readiness.is_ready());
+
+    sender.send_replace(super::Lifecycle::Deregistering);
+    tokio::task::yield_now().await;
+    assert!(!readiness.is_ready(), "the first signal leaves rotation");
+    assert!(!draining.is_draining(), "nothing drains through the delay");
+    assert!(
+        !stopping.is_finished(),
+        "accepting goes on through the delay"
+    );
+
+    sender.send_replace(super::Lifecycle::Draining);
+    let state = tokio::time::timeout(std::time::Duration::from_secs(3600), stopping)
+        .await
+        .expect("the drain stops accepting")
+        .expect("the waiter joins");
+    assert_eq!(state, super::Lifecycle::Draining);
+    assert!(!readiness.is_ready());
+    assert!(draining.is_draining());
+}
+
+/// A request no server listener accepted reads a `Readiness` that is ready,
+/// as its `Draining` never begins.
+#[tokio::test]
+async fn readiness_outside_a_server_lifecycle_is_ready() {
+    use crate::{extract::FromRequestParts as _, server::lifecycle::Readiness};
+
+    for connection in [None, Some(documentation_peer())] {
+        let mut request = crate::http::Request::new(crate::http::body::Body::empty());
+        if let Some(connection) = connection {
+            request.extensions_mut().insert(connection);
+        }
+        let (mut parts, _) = request.into_parts();
+        let Ok(readiness) = Readiness::from_request_parts(&mut parts, &()).await;
+        assert!(readiness.is_ready());
+    }
+}
+
+/// A service answering every request with its `Readiness` and `Draining`, as
+/// `"{ready} {draining}"`.
+#[cfg(feature = "http1")]
+fn lifecycle_service() -> crate::router::service::Service<()> {
+    use crate::{
+        extract::FromRequestParts as _,
+        server::lifecycle::{Draining, Readiness},
+    };
+
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Test", "1"),
+    );
+    crate::router::service::Service::new(document, |request: crate::http::Request| async move {
+        let (mut parts, _) = request.into_parts();
+        let Ok(readiness) = Readiness::from_request_parts(&mut parts, &()).await;
+        let Ok(draining) = Draining::from_request_parts(&mut parts, &()).await;
+        let body = format!("{} {}", readiness.is_ready(), draining.is_draining());
+        crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+            body,
+        )))
+    })
+}
+
+/// Through the deregistration delay a connection opened after the shutdown
+/// signal is still accepted and served, its handler reading not-ready and not
+/// draining.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_deregistration_delay_accepts_and_serves_while_not_ready() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(lifecycle_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .deregistration_delay(std::time::Duration::from_secs(3600))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let address = bound.local_addrs()[0];
+    let server = tokio::spawn(bound.serve());
+
+    let before = tokio::task::spawn_blocking(move || request_http1(address))
+        .await
+        .expect("blocking client joins");
+    assert!(before.ends_with("true false"), "{before}");
+
+    let _ = shutdown_sender.send(());
+    // A fresh connection per request, so each is one the listener accepted
+    // after the signal reached it.
+    let during = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            let response = tokio::task::spawn_blocking(move || request_http1(address))
+                .await
+                .expect("blocking client joins");
+            if !response.ends_with("true false") {
+                return response;
+            }
+        }
+    })
+    .await
+    .expect("the signal reaches the server");
+    assert!(during.starts_with("HTTP/1.1 200 OK"), "{during}");
+    assert!(during.ends_with("false false"), "{during}");
+    assert!(!server.is_finished(), "the delay holds the drain back");
+    server.abort();
+}
+
+/// Once the deregistration delay passes the server drains as it would have at
+/// the signal, and exits cleanly no sooner than the delay.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn the_deregistration_delay_ends_in_the_drain() {
+    let delay = std::time::Duration::from_millis(200);
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let bound = crate::server::Server::new(lifecycle_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .deregistration_delay(delay)
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let server = tokio::spawn(bound.serve());
+
+    let signalled = std::time::Instant::now();
+    let _ = shutdown_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(10), server)
+        .await
+        .expect("the drain follows the delay")
+        .expect("server task joins")
+        .expect("server exits cleanly");
+    assert!(
+        signalled.elapsed() >= delay,
+        "the drain waited out the delay"
+    );
+}
+
+/// A built-in trigger's second signal forces shutdown during the delay, as it
+/// does during the drain.
+#[tokio::test]
+async fn a_second_signal_forces_shutdown_during_the_deregistration_delay() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async move {
+            let _ = shutdown_receiver.await;
+            Ok(Box::pin(async move {
+                let _ = force_receiver.await;
+            }) as crate::server::shutdown::ForceFuture)
+        }),
+    };
+    let bound = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(shutdown)
+        .deregistration_delay(std::time::Duration::from_secs(3600))
+        .prepare()
+        .await
+        .expect("loopback listener binds");
+    let server = tokio::spawn(bound.serve());
+
+    let _ = shutdown_sender.send(());
+    tokio::task::yield_now().await;
+    assert!(!server.is_finished(), "the delay holds the drain back");
+    let _ = force_sender.send(());
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(10), server)
+        .await
+        .expect("forced shutdown is prompt")
+        .expect("server task joins")
+        .expect_err("the repeated trigger is reported");
+    assert!(matches!(
+        &error,
+        crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
+    ));
+}
+
 #[cfg(feature = "http1")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn connection_limit_applies_before_accepting_another_socket() {
@@ -1885,6 +2155,391 @@ async fn a_second_termination_signal_forces_the_drain() {
         "{error:?}"
     );
     client.await.expect("client task joins");
+}
+
+/// Connects to `address` until it is refused, as a closed listener is.
+///
+/// Windows answers a reset by retrying the SYN, so a connect to a closed port
+/// is refused only after about two seconds where Linux and macOS refuse it at
+/// once. Each attempt is bounded past that.
+async fn until_refused(address: std::net::SocketAddr) {
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                tokio::net::TcpStream::connect(address),
+            )
+            .await
+            {
+                Ok(Err(_)) => break,
+                Ok(Ok(stream)) => drop(stream),
+                Err(_) => {}
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the listener closes");
+}
+
+/// `Running::shutdown` drains the request in flight before it resolves, to
+/// the clean result `serve` returns, and the handle names the address it
+/// serves on.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spawned_server_drains_its_request_when_its_handle_shuts_it_down() {
+    let (service, started, release) = blocking_service();
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    assert_eq!(running.local_addrs(), [address]);
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    let stopping = tokio::spawn(running.shutdown());
+    until_refused(address).await;
+    assert!(!stopping.is_finished(), "the request is still draining");
+
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(5), stopping)
+        .await
+        .expect("the drain completes")
+        .expect("the shutdown task joins")
+        .expect("a complete drain is clean");
+    let response = client.await.expect("client task joins");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.ends_with("ok"), "{response}");
+}
+
+/// The drain `Running::shutdown` begins is bounded by the server's
+/// `shutdown_timeout`, and the timeout is what it reports.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_spawned_server_reports_its_shutdown_timeout() {
+    let timeout = std::time::Duration::from_millis(50);
+    let (service, started, _release) = blocking_service();
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(timeout)
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), running.shutdown())
+        .await
+        .expect("the drain deadline ends the shutdown")
+        .expect_err("an incomplete drain is reported");
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout: reported })
+                if *reported == timeout
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
+/// Dropping the handle begins shutdown without anyone waiting for it.
+#[tokio::test]
+async fn dropping_a_spawned_servers_handle_shuts_it_down() {
+    let running = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    drop(running);
+    until_refused(address).await;
+}
+
+/// A configured trigger stops a spawned server while its handle is still
+/// held, and the handle then reports that shutdown's result.
+#[tokio::test]
+async fn a_configured_trigger_still_stops_a_spawned_server() {
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+    let running = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+            let _ = shutdown_receiver.await;
+        }))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+
+    let _ = shutdown_sender.send(());
+    until_refused(address).await;
+    running
+        .shutdown()
+        .await
+        .expect("the configured shutdown drained cleanly");
+}
+
+/// Once the handle has begun shutdown, a configured trigger keeps its own
+/// meaning: its first signal asks for the shutdown already under way, and the
+/// force it then yields forces the drain, as a second built-in signal does.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_configured_force_still_forces_a_drain_the_handle_began() {
+    let (service, started, _release) = blocking_service();
+    let (begin_sender, begin_receiver) = tokio::sync::oneshot::channel();
+    let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+    let (observed_sender, observed_receiver) = tokio::sync::oneshot::channel();
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async move {
+            let _ = begin_receiver.await;
+            let _ = observed_sender.send(());
+            Ok(Box::pin(async move {
+                let _ = force_receiver.await;
+            }) as crate::server::shutdown::ForceFuture)
+        }),
+    };
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .shutdown_timeout(std::time::Duration::from_secs(25))
+        .graceful_shutdown(shutdown)
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+    let address = running.local_addr().expect("a TCP listener is bound");
+    let client = tokio::task::spawn_blocking(move || request_http1(address));
+
+    tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+        .await
+        .expect("the request reaches the handler");
+    let mut stopping = tokio::spawn(running.shutdown());
+    until_refused(address).await;
+    let _ = begin_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(5), observed_receiver)
+        .await
+        .expect("the serving task observes the first signal")
+        .expect("the trigger reports its first signal");
+    // The serving task reacts to the first signal on the poll that observed
+    // it, so a drain it forced would end well inside this window.
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), &mut stopping)
+            .await
+            .is_err(),
+        "a first signal does not force"
+    );
+
+    let _ = force_sender.send(());
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), stopping)
+        .await
+        .expect("the force ends the drain promptly")
+        .expect("the shutdown task joins")
+        .expect_err("the forced drain is reported");
+    assert!(
+        matches!(
+            &error,
+            crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
+        ),
+        "{error:?}"
+    );
+    client.await.expect("client task joins");
+}
+
+/// A configured trigger that fails ends a spawned server with its error,
+/// which the handle reports rather than discards.
+#[tokio::test]
+async fn a_spawned_server_reports_a_failing_shutdown_trigger() {
+    let shutdown = crate::server::shutdown::Shutdown {
+        future: Box::pin(async { Err(std::io::Error::other("no signal for you")) }),
+    };
+    let running = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(shutdown)
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+
+    let error = tokio::time::timeout(std::time::Duration::from_secs(5), running.shutdown())
+        .await
+        .expect("the failed trigger ends serving")
+        .expect_err("the failed trigger is reported");
+    let crate::Error::Server(crate::server::error::ServerError::Signal(source)) = &error else {
+        panic!("not a signal failure: {error:?}");
+    };
+    assert_eq!(source.to_string(), "no signal for you");
+}
+
+/// A server listening on Unix domain sockets alone has no TCP address for
+/// its handle to name.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_spawned_unix_only_server_has_no_local_addr() {
+    let directory = SocketDirectory::new("spawn");
+    let listener = std::os::unix::net::UnixListener::bind(directory.0.join("api.sock"))
+        .expect("the socket binds");
+    let running = crate::server::Server::new(test_service())
+        .unix_listener(listener)
+        .prepare()
+        .await
+        .expect("a Unix listener alone is something to listen on")
+        .spawn();
+
+    assert_eq!(running.local_addr(), None);
+    assert!(running.local_addrs().is_empty());
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
+/// The open-file limit `prepare` fits to the connection cap. The cases that
+/// set a limit do so in-process, which is sound only because nextest runs
+/// every test in its own process.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "redox",
+        target_os = "vita"
+    ))
+))]
+mod descriptor_limit {
+    use std::{
+        io,
+        num::NonZeroUsize,
+        sync::{Arc, Mutex},
+    };
+
+    use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
+
+    use crate::server::descriptors::{RESERVED_DESCRIPTORS, raised, required};
+
+    /// What `prepare` writes to a log, kept for the case to read.
+    #[derive(Clone, Default)]
+    struct Captured(Arc<Mutex<Vec<u8>>>);
+
+    impl io::Write for Captured {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0
+                .lock()
+                .expect("log unpoisoned")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    const fn limit(current: Option<u64>, maximum: Option<u64>) -> Rlimit {
+        Rlimit { current, maximum }
+    }
+
+    /// Prepares a loopback server capped at `max_connections`, under a
+    /// subscriber capturing every warning, and returns what it logged.
+    async fn prepare(max_connections: usize) -> String {
+        let captured = Captured::default();
+        let writer = captured.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        // Thread-local, and the current-thread runtime prepares on this thread.
+        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let service = crate::Router::<()>::new()
+            .build(())
+            .expect("an empty router builds");
+        let _bound = crate::server::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .max_connections(NonZeroUsize::new(max_connections).expect("a non-zero cap"))
+            .prepare()
+            .await
+            .expect("a loopback listener binds");
+        let log = captured.0.lock().expect("log unpoisoned").clone();
+        String::from_utf8(log).expect("the log is UTF-8")
+    }
+
+    #[test]
+    fn the_cap_needs_a_descriptor_per_connection_and_listener_and_the_reserve() {
+        assert_eq!(required(10_000, 2), 10_002 + RESERVED_DESCRIPTORS);
+        assert_eq!(required(usize::MAX, usize::MAX), u64::MAX);
+    }
+
+    /// Raised to exactly what the cap needs, never past it or the hard limit,
+    /// and never lowered.
+    #[test]
+    fn a_short_soft_limit_is_raised_toward_the_hard_limit() {
+        let cases = [
+            (limit(Some(1024), Some(524_288)), Some(10_128)),
+            (limit(Some(1024), None), Some(10_128)),
+            (limit(Some(1024), Some(4096)), Some(4096)),
+            (limit(Some(4096), Some(4096)), None),
+            (limit(Some(10_128), Some(524_288)), None),
+            (limit(Some(65_536), Some(524_288)), None),
+            (limit(None, None), None),
+        ];
+        for (current, expected) in cases {
+            assert_eq!(raised(current, 10_128), expected, "{current:?}");
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn prepare_raises_a_short_soft_limit_to_what_the_cap_needs() {
+        const SOFT: u64 = 256;
+        const CAP: usize = 300;
+        let maximum = getrlimit(Resource::Nofile).maximum;
+        let needed = required(CAP, 1);
+        assert!(
+            maximum.is_none_or(|maximum| maximum >= needed),
+            "the hard limit {maximum:?} admits {needed}"
+        );
+        setrlimit(Resource::Nofile, limit(Some(SOFT), maximum))
+            .expect("lowering the soft limit needs no privilege");
+
+        let log = prepare(CAP).await;
+
+        assert_eq!(getrlimit(Resource::Nofile), limit(Some(needed), maximum));
+        assert!(log.is_empty(), "a limit that fits warns of nothing: {log}");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_hard_limit_short_of_the_cap_is_reached_and_warned_of() {
+        const HARD: u64 = 384;
+        const CAP: usize = 300;
+        setrlimit(Resource::Nofile, limit(Some(256), Some(HARD)))
+            .expect("lowering the hard limit needs no privilege");
+
+        let log = prepare(CAP).await;
+
+        assert_eq!(
+            getrlimit(Resource::Nofile),
+            limit(Some(HARD), Some(HARD)),
+            "the soft limit rises as far as the hard limit"
+        );
+        let needed = required(CAP, 1);
+        assert!(
+            log.contains("WARN")
+                && log.contains(&format!("soft_limit={HARD}"))
+                && log.contains(&format!("required={needed}"))
+                && log.contains(&format!("max_connections={CAP}")),
+            "the warning names the limit and what the cap needs: {log}"
+        );
+    }
 }
 
 /// Only the two incomplete-drain variants are a requested shutdown; every
@@ -6032,11 +6687,13 @@ async fn an_http1_server_without_keep_alive_closes_after_one_response() {
 }
 
 /// `max_buffer_size` reaches the driver: a head of four fields filling the
-/// 8 KiB floor is answered 431 under that floor, while a longer one is served
-/// under the default.
+/// 8 KiB floor is answered 431 under that floor, while the default's own edge
+/// is the per-connection figure `nfr.md` states for an HTTP/1 head: a complete
+/// head one byte short of 417,792 bytes is served, and an unterminated one of
+/// exactly that many is read whole before its 431.
 ///
-/// The refused head is exactly 8 KiB and unterminated, so the driver has read
-/// every byte when it refuses: unread bytes at its close would reset the
+/// Each refused head is unterminated and exactly the buffer, so the driver has
+/// read every byte when it refuses: unread bytes at its close would reset the
 /// connection, and a reset may discard the 431 before the client reads it.
 #[cfg(feature = "http1")]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -6044,12 +6701,21 @@ async fn a_request_head_past_the_http1_buffer_is_answered_431() {
     use std::io::{Read as _, Write as _};
 
     const PREFIX: &str = "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nX-Padding: ";
+    let default = Http1Config::default().max_buffer_size;
 
     for (http1, head, status) in [
         (
             Http1Config::default(),
-            format!("{PREFIX}{}\r\n\r\n", "a".repeat(12 * 1024)),
+            format!(
+                "{PREFIX}{}\r\n\r\n",
+                "a".repeat(default - 1 - PREFIX.len() - 4)
+            ),
             "HTTP/1.1 200 ",
+        ),
+        (
+            Http1Config::default(),
+            format!("{PREFIX}{}", "a".repeat(default - PREFIX.len())),
+            "HTTP/1.1 431 ",
         ),
         (
             Http1Config::default().max_buffer_size(8_192),
@@ -7053,5 +7719,525 @@ mod http2_target {
     #[test]
     fn an_origin_form_target_without_a_host_header_is_sent_to_localhost() {
         assert_eq!(target("/users/42", None), "http://localhost/users/42");
+    }
+}
+
+/// The PROXY protocol header a trusted proxy opens a connection with: what the
+/// reader admits and refuses, and what a listener does with it.
+mod proxy_protocol {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    use crate::{
+        http::forwarded::{ProxyHeader, TrustedProxies},
+        server::proxy_protocol::{Header, Malformed, Parsed, parse},
+    };
+
+    const V2_SIGNATURE: &[u8] = b"\r\n\r\n\0\r\nQUIT\n";
+
+    /// A version 2 header with `command`, `family` and `block`, its length the
+    /// block's.
+    fn v2(command: u8, family: u8, block: &[u8]) -> Vec<u8> {
+        let mut header = V2_SIGNATURE.to_vec();
+        header.push(0x20 | command);
+        header.push(family);
+        let length = u16::try_from(block.len()).expect("a block fits the length field");
+        header.extend_from_slice(&length.to_be_bytes());
+        header.extend_from_slice(block);
+        header
+    }
+
+    /// An IPv4 address block: source, destination, then their ports.
+    fn ipv4_block(source: SocketAddr) -> Vec<u8> {
+        let SocketAddr::V4(source) = source else {
+            panic!("an IPv4 source");
+        };
+        let mut block = source.ip().octets().to_vec();
+        block.extend_from_slice(&[192, 0, 2, 2]);
+        block.extend_from_slice(&source.port().to_be_bytes());
+        block.extend_from_slice(&443_u16.to_be_bytes());
+        block
+    }
+
+    /// An IPv6 address block: source, destination, then their ports.
+    fn ipv6_block(source: SocketAddr) -> Vec<u8> {
+        let SocketAddr::V6(source) = source else {
+            panic!("an IPv6 source");
+        };
+        let mut block = source.ip().octets().to_vec();
+        block.extend_from_slice(&Ipv6Addr::LOCALHOST.octets());
+        block.extend_from_slice(&source.port().to_be_bytes());
+        block.extend_from_slice(&443_u16.to_be_bytes());
+        block
+    }
+
+    fn client_v4() -> SocketAddr {
+        SocketAddr::new(Ipv4Addr::new(203, 0, 113, 7).into(), 4711)
+    }
+
+    fn client_v6() -> SocketAddr {
+        SocketAddr::new(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1).into(), 50000)
+    }
+
+    /// `header` reads whole, as `expected`, with what follows it left unread;
+    /// and every prefix of it reads as a header still arriving, so a reader
+    /// fed one byte at a time reaches the same answer.
+    #[track_caller]
+    fn admits(header: &[u8], expected: Header) {
+        let mut connection = header.to_vec();
+        connection.extend_from_slice(b"GET / HTTP/1.1\r\n");
+        assert_eq!(
+            parse(&connection),
+            Ok(Parsed::Complete(expected, header.len())),
+            "{header:?}"
+        );
+        for end in 0..header.len() {
+            assert_eq!(
+                parse(&header[..end]),
+                Ok(Parsed::Partial),
+                "{:?}",
+                &header[..end]
+            );
+        }
+    }
+
+    #[track_caller]
+    fn refuses(connection: &[u8]) {
+        assert_eq!(parse(connection), Err(Malformed), "{connection:?}");
+    }
+
+    #[test]
+    fn version_1_names_an_ipv4_or_ipv6_client() {
+        admits(
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n",
+            Header::Relayed(client_v4()),
+        );
+        admits(
+            b"PROXY TCP6 2001:db8::1 ::1 50000 443\r\n",
+            Header::Relayed(client_v6()),
+        );
+        admits(
+            b"PROXY TCP4 0.0.0.0 255.255.255.255 0 65535\r\n",
+            Header::Relayed(SocketAddr::new(Ipv4Addr::UNSPECIFIED.into(), 0)),
+        );
+    }
+
+    /// `UNKNOWN` names no client, and the specification says to ignore
+    /// whatever follows it on the line.
+    #[test]
+    fn version_1_unknown_leaves_the_socket_peer() {
+        admits(b"PROXY UNKNOWN\r\n", Header::Local);
+        admits(
+            b"PROXY UNKNOWN ffff:f...f:ffff ffff:f...f:ffff 65535 65535\r\n",
+            Header::Local,
+        );
+    }
+
+    /// The longest line the specification allows is 107 bytes, its CRLF
+    /// included; a reader may give up on one longer.
+    #[test]
+    fn version_1_is_at_most_107_bytes() {
+        let mut longest = b"PROXY UNKNOWN ".to_vec();
+        longest.resize(105, b'x');
+        longest.extend_from_slice(b"\r\n");
+        admits(&longest, Header::Local);
+
+        let mut longer = b"PROXY UNKNOWN ".to_vec();
+        longer.resize(106, b'x');
+        longer.extend_from_slice(b"\r\n");
+        refuses(&longer);
+        // Refused once the 107th byte arrives without a line end.
+        refuses(&longer[..107]);
+        assert_eq!(parse(&longer[..106]), Ok(Parsed::Partial));
+    }
+
+    #[test]
+    fn version_1_refuses_what_the_grammar_does_not_admit() {
+        for line in [
+            &b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\n"[..],
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443 80\r\n",
+            b"PROXY TCP4 203.0.113.7  192.0.2.2 4711 443\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443 \r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 +4711 443\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 65536 443\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 -1\r\n",
+            b"PROXY TCP4 203.0.113.7 192.0.2.2  443\r\n",
+            b"PROXY TCP4 203.0.113.07 192.0.2.2 4711 443\r\n",
+            b"PROXY TCP4 2001:db8::1 ::1 50000 443\r\n",
+            b"PROXY TCP6 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY TCP4 203.0.113.7 not-an-address 4711 443\r\n",
+            b"PROXY TCP5 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY tcp4 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY UNKNOWNx\r\n",
+            b"PROXY \r\n",
+            b"proxy TCP4 203.0.113.7 192.0.2.2 4711 443\r\n",
+            b"PROXY  TCP4 203.0.113.7 192.0.2.2 4711 443\r\n",
+        ] {
+            refuses(line);
+        }
+    }
+
+    #[test]
+    fn version_2_names_an_ipv4_or_ipv6_client_over_either_transport() {
+        let ipv4 = ipv4_block(client_v4());
+        let ipv6 = ipv6_block(client_v6());
+        admits(&v2(1, 0x11, &ipv4), Header::Relayed(client_v4()));
+        admits(&v2(1, 0x12, &ipv4), Header::Relayed(client_v4()));
+        admits(&v2(1, 0x21, &ipv6), Header::Relayed(client_v6()));
+        admits(&v2(1, 0x22, &ipv6), Header::Relayed(client_v6()));
+    }
+
+    /// TLVs follow the address block inside the stated length, and are read
+    /// past.
+    #[test]
+    fn version_2_reads_past_its_tlvs() {
+        let mut block = ipv4_block(client_v4());
+        // PP2_TYPE_AUTHORITY, then PP2_TYPE_NOOP.
+        block.extend_from_slice(&[0x02, 0x00, 0x07]);
+        block.extend_from_slice(b"example");
+        block.extend_from_slice(&[0x04, 0x00, 0x00]);
+        admits(&v2(1, 0x11, &block), Header::Relayed(client_v4()));
+    }
+
+    /// `LOCAL` is the proxy's own connection, whatever family it states, and
+    /// an unspecified or Unix family names no client this server reports.
+    #[test]
+    fn version_2_without_an_ip_client_leaves_the_socket_peer() {
+        admits(&v2(0, 0x00, &[]), Header::Local);
+        admits(&v2(0, 0x11, &ipv4_block(client_v4())), Header::Local);
+        admits(&v2(0, 0xff, b"anything"), Header::Local);
+        admits(&v2(1, 0x00, &[]), Header::Local);
+        admits(&v2(1, 0x31, &[0; 216]), Header::Local);
+        admits(&v2(1, 0x32, &[0; 216]), Header::Local);
+    }
+
+    #[test]
+    fn version_2_refuses_what_the_specification_does_not_list() {
+        let block = ipv4_block(client_v4());
+        let mut version_1 = v2(1, 0x11, &block);
+        version_1[12] = 0x11;
+        refuses(&version_1);
+        let mut version_3 = v2(1, 0x11, &block);
+        version_3[12] = 0x31;
+        refuses(&version_3);
+        refuses(&v2(2, 0x11, &block));
+        refuses(&v2(0x0f, 0x11, &block));
+        for family in [0x01, 0x02, 0x10, 0x13, 0x20, 0x41] {
+            refuses(&v2(1, family, &block));
+        }
+    }
+
+    /// A block shorter than its family's addresses is refused at the fixed
+    /// part, before the rest is waited for.
+    #[test]
+    fn version_2_refuses_a_block_too_short_for_its_family() {
+        refuses(&v2(1, 0x11, &[0; 11])[..16]);
+        refuses(&v2(1, 0x21, &[0; 35])[..16]);
+        refuses(&v2(1, 0x31, &[0; 215])[..16]);
+        assert_eq!(
+            parse(&v2(1, 0x11, &[0; 12])[..16]),
+            Ok(Parsed::Partial),
+            "a long enough block is waited for"
+        );
+    }
+
+    /// A connection that opens with anything else is refused at the first
+    /// byte that tells, not at the deadline.
+    #[test]
+    fn a_connection_without_a_header_is_refused_as_soon_as_it_tells() {
+        refuses(b"G");
+        refuses(b"GET / HTTP/1.1\r\n");
+        refuses(b"PRI * HTTP/2.0\r\n");
+        refuses(b"\x16\x03\x01");
+        refuses(b"PX");
+        refuses(b"\r\n\r\nX");
+        assert_eq!(parse(b""), Ok(Parsed::Partial));
+        assert_eq!(parse(b"P"), Ok(Parsed::Partial));
+        assert_eq!(parse(b"\r\n\r\n\0"), Ok(Parsed::Partial));
+    }
+
+    /// A peer is trusted to send a header exactly where the policy believes
+    /// it: by address or network, in either IPv4 form, or as any nearest hop.
+    /// The field the policy names plays no part.
+    #[test]
+    fn a_peer_is_trusted_where_the_policy_believes_it() {
+        let balancer: IpAddr = Ipv4Addr::new(10, 0, 0, 5).into();
+        let mapped: IpAddr = Ipv4Addr::new(10, 0, 0, 5).to_ipv6_mapped().into();
+        let other: IpAddr = Ipv4Addr::new(192, 0, 2, 9).into();
+
+        let network = "10.0.0.0/8".parse().expect("a network");
+        let networks = TrustedProxies::networks(ProxyHeader::XForwarded, [network]);
+        assert!(networks.trusts_peer(balancer));
+        assert!(networks.trusts_peer(mapped));
+        assert!(!networks.trusts_peer(other));
+
+        let addresses = TrustedProxies::addresses(ProxyHeader::Forwarded, [balancer]);
+        assert!(addresses.trusts_peer(mapped));
+        assert!(!addresses.trusts_peer(other));
+
+        assert!(TrustedProxies::hops(ProxyHeader::Forwarded, 1).trusts_peer(other));
+        assert!(TrustedProxies::everyone(ProxyHeader::Forwarded).trusts_peer(other));
+        assert!(!TrustedProxies::hops(ProxyHeader::Forwarded, 0).trusts_peer(other));
+        assert!(!TrustedProxies::none().trusts_peer(balancer));
+        let unnamed = TrustedProxies::none().and_addresses([balancer]);
+        assert!(!unnamed.trusts_peer(balancer));
+    }
+
+    /// A service answering with the peer its connection reports.
+    #[cfg(feature = "http1")]
+    fn peer_service() -> crate::router::service::Service<()> {
+        use crate::extract::connection::{Connection, TransportAddress};
+
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        crate::router::service::Service::new(document, |request: crate::http::Request| {
+            let peer = match request
+                .extensions()
+                .get::<Connection>()
+                .expect("a served request carries its connection")
+                .peer()
+            {
+                TransportAddress::Ip(address) => address.to_string(),
+                other => format!("{other:?}"),
+            };
+            async move {
+                crate::http::Response::new(crate::http::body::Body::from_bytes(bytes::Bytes::from(
+                    peer,
+                )))
+            }
+        })
+    }
+
+    /// A loopback server requiring a header from the peers `trusted` believes,
+    /// with `configure` applied before it prepares.
+    #[cfg(feature = "http1")]
+    async fn proxied_server(
+        trusted: TrustedProxies,
+        configure: impl FnOnce(crate::server::Server<()>) -> crate::server::Server<()>,
+    ) -> (
+        SocketAddr,
+        tokio::sync::oneshot::Sender<()>,
+        tokio::task::JoinHandle<crate::error::Result<()>>,
+    ) {
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let bound = configure(crate::server::Server::new(peer_service()))
+            .bind((Ipv4Addr::LOCALHOST, 0))
+            .proxy_protocol(trusted)
+            .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {
+                let _ = shutdown_receiver.await;
+            }))
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        (address, shutdown_sender, tokio::spawn(bound.serve()))
+    }
+
+    /// The loopback client, which every test here connects from.
+    #[cfg(feature = "http1")]
+    fn loopback() -> TrustedProxies {
+        TrustedProxies::addresses(ProxyHeader::Forwarded, [Ipv4Addr::LOCALHOST.into()])
+    }
+
+    /// Sends `preface` and one request in a single write, so the request
+    /// arrives in the read that takes the header, and reads until the server
+    /// closes. A connection closed unanswered reads as empty.
+    #[cfg(feature = "http1")]
+    async fn exchange(address: SocketAddr, preface: Vec<u8>) -> String {
+        use std::io::{Read as _, Write as _};
+
+        tokio::task::spawn_blocking(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+            stream
+                .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+                .expect("a read timeout sets");
+            let mut sent = preface;
+            sent.extend_from_slice(
+                b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+            );
+            stream.write_all(&sent).expect("request writes");
+            let mut response = Vec::new();
+            // A close with the request unread may reset rather than end.
+            let _ = stream.read_to_end(&mut response);
+            String::from_utf8(response).expect("a text response")
+        })
+        .await
+        .expect("blocking client joins")
+    }
+
+    #[cfg(feature = "http1")]
+    async fn stop(
+        shutdown: tokio::sync::oneshot::Sender<()>,
+        server: tokio::task::JoinHandle<crate::error::Result<()>>,
+    ) {
+        let _ = shutdown.send(());
+        server
+            .await
+            .expect("server task joins")
+            .expect("server exits cleanly");
+    }
+
+    /// The client a trusted proxy's header names is the connection's peer,
+    /// in either version, and the request that follows it in the same read
+    /// is served.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_trusted_proxys_header_names_the_peer() {
+        let (address, shutdown, server) = proxied_server(loopback(), |server| server).await;
+
+        let v1 = b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n".to_vec();
+        let response = exchange(address, v1).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.ends_with("\r\n\r\n203.0.113.7:4711"), "{response}");
+
+        let mut block = ipv6_block(client_v6());
+        block.extend_from_slice(&[0x04, 0x00, 0x02, 0, 0]);
+        let response = exchange(address, v2(1, 0x21, &block)).await;
+        assert!(
+            response.ends_with("\r\n\r\n[2001:db8::1]:50000"),
+            "{response}"
+        );
+
+        // TLVs past what the first read takes: the header is read in more.
+        let mut block = ipv4_block(client_v4());
+        block.extend_from_slice(&[0x04, 0x01, 0x2c]);
+        block.extend_from_slice(&[0; 300]);
+        let response = exchange(address, v2(1, 0x11, &block)).await;
+        assert!(response.ends_with("\r\n\r\n203.0.113.7:4711"), "{response}");
+
+        stop(shutdown, server).await;
+    }
+
+    /// A header naming no client, such as a load balancer's health check,
+    /// leaves the socket's own peer.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_header_naming_no_client_leaves_the_socket_peer() {
+        let (address, shutdown, server) = proxied_server(loopback(), |server| server).await;
+
+        for preface in [v2(0, 0x00, &[]), b"PROXY UNKNOWN\r\n".to_vec()] {
+            let response = exchange(address, preface).await;
+            assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+            assert!(response.contains("\r\n\r\n127.0.0.1:"), "{response}");
+        }
+
+        stop(shutdown, server).await;
+    }
+
+    /// A trusted peer that sends no header, or a malformed one, is closed
+    /// unanswered.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_trusted_peer_without_a_valid_header_is_closed_unanswered() {
+        let (address, shutdown, server) = proxied_server(loopback(), |server| server).await;
+
+        for preface in [
+            Vec::new(),
+            b"PROXY TCP4 203.0.113.7 192.0.2.2 4711\r\n".to_vec(),
+            v2(2, 0x11, &ipv4_block(client_v4())),
+        ] {
+            assert_eq!(exchange(address, preface).await, "");
+        }
+
+        stop(shutdown, server).await;
+    }
+
+    /// A peer the policy does not believe is served as it is: no header is
+    /// read from it, so one it sends is the start of a malformed request
+    /// rather than a claim to another address.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_untrusted_peer_is_served_without_a_header() {
+        let elsewhere =
+            TrustedProxies::addresses(ProxyHeader::Forwarded, [Ipv4Addr::new(192, 0, 2, 1).into()]);
+        let (address, shutdown, server) = proxied_server(elsewhere, |server| server).await;
+
+        let response = exchange(address, Vec::new()).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.contains("\r\n\r\n127.0.0.1:"), "{response}");
+
+        let v1 = b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n".to_vec();
+        let response = exchange(address, v1).await;
+        assert!(response.starts_with("HTTP/1.1 400"), "{response}");
+
+        stop(shutdown, server).await;
+    }
+
+    /// A trusted peer that sends nothing is closed at the first-head
+    /// deadline, which the header is read within.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_silent_trusted_peer_is_closed_at_the_first_head_deadline() {
+        use std::{io::Read as _, time::Duration};
+
+        let (address, shutdown, server) = proxied_server(loopback(), |server| {
+            server.http1(
+                crate::server::protocol::http1::Http1Config::default()
+                    .header_read_timeout(Some(Duration::from_millis(200))),
+            )
+        })
+        .await;
+
+        let (read, elapsed) = tokio::task::spawn_blocking(move || {
+            let mut stream = std::net::TcpStream::connect(address).expect("server accepts");
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .expect("a read timeout sets");
+            let started = std::time::Instant::now();
+            let mut response = Vec::new();
+            let read = stream.read_to_end(&mut response).map(|_| response);
+            (read, started.elapsed())
+        })
+        .await
+        .expect("blocking client joins");
+
+        assert_eq!(read.expect("the server closes the connection"), b"");
+        assert!(elapsed < Duration::from_secs(5), "closed after {elapsed:?}");
+
+        stop(shutdown, server).await;
+    }
+
+    /// The header precedes the TLS handshake, and the client it names is the
+    /// peer of the requests served over it.
+    #[cfg(all(feature = "tls", feature = "http1"))]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_header_precedes_the_tls_handshake() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        use tokio_rustls::rustls::pki_types::ServerName;
+
+        let (address, authority, shutdown, server) =
+            super::tls_server_with(peer_service(), |server| server.proxy_protocol(loopback()))
+                .await;
+
+        let mut stream = tokio::net::TcpStream::connect(address)
+            .await
+            .expect("server accepts");
+        stream
+            .write_all(b"PROXY TCP4 203.0.113.7 192.0.2.2 4711 443\r\n")
+            .await
+            .expect("header writes");
+        let mut client = super::alpn_connector(authority.as_bytes(), &[b"http/1.1"])
+            .connect(
+                ServerName::try_from("localhost").expect("valid DNS name"),
+                stream,
+            )
+            .await
+            .expect("the handshake follows the header");
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("request writes");
+        let mut response = String::new();
+        client
+            .read_to_string(&mut response)
+            .await
+            .expect("response reads");
+
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        assert!(response.ends_with("\r\n\r\n203.0.113.7:4711"), "{response}");
+        stop(shutdown, server).await;
     }
 }

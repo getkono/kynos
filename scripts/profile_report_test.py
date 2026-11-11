@@ -112,17 +112,17 @@ def summary(
 
 class SplitByObject(unittest.TestCase):
     def test_a_call_line_is_not_counted_where_it_is_made(self):
-        program, other = report.split_by_object(CALLGRIND_SAMPLE, PROGRAM)
+        program, crypto, other = report.split_by_object(CALLGRIND_SAMPLE, PROGRAM)
         # 25 + 5 + 10 + 5 in the program, the 120 after `calls=` skipped, and
         # libc's own 100 + 20 counted where libc's lines are.
-        self.assertEqual((program, other), (45, 120))
+        self.assertEqual((program, crypto, other), (45, 0, 120))
 
     def test_a_compressed_object_name_resolves_to_its_first_spelling(self):
         renamed = CALLGRIND_SAMPLE.replace(
             f"ob=(1) {PROGRAM}", "ob=(1) /elsewhere/requests"
         )
-        program, other = report.split_by_object(renamed, PROGRAM)
-        self.assertEqual((program, other), (0, 165))
+        program, crypto, other = report.split_by_object(renamed, PROGRAM)
+        self.assertEqual((program, crypto, other), (0, 0, 165))
 
     def test_a_file_that_counts_something_other_than_instructions_is_refused(self):
         with self.assertRaises(report.Unreadable):
@@ -142,7 +142,75 @@ class SplitByObject(unittest.TestCase):
 
     def test_a_jump_line_is_not_read_as_a_cost(self):
         with_jumps = CALLGRIND_SAMPLE.replace("+2 5 1 1", "jump=3 +4\n+2 5 1 1")
-        self.assertEqual(report.split_by_object(with_jumps, PROGRAM), (45, 120))
+        self.assertEqual(report.split_by_object(with_jumps, PROGRAM), (45, 0, 120))
+
+
+class SplitCrypto(unittest.TestCase):
+    """aws-lc is linked into the program object, so its share is split off by
+    file or symbol; a wrong split either compares a cipher's count or hides
+    the program's."""
+
+    # A rustls frame calling an exported aws-lc function compiled from a C
+    # file, which inlines a system header and calls a static function of its
+    # own; then an assembly routine Callgrind places in no file; then the
+    # `aws-lc-rs` binding, which is Rust and stays the program's.
+    SAMPLE = f"""# callgrind format
+events: Ir
+ob=(1) {PROGRAM}
+fl=(1) /cargo/rustls-0.23.46/src/tls13/key_schedule.rs
+fn=(1) <rustls::tls13::key_schedule::KeySchedule>::derive
+10 7
+cfl=(2) /aws-lc/crypto/fipsmodule/hkdf/hkdf.c
+cfn=(2) aws_lc_0_46_0_HKDF_expand
+calls=1 0
+10 1000
+fl=(2)
+fn=(2)
+20 30
+fi=(3) /usr/include/x86_64-linux-gnu/bits/string_fortified.h
+29 4
+fe=(2)
+21 6
+fn=(3) hkdf_expand_block
+30 50
+fl=(4) ???
+fn=(4) aws_lc_0_46_0_sha512_block_data_order_avx
+0 900
+fl=(5) /cargo/aws-lc-rs-1.18.2/src/hkdf.rs
+fn=(5) <aws_lc_rs::hkdf::Okm<rustls::Len>>::fill
+40 11
+fn=(1)
+11 3
+"""
+
+    def test_aws_lc_is_split_from_the_program_by_file_and_by_symbol(self):
+        program, crypto, other = report.split_by_object(self.SAMPLE, PROGRAM)
+        # rustls's 7 + 3 and the binding's 11 are the program's; the exported
+        # function's 30 + 6, its inlined header's 4, the static function's 50
+        # and the file-less routine's 900 are aws-lc's; the 1000 after
+        # `calls=` is counted nowhere.
+        self.assertEqual((program, crypto, other), (21, 990, 0))
+
+    def test_the_binding_crate_s_directory_is_not_aws_lc_s(self):
+        self.assertFalse(
+            report.is_crypto("/cargo/aws-lc-rs-1.18.2/src/hkdf.rs", "fill")
+        )
+        self.assertTrue(
+            report.is_crypto("/cargo/aws-lc-sys-0.33.0/aws-lc/crypto/mem.c", "f")
+        )
+
+    def test_a_shared_object_s_lines_are_never_aws_lc_s(self):
+        program, crypto, other = report.split_by_object(
+            self.SAMPLE.replace(f"ob=(1) {PROGRAM}", f"ob=(1) {LIBC}"), PROGRAM
+        )
+        self.assertEqual((program, crypto, other), (0, 0, 1011))
+
+    def test_the_report_shows_aws_lc_beside_libc_and_compares_neither(self):
+        row = report.Row("connection_tls.full", 10, 5, 2, 3, crypto=900)
+        recorded = {"connection_tls.full": (10, 2, 3)}
+        text = report.report([row], recorded)
+        self.assertIn("| `connection_tls.full` | 10 | = | 5 | 900 | 2 | = | 3 | = |", text)
+        self.assertEqual(report.counts(row), (10, 2, 3))
 
 
 class Calibration(unittest.TestCase):

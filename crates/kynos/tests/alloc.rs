@@ -6,7 +6,7 @@
 //!
 //! The allocation-count kind in
 //! [`performance.md`](../../../docs/performance.md#the-taxonomy), and one of
-//! the four targets that document says own the global allocator. It is a target
+//! the five targets that document says own the global allocator. It is a target
 //! of its own rather than a sibling `tests.rs` beside the router because a
 //! `#[global_allocator]` is process-wide: installed in the library's unit-test
 //! binary it would count, and slow, every other unit test in it.
@@ -28,13 +28,15 @@
 //! [`hermeticity.rs`](hermeticity.rs) and `.config/nextest.toml` — but the
 //! numbers below no longer rest on it.
 //!
-//! **These numbers record a requirement that is not met.**
-//! [`nfr.md`](../../../docs/nfr.md#routing) asks for zero allocations on the
-//! routing path and the path allocates five times for a static match. The
-//! ceilings are the measurement rather than the target, as
+//! **These numbers record a requirement that is decided against.**
+//! [`nfr.md`](../../../docs/nfr.md#routing) records zero allocations on the
+//! routing path as `absent`, and decided rather than open: a static match
+//! allocates five times, and each of the five blocks is attributed there and
+//! kept. The ceilings are the measurement rather than the target, as
 //! [`nfr.md`](../../../docs/nfr.md#thresholds) requires of a first
 //! measurement — and this file is the characterization that row points at, so
-//! that closing the gap turns something red rather than nothing.
+//! a ceiling falls only when one of the five blocks stops being kept, and
+//! anything that moves the count turns something red rather than nothing.
 //!
 //! The middleware half is recorded the same way and asks nothing of the same
 //! kind: a chain is a slice run head-first, so what is worth pinning is that a
@@ -606,14 +608,17 @@ fn a_chain_does_not_widen_the_dispatch_future() {
 /// holds the relation everywhere.
 const ENDPOINT_FUTURE_BYTES: usize = 320;
 
-/// The same, for a handler whose last argument consumes a JSON body: 576 bytes
-/// on Linux, from 632 while the read collected through `http-body-util`'s
-/// collector, with its frame queue and trailer map, and 1528 before that, when
-/// each `async fn` from the endpoint down to the codec's read kept a request of
-/// its own. What it holds past [`ENDPOINT_FUTURE_BYTES`] is the read itself:
-/// the body, its first frame, and the buffer later frames are joined into.
+/// The same, for a handler whose last argument consumes a JSON body: 584 bytes
+/// on Linux. 576 before the handler kept the head it lends the body extractor
+/// across that read, to render the extractor's rejection with the members
+/// `Router::problem_members` installs; 632 while the read collected through
+/// `http-body-util`'s collector, with its frame queue and trailer map, and 1528
+/// before that, when each `async fn` from the endpoint down to the codec's read
+/// kept a request of its own. What it holds past [`ENDPOINT_FUTURE_BYTES`] is
+/// the read itself: the body, its first frame, and the buffer later frames are
+/// joined into.
 #[cfg(feature = "json")]
-const BODY_ENDPOINT_FUTURE_BYTES: usize = 576;
+const BODY_ENDPOINT_FUTURE_BYTES: usize = 584;
 
 /// The width of the future
 /// [`Endpoint::call`](kynos::router::endpoint::Endpoint::call) returns for an
@@ -845,8 +850,8 @@ fn the_routing_path_allocates_where_the_requirement_asks_for_nothing() {
         assert!(
             counted <= ceiling,
             "{target} allocated {counted} times against a recorded {ceiling}; \
-             raising a ceiling is a change to docs/nfr.md, and lowering one is \
-             what closing the gap looks like"
+             raising a ceiling is a change to docs/nfr.md, and a ceiling falls \
+             only when one of the five blocks docs/nfr.md attributes stops being kept"
         );
     }
 }

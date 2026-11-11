@@ -66,6 +66,56 @@ pub fn kynos::di::Provides::provide(&self) -> T
 impl<T: core::clone::Clone> kynos::di::Provides<T> for T
 pub fn T::provide(&self) -> T
 pub mod kynos::error
+pub mod kynos::error::members
+#[non_exhaustive] pub enum kynos::error::members::ProblemOrigin
+pub kynos::error::members::ProblemOrigin::Authentication
+pub kynos::error::members::ProblemOrigin::ByteRange
+pub kynos::error::members::ProblemOrigin::Content
+pub kynos::error::members::ProblemOrigin::CookieValue
+pub kynos::error::members::ProblemOrigin::HeaderField
+pub kynos::error::members::ProblemOrigin::Negotiation
+pub kynos::error::members::ProblemOrigin::PathParameter
+pub kynos::error::members::ProblemOrigin::QueryParameter
+pub kynos::error::members::ProblemOrigin::Routing
+pub kynos::error::members::ProblemOrigin::Transport
+impl core::clone::Clone for kynos::error::members::ProblemOrigin
+pub fn kynos::error::members::ProblemOrigin::clone(&self) -> kynos::error::members::ProblemOrigin
+impl core::cmp::Eq for kynos::error::members::ProblemOrigin
+impl core::cmp::PartialEq for kynos::error::members::ProblemOrigin
+pub fn kynos::error::members::ProblemOrigin::eq(&self, &kynos::error::members::ProblemOrigin) -> bool
+impl core::fmt::Debug for kynos::error::members::ProblemOrigin
+pub fn kynos::error::members::ProblemOrigin::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::error::members::ProblemOrigin
+pub fn kynos::error::members::ProblemOrigin::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::error::members::ProblemOrigin
+impl core::marker::StructuralPartialEq for kynos::error::members::ProblemOrigin
+impl core::marker::Freeze for kynos::error::members::ProblemOrigin
+impl core::marker::Send for kynos::error::members::ProblemOrigin
+impl core::marker::Sync for kynos::error::members::ProblemOrigin
+impl core::marker::Unpin for kynos::error::members::ProblemOrigin
+impl core::marker::UnsafeUnpin for kynos::error::members::ProblemOrigin
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemOrigin
+impl core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemOrigin
+pub struct kynos::error::members::ProblemCx<'a>
+impl<'a> kynos::error::members::ProblemCx<'a>
+pub fn kynos::error::members::ProblemCx<'a>::extensions(&self) -> &'a http::extensions::Extensions
+pub fn kynos::error::members::ProblemCx<'a>::headers(&self) -> &'a http::header::map::HeaderMap
+pub fn kynos::error::members::ProblemCx<'a>::method(&self) -> &'a http::method::Method
+pub fn kynos::error::members::ProblemCx<'a>::origin(&self) -> kynos::error::members::ProblemOrigin
+pub fn kynos::error::members::ProblemCx<'a>::problem(&self) -> &'a kynos::error::problem::Problem
+pub fn kynos::error::members::ProblemCx<'a>::status(&self) -> http::status::StatusCode
+pub fn kynos::error::members::ProblemCx<'a>::uri(&self) -> &'a http::uri::Uri
+impl<'a> core::fmt::Debug for kynos::error::members::ProblemCx<'a>
+pub fn kynos::error::members::ProblemCx<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Freeze for kynos::error::members::ProblemCx<'a>
+impl<'a> core::marker::Send for kynos::error::members::ProblemCx<'a>
+impl<'a> core::marker::Sync for kynos::error::members::ProblemCx<'a>
+impl<'a> core::marker::Unpin for kynos::error::members::ProblemCx<'a>
+impl<'a> core::marker::UnsafeUnpin for kynos::error::members::ProblemCx<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemCx<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemCx<'a>
+pub trait kynos::error::members::ProblemMembers: kynos::schema::Schema + serde_core::ser::Serialize
+pub fn kynos::error::members::ProblemMembers::for_problem(&kynos::error::members::ProblemCx<'_>) -> Self
 pub mod kynos::error::problem
 #[non_exhaustive] pub struct kynos::error::problem::PointerError
 pub kynos::error::problem::PointerError::detail: alloc::string::String
@@ -1383,6 +1433,26 @@ pub const kynos::extract::body::limit::DEFAULT_LIMIT: u64
 pub async fn kynos::extract::body::limit::collect_capped(kynos::http::body::Body, u64) -> kynos::extract::body::limit::Capped
 pub fn kynos::extract::body::limit::declared_length(&http::header::map::HeaderMap) -> core::option::Option<u64>
 pub mod kynos::extract::body::multipart
+#[non_exhaustive] pub enum kynos::extract::body::multipart::Admission
+pub kynos::extract::body::multipart::Admission::Read
+pub kynos::extract::body::multipart::Admission::Read::limit: core::option::Option<u64>
+pub kynos::extract::body::multipart::Admission::Skip
+impl core::clone::Clone for kynos::extract::body::multipart::Admission
+pub fn kynos::extract::body::multipart::Admission::clone(&self) -> kynos::extract::body::multipart::Admission
+impl core::cmp::Eq for kynos::extract::body::multipart::Admission
+impl core::cmp::PartialEq for kynos::extract::body::multipart::Admission
+pub fn kynos::extract::body::multipart::Admission::eq(&self, &kynos::extract::body::multipart::Admission) -> bool
+impl core::fmt::Debug for kynos::extract::body::multipart::Admission
+pub fn kynos::extract::body::multipart::Admission::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::extract::body::multipart::Admission
+impl core::marker::StructuralPartialEq for kynos::extract::body::multipart::Admission
+impl core::marker::Freeze for kynos::extract::body::multipart::Admission
+impl core::marker::Send for kynos::extract::body::multipart::Admission
+impl core::marker::Sync for kynos::extract::body::multipart::Admission
+impl core::marker::Unpin for kynos::extract::body::multipart::Admission
+impl core::marker::UnsafeUnpin for kynos::extract::body::multipart::Admission
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::extract::body::multipart::Admission
+impl core::panic::unwind_safe::UnwindSafe for kynos::extract::body::multipart::Admission
 pub struct kynos::extract::body::multipart::FilePart
 pub kynos::extract::body::multipart::FilePart::bytes: bytes::bytes::Bytes
 pub kynos::extract::body::multipart::FilePart::content_type: core::option::Option<alloc::string::String>
@@ -1400,6 +1470,7 @@ impl core::fmt::Debug for kynos::extract::body::multipart::FilePart
 pub fn kynos::extract::body::multipart::FilePart::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos::extract::body::multipart::FilePart
 impl kynos::extract::body::multipart::FromPart for kynos::extract::body::multipart::FilePart
+pub const kynos::extract::body::multipart::FilePart::LIMIT: core::option::Option<u64>
 pub fn kynos::extract::body::multipart::FilePart::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl kynos::response::codec::multipart::IntoPart for kynos::extract::body::multipart::FilePart
 pub fn kynos::extract::body::multipart::FilePart::into_part(self, &str) -> kynos::extract::body::multipart::Part
@@ -1512,15 +1583,21 @@ impl core::marker::Unpin for kynos::extract::body::multipart::Part
 impl core::marker::UnsafeUnpin for kynos::extract::body::multipart::Part
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::extract::body::multipart::Part
 impl core::panic::unwind_safe::UnwindSafe for kynos::extract::body::multipart::Part
+pub const kynos::extract::body::multipart::TEXT_PART_LIMIT: u64
 pub trait kynos::extract::body::multipart::FromMultipart: core::marker::Sized
+pub fn kynos::extract::body::multipart::FromMultipart::admit(&str) -> core::result::Result<kynos::extract::body::multipart::Admission, kynos::error::rejection::BodyRejection>
 pub fn kynos::extract::body::multipart::FromMultipart::from_parts(alloc::vec::Vec<kynos::extract::body::multipart::Part>) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 pub trait kynos::extract::body::multipart::FromPart: core::marker::Sized
+pub const kynos::extract::body::multipart::FromPart::LIMIT: core::option::Option<u64>
 pub fn kynos::extract::body::multipart::FromPart::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl kynos::extract::body::multipart::FromPart for bytes::bytes::Bytes
+pub const bytes::bytes::Bytes::LIMIT: core::option::Option<u64>
 pub fn bytes::bytes::Bytes::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl kynos::extract::body::multipart::FromPart for kynos::extract::body::multipart::FilePart
+pub const kynos::extract::body::multipart::FilePart::LIMIT: core::option::Option<u64>
 pub fn kynos::extract::body::multipart::FilePart::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 impl<T: kynos::schema::ParamValue + 'static> kynos::extract::body::multipart::FromPart for T
+pub const T::LIMIT: core::option::Option<u64>
 pub fn T::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 pub mod kynos::extract::body::protobuf
 pub struct kynos::extract::body::protobuf::Protobuf<T>(pub T)
@@ -1979,6 +2056,8 @@ impl kynos::extract::describe::Describe for kynos::response::range::served::Cond
 pub fn kynos::response::range::served::Conditions::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl kynos::extract::describe::Describe for kynos::server::lifecycle::Draining
 pub fn kynos::server::lifecycle::Draining::describe(&mut kynos::router::operation::OperationCx<'_>)
+impl kynos::extract::describe::Describe for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<C: kynos::extract::body::codec::BodyCodec<T>, T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::codec::Encoded<C, T>
 pub fn kynos::extract::body::codec::Encoded<C, T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<E: kynos::router::endpoint::meta::EndpointUri> kynos::extract::describe::Describe for kynos::extract::link::Link<E>
@@ -2628,6 +2707,9 @@ pub async fn kynos::response::range::served::Conditions::from_request_parts(&mut
 impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for kynos::server::lifecycle::Draining
 pub type kynos::server::lifecycle::Draining::Rejection = core::convert::Infallible
 pub async fn kynos::server::lifecycle::Draining::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
+impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for kynos::server::lifecycle::Readiness
+pub type kynos::server::lifecycle::Readiness::Rejection = core::convert::Infallible
+pub async fn kynos::server::lifecycle::Readiness::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 pub mod kynos::handler
 pub enum kynos::handler::Guarded
 impl core::fmt::Debug for kynos::handler::Guarded
@@ -3355,6 +3437,7 @@ impl<C, S, D> kynos::middleware::Interceptor<C> for kynos::middleware::cache::Ca
 pub type kynos::middleware::cache::Cache<S, D>::Adds = <D as kynos::middleware::cache::CacheTagging>::Headers
 pub type kynos::middleware::cache::Cache<S, D>::Reads = ()
 pub type kynos::middleware::cache::Cache<S, D>::Short = core::convert::Infallible
+pub const kynos::middleware::cache::Cache<S, D>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::cache::Cache<S, D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cache::CacheTagging>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<S: core::clone::Clone, D: core::clone::Clone> core::clone::Clone for kynos::middleware::cache::Cache<S, D>
 pub fn kynos::middleware::cache::Cache<S, D>::clone(&self) -> kynos::middleware::cache::Cache<S, D>
@@ -3646,6 +3729,7 @@ impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::compression:
 pub type kynos::middleware::compression::Compression<T>::Adds = kynos::middleware::compression::ContentEncoding
 pub type kynos::middleware::compression::Compression<T>::Reads = ()
 pub type kynos::middleware::compression::Compression<T>::Short = kynos::middleware::compression::NotAcceptable<T>
+pub const kynos::middleware::compression::Compression<T>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::compression::Compression<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::compression::ContentEncoding>, kynos::middleware::compression::NotAcceptable<T>>> + core::marker::Send
 impl<T> core::clone::Clone for kynos::middleware::compression::Compression<T>
 pub fn kynos::middleware::compression::Compression<T>::clone(&self) -> Self
@@ -3730,6 +3814,7 @@ impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kyno
 pub type kynos::middleware::conditional::Conditional::Adds = ()
 pub type kynos::middleware::conditional::Conditional::Reads = kynos::middleware::conditional::Preconditions
 pub type kynos::middleware::conditional::Conditional::Short = kynos::middleware::conditional::NotModified
+pub const kynos::middleware::conditional::Conditional::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::conditional::Conditional::intercept(&self, kynos::http::Request, kynos::middleware::conditional::Preconditions, &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::conditional::NotModified>
 impl core::marker::Freeze for kynos::middleware::conditional::Conditional
 impl core::marker::Send for kynos::middleware::conditional::Conditional
@@ -3869,6 +3954,7 @@ impl<C, S> kynos::middleware::Interceptor<C> for kynos::middleware::cookies::Set
 pub type kynos::middleware::cookies::SetCookies<S>::Adds = kynos::middleware::cookies::SetCookieHeaders
 pub type kynos::middleware::cookies::SetCookies<S>::Reads = ()
 pub type kynos::middleware::cookies::SetCookies<S>::Short = core::convert::Infallible
+pub const kynos::middleware::cookies::SetCookies<S>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::cookies::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
 impl<S: core::clone::Clone> core::clone::Clone for kynos::middleware::cookies::SetCookies<S>
 pub fn kynos::middleware::cookies::SetCookies<S>::clone(&self) -> kynos::middleware::cookies::SetCookies<S>
@@ -3907,6 +3993,7 @@ impl<C: core::marker::Sync + 'static, D: kynos::middleware::cors::CorsDocumentat
 pub type kynos::middleware::cors::Cors<D>::Adds = <D as kynos::middleware::cors::CorsDocumentation>::Headers
 pub type kynos::middleware::cors::Cors<D>::Reads = ()
 pub type kynos::middleware::cors::Cors<D>::Short = core::convert::Infallible
+pub const kynos::middleware::cors::Cors<D>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::cors::Cors<D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cors::CorsDocumentation>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<D: core::clone::Clone> core::clone::Clone for kynos::middleware::cors::Cors<D>
 pub fn kynos::middleware::cors::Cors<D>::clone(&self) -> kynos::middleware::cors::Cors<D>
@@ -4032,6 +4119,7 @@ impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::csrf::Csrf<T
 pub type kynos::middleware::csrf::Csrf<T>::Adds = ()
 pub type kynos::middleware::csrf::Csrf<T>::Reads = ()
 pub type kynos::middleware::csrf::Csrf<T>::Short = kynos::middleware::csrf::CrossSite<T>
+pub const kynos::middleware::csrf::Csrf<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::csrf::Csrf<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<T> core::clone::Clone for kynos::middleware::csrf::Csrf<T>
 pub fn kynos::middleware::csrf::Csrf<T>::clone(&self) -> Self
@@ -4055,6 +4143,7 @@ impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::csrf::CsrfWh
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Adds = ()
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Reads = ()
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Short = kynos::middleware::csrf::CrossSite<T>
+pub const kynos::middleware::csrf::CsrfWhen<C, T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::csrf::CsrfWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<C, T> core::marker::Freeze for kynos::middleware::csrf::CsrfWhen<C, T>
 impl<C, T> core::marker::Send for kynos::middleware::csrf::CsrfWhen<C, T>
@@ -4100,6 +4189,7 @@ impl<C, U, M, L> kynos::middleware::Interceptor<C> for kynos::middleware::decomp
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Adds = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Reads = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Short = kynos::middleware::decompression::Undecodable<U, M, L>
+pub const kynos::middleware::decompression::Decompression<U, M, L>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::decompression::Decompression<U, M, L>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::decompression::Undecodable<U, M, L>>
 impl<U, M, L> core::clone::Clone for kynos::middleware::decompression::Decompression<U, M, L>
 pub fn kynos::middleware::decompression::Decompression<U, M, L>::clone(&self) -> Self
@@ -4186,11 +4276,13 @@ impl<C, T, U> kynos::middleware::Interceptor<C> for kynos::middleware::limits::b
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Adds = ()
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Reads = ()
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Short = kynos::middleware::limits::body_size::BodyRefused<T, U>
+pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodyRefused<T, U>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_size::BodySize<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::body_size::BodySize<T>::Adds = ()
 pub type kynos::middleware::limits::body_size::BodySize<T>::Reads = ()
 pub type kynos::middleware::limits::body_size::BodySize<T>::Short = kynos::middleware::limits::body_size::BodySizeExceeded<T>
+pub const kynos::middleware::limits::body_size::BodySize<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::body_size::BodySize<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodySizeExceeded<T>>
 impl<T, D> core::clone::Clone for kynos::middleware::limits::body_size::BodySize<T, D> where D: core::marker::Copy
 pub fn kynos::middleware::limits::body_size::BodySize<T, D>::clone(&self) -> Self
@@ -4291,6 +4383,7 @@ impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kyno
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Adds = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Reads = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Short = core::convert::Infallible
+pub const kynos::middleware::limits::body_timeout::BodyTimeout::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::body_timeout::BodyTimeout::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, core::convert::Infallible>
 impl core::marker::Freeze for kynos::middleware::limits::body_timeout::BodyTimeout
 impl core::marker::Send for kynos::middleware::limits::body_timeout::BodyTimeout
@@ -4340,6 +4433,7 @@ impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::limits::conc
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Adds = ()
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Reads = ()
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Short = kynos::middleware::limits::concurrency::AtCapacity<T>
+pub const kynos::middleware::limits::concurrency::Concurrency<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::concurrency::Concurrency<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::concurrency::AtCapacity<T>>
 impl<T> core::clone::Clone for kynos::middleware::limits::concurrency::Concurrency<T>
 pub fn kynos::middleware::limits::concurrency::Concurrency<T>::clone(&self) -> Self
@@ -4394,6 +4488,7 @@ impl<C, R> kynos::middleware::Interceptor<C> for kynos::middleware::limits::time
 pub type kynos::middleware::limits::timeout::Timeout<R>::Adds = ()
 pub type kynos::middleware::limits::timeout::Timeout<R>::Reads = ()
 pub type kynos::middleware::limits::timeout::Timeout<R>::Short = R
+pub const kynos::middleware::limits::timeout::Timeout<R>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::timeout::Timeout<R>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, R>
 impl<R> core::clone::Clone for kynos::middleware::limits::timeout::Timeout<R>
 pub fn kynos::middleware::limits::timeout::Timeout<R>::clone(&self) -> Self
@@ -4879,6 +4974,7 @@ impl<C, P, D, T> kynos::middleware::Interceptor<C> for kynos::middleware::rate_l
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Adds = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Headers
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Reads = ()
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Short = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Denied
+pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::rate_limit::RateLimit<P, D, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::rate_limit::RateLimitSpelling>::Headers>, <D as kynos::middleware::rate_limit::RateLimitSpelling>::Denied>
 impl<P, D, T> core::clone::Clone for kynos::middleware::rate_limit::RateLimit<P, D, T> where P: core::clone::Clone
 pub fn kynos::middleware::rate_limit::RateLimit<P, D, T>::clone(&self) -> Self
@@ -4970,6 +5066,7 @@ impl<C, S, H> kynos::middleware::Interceptor<C> for kynos::middleware::request_i
 pub type kynos::middleware::request_id::RequestId<S, H>::Adds = H
 pub type kynos::middleware::request_id::RequestId<S, H>::Reads = ()
 pub type kynos::middleware::request_id::RequestId<S, H>::Short = core::convert::Infallible
+pub const kynos::middleware::request_id::RequestId<S, H>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::request_id::RequestId<S, H>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<H>, core::convert::Infallible>> + core::marker::Send
 impl<S: core::clone::Clone, H> core::clone::Clone for kynos::middleware::request_id::RequestId<S, H>
 pub fn kynos::middleware::request_id::RequestId<S, H>::clone(&self) -> Self
@@ -5058,6 +5155,7 @@ impl<C, const HSTS: bool, const DENY_FRAMING: bool> kynos::middleware::Intercept
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Adds = kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Reads = ()
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Short = core::convert::Infallible
+pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, core::convert::Infallible>> + core::marker::Send
 impl<const HSTS: bool, const DENY_FRAMING: bool> core::clone::Clone for kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>
 pub fn kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::clone(&self) -> kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>
@@ -5123,6 +5221,22 @@ impl<H, T> core::marker::Unpin for kynos::middleware::stack::Cons<H, T>
 impl<H, T> core::marker::UnsafeUnpin for kynos::middleware::stack::Cons<H, T>
 impl<H, T> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::stack::Cons<H, T>
 impl<H, T> core::panic::unwind_safe::UnwindSafe for kynos::middleware::stack::Cons<H, T>
+pub struct kynos::middleware::stack::When<M, N>
+impl<C, M, N> kynos::middleware::Interceptor<C> for kynos::middleware::stack::When<M, N> where C: core::marker::Sync + 'static, M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>
+pub type kynos::middleware::stack::When<M, N>::Adds = <N as kynos::middleware::Interceptor<C>>::Adds
+pub type kynos::middleware::stack::When<M, N>::Reads = <N as kynos::middleware::Interceptor<C>>::Reads
+pub type kynos::middleware::stack::When<M, N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
+pub const kynos::middleware::stack::When<M, N>::ADDS_ON: kynos::middleware::Placement
+pub fn kynos::middleware::stack::When<M, N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
+impl<M, N> core::fmt::Debug for kynos::middleware::stack::When<M, N>
+pub fn kynos::middleware::stack::When<M, N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<M, N> core::marker::Freeze for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::Send for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::Sync for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::Unpin for kynos::middleware::stack::When<M, N>
+impl<M, N> core::marker::UnsafeUnpin for kynos::middleware::stack::When<M, N>
+impl<M, N> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::stack::When<M, N>
+impl<M, N> core::panic::unwind_safe::UnwindSafe for kynos::middleware::stack::When<M, N>
 pub trait kynos::middleware::stack::CompatibleStack<Other, C>
 pub const kynos::middleware::stack::CompatibleStack::CHECK: ()
 impl<Other, C> kynos::middleware::stack::CompatibleStack<Other, C> for ()
@@ -5214,6 +5328,7 @@ pub fn kynos::middleware::trace::Trace::correlating<S, G: kynos::middleware::req
 pub fn kynos::middleware::trace::Trace::level(self, kynos::middleware::trace::Level) -> Self
 pub fn kynos::middleware::trace::Trace::new() -> Self
 pub fn kynos::middleware::trace::Trace::record_headers(self, &'static [&'static str]) -> Self
+pub fn kynos::middleware::trace::Trace::span(self, &'static [&'static str]) -> kynos::middleware::trace::TraceSpan
 impl core::clone::Clone for kynos::middleware::trace::Trace
 pub fn kynos::middleware::trace::Trace::clone(&self) -> kynos::middleware::trace::Trace
 impl core::default::Default for kynos::middleware::trace::Trace
@@ -5233,6 +5348,24 @@ impl core::marker::Unpin for kynos::middleware::trace::Trace
 impl core::marker::UnsafeUnpin for kynos::middleware::trace::Trace
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::Trace
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::Trace
+pub struct kynos::middleware::trace::TraceSpan
+impl core::clone::Clone for kynos::middleware::trace::TraceSpan
+pub fn kynos::middleware::trace::TraceSpan::clone(&self) -> kynos::middleware::trace::TraceSpan
+impl core::fmt::Debug for kynos::middleware::trace::TraceSpan
+pub fn kynos::middleware::trace::TraceSpan::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::trace::TraceSpan
+pub type kynos::middleware::trace::TraceSpan::Adds = ()
+pub type kynos::middleware::trace::TraceSpan::Reads = ()
+pub type kynos::middleware::trace::TraceSpan::Short = core::convert::Infallible
+pub const kynos::middleware::trace::TraceSpan::ADDS_ON: kynos::middleware::Placement
+pub fn kynos::middleware::trace::TraceSpan::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued, core::convert::Infallible>> + core::marker::Send
+impl core::marker::Freeze for kynos::middleware::trace::TraceSpan
+impl core::marker::Send for kynos::middleware::trace::TraceSpan
+impl core::marker::Sync for kynos::middleware::trace::TraceSpan
+impl core::marker::Unpin for kynos::middleware::trace::TraceSpan
+impl core::marker::UnsafeUnpin for kynos::middleware::trace::TraceSpan
+impl !core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::TraceSpan
+impl !core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::TraceSpan
 pub const kynos::middleware::trace::REDACTED: &[&str]
 pub mod kynos::middleware::trusted_hosts
 pub struct kynos::middleware::trusted_hosts::TrustedHosts<T>
@@ -5246,6 +5379,7 @@ impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_host
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Adds = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
+pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::trusted_hosts::TrustedHosts<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<T> core::clone::Clone for kynos::middleware::trusted_hosts::TrustedHosts<T>
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::clone(&self) -> Self
@@ -5306,6 +5440,30 @@ impl core::marker::Unpin for kynos::middleware::MiddlewareError
 impl core::marker::UnsafeUnpin for kynos::middleware::MiddlewareError
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::MiddlewareError
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::MiddlewareError
+#[non_exhaustive] pub enum kynos::middleware::Placement
+pub kynos::middleware::Placement::Every
+pub kynos::middleware::Placement::Problems
+pub kynos::middleware::Placement::Success
+impl core::clone::Clone for kynos::middleware::Placement
+pub fn kynos::middleware::Placement::clone(&self) -> kynos::middleware::Placement
+impl core::cmp::Eq for kynos::middleware::Placement
+impl core::cmp::PartialEq for kynos::middleware::Placement
+pub fn kynos::middleware::Placement::eq(&self, &kynos::middleware::Placement) -> bool
+impl core::default::Default for kynos::middleware::Placement
+pub fn kynos::middleware::Placement::default() -> kynos::middleware::Placement
+impl core::fmt::Debug for kynos::middleware::Placement
+pub fn kynos::middleware::Placement::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::middleware::Placement
+pub fn kynos::middleware::Placement::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::middleware::Placement
+impl core::marker::StructuralPartialEq for kynos::middleware::Placement
+impl core::marker::Freeze for kynos::middleware::Placement
+impl core::marker::Send for kynos::middleware::Placement
+impl core::marker::Sync for kynos::middleware::Placement
+impl core::marker::Unpin for kynos::middleware::Placement
+impl core::marker::UnsafeUnpin for kynos::middleware::Placement
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::Placement
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::Placement
 #[non_exhaustive] pub struct kynos::middleware::Completion
 pub kynos::middleware::Completion::body_bytes: u64
 pub kynos::middleware::Completion::elapsed: core::time::Duration
@@ -5359,92 +5517,122 @@ pub trait kynos::middleware::Interceptor<C: core::marker::Sync + 'static>: core:
 pub type kynos::middleware::Interceptor::Adds: kynos::extract::params::header::EncodeHeaders
 pub type kynos::middleware::Interceptor::Reads: kynos::extract::params::header::DecodeHeaders + core::marker::Send
 pub type kynos::middleware::Interceptor::Short: kynos::response::ShortCircuit
+pub const kynos::middleware::Interceptor::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::Interceptor::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
+impl<C, M, N> kynos::middleware::Interceptor<C> for kynos::middleware::stack::When<M, N> where C: core::marker::Sync + 'static, M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>
+pub type kynos::middleware::stack::When<M, N>::Adds = <N as kynos::middleware::Interceptor<C>>::Adds
+pub type kynos::middleware::stack::When<M, N>::Reads = <N as kynos::middleware::Interceptor<C>>::Reads
+pub type kynos::middleware::stack::When<M, N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
+pub const kynos::middleware::stack::When<M, N>::ADDS_ON: kynos::middleware::Placement
+pub fn kynos::middleware::stack::When<M, N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
 impl<C, P, D, T> kynos::middleware::Interceptor<C> for kynos::middleware::rate_limit::RateLimit<P, D, T> where C: core::marker::Sync + 'static, P: kynos::middleware::rate_limit::decision::RateLimitPolicy<C>, D: kynos::middleware::rate_limit::RateLimitSpelling<T>, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Adds = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Headers
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Reads = ()
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Short = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Denied
+pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::rate_limit::RateLimit<P, D, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::rate_limit::RateLimitSpelling>::Headers>, <D as kynos::middleware::rate_limit::RateLimitSpelling>::Denied>
 impl<C, R> kynos::middleware::Interceptor<C> for kynos::middleware::limits::timeout::Timeout<R> where C: core::marker::Sync + 'static, R: kynos::response::ShortCircuit + core::convert::From<core::time::Duration> + core::marker::Send + 'static
 pub type kynos::middleware::limits::timeout::Timeout<R>::Adds = ()
 pub type kynos::middleware::limits::timeout::Timeout<R>::Reads = ()
 pub type kynos::middleware::limits::timeout::Timeout<R>::Short = R
+pub const kynos::middleware::limits::timeout::Timeout<R>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::timeout::Timeout<R>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, R>
 impl<C, S, D> kynos::middleware::Interceptor<C> for kynos::middleware::cache::Cache<S, D> where C: core::marker::Sync + 'static, S: kynos::middleware::cache::store::CacheStore<C>, D: kynos::middleware::cache::CacheTagging
 pub type kynos::middleware::cache::Cache<S, D>::Adds = <D as kynos::middleware::cache::CacheTagging>::Headers
 pub type kynos::middleware::cache::Cache<S, D>::Reads = ()
 pub type kynos::middleware::cache::Cache<S, D>::Short = core::convert::Infallible
+pub const kynos::middleware::cache::Cache<S, D>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::cache::Cache<S, D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cache::CacheTagging>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<C, S, H> kynos::middleware::Interceptor<C> for kynos::middleware::request_id::RequestId<S, H> where C: core::marker::Sync + 'static, S: kynos::middleware::request_id::RequestIdSource, H: kynos::middleware::request_id::CorrelationHeaders + core::marker::Send + core::marker::Sync + 'static
 pub type kynos::middleware::request_id::RequestId<S, H>::Adds = H
 pub type kynos::middleware::request_id::RequestId<S, H>::Reads = ()
 pub type kynos::middleware::request_id::RequestId<S, H>::Short = core::convert::Infallible
+pub const kynos::middleware::request_id::RequestId<S, H>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::request_id::RequestId<S, H>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<H>, core::convert::Infallible>> + core::marker::Send
 impl<C, S> kynos::middleware::Interceptor<C> for kynos::middleware::cookies::SetCookies<S> where C: core::marker::Sync + 'static, S: kynos::middleware::cookies::CookieSource<C>
 pub type kynos::middleware::cookies::SetCookies<S>::Adds = kynos::middleware::cookies::SetCookieHeaders
 pub type kynos::middleware::cookies::SetCookies<S>::Reads = ()
 pub type kynos::middleware::cookies::SetCookies<S>::Short = core::convert::Infallible
+pub const kynos::middleware::cookies::SetCookies<S>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::cookies::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
 impl<C, T, U> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType, U: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Adds = ()
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Reads = ()
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Short = kynos::middleware::limits::body_size::BodyRefused<T, U>
+pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodyRefused<T, U>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::compression::Compression<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::compression::Compression<T>::Adds = kynos::middleware::compression::ContentEncoding
 pub type kynos::middleware::compression::Compression<T>::Reads = ()
 pub type kynos::middleware::compression::Compression<T>::Short = kynos::middleware::compression::NotAcceptable<T>
+pub const kynos::middleware::compression::Compression<T>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::compression::Compression<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::compression::ContentEncoding>, kynos::middleware::compression::NotAcceptable<T>>> + core::marker::Send
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::csrf::Csrf<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::csrf::Csrf<T>::Adds = ()
 pub type kynos::middleware::csrf::Csrf<T>::Reads = ()
 pub type kynos::middleware::csrf::Csrf<T>::Short = kynos::middleware::csrf::CrossSite<T>
+pub const kynos::middleware::csrf::Csrf<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::csrf::Csrf<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::csrf::CsrfWhen<C, T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Adds = ()
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Reads = ()
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Short = kynos::middleware::csrf::CrossSite<T>
+pub const kynos::middleware::csrf::CsrfWhen<C, T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::csrf::CsrfWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_size::BodySize<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::body_size::BodySize<T>::Adds = ()
 pub type kynos::middleware::limits::body_size::BodySize<T>::Reads = ()
 pub type kynos::middleware::limits::body_size::BodySize<T>::Short = kynos::middleware::limits::body_size::BodySizeExceeded<T>
+pub const kynos::middleware::limits::body_size::BodySize<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::body_size::BodySize<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodySizeExceeded<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::limits::concurrency::Concurrency<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Adds = ()
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Reads = ()
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Short = kynos::middleware::limits::concurrency::AtCapacity<T>
+pub const kynos::middleware::limits::concurrency::Concurrency<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::concurrency::Concurrency<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::concurrency::AtCapacity<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHosts<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Adds = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
+pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::trusted_hosts::TrustedHosts<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<C, U, M, L> kynos::middleware::Interceptor<C> for kynos::middleware::decompression::Decompression<U, M, L> where C: core::marker::Sync + 'static, U: kynos::error::problem::ProblemType, M: kynos::error::problem::ProblemType, L: kynos::error::problem::ProblemType
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Adds = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Reads = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Short = kynos::middleware::decompression::Undecodable<U, M, L>
+pub const kynos::middleware::decompression::Decompression<U, M, L>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::decompression::Decompression<U, M, L>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::decompression::Undecodable<U, M, L>>
 impl<C, const HSTS: bool, const DENY_FRAMING: bool> kynos::middleware::Interceptor<C> for kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING> where C: core::marker::Sync + 'static
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Adds = kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Reads = ()
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Short = core::convert::Infallible
+pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, core::convert::Infallible>> + core::marker::Send
 impl<C: core::marker::Sync + 'static, D: kynos::middleware::cors::CorsDocumentation> kynos::middleware::Interceptor<C> for kynos::middleware::cors::Cors<D>
 pub type kynos::middleware::cors::Cors<D>::Adds = <D as kynos::middleware::cors::CorsDocumentation>::Headers
 pub type kynos::middleware::cors::Cors<D>::Reads = ()
 pub type kynos::middleware::cors::Cors<D>::Short = core::convert::Infallible
+pub const kynos::middleware::cors::Cors<D>::ADDS_ON: kynos::middleware::Placement
 pub fn kynos::middleware::cors::Cors<D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cors::CorsDocumentation>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::conditional::Conditional
 pub type kynos::middleware::conditional::Conditional::Adds = ()
 pub type kynos::middleware::conditional::Conditional::Reads = kynos::middleware::conditional::Preconditions
 pub type kynos::middleware::conditional::Conditional::Short = kynos::middleware::conditional::NotModified
+pub const kynos::middleware::conditional::Conditional::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::conditional::Conditional::intercept(&self, kynos::http::Request, kynos::middleware::conditional::Preconditions, &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::conditional::NotModified>
 impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_timeout::BodyTimeout
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Adds = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Reads = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Short = core::convert::Infallible
+pub const kynos::middleware::limits::body_timeout::BodyTimeout::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::limits::body_timeout::BodyTimeout::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, core::convert::Infallible>
+impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::trace::TraceSpan
+pub type kynos::middleware::trace::TraceSpan::Adds = ()
+pub type kynos::middleware::trace::TraceSpan::Reads = ()
+pub type kynos::middleware::trace::TraceSpan::Short = core::convert::Infallible
+pub const kynos::middleware::trace::TraceSpan::ADDS_ON: kynos::middleware::Placement
+pub fn kynos::middleware::trace::TraceSpan::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued, core::convert::Infallible>> + core::marker::Send
 pub trait kynos::middleware::Observer<C>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::middleware::Observer::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion)
 pub fn kynos::middleware::Observer::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration)
@@ -5638,6 +5826,7 @@ pub fn kynos::router::group::Group<C, P, I, S>::catch_panics(self) -> kynos::rou
 pub fn kynos::router::group::Group<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::group::Group<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
 pub fn kynos::router::group::Group<C, P, I, S>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I, S>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack, S>
+pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
 pub fn kynos::router::group::Group<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::group::Group<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
 pub fn kynos::router::group::Group<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
 impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
@@ -5997,6 +6186,7 @@ pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_pan
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::Router<C, P, I, S>::map_openapi(self, impl core::ops::function::Fn(&mut kynos_openapi::model::document::Document) + core::marker::Send + core::marker::Sync + 'static) -> Self
 pub fn kynos::router::Router<C, P, I, S>::merge<OP: kynos::middleware::catch_panic::PanicPolicy, OI, OS>(self, kynos::router::Router<C, OP, OI, OS>) -> kynos::router::Router<C, P, I, <OI as kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, OS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, OI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::method_not_allowed(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::Router<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
@@ -6004,6 +6194,7 @@ pub fn kynos::router::Router<C, P, I, S>::name_instantiation<A: kynos::schema::N
 pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_panic::PanicPolicy, NI, NS>(self, &str, kynos::router::Router<C, NP, NI, NS>) -> kynos::router::Router<C, P, I, <NI as kynos::middleware::stack::Flatten<<NS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, NS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, NI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<NS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
@@ -6060,16 +6251,23 @@ impl<S, R> core::marker::UnsafeUnpin for kynos::security::auth::Scoped<S, R> whe
 impl<S, R> core::panic::unwind_safe::RefUnwindSafe for kynos::security::auth::Scoped<S, R> where <S as kynos::security::requirement::Requirement>::Credential: core::panic::unwind_safe::RefUnwindSafe, R: core::panic::unwind_safe::RefUnwindSafe
 impl<S, R> core::panic::unwind_safe::UnwindSafe for kynos::security::auth::Scoped<S, R> where <S as kynos::security::requirement::Requirement>::Credential: core::panic::unwind_safe::UnwindSafe, R: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::prelude::Server<C>
+impl kynos::server::Server<()>
+pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
+pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
+pub fn kynos::server::Server<C>::deregistration_delay(self, core::time::Duration) -> Self
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
 pub fn kynos::server::Server<C>::http2(self, kynos::server::protocol::http2::Http2Config) -> Self
+pub fn kynos::server::Server<C>::listen_backlog(self, core::num::nonzero::NonZeroU32) -> Self
 pub fn kynos::server::Server<C>::listener(self, impl core::convert::Into<std::net::tcp::TcpListener>) -> Self
 pub fn kynos::server::Server<C>::max_connections(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self
 pub async fn kynos::server::Server<C>::prepare(self) -> kynos::error::Result<kynos::server::BoundServer<C>>
+pub fn kynos::server::Server<C>::proxy_protocol(self, kynos::http::forwarded::TrustedProxies) -> Self
 pub fn kynos::server::Server<C>::request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<()>
 pub fn kynos::server::Server<C>::serve_io<I>(&self, I, kynos::extract::connection::Connection) -> kynos::error::Result<impl core::future::future::Future<Output = std::io::error::Result<()>> + core::marker::Send + 'static> where I: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + core::marker::Send + 'static
@@ -8055,8 +8253,16 @@ pub kynos::router::error::RouterError::DuplicateOperation::method: kynos_openapi
 pub kynos::router::error::RouterError::DuplicateOperation::path: alloc::string::String
 pub kynos::router::error::RouterError::InvalidRoutePattern
 pub kynos::router::error::RouterError::InvalidRoutePattern::pattern: alloc::string::String
+pub kynos::router::error::RouterError::MappedOperation
+pub kynos::router::error::RouterError::MappedOperation::method: kynos_openapi::model::paths::method::Method
+pub kynos::router::error::RouterError::MappedOperation::path: alloc::string::String
 pub kynos::router::error::RouterError::NestedRouterPolicy
 pub kynos::router::error::RouterError::NestedRouterPolicy::policy: &'static str
+pub kynos::router::error::RouterError::ProblemMemberReserved
+pub kynos::router::error::RouterError::ProblemMemberReserved::member: alloc::string::String
+pub kynos::router::error::RouterError::ProblemMemberReserved::members: &'static str
+pub kynos::router::error::RouterError::ProblemMembersNotObject
+pub kynos::router::error::RouterError::ProblemMembersNotObject::members: &'static str
 pub kynos::router::error::RouterError::RouteConflict
 pub kynos::router::error::RouterError::RouteConflict::existing: alloc::string::String
 pub kynos::router::error::RouterError::RouteConflict::pattern: alloc::string::String
@@ -8093,6 +8299,7 @@ pub fn kynos::router::group::Group<C, P, I, S>::catch_panics(self) -> kynos::rou
 pub fn kynos::router::group::Group<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::group::Group<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
 pub fn kynos::router::group::Group<C, P, I, S>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I, S>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack, S>
+pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
 pub fn kynos::router::group::Group<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::group::Group<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
 pub fn kynos::router::group::Group<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
 impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
@@ -8108,6 +8315,80 @@ impl<C, P, I, S> core::marker::Unpin for kynos::router::group::Group<C, P, I, S>
 impl<C, P, I, S> core::marker::UnsafeUnpin for kynos::router::group::Group<C, P, I, S>
 impl<C, P, I, S> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::Group<C, P, I, S>
 impl<C, P, I, S> !core::panic::unwind_safe::UnwindSafe for kynos::router::group::Group<C, P, I, S>
+pub struct kynos::router::group::Methods
+impl kynos::router::group::Methods
+pub const fn kynos::router::group::Methods::contains(self, kynos_openapi::model::paths::method::Method) -> bool
+pub const fn kynos::router::group::Methods::only(&[kynos_openapi::model::paths::method::Method]) -> Self
+impl core::clone::Clone for kynos::router::group::Methods
+pub fn kynos::router::group::Methods::clone(&self) -> kynos::router::group::Methods
+impl core::cmp::Eq for kynos::router::group::Methods
+impl core::cmp::PartialEq for kynos::router::group::Methods
+pub fn kynos::router::group::Methods::eq(&self, &kynos::router::group::Methods) -> bool
+impl core::fmt::Debug for kynos::router::group::Methods
+pub fn kynos::router::group::Methods::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::router::group::Methods
+pub fn kynos::router::group::Methods::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::router::group::Methods
+impl core::marker::StructuralPartialEq for kynos::router::group::Methods
+impl core::marker::Freeze for kynos::router::group::Methods
+impl core::marker::Send for kynos::router::group::Methods
+impl core::marker::Sync for kynos::router::group::Methods
+impl core::marker::Unpin for kynos::router::group::Methods
+impl core::marker::UnsafeUnpin for kynos::router::group::Methods
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::Methods
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::group::Methods
+pub struct kynos::router::group::SafeMethods
+impl core::clone::Clone for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::clone(&self) -> kynos::router::group::SafeMethods
+impl core::cmp::Eq for kynos::router::group::SafeMethods
+impl core::cmp::PartialEq for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::eq(&self, &kynos::router::group::SafeMethods) -> bool
+impl core::default::Default for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::default() -> kynos::router::group::SafeMethods
+impl core::fmt::Debug for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::router::group::SafeMethods
+pub fn kynos::router::group::SafeMethods::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::router::group::SafeMethods
+impl core::marker::StructuralPartialEq for kynos::router::group::SafeMethods
+impl kynos::router::group::MethodSet for kynos::router::group::SafeMethods
+pub const kynos::router::group::SafeMethods::METHODS: kynos::router::group::Methods
+impl core::marker::Freeze for kynos::router::group::SafeMethods
+impl core::marker::Send for kynos::router::group::SafeMethods
+impl core::marker::Sync for kynos::router::group::SafeMethods
+impl core::marker::Unpin for kynos::router::group::SafeMethods
+impl core::marker::UnsafeUnpin for kynos::router::group::SafeMethods
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::SafeMethods
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::group::SafeMethods
+pub struct kynos::router::group::UnsafeMethods
+impl core::clone::Clone for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::clone(&self) -> kynos::router::group::UnsafeMethods
+impl core::cmp::Eq for kynos::router::group::UnsafeMethods
+impl core::cmp::PartialEq for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::eq(&self, &kynos::router::group::UnsafeMethods) -> bool
+impl core::default::Default for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::default() -> kynos::router::group::UnsafeMethods
+impl core::fmt::Debug for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::router::group::UnsafeMethods
+pub fn kynos::router::group::UnsafeMethods::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::router::group::UnsafeMethods
+impl core::marker::StructuralPartialEq for kynos::router::group::UnsafeMethods
+impl kynos::router::group::MethodSet for kynos::router::group::UnsafeMethods
+pub const kynos::router::group::UnsafeMethods::METHODS: kynos::router::group::Methods
+impl core::marker::Freeze for kynos::router::group::UnsafeMethods
+impl core::marker::Send for kynos::router::group::UnsafeMethods
+impl core::marker::Sync for kynos::router::group::UnsafeMethods
+impl core::marker::Unpin for kynos::router::group::UnsafeMethods
+impl core::marker::UnsafeUnpin for kynos::router::group::UnsafeMethods
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::UnsafeMethods
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::group::UnsafeMethods
+pub trait kynos::router::group::MethodSet: 'static
+pub const kynos::router::group::MethodSet::METHODS: kynos::router::group::Methods
+impl kynos::router::group::MethodSet for kynos::router::group::SafeMethods
+pub const kynos::router::group::SafeMethods::METHODS: kynos::router::group::Methods
+impl kynos::router::group::MethodSet for kynos::router::group::UnsafeMethods
+pub const kynos::router::group::UnsafeMethods::METHODS: kynos::router::group::Methods
 pub mod kynos::router::operation
 pub struct kynos::router::operation::DeclaredTag
 impl kynos::router::operation::DeclaredTag
@@ -8255,6 +8536,7 @@ pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_pan
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::Router<C, P, I, S>::map_openapi(self, impl core::ops::function::Fn(&mut kynos_openapi::model::document::Document) + core::marker::Send + core::marker::Sync + 'static) -> Self
 pub fn kynos::router::Router<C, P, I, S>::merge<OP: kynos::middleware::catch_panic::PanicPolicy, OI, OS>(self, kynos::router::Router<C, OP, OI, OS>) -> kynos::router::Router<C, P, I, <OI as kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, OS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, OI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::method_not_allowed(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::Router<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
@@ -8262,6 +8544,7 @@ pub fn kynos::router::Router<C, P, I, S>::name_instantiation<A: kynos::schema::N
 pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_panic::PanicPolicy, NI, NS>(self, &str, kynos::router::Router<C, NP, NI, NS>) -> kynos::router::Router<C, P, I, <NI as kynos::middleware::stack::Flatten<<NS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, NS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, NI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<NS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
@@ -9265,6 +9548,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D)>
 pub type kynos::security::requirement::AllOf<(A, B, D)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B, D)>::FORBIDS: bool
@@ -9272,6 +9556,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B)>
 pub type kynos::security::requirement::AllOf<(A, B)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B)>::FORBIDS: bool
@@ -9279,6 +9564,7 @@ pub const kynos::security::requirement::AllOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<C, A, B, D, E> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AllOf<(A, B, D, E)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries, D: kynos::security::carrier::Carries, E: kynos::security::carrier::Carries, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D> + kynos::security::Authenticates<E>
 pub async fn kynos::security::requirement::AllOf<(A, B, D, E)>::check(&kynos::http::Parts, &C) -> core::result::Result<core::option::Option<Self::Credential>, kynos::error::rejection::AuthRejection>
 impl<C, A, B, D> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AllOf<(A, B, D)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries, D: kynos::security::carrier::Carries, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D>
@@ -9328,6 +9614,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D)>
 pub type kynos::security::requirement::AnyOf<(A, B, D)>::Credential = kynos::security::requirement::Either3<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B, D)>::FORBIDS: bool
@@ -9335,6 +9622,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B)>
 pub type kynos::security::requirement::AnyOf<(A, B)>::Credential = kynos::security::requirement::Either2<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B)>::FORBIDS: bool
@@ -9342,6 +9630,7 @@ pub const kynos::security::requirement::AnyOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<C, A, B, D, E> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AnyOf<(A, B, D, E)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries, D: kynos::security::carrier::Carries, E: kynos::security::carrier::Carries, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D> + kynos::security::Authenticates<E>
 pub async fn kynos::security::requirement::AnyOf<(A, B, D, E)>::check(&kynos::http::Parts, &C) -> core::result::Result<core::option::Option<Self::Credential>, kynos::error::rejection::AuthRejection>
 impl<C, A, B, D, E> kynos::security::requirement::ScopeCheckedBy<C> for kynos::security::requirement::AnyOf<(A, B, D, E)> where A: kynos::security::carrier::Carries, B: kynos::security::carrier::Carries<Scope = <A as kynos::security::SecurityScheme>::Scope>, D: kynos::security::carrier::Carries<Scope = <A as kynos::security::SecurityScheme>::Scope>, E: kynos::security::carrier::Carries<Scope = <A as kynos::security::SecurityScheme>::Scope>, C: kynos::security::Authenticates<A> + kynos::security::Authenticates<B> + kynos::security::Authenticates<D> + kynos::security::Authenticates<E>
@@ -9400,6 +9689,7 @@ pub const kynos::security::requirement::Requirement::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::Requirement::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::Requirement::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::Requirement::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::Requirement::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme, E: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D, E)>
 pub type kynos::security::requirement::AllOf<(A, B, D, E)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential, <E as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B, D, E)>::FORBIDS: bool
@@ -9407,6 +9697,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme, E: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D, E)>
 pub type kynos::security::requirement::AnyOf<(A, B, D, E)>::Credential = kynos::security::requirement::Either4<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential, <E as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::FORBIDS: bool
@@ -9414,6 +9705,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE:
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D)>
 pub type kynos::security::requirement::AllOf<(A, B, D)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B, D)>::FORBIDS: bool
@@ -9421,6 +9713,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme, D: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D)>
 pub type kynos::security::requirement::AnyOf<(A, B, D)>::Credential = kynos::security::requirement::Either3<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential, <D as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B, D)>::FORBIDS: bool
@@ -9428,6 +9721,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bo
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B)>
 pub type kynos::security::requirement::AllOf<(A, B)>::Credential = (<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential)
 pub const kynos::security::requirement::AllOf<(A, B)>::FORBIDS: bool
@@ -9435,6 +9729,7 @@ pub const kynos::security::requirement::AllOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AllOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AllOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::SecurityScheme, B: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B)>
 pub type kynos::security::requirement::AnyOf<(A, B)>::Credential = kynos::security::requirement::Either2<<A as kynos::security::SecurityScheme>::Credential, <B as kynos::security::SecurityScheme>::Credential>
 pub const kynos::security::requirement::AnyOf<(A, B)>::FORBIDS: bool
@@ -9442,6 +9737,7 @@ pub const kynos::security::requirement::AnyOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::requirement::AnyOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<S: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for S
 pub type S::Credential = <S as kynos::security::SecurityScheme>::Credential
 pub const S::FORBIDS: bool
@@ -9449,6 +9745,7 @@ pub const S::MAY_BE_UNAVAILABLE: bool
 pub fn S::challenge() -> core::option::Option<&'static str>
 pub fn S::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
 pub fn S::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn S::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub trait kynos::security::requirement::Scopable: kynos::security::requirement::Requirement
 pub type kynos::security::requirement::Scopable::Scope: kynos::security::Scope
 pub fn kynos::security::requirement::Scopable::declare_scoped(&mut kynos::router::operation::OperationCx<'_>, &'static [Self::Scope]) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
@@ -9533,6 +9830,7 @@ pub const kynos::security::schemes::Basic<T, P, R>::NAME: &'static str
 pub fn kynos::security::schemes::Basic<T, P, R>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Basic<T, P, R>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Basic<T, P, R>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Basic<T, P, R>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Basic<T, P, R>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope, R: kynos::security::schemes::Realm> kynos::security::carrier::Carries for kynos::security::schemes::Basic<T, P, R>
 pub type kynos::security::schemes::Basic<T, P, R>::Presented = kynos::security::carrier::Credentials
@@ -9570,6 +9868,7 @@ pub const kynos::security::schemes::Bearer<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::Bearer<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Bearer<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Bearer<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Bearer<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Bearer<T, P>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::carrier::Carries for kynos::security::schemes::Bearer<T, P>
 pub type kynos::security::schemes::Bearer<T, P>::Presented = kynos::security::carrier::BearerToken
@@ -9607,6 +9906,7 @@ pub const kynos::security::schemes::MutualTls<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::MutualTls<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::MutualTls<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::MutualTls<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::MutualTls<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::MutualTls<T, P>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::carrier::Carries for kynos::security::schemes::MutualTls<T, P>
 pub type kynos::security::schemes::MutualTls<T, P>::Presented = kynos::security::carrier::PeerCertificates
@@ -9640,6 +9940,8 @@ impl core::marker::Copy for kynos::security::Unscoped
 impl core::marker::StructuralPartialEq for kynos::security::Unscoped
 impl kynos::security::Scope for kynos::security::Unscoped
 pub fn kynos::security::Unscoped::name(&self) -> &'static str
+impl<S, C, A> kynos::security::Authorizer<S, C, kynos::security::Unscoped> for A where S: kynos::security::carrier::Carries + kynos::security::SecurityScheme<Scope = kynos::security::Unscoped>, C: core::marker::Sync, A: kynos::security::Authenticator<S, C>
+pub fn A::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[kynos::security::Unscoped], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
 impl core::marker::Freeze for kynos::security::Unscoped
 impl core::marker::Send for kynos::security::Unscoped
 impl core::marker::Sync for kynos::security::Unscoped
@@ -9648,11 +9950,14 @@ impl core::marker::UnsafeUnpin for kynos::security::Unscoped
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::security::Unscoped
 impl core::panic::unwind_safe::UnwindSafe for kynos::security::Unscoped
 pub trait kynos::security::Authenticates<S: kynos::security::carrier::Carries>: core::marker::Sync + core::marker::Sized
-pub type kynos::security::Authenticates::Authenticator: kynos::security::Authenticator<S, Self>
+pub type kynos::security::Authenticates::Authenticator: kynos::security::Authorizer<S, Self, <S as kynos::security::SecurityScheme>::Scope>
 pub fn kynos::security::Authenticates::authenticator(&self) -> &Self::Authenticator
 pub trait kynos::security::Authenticator<S: kynos::security::carrier::Carries, C: core::marker::Sync>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::security::Authenticator::authenticate(&self, <S as kynos::security::carrier::Carries>::Presented, &C) -> impl core::future::future::Future<Output = core::result::Result<<S as kynos::security::SecurityScheme>::Credential, kynos::error::rejection::AuthRejection>> + core::marker::Send
-pub fn kynos::security::Authenticator::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[<S as kynos::security::SecurityScheme>::Scope], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
+pub trait kynos::security::Authorizer<S, C: core::marker::Sync, P> where S: kynos::security::carrier::Carries + kynos::security::SecurityScheme<Scope = P>: kynos::security::Authenticator<S, C>
+pub fn kynos::security::Authorizer::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[P], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
+impl<S, C, A> kynos::security::Authorizer<S, C, kynos::security::Unscoped> for A where S: kynos::security::carrier::Carries + kynos::security::SecurityScheme<Scope = kynos::security::Unscoped>, C: core::marker::Sync, A: kynos::security::Authenticator<S, C>
+pub fn A::authorize(&self, &<S as kynos::security::SecurityScheme>::Credential, &[kynos::security::Unscoped], &C) -> impl core::future::future::Future<Output = core::result::Result<(), kynos::error::rejection::AuthRejection>> + core::marker::Send
 pub trait kynos::security::Guard<C>: kynos::security::sealed::Sealed + kynos::extract::describe::Describe + core::marker::Sized + core::marker::Send + 'static
 pub type kynos::security::Guard::Rejection: kynos::response::IntoResponse + kynos::response::Responses
 pub fn kynos::security::Guard::guard(&kynos::http::Parts, &C) -> impl core::future::future::Future<Output = core::result::Result<Self, Self::Rejection>> + core::marker::Send
@@ -9678,6 +9983,7 @@ pub const kynos::security::SecurityScheme::NAME: &'static str
 pub fn kynos::security::SecurityScheme::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::SecurityScheme::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::SecurityScheme::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::SecurityScheme::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::SecurityScheme::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope, R: kynos::security::schemes::Realm> kynos::security::SecurityScheme for kynos::security::schemes::Basic<T, P, R>
 pub type kynos::security::schemes::Basic<T, P, R>::Credential = T
@@ -9688,6 +9994,7 @@ pub const kynos::security::schemes::Basic<T, P, R>::NAME: &'static str
 pub fn kynos::security::schemes::Basic<T, P, R>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Basic<T, P, R>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Basic<T, P, R>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Basic<T, P, R>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Basic<T, P, R>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::SecurityScheme for kynos::security::schemes::Bearer<T, P>
 pub type kynos::security::schemes::Bearer<T, P>::Credential = T
@@ -9698,6 +10005,7 @@ pub const kynos::security::schemes::Bearer<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::Bearer<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::Bearer<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::Bearer<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::Bearer<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::Bearer<T, P>::scopes() -> &'static [Self::Scope]
 impl<T: core::marker::Send + 'static, P: kynos::security::Scope> kynos::security::SecurityScheme for kynos::security::schemes::MutualTls<T, P>
 pub type kynos::security::schemes::MutualTls<T, P>::Credential = T
@@ -9708,6 +10016,7 @@ pub const kynos::security::schemes::MutualTls<T, P>::NAME: &'static str
 pub fn kynos::security::schemes::MutualTls<T, P>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::schemes::MutualTls<T, P>::describe() -> kynos_openapi::model::security::SecurityScheme
 pub fn kynos::security::schemes::MutualTls<T, P>::insufficient_scope_challenge() -> core::option::Option<&'static str>
+pub fn kynos::security::schemes::MutualTls<T, P>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::security::schemes::MutualTls<T, P>::scopes() -> &'static [Self::Scope]
 pub fn kynos::security::constant_time_eq(&[u8], &[u8]) -> bool
 pub mod kynos::server
@@ -9814,6 +10123,25 @@ impl core::marker::Unpin for kynos::server::lifecycle::Draining
 impl core::marker::UnsafeUnpin for kynos::server::lifecycle::Draining
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::server::lifecycle::Draining
 impl core::panic::unwind_safe::UnwindSafe for kynos::server::lifecycle::Draining
+pub struct kynos::server::lifecycle::Readiness(_)
+impl kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::is_ready(&self) -> bool
+impl core::clone::Clone for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::clone(&self) -> kynos::server::lifecycle::Readiness
+impl core::fmt::Debug for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl kynos::extract::describe::Describe for kynos::server::lifecycle::Readiness
+pub fn kynos::server::lifecycle::Readiness::describe(&mut kynos::router::operation::OperationCx<'_>)
+impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for kynos::server::lifecycle::Readiness
+pub type kynos::server::lifecycle::Readiness::Rejection = core::convert::Infallible
+pub async fn kynos::server::lifecycle::Readiness::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
+impl core::marker::Freeze for kynos::server::lifecycle::Readiness
+impl core::marker::Send for kynos::server::lifecycle::Readiness
+impl core::marker::Sync for kynos::server::lifecycle::Readiness
+impl core::marker::Unpin for kynos::server::lifecycle::Readiness
+impl core::marker::UnsafeUnpin for kynos::server::lifecycle::Readiness
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::server::lifecycle::Readiness
+impl core::panic::unwind_safe::UnwindSafe for kynos::server::lifecycle::Readiness
 pub mod kynos::server::protocol
 pub mod kynos::server::protocol::http1
 #[non_exhaustive] pub struct kynos::server::protocol::http1::Http1Config
@@ -9822,6 +10150,7 @@ pub kynos::server::protocol::http1::Http1Config::keep_alive: bool
 pub kynos::server::protocol::http1::Http1Config::max_buffer_size: usize
 pub kynos::server::protocol::http1::Http1Config::max_headers: usize
 impl kynos::server::protocol::http1::Http1Config
+pub const kynos::server::protocol::http1::Http1Config::DEFAULT_HEADER_READ_TIMEOUT: core::time::Duration
 pub fn kynos::server::protocol::http1::Http1Config::header_read_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn kynos::server::protocol::http1::Http1Config::keep_alive(self, bool) -> Self
 pub fn kynos::server::protocol::http1::Http1Config::max_buffer_size(self, usize) -> Self
@@ -10084,6 +10413,7 @@ pub struct kynos::server::BoundServer<C>
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
 pub async fn kynos::server::BoundServer<C>::serve(self) -> kynos::error::Result<()>
+pub fn kynos::server::BoundServer<C>::spawn(self) -> kynos::server::Running
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::openapi(&self) -> &kynos_openapi::model::document::Document
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::BoundServer<C>
@@ -10095,17 +10425,38 @@ impl<C> core::marker::Unpin for kynos::server::BoundServer<C>
 impl<C> core::marker::UnsafeUnpin for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::BoundServer<C>
+pub struct kynos::server::Running
+impl kynos::server::Running
+pub fn kynos::server::Running::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
+pub fn kynos::server::Running::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
+pub async fn kynos::server::Running::shutdown(self) -> kynos::error::Result<()>
+impl core::fmt::Debug for kynos::server::Running
+pub fn kynos::server::Running::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kynos::server::Running
+impl core::marker::Send for kynos::server::Running
+impl core::marker::Sync for kynos::server::Running
+impl core::marker::Unpin for kynos::server::Running
+impl core::marker::UnsafeUnpin for kynos::server::Running
+impl !core::panic::unwind_safe::RefUnwindSafe for kynos::server::Running
+impl !core::panic::unwind_safe::UnwindSafe for kynos::server::Running
 pub struct kynos::server::Server<C>
+impl kynos::server::Server<()>
+pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
+pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::bind(self, impl core::convert::Into<kynos::server::address::BindAddress>) -> Self
+pub fn kynos::server::Server<C>::deregistration_delay(self, core::time::Duration) -> Self
 pub fn kynos::server::Server<C>::graceful_shutdown(self, kynos::server::shutdown::Shutdown) -> Self
 pub fn kynos::server::Server<C>::http1(self, kynos::server::protocol::http1::Http1Config) -> Self
 pub fn kynos::server::Server<C>::http2(self, kynos::server::protocol::http2::Http2Config) -> Self
+pub fn kynos::server::Server<C>::listen_backlog(self, core::num::nonzero::NonZeroU32) -> Self
 pub fn kynos::server::Server<C>::listener(self, impl core::convert::Into<std::net::tcp::TcpListener>) -> Self
 pub fn kynos::server::Server<C>::max_connections(self, core::num::nonzero::NonZeroUsize) -> Self
 pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self
 pub async fn kynos::server::Server<C>::prepare(self) -> kynos::error::Result<kynos::server::BoundServer<C>>
+pub fn kynos::server::Server<C>::proxy_protocol(self, kynos::http::forwarded::TrustedProxies) -> Self
 pub fn kynos::server::Server<C>::request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<()>
 pub fn kynos::server::Server<C>::serve_io<I>(&self, I, kynos::extract::connection::Connection) -> kynos::error::Result<impl core::future::future::Future<Output = std::io::error::Result<()>> + core::marker::Send + 'static> where I: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + core::marker::Send + 'static
@@ -10251,7 +10602,9 @@ pub fn kynos::test::TestResponse::assert_status(&self, impl kynos::test::IntoSta
 pub fn kynos::test::TestResponse::bytes(&self) -> &bytes::bytes::Bytes
 pub fn kynos::test::TestResponse::cookies(&self) -> alloc::vec::Vec<(&str, &str)>
 pub fn kynos::test::TestResponse::events(&self) -> alloc::vec::Vec<kynos::test::TestEvent>
+pub fn kynos::test::TestResponse::expect_status(self, impl kynos::test::IntoStatus) -> Self
 pub fn kynos::test::TestResponse::header(&self, &str) -> core::option::Option<&str>
+pub fn kynos::test::TestResponse::header_map(&self) -> &http::header::map::HeaderMap
 pub fn kynos::test::TestResponse::headers(&self, &str) -> alloc::vec::Vec<&str>
 pub fn kynos::test::TestResponse::into_inner(self) -> kynos::http::Response
 pub fn kynos::test::TestResponse::json<T: serde_core::de::DeserializeOwned>(&self) -> T
@@ -10418,6 +10771,7 @@ pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_pan
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::Router<C, P, I, S>::map_openapi(self, impl core::ops::function::Fn(&mut kynos_openapi::model::document::Document) + core::marker::Send + core::marker::Sync + 'static) -> Self
 pub fn kynos::router::Router<C, P, I, S>::merge<OP: kynos::middleware::catch_panic::PanicPolicy, OI, OS>(self, kynos::router::Router<C, OP, OI, OS>) -> kynos::router::Router<C, P, I, <OI as kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, OS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, OI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<OS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::method_not_allowed(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::Router<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
@@ -10425,6 +10779,7 @@ pub fn kynos::router::Router<C, P, I, S>::name_instantiation<A: kynos::schema::N
 pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_panic::PanicPolicy, NI, NS>(self, &str, kynos::router::Router<C, NP, NI, NS>) -> kynos::router::Router<C, P, I, <NI as kynos::middleware::stack::Flatten<<NS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, NS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, NI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<NS as kynos::middleware::stack::Flatten<S>>::Out>
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self

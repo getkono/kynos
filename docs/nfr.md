@@ -44,9 +44,10 @@ Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `gungraun` over Valgrind, `cargo-fuzz`, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature — `cargo-deny`, and `cargo-public-api` on `KYNOS_NIGHTLY`'s
-rustdoc. Not yet present: `cargo-udeps`. `criterion` is
-not on this list and will not be: benchmarks live in `kynos-bench`.
+every feature — `cargo-deny`, `cargo-public-api` on `KYNOS_NIGHTLY`'s
+rustdoc, and `cargo-edit`'s `cargo upgrade`, as a report. Not yet present:
+`cargo-udeps`. `criterion` is not on this list and will not be: benchmarks live
+in `kynos-bench`.
 
 ## Thresholds
 
@@ -58,11 +59,14 @@ Numeric ceilings are written `TBD` until they are measured.
 A guessed ceiling is worse than no ceiling: it either fails constantly and gets
 disabled, or passes trivially and hides the regression it was meant to catch.
 
-Four ceilings below stay `TBD` because the measurement that would set one is
+Three ceilings below stay `TBD` because the measurement that would set one is
 `kynos-bench`'s: route resolution p99 at a thousand registered operations,
-per-layer added p99, syscalls per request, and idle memory per connection at
-100k connections. A counted figure taken beside one of them would not set it: a
-`size_of` on per-connection state is the structural reading
+per-layer added p99, and idle memory per connection at 100k connections.
+Syscalls per request is `kynos-bench`'s too, but it is a count a trace reads
+exactly on any host, so its ceiling is set from a local trace. That trace
+counted `plaintext` alone, so the ceiling holds `plaintext` alone; every other
+scenario has none until a count sets one. A counted figure taken beside one of
+the three would not set it: a `size_of` on per-connection state is the structural reading
 [`performance.md`](performance.md#the-boundary) allocates to this repository,
 not the resident-memory reading at scale the ceiling names, and an allocation
 count at stack depth 0/4/8 is not a latency. Where a ceiling has a counted twin
@@ -167,10 +171,11 @@ exercises them: a description the corpus does not contain is not covered.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
-| performance | Zero heap allocations on the routing path | — | `absent`. The row above enforces a ceiling, which is the opposite direction; nothing asserts the zero, and the measurement below is why |
+| performance | Zero heap allocations on the routing path | — | `absent`, and decided rather than open: the row above enforces a ceiling, which is the opposite direction, and each of the five blocks a static match still allocates is attributed below and kept, since removing any needs a public bound, `unsafe` or a dependency the default build cannot take, or a change to `http` |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path; and so is each element of the per-request surface, priced as the difference from the row it alone changes: routing past three captures and every answer the router gives without an operation, a layer or panic recovery at each scope, an observer and `Trace` with and without a subscriber, each extractor and guard, each body codec and refusal, ranged, conditional, negotiated and created responses, every shipped interceptor, each streamed body, an embedded asset and the served description, and a typical production stack | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted. The `routing` through `realistic` groups are the ablation matrix: each row names its base in `lib.rs`, and the report gives the difference beside the counts | `partial`: a trend in `full.yml` once master settles, with no ceiling and no gate; the connection path is counted to the duplex and no further, so no socket, syscall or kernel buffer is (`kynos-bench`'s), and `connection_h2` and `rate_limit` are `trend` rather than exact, since what each counts reads the wall clock, as are `form_echo` and `request_id_random`, since what each counts depends on a key the process draws at random ([`performance.md`](performance.md)) — below |
+| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path, in plaintext and over a TLS session: a full handshake, a resumed one, and a request on an established session; and so is each element of the per-request surface, priced as the difference from the row it alone changes: routing past three captures and every answer the router gives without an operation, a layer or panic recovery at each scope, an observer, and `Trace` as an observer and as its per-request span, each with and without a subscriber, each extractor and guard, each body codec and refusal, ranged, conditional, negotiated and created responses, a JSON body against bare `serde_json`, every shipped interceptor, each streamed body, an embedded asset and the served description, and a typical production stack | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted; `connection_tls` sends the request over a TLS 1.3 session to Kynos's own TLS listener on a loopback socket, so its accept loop, its acceptor, handshake deadline and certificate resolver are counted too, from each round of the runtime that ends once the server has written, so its client is not, with aws-lc's crypto reported beside libc and not compared. The `routing` through `realistic` groups are the ablation matrix: each row names its base in `lib.rs`, and the report gives the difference beside the counts | `partial`: a trend in `full.yml` once master settles, with no ceiling and no gate; the connection path is counted to the duplex and no further, so no syscall or kernel buffer is (`kynos-bench`'s), and only `connection_tls` opens a socket, whose userspace side alone it counts, and `connection_h2` and `rate_limit` are `trend` rather than exact, since what each counts reads the wall clock, as are `form_echo`, `request_id_random` and `connection_tls`, since what each counts depends on a key the process draws at random ([`performance.md`](performance.md)) — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
+| performance | A request served through the connection path, request body erasure included, costs a recorded number of allocations beside the same request in-process | [`tests/alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs), serving the second request on an HTTP/1.1 connection through `Server::serve_io` over a duplex, without a body and with one, each held exactly on Linux and Windows, the futex-lock platforms it was read on, and as a floor elsewhere: on macOS each `pthread` lock boxes itself on first use, and no runner reads the other futex-lock platforms | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
@@ -191,6 +196,21 @@ executed 1027297 program instructions, and `serde_json`'s string writer alone
 is 37% of all it counted.
 The ceiling this row would need stays unset for [Thresholds](#thresholds)'
 reason; the counts are the first measurement, not a target.
+
+**A JSON response costs what bare `serde_json` does, give or take the stack
+buffer.** The `respond` group's `json-small-bare` and `json-large-bare` serve
+the same documents under the same headers, written by `serde_json::to_vec`
+instead of `Json`'s writer. On an AMD Ryzen 7 7800X3D, counting libc too,
+`json-large` executes 1822922 instructions against the control's 1893826, and
+4 fewer heap blocks: the writer starts its heap at 2 KiB, where `to_vec`
+starts at 128 octets and doubles, and leaves no shared header for `Bytes` to
+add. `json-small` executes 5432 against 5380 and one block fewer. Zeroing the 1 KiB
+stack buffer accounts for those 52 and more: the zeroing costs 78 to 89
+instructions of `memset`, and the one allocation the writer saves offsets the
+rest. Safe Rust cannot leave the buffer uninitialized, and `unsafe_code` is
+forbidden. So in process there is no 1.5x for Kynos to remove. A gap that
+`kynos-bench` reads between a served JSON response and bare serialization
+comes from the request around the body.
 
 **A request through the server pays for its connection first.**
 `connection_h1.plaintext` sends `plaintext`'s request through
@@ -231,6 +251,26 @@ reference count its first split adds (40 bytes). Enabling hyper's
 a handler being dropped when its client goes away mid-request, so it stays
 off.
 
+**Over TLS, the handshake is the connection's cost and the record layer a
+request's.** Measured on one host, an AMD Ryzen 7 7800X3D, against that host's
+plaintext rows, through Kynos's own TLS listener on a loopback socket.
+`connection_tls.full` accepts a connection and serves
+`connection_h1.plaintext`'s request after a full TLS 1.3 handshake, and
+counts 69061 program instructions, 183 blocks and 71740 bytes against 14176,
+27 and 36361; aws-lc executes about 1.02 million more, reported and not
+compared. The largest block is the connection's task, 12928 bytes, which the
+accept loop spawns once per connection and which holds the whole connection
+future, handshake and serving path inline. `connection_tls.resumed` counts
+74158, 197 and 71500: a resumption skips the certificate and its signature
+but still runs a key exchange, decrypts the ticket and seals two fresh ones,
+so in the program it costs more than the full handshake, not less, and
+aws-lc's share is the same. `connection_tls.second`, a request on a session
+past its handshake, counts 19070, 17 and 2131 against `connection_h1.second`'s
+11666, 11 and 1801, with 3260 in aws-lc: about 7400 instructions and six
+blocks a request for decrypting it and encrypting its answer, and for the
+runtime's I/O driver and the socket's reads and writes, which the duplex rows
+do not pay.
+
 **Against axum, the gap is Kynos's own futures.** The same plaintext request,
 counted the same way on one connection with a per-request allocation counter,
 is 14 blocks and 10129 bytes through Kynos and 13 and 9200 through axum 0.8
@@ -240,7 +280,9 @@ routing record (120), the read deadline axum's `serve` does not arm (96), the
 handler's own string (13) and the `Connection` handle (8) — and axum 60 Kynos
 does not. Without hyper's buffer, Kynos allocates 1897 bytes a request to
 axum's 968, the near-2× `kynos-bench`'s first sessions recorded against
-`0.1.0`. Removing the two futures' boxes and the record is #1235's.
+`0.1.0`. Removing any of the three needs a public bound, `unsafe` or a
+dependency the default build cannot take, or a change to `http`, for the
+reasons below the attribution table.
 
 **The zero does not hold.** A static match allocates five times, of the seven
 the attribution below decided on, a capture and a miss five as well, each stable to the allocation across a
@@ -263,10 +305,41 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | Was | Site | Decision |
 | --- | --- | --- |
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
-| 16 B, 48 B → 88 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way |
+| 16 B, 48 B → 88 B → 120 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way. The record's one block is **kept** |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
-| 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept, and narrowed below** |
+| 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
 | 920 B → 912 B → 536 B → 320 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
+
+**Five remain, and none is the router's to remove.** They are
+[`requests.tsv`](../crates/kynos-profile/requests.tsv)'s 1052 bytes for that
+row: the map's box and table (32 and 148), the record (120), and the dispatch
+and endpoint futures (432 and 320).
+
+- The dispatch future is boxed because `Service<C>` erases it, and generic
+  code calls `Service::call` under no bound on `C`, as `examples/csrf.rs`'s
+  `send` and the server's own `serve_http` do. Returning `serve`'s future
+  unboxed names one that is `Send` only for `C: Send + Sync + 'static`, so it
+  needs that bound on `call`: a breaking change, and the one that would remove
+  the block, carrying its 432 bytes inline in every future awaiting `call`.
+- An inline slot instead of either box, used when the future fits, stores an
+  erased value in place. Writing one here needs `unsafe`, which the workspace
+  forbids. Taking a vetted one, the way `alloc_counter` keeps that rule
+  ([`architecture.md`](architecture.md#dependencies)), is refused on two
+  grounds. The routing path is in the default build, and a capability there
+  cannot take a dependency at all; `alloc_counter` is a dev-dependency that no
+  `src/` line names. And no such crate reaches zero for every handler.
+  `smallbox` and `stackfuture`'s `from_or_box` box a future larger than their
+  fixed slot. `stackfuture`'s `from` instead refuses that future at compile
+  time, which limits what a handler may hold, and that limit is a public one.
+  Even the slot that fits carries its whole width inline, in every future
+  that awaits it.
+- The record and the map are `http::Extensions`', which boxes every value and
+  the map itself and offers neither capacity nor reuse. One extension carrying
+  both the record and `Connection` would spare only a request from the server
+  a block, by having the server insert a slot the router fills, and would move
+  `Connection` from where `extensions().get::<Connection>()` finds it; the
+  in-process request counted here carries no `Connection` and would gain
+  nothing.
 
 **The origin is still resolved eagerly, and that is a decision.** Resolving it
 on first read instead would spare a request nothing reads it on, but it would
@@ -317,12 +390,15 @@ handed the body, and lends the head on to each extractor; a body extractor's
 `FromRequest::from_request` takes the same pair rather than a request rebuilt
 for it. A handler taking nothing boxes 320 bytes, from 536 when
 `Endpoint::call` and the handler each kept a request of their own, and 808
-before that; one taking a JSON body boxes 632, from 1528 and 1800, and what it
-holds past the head is the codec's read: the collector buffering the body,
-with its frame queue and trailer map.
+before that; one taking a JSON body boxes 584, from 576 before the handler
+kept the head it lent the body extractor, to render that extractor's
+rejection with the members `Router::problem_members` installs
+([`errors.md`](errors.md#members-on-the-problems-kynos-renders)), and from
+632, 1528 and 1800 before that. What it holds past the head is the codec's
+read: the body, its first frame, and the buffer later frames are joined into.
 [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the first to under
 two requests everywhere and to its 320 on Linux, and the second to under
-three, the read being just over one request wide, and to its 632. An endpoint
+three, the read being just over one request wide, and to its 584. An endpoint
 with interceptors of its own still keeps the head beside the request it
 rebuilds for its chain, since `Next::run` takes a whole request; nothing
 guards that width.
@@ -369,8 +445,9 @@ is not zero-sized.
 The ceilings are recorded rather than the zero because
 [Thresholds](#thresholds) asks for the first measurement rather than the hoped
 figure, and because a requirement asserting a zero the path does not deliver
-fails on every run and gets deleted. Lowering a ceiling is what closing the gap
-looks like; raising one is a change to this document.
+fails on every run and gets deleted. The gap is decided rather than open, so a
+ceiling falls only when one of the blocks above stops being kept, and raising
+one is a change to this document.
 
 The scope is narrower than the path, and deliberately: the requirement is
 written against routes of at most three parameters with no static/dynamic
@@ -383,14 +460,16 @@ rewrite.
 
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
-| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `partial`: a release fails only on a committed input, while a new one fails the nightly job, which no merge waits on; and the targets are Kynos's own parsers, not every extractor — a codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here. [`testing.md`](testing.md#fuzzing) lists them |
+| reliability | No extractor panics on any input | `cargo-fuzz` targets in [`fuzz/`](../fuzz/), one per hand-written parser of untrusted input, each asserting no panic and a round trip or an independent oracle where one exists; [`fuzz.yml`](../.github/workflows/fuzz.yml) searches each nightly, and [`full.yml`](../.github/workflows/full.yml) replays the committed [`fuzz/corpus/`](../fuzz/corpus/) | `enforced` for Kynos's own parsers of client input, each header field and body framing a client controls having a target: a committed input that panics or breaks its oracle fails the release, and a new one found by the search fails the nightly job, which no merge waits on, and lands as a bug fix whose input joins the corpus ([`testing.md`](testing.md#fuzzing) gives the reason the search gates nothing). A codec whose parser is a dependency's (`serde_json`, `serde_html_form`, `multer`'s part framing, `prost`) is not fuzzed here, though what Kynos builds on one is, such as the strict JSON reader over `serde_json`. [`testing.md`](testing.md#fuzzing) lists them |
 | security | Header count and header-list size are bounded by default | The driver is configured from [`Http1Config`](../crates/kynos/src/server/protocol/http1.rs) and [`Http2Config`](../crates/kynos/src/server/protocol/http2.rs) on every connection; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) asserts over a real socket that a head at the default and at a configured HTTP/1 header count is served and one field more is answered 431, and that an HTTP/2 header list past the default and past a configured size is answered 431 on its stream | `enforced` |
-| security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding each streamed record | `enforced`; `planned` for the allocation bound |
-| security | Per-IP connection caps | none yet — see below | `planned` |
+| security | Every buffered request body is capped by default, the cap is declared wherever a body is read, and a mounted limit replaces it per operation | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a 2 MiB default refuses at default+1 counted and declared, accepts at the default, declares its 413 only on operations reading a body, is raised past itself by a `BodySize` on one operation, and holds for multipart, where a text part is also refused past `TEXT_PART_LIMIT` under any body limit and a closed form refuses an undeclared part before reading it; a mounted limit asserted at limit+1 and refused from a declared length before the body is read; [`json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) bounding a streamed body as a whole, counted, cut mid-frame and declared, and `read_all` with it | `enforced`; `planned` for the allocation bound |
+| security | Per-IP connection caps | — | `absent`, and recorded below and in [`middleware.md`](middleware.md#what-bounds-a-request-before-an-interceptor-runs): a connection is counted before any header is read, and `Router::trusted_proxies` applies only after routing. A per-IP request rate, `RateLimit` keyed `ByClientAddress`, is the supported bound |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
+| correctness | A member `Router::problem_members` installs is sent on every problem whose response declares it, and declared on every response whose problem sends it | [`tests/problem_members.rs`](../crates/kynos/tests/problem_members.rs) validating each refusal's body with `assert_conformance` against the schema requiring the members; a hidden `IntoResponse` and `Responses` pair that a type overrides both halves of or neither | `enforced` for extractor and guard rejections, an interceptor's `Reads` 400, an asset endpoint's 416, the router's fallbacks and a CORS preflight's 405 and 501; `absent` for a returned rejection, a ranged `Delivery`'s 416, an interceptor's own refusal and a recovered panic's 500, which carry none and declare none, each for the reason [`errors.md`](errors.md#members-on-the-problems-kynos-renders) records |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
+| security | A header a carrier reads beside its credential is declared on every operation a guard naming the scheme covers, required only where every admitted request presents that credential | A derived `reads = T` writes `SecurityScheme::reads` and the carrier from one `T`; [`tests/derives.rs`](../crates/kynos/tests/derives.rs) reads the group only beside a presented credential and declares it, and [`security/auth/tests.rs`](../crates/kynos/src/security/auth/tests.rs) declares it required under `Auth`, `Scoped` and `AllOf` and optional under `MaybeAuth` and `AnyOf`. A hand-written `Carries` reading more than its credential is held to its own override | `enforced` for a derived carrier; `absent` for a hand-written one, which the type system cannot tie to its declaration |
 | performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
 | performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures in [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
 
@@ -422,8 +501,40 @@ extractor that holds a body in memory reads it under
 `extract::body::limit::DEFAULT_LIMIT`, 2 MiB, the figure axum also ships, and refuses
 past it with `BodyRejection::TooLarge`: a declared `Content-Length` from the
 head, a length-less body on the frame that passes it. Multipart bounds its
-whole stream through multer's own count, and a streamed JSON body bounds each
-record rather than the body, since a record is all it holds. A `BodySize`
+whole stream through multer's own count, and a streamed JSON body bounds the
+whole body too, though it holds one record at a time: a client could otherwise
+send records under the limit without end, and `read_all` would collect every
+one. `Records` refuses a declared length from the head at extraction, and frames
+only a length-less body's first `limit` bytes, so its 413 replaces the record
+the limit cuts wherever the frames split, after every record before it.
+
+**A streamed request body gets no default total deadline.** With the byte
+bound, a streamed body is bounded exactly as a buffered one is: at most the
+limit in octets, and at most the server's 30 s request-body idle timeout
+between frames. A total deadline would bound both kinds or neither, since
+nothing about framing makes a slow record cheaper to hold than a slow buffer,
+and its default would be a figure no measurement under
+[Thresholds](#thresholds) supports. The worst case stays a client sending one
+octet just inside every idle gap, which the connection permits bound in number
+and `BodySize::deadline` bounds in time for an operation that mounts it.
+
+**Multipart bounds each part by its field, from Kynos's reading of its name.**
+`FromMultipart::admit` decides a part from the name `disposition` read, before
+any of its octets: the derive drops a part no field declares unread, refuses one
+under `deny_unknown_fields` as a 422, and reads a declared one under its
+element's `FromPart::LIMIT`. A `ParamValue` part is read under
+`TEXT_PART_LIMIT`, 408 KiB, and past it is the 413; a `FilePart` or `Bytes` part
+is bounded by the body alone. `multer`'s `allowed_fields` and per-field limits
+would do the same work keyed by its own name scan, which is not quote-aware and
+is why `disposition` exists, so a part could be admitted under one name and
+read as another. The figure is not a measurement, and [Thresholds](#thresholds)
+does not ask for one: it is a refusal bound, set where a parameter already
+stands. A text part becomes its field through the `FromStr` a parameter does,
+and a parameter arrives in a head a default HTTP/1 connection holds to the same
+408 KiB, so a form field costs its parser no more than its parameter twin could.
+It does not move with a `BodySize`: a large text value is a `Bytes` field the
+handler parses. No part-count bound is set: an undeclared part is no longer
+held, and a declared repeated field holds what the body limit lets it. A `BodySize`
 covering an operation replaces the figure for it in either direction, and so
 does `Decompression`, whose limit is the route's; each hands it on as a
 crate-private request extension, so nothing that does not declare its own 413
@@ -440,7 +551,7 @@ own `BodySize` a `const` compile error against `CompatibleWith`*: that check
 compares interceptors, and the cap is a rejection, so a `BodySize` mounts beside
 it exactly as before. *It would buffer a length-less body, the streaming upload
 the limit exists to leave alone*: the codecs that buffer already did, and the
-one that streams, `Records`, is bounded per record and still streams.
+one that streams, `Records`, is bounded in total and still streams.
 
 What the placement costs is precision under a named problem type. The 413
 `BodyRejection` declares is `about:blank`, and a `BodySize` naming its own type
@@ -452,8 +563,13 @@ a rejection declared, which nothing in the description model does.
 **The per-IP row has no method, and that is the requirement.** In the common
 deployment every connection arrives from the load balancer's address, so a cap
 counted in-process is either meaningless or a self-inflicted outage. An honest
-one needs a trusted-proxy-header policy — which is authentication-adjacent and
-belongs with [`security.md`](security.md) rather than here.
+one needs the forwarded address, and the trusted-proxy policy that resolves it,
+`Router::trusted_proxies`, applies after routing, while a connection is counted
+before any header is read. `Server::proxy_protocol` names the client before
+routing, but still after the connection is counted, since its header is read
+under the permit accepting it took. A per-IP request rate is honest behind a proxy:
+`RateLimit` keyed `ByClientAddress` counts against the address that policy
+resolves.
 
 ## Middleware
 
@@ -463,7 +579,10 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A short circuit's description declares the body it sends, and declares none only where it sends none | `every_short_circuit_declares_the_content_it_sends` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) driving every constructible implementation against `every_short_circuit_kynos_ships_is_accounted_for`'s set, plus the declaration-of-none check in [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs) that [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) runs over a live exchange | `enforced` |
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
 | correctness | The check does not depend on the order the scopes were written in | `endpoint_interceptor_then_router_interceptor_collide`, `group_interceptor_then_router_interceptor_collide` and `group_mount_then_group_intercept_collide` mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
+| correctness | An interceptor scoped to methods runs on, and is declared on, only the operations whose method it names, with an undeclared `HEAD` covered exactly when `GET` is | `a_method_scoped_interceptor_runs_only_on_the_methods_it_names`, `an_undeclared_head_is_covered_exactly_when_get_is` and `a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs); the `guard_first` point recounted per operation in `router/group/tests.rs` | `enforced` |
+| correctness | Two scoped interceptors are compared for a collision only where their methods overlap, since disjoint methods cover no operation in common | the passing and `compile_fail` doctests on `Group::intercept_when`; `interceptors_scoped_to_disjoint_methods_never_meet_on_an_operation` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs); `two_sets_overlap_exactly_where_they_share_a_method` in `router/group/tests.rs` | `enforced` at compile time, by method set rather than by mounted operation: overlapping sets collide even where no operation declares a shared method ([`middleware.md`](middleware.md#the-order-a-chain-runs-in)) |
 | correctness | An interceptor attaches exactly the header group it declared, and that group writes only the names it declared | `with_headers` on `Continued<()>` alone, pinned by `interceptor_attaches_an_undeclared_header`; the encode-subset `debug_assert` in the one writer, pinned by `a_group_encoding_an_undeclared_field_is_refused` | `enforced` in debug; the assert is compiled out of release |
+| correctness | An interceptor's described response headers land on the responses its `ADDS_ON` names, including those declared after it is described | `an_interceptors_response_header_is_declared_where_a_consumer_resolves_it`, `an_interceptor_adding_on_every_response_is_declared_on_each_one` and `an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone` in [`tests/description.rs`](../crates/kynos/tests/description.rs), over an operation whose 408 and 500 are declared after the interceptor | `enforced` for where the declaration is filed; `by-design` that `Every` and `Problems` are the author's claim, which the framework does not narrow to the responses that pass through the interceptor ([`middleware.md`](middleware.md#declaring-is-not-describing)) |
 | correctness | An endpoint-scoped interceptor reaching a router through an `Endpoints` collection is checked | — | `absent`, and recorded in [`middleware.md`](middleware.md#what-the-compile-time-check-still-cannot-see): a collection erases what its members carry, and a build-time backstop would need a declaration method on the public `Endpoint` trait — the `contribution` method the design refuses. Use `routes!`. |
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and on a `ShortCircuit` written by hand beside its own `IntoResponse` it would be a declaration beside the behaviour — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
@@ -471,6 +590,7 @@ belongs with [`security.md`](security.md) rather than here.
 | performance | Added allocations = 1 per layer, held as an equality, and the dispatch future ≤ 16 bytes at any depth | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), counting one request through a no-op interceptor stack at depth 0/4/8 and reporting the marginal cost of a layer, plus a `size_of` ratchet on the future a driver holds | `enforced` |
 | performance | Per-layer added p99 ≤ TBD | `criterion` at stack depth 0/4/8 with a regression gate | `kynos-bench` |
 | performance | Compression's added allocations never fall as the body grows, and grow by no more than the 8 KiB reads the encoder's drain adds between one non-empty body size and the next; encoding a body the encoder engages on costs strictly more than declining to, with the empty body the baseline of that relation rather than a rung of the first; and what declining costs is a recorded constant rather than a held one | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), over gzip, brotli and zstd at 0/1 KiB/16 KiB/256 KiB, engaged and not by `Accept-Encoding` on one mounted service | `enforced` |
+| reliability | Response encoders resident at once are bounded: at most one per runtime worker for a collected body up to 1 MiB, which is encoded in the poll that starts it, and otherwise one per response in flight, which `Concurrency` bounds where mounted outside `Compression`; [`middleware.md`](middleware.md) records each coding's resident figure and the sizing rule | [`compression/tests.rs`](../crates/kynos/src/middleware/compression/tests.rs)'s `an_encode_yields_between_reads_only_past_the_threshold`, holding an encode up to 1 MiB to one poll; the resident figures are a measurement on one host | `enforced` for the one-poll bound; `by-design` for a cap of the encoder's own, refused in `middleware.md` since it would fall back to identity at peak load and `Concurrency` already bounds the responses; `kynos-bench` for peak resident memory under concurrent encodes ([getkono/kynos-bench#121](https://github.com/getkono/kynos-bench/issues/121)) |
 | correctness | A stored response is never served to a request its stored `Vary` does not select | [`middleware/cache/tests.rs`](../crates/kynos/src/middleware/cache/tests.rs) over the selection rules, plus [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live sequence | `enforced` |
 | correctness | A response that stated no freshness is never reused | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) counting handler calls across three requests | `enforced` |
 | correctness | A timeout answers a status the specification defines for an origin server | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) over a live handler past its budget, and [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) against the emitted document | `enforced` |
@@ -498,7 +618,7 @@ belongs with [`security.md`](security.md) rather than here.
 | correctness | A ranged delivery answers 200, 206, 304, 412 and 416 where RFC 9110 sections 13 and 14 say each belongs, and evaluates the conditions in section 13.2.2's order before the range | [`tests/ranged.rs`](../crates/kynos/tests/ranged.rs) over a source that is not a filesystem | `enforced` |
 | correctness | A ranged body never ends shorter than the `Content-Length` its head already sent: a source that stops making progress fails the stream instead | [`response/range/source/tests.rs`](../crates/kynos/src/response/range/source/tests.rs), over a source that answers a span with nothing, and one that answers it short and is asked again | `enforced` |
 | correctness | A response that advertises `Accept-Ranges` is never content-coded | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `partial` for the rule and its control, and `ranged_assets` resuming an asset download against the tag it was served with | `enforced` |
-| security | A compressed request body cannot cost more memory than the route's declared limit | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `decompression`, refusing a body that passes a limit on its encoded size and expands past the decoded one, with a control inside both bounds | `enforced` |
+| security | A compressed request body cannot cost more memory than the route's declared limit | [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs)'s `decompression`, refusing a body that passes a limit on its encoded size and expands past the decoded one, with a control inside both bounds; [`decompression/tests.rs`](../crates/kynos/src/middleware/decompression/tests.rs) refusing a zstd frame whose header declares a window past 8 MB, with an 8 MB control on a 1 KiB route | `partial`: `enforced` for the decoded body, which the limit counts; the decoder's window is not counted, and is bounded by the coding instead — zstd's at RFC 9659's 8 MB, refused as malformed before it is allocated and never narrower, since section 3 has a decoder support it on any route; brotli's at RFC 7932's 16 MB, which the stream header declares and `brotli-decompressor` offers no knob to refuse before allocating; gzip's at 32 KB |
 | correctness | Metadata describing a coded form does not outlive the decode | The same module, asserting `Content-Encoding`, `Content-Length` and `Content-Digest` as the handler receives them, with a control that carried no coding | `enforced` |
 
 **The two decompression rows are one requirement seen twice.** RFC 9110 §8.4
@@ -569,13 +689,18 @@ which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 | Category | Requirement | Method | Status |
 | --- | --- | --- | --- |
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, a completed TLS handshake that then sends nothing, timeout exhaustion, a Unix domain socket listener shut down after serving, its socket file left to its caller, and a handler waiting on `Draining` woken by the drain; [`tests/sse.rs`](../crates/kynos/tests/sse.rs) over a real socket, for an event stream ended on shutdown ending when the drain begins, against one that holds the drain to its timeout | `enforced` |
-| reliability | Backpressure is bounded by default via connection count, queue depth and timeouts | [`tests/limits.rs`](../crates/kynos/tests/limits.rs) asserting a request past the concurrency cap is shed with 503 rather than queued; a load test at 2× capacity for the memory bound | `enforced` for the shedding; `planned` for the load test |
+| reliability | No connection is refused while a load balancer may still route to the server: through a configured deregistration delay after the first shutdown signal the server accepts and serves while `Readiness` reports not-ready and `Draining` stays unresolved, and the drain begins when the delay ends | Integration tests in `crates/kynos/src/server/tests.rs` covering a connection opened after the signal accepted and served not-ready and not draining, the drain following the delay, and a second signal forcing shutdown during it; a unit test over the lifecycle states pinning that `Deregistering` moves neither the `Draining` latch nor the accept loops' stop | `enforced`. A listener that stops accepting during the delay ending it is not exercised, since no test makes an accept fail terminally on cue |
+| reliability | A server spawned through `BoundServer::spawn` stops gracefully through its `Running` handle: `shutdown` drains under the `shutdown_timeout` and resolves to `serve`'s result, dropping the handle begins the same shutdown without waiting, and a configured `Shutdown` trigger still begins it, or forces a drain the handle began, as it would alone | Integration tests in `crates/kynos/src/server/tests.rs` covering a request drained before `shutdown` resolves cleanly, the timeout reported for one that outlives it, a dropped handle closing the listener, a configured trigger stopping a server whose handle is held, a configured force ending a drain the handle began, and a failing trigger's error reaching the handle | `enforced`. A serving task that panics, or that the runtime cancels as it shuts down, is not exercised: `serve` has no panic a test can cause, and a cancelled task needs a second runtime awaiting the handle |
+| reliability | Backpressure is bounded by default at the connection, not at the handler: at most 10,000 open connections (`Server::DEFAULT_MAX_CONNECTIONS`), at most 200 concurrent HTTP/2 streams on each, a 30 s header-read timeout counted from accept, a 10 s TLS handshake timeout, and 30 s between request-body frames. A handler's runtime and the number of requests in flight have no default bound; `Timeout` and `Concurrency` bound them where mounted, as [`middleware.md`](middleware.md#what-bounds-a-request-before-an-interceptor-runs)'s table records | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) reading the 10,000 cap off a new server and the 200 streams off `Http2Config::default()`, holding the next socket unaccepted at a cap of one, and closing a silent connection at the header-read timeout; [`tests/connection_adversarial.rs`](../crates/kynos/tests/connection_adversarial.rs) letting go of a client that never starts its TLS handshake, at a set handshake timeout; the request-body gap as the 408 row below holds it; [`tests/limits.rs`](../crates/kynos/tests/limits.rs) for the opt-in `Concurrency` only, shedding a request past its cap with 503 rather than queueing it; a load test at 2× capacity for the memory bound | `enforced` for the connection cap, the stream cap and the header-read and body-gap timeouts; `partial` for the TLS handshake timeout, whose expiry is held at a set value and whose 10 s default no test reads; `absent` for a default handler deadline and a default in-flight bound, so with default settings a slow handler is never timed out and in-flight requests are bounded only by connections × streams, 2,000,000 over HTTP/2; `kynos-bench` for the load test ([getkono/kynos-bench#107](https://github.com/getkono/kynos-bench/issues/107)) |
+| reliability | Connections arriving past the connection cap queue in the kernel up to its own ceiling by default, not a fixed 128, and the backlog of every socket the server binds is configurable | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over loopback sockets nothing accepts from: a bound address and an accept shard each given a backlog of two complete exactly three connections before the kernel drops the next SYN; the default read off a new server | `enforced` on Linux for a set backlog; the default reaching the kernel's ceiling is not exercised, since it would take `somaxconn` plus one sockets, and other kernels' queue arithmetic is not pinned |
 | reliability | A peer that vanishes without a FIN or RST releases its connection permit and buffers within a bounded time, by default | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets: an HTTP/2 peer that never acknowledges a PING is pinged and then disconnected, and a socket the server accepted carries the configured TCP keepalive and `TCP_USER_TIMEOUT` as the kernel reads them back. The defaults — a PING after 30 s of silence with 20 s to answer, TCP probes after 60 s idle every 15 s, and a 195 s user timeout — release an HTTP/2 connection within 50 s, any connection with nothing in flight within 195 s at Linux's nine probes, and one whose sent data the peer stopped acknowledging within 195 s | `enforced` for HTTP/2 and for an idle connection; `enforced` for an HTTP/1 peer lost mid-response on Linux, Android, Fuchsia and Cygwin; `absent` for that peer elsewhere, where no `TCP_USER_TIMEOUT` exists and only retransmission timeouts bound it, because the kernel sends no probe while data is unacknowledged |
+| security | Under `Server::proxy_protocol`, a PROXY protocol header names the client only on a connection from a peer its `TrustedProxies` believes, is required on every such connection, and is read before TLS within the first-head deadline; a missing or malformed one closes the connection unanswered | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets: a version 1 and a version 2 header name the peer a handler reads, also ahead of a TLS handshake; `LOCAL` and `UNKNOWN` leave the socket's peer; a trusted peer sending no header or a malformed one is closed unanswered, and a silent one at the first-head deadline; an untrusted peer is served without one, its header answered 400. The reader's admissions and refusals are tabled there against the specification, and the `proxy_protocol` fuzz target holds it to deciding at a header's last byte whatever the read boundaries ([`testing.md`](testing.md#fuzzing)) | `enforced`; `absent` on a Unix domain socket listener and `serve_io`, which read no header |
 | performance | A returning TLS client resumes its session rather than paying a full handshake, by default, whatever the number of other clients | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets, with `HandshakeKind` read from the client: resumption over TLS 1.3 and 1.2 under the default stateless tickets, a ticketed session still resumed after three hundred other clients (rustls's own 256-entry cache evicted it), the bounded cache evicting past its capacity, `Disabled` paying a full handshake every time, and a resumed mutual-TLS session keeping its client certificate. Across replicas, under `SharedTickets`: two listeners given one ticket secret each resuming a session the other issued, client certificate included, and a third given another secret paying a full handshake | `enforced`; the CPU a resumption saves, and the resumption rate across a fleet, are `kynos-bench` |
 | reliability | A request body that stalls is bounded by default, and answered with the 408 its operation declares, carrying what the interceptors add | [`tests/connection_adversarial.rs`](../crates/kynos/tests/connection_adversarial.rs) over a real HTTP/1 socket, through a router whose `RequestId` adds a header and whose document is read for the 408; [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets, HTTP/1 and HTTP/2, answering a stall through the extractors' mapping on a bare service; [`tests/conformance.rs`](../crates/kynos/tests/conformance.rs) exercising the 408 through `TestClient` | `enforced`; HTTP/2 through a router is unpinned; the 408 stays declared with the timer turned off |
-| reliability | HTTP/2 request-body flow control is released as the body is consumed, not as frames arrive | Load test streaming a large body to a slow consumer, asserting the receive window closes | `blocked-on-dependency` |
+| reliability | On Unix, a soft open-file limit below what the connection cap needs is raised at startup as far as the hard limit, to the cap plus one per listener and 128 to spare, and a limit still short is warned of, naming the limit and what the cap needs | [`server/tests.rs`](../crates/kynos/src/server/tests.rs): the raise decided over soft and hard limits, unlimited ones included; `prepare` under a lowered soft limit raising it to exactly what the cap needs and warning of nothing; and under a lowered hard limit raising the soft limit to it and warning with both numbers | `enforced` on Linux; macOS, whose `setrlimit` refuses a soft limit past `OPEN_MAX` even under an unlimited hard one, warns rather than raising for a cap past about 10,100 |
+| reliability | HTTP/2 request-body flow control is released as the body is read, not as frames arrive, so a reader that stops reading closes the peer's window | An HTTP/2 exchange in [`server/tests.rs`](../crates/kynos/src/server/tests.rs) sending a body past the stream window to a handler that stops reading, asserting the client's send capacity falls to zero and stays there | `planned`; hyper 1.12 releases a DATA frame's capacity in the `Incoming::poll_frame` that yields it, and the server's body-gap wrapper polls only when read |
 | reliability | A streamed request body is decoded as it arrives rather than after it has been collected | [`extract/body/json_lines/tests.rs`](../crates/kynos/src/extract/body/json_lines/tests.rs) reading a body delivered one frame per byte, and every frame boundary of a fixed body | `enforced` for a body declaring a `Content-Length`; `by-design` under `BodySize` for a chunked one |
-| performance | Syscalls per request ≤ TBD | `strace -c` assertion over a fixed request count | `kynos-bench` |
+| performance | Syscalls per request ≤ 3 for `plaintext` on a kept-alive HTTP/1.1 connection, under either tokio runtime flavour: one `epoll_wait`, one `recvfrom` and one `writev`, the count hyper alone and axum 0.8 pay on the same path | A ptrace summary in `strace -c -f`'s shape over 200 and then 5,200 sequential requests on one connection, differenced so that start-up and shutdown cancel; counted on Linux 7.2 at master@56ebc0f6 under the current-thread and multi-thread runtimes, with Kynos 0.1.0, hyper's auto builder and axum 0.8 each counting the same | `kynos-bench` for asserting this ceiling on `plaintext`, which needs the harness to build Kynos from a revision ([getkono/kynos-bench#87](https://github.com/getkono/kynos-bench/issues/87)); the ceiling is the count above, and no other scenario carries one |
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 176 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 96, `TransportConfig` ≤ 256 from 200. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
 | compatibility | The I/O bound on `Server::serve_io` is the only public item naming a tokio type; a pre-bound listener is taken as the standard library's | `mise run api:check`, refusing a `tokio` path in any listed item but the one the `tokio` bullet of [`architecture.md`](architecture.md#what-an-upstream-fix-may-change)'s Public dependencies list names | `enforced` |
@@ -602,12 +727,50 @@ The containment row is written against the enumerated table in
 a seventh site fails the build. A count asserted only in prose is a count
 nobody is holding.
 
-The `blocked-on-dependency` row is the one requirement a pinned dependency
-prevents rather than delays: hyper releases HTTP/2 flow-control capacity when a
-frame is polled rather than when the body is consumed, so the receive window
-never closes on a slow consumer. Driving `h2` directly is the only remedy, and
-[`architecture.md`](architecture.md#dependencies) records why that trade is not
-taken today.
+The HTTP/2 flow-control row was once `blocked-on-dependency`, on the reading
+that hyper releases receive capacity as frames arrive. It does not: `h2` buffers
+a stream's DATA unreleased until `Incoming::poll_frame` hands a frame over,
+and only then does hyper call `release_capacity` for it. A reader that stops
+reading therefore closes its stream window, and what a peer can park unread
+on one connection is the connection window, not 200 stream windows: 1 MiB at
+the defaults, which is the HTTP/2 heads row of the table below, and up to the
+16 MiB hyper's BDP estimate grows both windows to under
+`Http2FlowControl::Adaptive`.
+
+What poll-time release leaves open is the gap between a frame being polled and
+its bytes being done with, and that gap is the reader's own buffer, which the
+window was never going to bound:
+
+- A buffering extractor collects the whole body before the handler runs, so
+  release on consumption would release nothing sooner. Its bound is its limit,
+  2 MiB by default, which is the last row of the table below; lowering
+  `Http2Config`'s windows leaves it untouched.
+- A streaming reader such as `Records<T>` releases a frame's capacity when it
+  polls the frame, but polls one only once its buffer holds no whole record.
+  What it holds released and undecoded is that buffer: the records the last
+  frame carried that it has not yet yielded, and the partial record behind
+  them, which spans as many frames as the record does. That is up to one
+  record's bytes per stream, beside what is left of the last frame, so it is
+  bounded by the body limit rather than by a frame: the buffering extractors'
+  bound again.
+- A handler reading `Body` itself holds what it chooses to hold.
+
+So no upstream change is asked for. No issue in `hyperium/hyper` or
+`hyperium/h2` requests consumer-driven release; the nearest are
+[hyperium/hyper#2899](https://github.com/hyperium/hyper/issues/2899), a
+connection window starved by streams nobody reads, which is this mechanism seen
+from the peer's side, and
+[hyperium/hyper#2901](https://github.com/hyperium/hyper/issues/2901), a
+low-level pull API that would expose `h2`'s streams. Were hyper to let a body's
+reader release capacity itself, Kynos would change nothing in the buffering
+extractors, and could not release per decoded record in the streaming ones:
+a record wider than the stream window would then close the window on its own
+unfinished bytes and never complete. The streaming readers would have to
+release as bytes enter their buffer, which is what poll-time release already
+does, so the body limit stays the bound either way. That is not worth owning
+the connection driver [`architecture.md`](architecture.md#what-does-not-move-and-why) keeps with hyper.
+The row is `planned` rather than `enforced` because no test yet watches the
+window close.
 
 The streaming row above it is the same family of fact one layer up, and it is
 split because half of it holds. A request declaring a `Content-Length` is
@@ -628,6 +791,57 @@ every chunked upload. That is why the row reads `by-design` and not
 `blocked-on-impl`; there is no missing constructor to write. The limit is
 documented where the decision is made rather than only here, because that is
 where someone mounting a cap will meet it.
+
+### What the defaults let one connection hold
+
+What a client can make the server hold at the default limits, per connection
+and at the 10,000 `max_connections` allows. Every figure is arithmetic from
+the defaults — `Http1Config`'s and `Http2Config`'s, which
+[`server/tests.rs`](../crates/kynos/src/server/tests.rs) pins whole, and the
+body extractors' `DEFAULT_LIMIT` — not a measurement, and every one is a floor
+of the worst case rather than a ceiling:
+
+| What the client sends | Held per connection | At 10,000 connections |
+| --- | --- | --- |
+| HTTP/1: one unfinished head | 416 KiB: a read buffer filled to `max_buffer_size`, 417,792 bytes, before the 431, and hyper's 8 KiB write buffer | 3.97 GiB |
+| HTTP/2: 200 heads, each in flight | 4.125 MiB: 200 streams × a 16 KiB `max_header_list_size`, and the 1 MiB connection window of DATA no handler has polled | 40.3 GiB |
+| HTTP/2: 200 requests whose responses it stops reading | 78.125 MiB: 200 streams × a 400 KiB `max_send_buffer_size` of response bytes queued past the window it never reopens, once each response reaches 400 KiB | 762.9 GiB |
+| Either: bodies a buffering extractor collects | 2 MiB per request in flight: one per HTTP/1 connection, 200 per HTTP/2 one | 19.5 GiB over HTTP/1, 3.8 TiB over HTTP/2 |
+
+A floor, because none of it counts what the table cannot read off a default:
+the growth policy of hyper's read buffer, which may allocate past the bytes it
+holds; rustls's buffers under TLS; what a decoded HTTP/2 header list occupies
+past the octets of its fields plus 32 per field, all RFC 9113 §6.5.2 counts; each
+request's dispatch future, the connection task, its permit and the peer
+certificate chain [`architecture.md`](architecture.md#why-hyper-stays)
+names; and kernel socket buffers. The HTTP/1 read buffer is reached by a head
+alone: [`server/tests.rs`](../crates/kynos/src/server/tests.rs) serves a head
+one byte short of it and answers 431 only once the whole default buffer has
+been read.
+
+Nor does it count an interceptor, since none is mounted by default.
+`Compression`, where mounted, adds an encoder to each streamed or past-1 MiB
+response in flight: up to 3.0 MiB for zstd and 11.2 MiB for brotli, which
+[`middleware.md`](middleware.md) measures and turns into a sizing rule.
+
+So a 512 MiB container serving defaults can be exhausted by HTTP/1 heads from
+about 1,260 connections, by HTTP/2 ones from about 124, and by HTTP/2 readers
+that stall on responses of 400 KiB or more from about 7. The bound on all of
+it is `Server::max_connections`, and sizing it is the deployment's: divide the
+memory budget by the row its traffic can reach, after lowering what it does not
+need — `Http1Config::max_buffer_size`, `Http2Config`'s streams, header list,
+windows and send buffer, the body limit.
+
+The defaults neither shrink nor scale with available memory. Lowering
+`max_buffer_size` alone would leave the HTTP/2 heads row ten times larger and
+the send-buffer row nearly two hundred times larger at the same connection cap, and would also cap the bytes each body read may reserve. Scaling
+from cgroup `memory.max` or physical RAM would divide by a per-connection figure
+that is the `TBD` the idle-memory row in the table above waits on, and would
+make a default the tests read off a new server depend on the host it runs on.
+The idle-memory row is where that figure arrives, from `kynos-bench`
+([getkono/kynos-bench#109](https://github.com/getkono/kynos-bench/issues/109),
+[getkono/kynos-bench#102](https://github.com/getkono/kynos-bench/issues/102)),
+and with it the evidence a default change would be argued from.
 
 ### The module-size budget
 
@@ -668,8 +882,10 @@ way: `Router::build` and the match table it fills sit in a private
 `derive/api_error/` and
 `derive/security_scheme/` were split because each held two concerns, a derive's
 attribute grammar and the code that expands it, and since nothing in
-`kynos-macros` is public but the derives, the split cost no path. The rest were
-not.
+`kynos-macros` is public but the derives, the split cost no path.
+`derive/security_scheme/carrier.rs` later took the derived `Carries` and the
+`reads` declaring what it reads beside the credential, which change when a
+carrier reads more rather than when the description does. The rest were not.
 
 `middleware/limits/` was split at the path cost, because it was never one
 family: four interceptors sharing no type, each with its own response and its
@@ -680,7 +896,7 @@ The budget is the honest record of what stayed. A path leaves it when its module
 is split, and one joins it only with the argument for why that module needs the
 room, in the same commit.
 
-Fifteen of them crossed the line after v0.1.0, and each was argued for as it did.
+Sixteen of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 seven public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
 `Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it would turn
@@ -789,8 +1005,9 @@ now tells the two apart. That helper and the combinators are one concern —
 how a requirement is checked — and a new combinator changes both.
 
 `security/mod.rs` is `status.rs`'s shape. It declares `Guard`,
-`SecurityScheme`, `Scope`, `Unscoped`, `Authenticator` and `Authenticates`, so
-a split would turn `security::SecurityScheme`, the path every derived and
+`SecurityScheme`, `Scope`, `Unscoped`, `Authenticator`, `Authorizer` and
+`Authenticates`, so a split would turn `security::SecurityScheme`, the path
+every derived and
 hand-written scheme names, into a longer one. What pushed it over was
 `SecurityScheme::FORBIDS`, whose documentation says what the type system cannot
 hold and the harness does. The traits are one concern — what a scheme is and
@@ -826,6 +1043,62 @@ issue #1149's named instantiations, which replace a component name inside
 refusal is the registry's to record for `resolve`'s reason. One concern, so one
 file.
 
+`extract/body/multipart.rs` is `status.rs`'s shape. It declares
+`MultipartForm`, `FilePart`, `Part`, `FromMultipart`, `FromPart`, `Admission`
+and `TEXT_PART_LIMIT`, so a split would turn `multipart::FromPart`, the trait a
+form field's type implements, into a longer path. What pushed it over was
+issue #1218's per-part bounds: `admit` and `FromPart::LIMIT` are how a part is
+read, and the reader beside them is their one consumer. Its part-header parser
+already sits in `multipart/disposition.rs`, the one piece that changes for a
+reason of its own.
+
+`middleware/trace.rs` is `status.rs`'s shape. It declares `Trace`, `Level`,
+`REDACTED` and `TraceSpan`, so a split would turn `trace::TraceSpan` into
+`trace::span::TraceSpan`. What pushed it over was issue #1279's per-request
+span, whose callsite is built at run time because its fields are the
+application's. The span is `Trace`'s configuration read the other way round,
+through the same header and identifier readers, so the two are one concern:
+how a request is logged. A private module for the callsite alone would cost no
+path, but would be a second site under `middleware/` naming `tracing`, which
+the dependency rows below allow nowhere under `middleware/` but this file.
+
+`__private/fuzz.rs` is compiled only under `cfg(fuzzing)`, so a split would
+cost no path an application can name, and it is one concern: the door each
+`fuzz/` target opens into a parser with no public path. Every function forwards
+to the parser it is named after, adapting a crate-private type to one a target
+can hold, and none shares state with another. What pushed it over was issue
+#1220's eight targets over the rest of the client-facing parsers. Split by
+parser, each file would hold one forwarding function, a module per target that
+the targets already are.
+
+`router/operation.rs` is `status.rs`'s shape. It declares `Route`,
+`OperationCx`, `Tag` and `DeclaredTag`, so a split would turn
+`operation::DeclaredTag`, the type every `add_tag` call names, into a longer
+path. What pushed it over was issue #1271's `ADDS_ON` placements: a header an
+interceptor adds on every response, or on problems alone, is filed by
+`OperationCx::finish`, because only then has the last contributor declared its
+responses. Filing a header is describing the operation, through the same
+`declare_header` an explicit `add_response_header` goes through, so the two are
+one concern: what one operation's description holds when it is finished.
+
+`router/group.rs` is `status.rs`'s shape. It declares `Group`, `Methods`,
+`MethodSet`, `SafeMethods` and `UnsafeMethods`, so a split would turn
+`group::SafeMethods`, the argument `intercept_when` takes, into
+`group::methods::SafeMethods`. What pushed it over was issue #1277's
+`intercept_when`, whose documentation says which operations a scoped
+interceptor covers, and issue #1331's `MethodSet`, which carries the set in the
+type so the collision check can read it. The sets exist for that one method,
+and resolving them per operation is part of mounting a group, so the two are
+one concern: what a group puts in front of each operation it holds.
+
+`middleware/stack.rs` is `status.rs`'s shape. It declares `Cons`, `When`,
+`Both`, `InterceptorList`, `Flatten`, `CompatibleWith` and `CompatibleStack`,
+so a split would turn `stack::When`, the element a group's type names, into a
+longer path. What pushed it over was issue #1277's `When`, whose method set
+the check reads to skip two interceptors that cover no operation in common. A
+stack element and the check that reads it are one concern: which interceptors
+a type says cover an operation, and whether two of them collide.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -837,8 +1110,10 @@ The budget, which may only shrink:
 - `crates/kynos-openapi/src/pattern.rs`
 - `crates/kynos-openapi/src/validate/violation.rs`
 - `crates/kynos-profile/src/lib.rs`
+- `crates/kynos/src/__private/fuzz.rs`
 - `crates/kynos/src/error/problem.rs`
 - `crates/kynos/src/error/rejection.rs`
+- `crates/kynos/src/extract/body/multipart.rs`
 - `crates/kynos/src/extract/connection.rs`
 - `crates/kynos/src/http/forwarded.rs`
 - `crates/kynos/src/middleware/cache/mod.rs`
@@ -847,11 +1122,15 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
+- `crates/kynos/src/middleware/stack.rs`
+- `crates/kynos/src/middleware/trace.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`
 - `crates/kynos/src/router/dispatch.rs`
+- `crates/kynos/src/router/group.rs`
 - `crates/kynos/src/router/mod.rs`
+- `crates/kynos/src/router/operation.rs`
 - `crates/kynos/src/schema/constraints.rs`
 - `crates/kynos/src/schema/mod.rs`
 - `crates/kynos/src/schema/registry.rs`
@@ -879,6 +1158,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `tokio-rustls` and `rustls` are named only under `server/tls/` | `mise run containment:check` | `enforced` |
 | compatibility | `matchit` may be named only under `router/` | `mise run containment:check` | `enforced` |
 | compatibility | `socket2` is named only in `server/tcp.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `rustix` is named only in `server/descriptors.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `h2` and `httparse` are never named | `mise run containment:check` | `enforced` |
 | compatibility | `tower`, `tower-layer` and `tower-service` are named only in `unchecked.rs` and under `unchecked/` | `mise run containment:check` | `enforced` |
 | compatibility | `http-body` and `http-body-util` are named only in `http/body.rs`, `http/body/watched.rs`, `middleware/cache/mod.rs`, `response/range/source.rs`, `server/request_body.rs`, `test/body.rs` and `test/mod.rs`, and under `extract/body/`, `middleware/compression/` and `middleware/limits/` | `mise run containment:check` | `enforced` |
@@ -970,11 +1250,12 @@ the application's to assert against its own instrumentation.
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --all-features` over every member whose manifest allows publishing), dedicated CI job | `enforced` |
 | reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate |
-| compatibility | A release pull request, or one labelled `ci:full`, reports whether the API broke, across every feature | `mise run semver:check`, the `API compatibility` job in `full.yml`, comparing the workspace at `--all-features` against the last published version | `partial`: advisory before 1.0 — the verdict goes to the job summary rather than failing the pull request. Pre-1.0 a minor bump is how an intentional break is declared, and the baseline is the *published* version, so one break landed for the next minor release is reported by every later run until that release ships; blocking would put a red mark meaning "the release has not happened yet" on all of them. The job still fails when the tool produces no verdict at all, which is the fail-open hole the release-time copy has. Reaching 1.0, or an explicit change to the `master` ruleset, is what would make it required |
+| compatibility | A release pull request fails on an API break its version does not declare, across every feature; one labelled `ci:full` reports it | `mise run semver:check`, the `API compatibility` job in `full.yml`, comparing the workspace at `--all-features` against the last published version, which reads the release type from the workspace version | `enforced` on a `release-plz-` head, where release-plz has bumped the version: a minor bump declares a break, so what still fails is one no `!` commit declared, behind any flag. `partial` elsewhere: advisory, the verdict going to the job summary, because the version there is the one last published, so one break landed for the next minor release is reported by every later run until that release ships, and blocking would put a red mark meaning "the release has not happened yet" on all of them. Both fail when the tool produces no verdict at all, which is the fail-open hole the release-time copy has |
 | security | No crate in the graph, at any feature, carries a RustSec advisory or is yanked, unless `deny.toml` waives it with a reason | `mise run deny:check` (`cargo deny check`), the `Dependencies` CI job | `enforced`, and blocking. It can fail a pull request that changed no dependency, when an advisory is published against something already locked: that is the point of it. One waiver today, RUSTSEC-2026-0009 in `time`, reached only through the `rcgen` dev-dependency and fixed only above the MSRV |
 | compatibility | Every dependency is under a licence an MIT application can redistribute | `mise run deny:check`, against `deny.toml`'s permissive allow list | `enforced` |
 | reliability | Every dependency comes from crates.io, and no requirement is a wildcard | `mise run deny:check` | `enforced` |
 | reliability | Every declared dependency lower bound builds | `mise run minimal-versions:check` (`cargo -Z direct-minimal-versions`, then `cargo check --workspace --all-features`), the nightly `minimal-versions.yml` job | `partial`: a scheduled job, not a pull-request gate, so a bound a change leaves stale surfaces the next night. Direct dependencies only, the library targets only, and `kynos-profile` excluded: a transitive minimum is another crate's promise, and neither a dev-dependency's bound nor the unpublished harness's reaches an application |
+| reliability | A newer incompatible version of a direct dependency is visible before the version Kynos requires stops receiving fixes | `mise run deps:outdated` (`cargo upgrade --dry-run --incompatible allow` from `cargo-edit`), the nightly `outdated.yml` job, to its job summary and an artifact | `partial`: a report, never a failure, and it files nothing, so a major is seen only by whoever reads the run. Dependabot is `lockfile-only` and never shows one. What adopting it is follows the dependency's tier in [`architecture.md`](architecture.md#what-an-upstream-fix-may-change) |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |

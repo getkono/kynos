@@ -29,6 +29,9 @@ pub(super) struct SchemeArgs {
     pub(super) forbids: Option<LitBool>,
     /// What `carrier = ...` said, if it was written.
     pub(super) carrier: Option<Carrier>,
+    /// `reads = Type`: a header group the carrier reads beside the
+    /// credential, declared on every guarded operation.
+    pub(super) reads: Option<Type>,
     /// The scheme-level `scopes(..)`: values of `scope`.
     pub(super) scopes: Vec<Expr>,
     pub(super) nested: Nested,
@@ -114,6 +117,7 @@ pub(super) fn parse_args(input: &DeriveInput) -> syn::Result<SchemeArgs> {
                 "name" => args.name = Some(meta.value()?.parse()?),
                 "credential" => args.credential = Some(meta.value()?.parse()?),
                 "scope" => args.scope = Some(meta.value()?.parse()?),
+                "reads" => args.reads = Some(meta.value()?.parse()?),
                 "challenge" => args.challenge = Some(meta.value()?.parse()?),
                 "description" => args.description = Some(meta.value()?.parse()?),
                 // A 3.2-only key is refused under 3.1 rather than dropped.

@@ -612,9 +612,9 @@ mod a_multipart_boundary_is_read_past_optional_whitespace {
     /// A stream yielding each of its chunks in turn, then ending, and pending
     /// once before each, as a transport waiting on the next frame does; a
     /// stream always ready would be read whole before any part is parsed.
-    struct Chunks {
-        chunks: std::collections::VecDeque<bytes::Bytes>,
-        ready: bool,
+    pub(super) struct Chunks {
+        pub(super) chunks: std::collections::VecDeque<bytes::Bytes>,
+        pub(super) ready: bool,
     }
 
     impl futures_core::Stream for Chunks {
@@ -905,6 +905,168 @@ mod a_part_disposition_is_read_quote_aware {
         ] {
             assert!(disposition::parse(value).is_err(), "`{value}` was admitted");
         }
+    }
+}
+
+/// `FromMultipart::admit` decides each part from its name before a byte of it
+/// is read: a skipped part never reaches `from_parts`, a refusal ends the read
+/// at that part, and a bounded part is refused at the chunk that crosses its
+/// bound.
+#[cfg(feature = "multipart")]
+mod a_part_is_admitted_before_it_is_read {
+    use crate::{
+        error::rejection::BodyRejection,
+        extract::body::multipart::{Admission, FromMultipart, MultipartForm, Part},
+        http::{HeaderValue, Request, body::Body, header},
+        schema::{Schema, registry::Registry},
+    };
+
+    use super::a_multipart_boundary_is_read_past_optional_whitespace::Chunks;
+
+    /// `TEXT_PART_LIMIT` is the bound a parameter's head is held to by
+    /// default, and stays that figure if the default moves.
+    #[cfg(feature = "server")]
+    #[test]
+    fn a_text_part_is_bounded_as_a_default_head_is() {
+        let head = crate::server::protocol::http1::Http1Config::default().max_buffer_size;
+        assert_eq!(
+            Some(crate::extract::body::multipart::TEXT_PART_LIMIT),
+            u64::try_from(head).ok()
+        );
+    }
+
+    /// Every part read, as `(name, bytes)`; `skipped` is dropped, `refused`
+    /// ends the read, and `small` holds at most [`SMALL`] octets.
+    #[derive(Debug, PartialEq, Eq)]
+    struct Admitted(Vec<(String, bytes::Bytes)>);
+
+    /// The bound `small` is read under.
+    const SMALL: u64 = 4;
+
+    impl FromMultipart for Admitted {
+        fn from_parts(parts: Vec<Part>) -> Result<Self, BodyRejection> {
+            Ok(Self(
+                parts
+                    .into_iter()
+                    .map(|part| (part.name, part.bytes))
+                    .collect(),
+            ))
+        }
+
+        fn admit(name: &str) -> Result<Admission, BodyRejection> {
+            match name {
+                "skipped" => Ok(Admission::Skip),
+                "refused" => Err(BodyRejection::Syntax {
+                    detail: "refused".to_owned(),
+                }),
+                "small" => Ok(Admission::Read { limit: Some(SMALL) }),
+                _ => Ok(Admission::Read { limit: None }),
+            }
+        }
+    }
+
+    impl Schema for Admitted {
+        fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+            kynos_openapi::Schema::any()
+        }
+    }
+
+    /// What `MultipartForm` makes of `body`.
+    async fn read(body: Body) -> Result<Admitted, BodyRejection> {
+        let mut request = Request::new(body);
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("multipart/form-data; boundary=x"),
+        );
+        super::extract::<MultipartForm<Admitted>>(request)
+            .await
+            .map(|MultipartForm(admitted)| admitted)
+    }
+
+    /// One part named `name` holding `value`, delimiter included.
+    fn part(name: &str, value: &str) -> String {
+        format!("--x\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\r\n{value}\r\n")
+    }
+
+    /// `body` whole, in one frame.
+    fn whole(body: String) -> Body {
+        Body::from_bytes(bytes::Bytes::from(body))
+    }
+
+    #[tokio::test]
+    async fn a_skipped_part_never_reaches_the_type() {
+        let body = [part("a", "1"), part("skipped", "2"), part("b", "3")].concat() + "--x--\r\n";
+        assert_eq!(
+            read(whole(body)).await.expect("a well-formed body"),
+            Admitted(vec![
+                ("a".to_owned(), bytes::Bytes::from_static(b"1")),
+                ("b".to_owned(), bytes::Bytes::from_static(b"3")),
+            ])
+        );
+    }
+
+    /// The refused part's octets never end and no closing delimiter follows,
+    /// which reading it would answer with the parser's own 400.
+    #[tokio::test]
+    async fn a_refused_part_ends_the_read_unread() {
+        let body = part("a", "1")
+            + "--x\r\nContent-Disposition: form-data; name=\"refused\"\r\n\r\nunterminated";
+        let rejection = read(whole(body)).await;
+        assert!(
+            matches!(&rejection, Err(BodyRejection::Syntax { detail }) if detail == "refused"),
+            "{rejection:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_bounded_part_is_read_at_its_bound_and_refused_past_it() {
+        let at = [part("small", "abcd"), "--x--\r\n".to_owned()].concat();
+        assert_eq!(
+            read(whole(at)).await.expect("a part at its bound"),
+            Admitted(vec![(
+                "small".to_owned(),
+                bytes::Bytes::from_static(b"abcd")
+            )])
+        );
+
+        let past = [part("small", "abcde"), "--x--\r\n".to_owned()].concat();
+        let rejection = read(whole(past)).await;
+        assert!(
+            matches!(rejection, Err(BodyRejection::TooLarge { limit: SMALL })),
+            "{rejection:?}"
+        );
+    }
+
+    /// One octet per frame, so the bound is crossed in the loop that joins a
+    /// part's chunks rather than by its first chunk; an unbounded part beside
+    /// it is read whole past the same length.
+    #[tokio::test]
+    async fn a_bound_counts_every_chunk_of_a_part() {
+        let frames = |body: String| {
+            Body::from_stream(Chunks {
+                chunks: body
+                    .bytes()
+                    .map(|octet| bytes::Bytes::copy_from_slice(&[octet]))
+                    .collect(),
+                ready: false,
+            })
+        };
+
+        let unbounded = [part("a", "abcdefgh"), "--x--\r\n".to_owned()].concat();
+        assert_eq!(
+            read(frames(unbounded)).await.expect("an unbounded part"),
+            Admitted(vec![(
+                "a".to_owned(),
+                bytes::Bytes::from_static(b"abcdefgh")
+            )])
+        );
+
+        let past = [part("small", "abcdefgh"), "--x--\r\n".to_owned()].concat();
+        let rejection = read(frames(past)).await;
+        assert!(
+            matches!(rejection, Err(BodyRejection::TooLarge { limit: SMALL })),
+            "{rejection:?}"
+        );
     }
 }
 

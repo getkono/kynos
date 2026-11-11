@@ -11,6 +11,7 @@
 mod build;
 mod describe;
 mod install;
+mod map;
 
 use error::RouterError;
 use install::{catches, error_at, path_location, unroutable};
@@ -43,7 +44,7 @@ use crate::{
         Interceptor, Observer,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
+        stack::{self, CompatibleStack, CompatibleWith, Cons, Flatten},
     },
     router::{
         dispatch::{Dispatch, EndpointTerminal, PathEntry},
@@ -57,6 +58,9 @@ use crate::{
     schema::registry::Registry,
     security::SecurityScheme,
 };
+
+/// An application's edit to the assembled description.
+pub(crate) type DocumentEdit = Box<dyn Fn(&mut Document) + Send + Sync>;
 
 /// A `ShortCircuit`'s two halves, compared once the registry exists.
 pub(crate) type ShortCircuitCheck = fn(&mut Registry) -> Option<RouterError>;
@@ -159,7 +163,11 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) method_not_allowed: Option<FallbackPolicy>,
     pub(crate) trailing_slashes: Option<TrailingSlashPolicy>,
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
+    /// What [`problem_members`](Router::problem_members) installed.
+    pub(crate) problem_members: Option<crate::error::members::Hook>,
     pub(crate) deny_unchecked_schemas: bool,
+    /// Each [`map_openapi`](Router::map_openapi) edit, in call order.
+    pub(crate) document_edits: Vec<DocumentEdit>,
     /// The waivers taken here: routes no template expresses, and layers whose
     /// effect nothing declares.
     #[cfg(feature = "unchecked")]
@@ -217,7 +225,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: None,
             trailing_slashes: None,
             trusted_proxies: None,
+            problem_members: None,
             deny_unchecked_schemas: false,
+            document_edits: Vec::new(),
             #[cfg(feature = "unchecked")]
             unchecked: crate::unchecked::Unchecked::default(),
             _private: PhantomData,
@@ -248,7 +258,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
+            problem_members: self.problem_members,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
+            document_edits: self.document_edits,
             #[cfg(feature = "unchecked")]
             unchecked: self.unchecked,
             _private: PhantomData,
@@ -366,6 +378,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.method_not_allowed.is_some(), "method_not_allowed"),
             (other.trailing_slashes.is_some(), "trailing_slashes"),
             (other.trusted_proxies.is_some(), "trusted_proxies"),
+            (other.problem_members.is_some(), "problem_members"),
+            // An edit sees the whole document, which only the root assembles.
+            (!other.document_edits.is_empty(), "map_openapi"),
         ] {
             if set {
                 self.violations
@@ -556,14 +571,20 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         #[cfg(feature = "unchecked")]
         let first = self.mounted.len();
 
-        self.absorb(
-            endpoints,
-            &prefix,
-            &tags,
-            &interceptors,
-            guard_first,
-            catches::<GP>(),
-        );
+        // Each operation takes only the interceptors its method is covered by,
+        // which is also what keeps the others off its description.
+        for endpoint in endpoints {
+            let (covering, guard_at) =
+                group::covering(&interceptors, guard_first, endpoint.method());
+            self.absorb(
+                vec![endpoint],
+                &prefix,
+                &tags,
+                &covering,
+                guard_at,
+                catches::<GP>(),
+            );
+        }
 
         // A group's layers cover only its operations, so they land per endpoint.
         #[cfg(feature = "unchecked")]
@@ -678,6 +699,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // this also covers every scope already mounted.
         let () = <I as CompatibleWith<N, C>>::CHECK;
         let () = <S as CompatibleWith<N, C>>::CHECK;
+        const { stack::unscoped::<C, N>() };
 
         let mut router: Router<C, P, Cons<N, I>, S> = self.retype();
         router.interceptors.push(Arc::new(interceptor));
@@ -801,6 +823,30 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self
     }
 
+    /// Adds `M`'s extension members to every problem Kynos renders itself,
+    /// and declares them on every response describing one.
+    ///
+    /// Reaches each rejection a handler's argument or guard raises, the 400
+    /// an interceptor's `Reads` answers with, an asset endpoint's 416, the
+    /// 404, 405 and 501 under [`FallbackPolicy::Problem`], a CORS preflight's
+    /// 405 and 501, and the 400 a `QUERY` naming no media type gets. An
+    /// application's own `#[derive(ApiError)]` type carries its own members;
+    /// a rejection or `Delivery` a handler returns, an interceptor's own
+    /// refusal and a recovered panic's 500 carry none. See
+    /// [`ProblemMembers`] for what `M` must describe.
+    ///
+    /// One application-level policy, so it is set on the root router: on a
+    /// router that is then nested or merged, it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    /// Calling it twice keeps the second.
+    ///
+    /// [`ProblemMembers`]: crate::error::members::ProblemMembers
+    #[must_use]
+    pub fn problem_members<M: crate::error::members::ProblemMembers>(mut self) -> Self {
+        self.problem_members = Some(crate::error::members::Hook::of::<M>());
+        self
+    }
+
     /// Turns unconstrained-schema warnings into build errors.
     ///
     /// [`Unchecked`](crate::schema::unchecked::Unchecked) is honest but weak.
@@ -812,6 +858,41 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     #[must_use]
     pub fn deny_unchecked_schemas(mut self) -> Self {
         self.deny_unchecked_schemas = true;
+        self
+    }
+
+    /// Edits the description after it is assembled and before it is checked,
+    /// wherever it is produced: [`validate`](Router::validate),
+    /// [`openapi`](Router::openapi), [`openapi_as`](Router::openapi_as) and
+    /// [`build`](Router::build) alike.
+    ///
+    /// So the document a built [`Service`] serves, validates responses against
+    /// and publishes through [`docs`](Router::docs) is the one the application
+    /// publishes, and an edit that breaks it fails the build with every
+    /// violation it caused. Each call adds an edit, and edits run in call
+    /// order.
+    ///
+    /// An edit may describe an operation differently, but the operations
+    /// themselves are the router's: adding, removing or moving one, changing
+    /// its `operationId`, adding or removing its security requirement,
+    /// changing the media types its `QUERY` body accepts, or removing an
+    /// `x-kynos-opaque` marker is a [`MappedOperation`](RouterError::MappedOperation) violation. The
+    /// version the document claims is chosen after the edit, from what it
+    /// uses, so the `openapi` field an edit writes is not kept.
+    ///
+    /// Set on the root router: an edit sees the whole document, so on a
+    /// router that is then nested or merged it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    ///
+    /// ```no_run
+    /// let router = kynos::Router::<()>::new().map_openapi(|document| {
+    ///     document.info.summary = Some("Every pet, every owner".to_owned());
+    /// });
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn map_openapi(mut self, edit: impl Fn(&mut Document) + Send + Sync + 'static) -> Self {
+        self.document_edits.push(Box::new(edit));
         self
     }
 }

@@ -24,8 +24,8 @@
 //!
 //! **Both rows are held exactly, and neither of them is a ceiling.**
 //! [`alloc.rs`](alloc.rs)'s numbers are ceilings because they record a
-//! requirement that is not met and are meant to fall. These two are not going
-//! anywhere: zero is the floor and the reason for it is a zero-sized type, and
+//! requirement decided against, and one falls whenever a block it counts stops
+//! being kept. These two are not going anywhere: zero is the floor and the reason for it is a zero-sized type, and
 //! the one is the whole of what erasing a body that is not empty does. A count
 //! that came in *under* either row would mean the boxing had stopped happening,
 //! which contradicts the verdict exactly as much as a count over it does, so
