@@ -76,7 +76,9 @@ results, so none of that advice is here, and nothing below tunes a cost.
   queue more than its value, 4096 by default: it caps the queue
   `listen_backlog` asks for. It belongs to the network namespace, so a
   container sets it in its own (`docker run --sysctl`, a pod's
-  `securityContext.sysctls`) rather than inheriting the host's.
+  `securityContext.sysctls`) rather than inheriting the host's. Kubernetes
+  classes it as an unsafe sysctl, so the kubelet rejects such a pod unless its
+  node lists the sysctl in `--allowed-unsafe-sysctls`.
 - Leave `server::Server::accept_shards`, on Linux and Android, at one until
   your own measurement shows accepting is the bottleneck. Each listener has one accept task, which
   is enough unless connections are both many and short-lived. Shards are
