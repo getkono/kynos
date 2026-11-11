@@ -133,14 +133,7 @@ where
                     "`{}` sets `FALLIBLE = false` and rejected a request",
                     std::any::type_name::<I::Reads>(),
                 );
-                // Rendered while the request is in hand, so it carries the
-                // members the router installs.
-                let refused = served(
-                    IntoProblem::into_problem(rejection),
-                    ProblemOrigin::HeaderField,
-                    Head::from(&request),
-                );
-                return Box::pin(std::future::ready(Err::<Continued, _>(refused)));
+                return refuse(rejection, request);
             }
         };
 
@@ -150,6 +143,27 @@ where
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+}
+
+/// Renders an interceptor's header rejection while the request is in hand,
+/// so it carries the members the router installs.
+///
+/// Takes the request by value: a borrow of it in `intercept` changes the
+/// codegen of the path that moves it, even where this arm is dead, at a cost
+/// paid on every layer of every request.
+#[cold]
+#[inline(never)]
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "moving the request in is the point; see above"
+)]
+fn refuse<'a>(rejection: HeaderRejection, request: Request) -> Intercepted<'a> {
+    let refused = served(
+        IntoProblem::into_problem(rejection),
+        ProblemOrigin::HeaderField,
+        Head::from(&request),
+    );
+    Box::pin(std::future::ready(Err::<Continued, _>(refused)))
 }
 
 /// The end of a chain: whatever runs when no interceptor is left.
