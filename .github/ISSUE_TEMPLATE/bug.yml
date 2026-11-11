@@ -9,8 +9,8 @@ body:
       value: |
         Three things this tracker does not treat as bugs:
 
-        - **An unimplemented surface.** The API is a pre-v1 skeleton and parts of
-          it are `todo!()`-bodied by design.
+        - **An unimplemented surface.** Something neither the README nor
+          `docs/` says Kynos does is a feature request, not a bug.
         - **A deliberate refusal.** The README's anti-patterns list eleven things
           Kynos declines to do on purpose.
         - **A rule you disagree with.** Everything under `docs/` is normative,
