@@ -145,6 +145,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Items", "macros/schema_item_bound_on_a_string.stderr"),
         ("Languages", "traits/languages.stderr"),
         ("MapKey", "traits/map_key.stderr"),
+        ("Message", "traits/protobuf_message.stderr"),
         ("NamedInstantiation", "traits/named_instantiation.stderr"),
         (
             "NumberBound",

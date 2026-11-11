@@ -261,9 +261,15 @@ keep:
   their types under `schema/impls/`, each behind a feature naming its major, so
   a new major is additive (the scalar-format exception above).
 
-One crate is public API today without being in the allowance, and it has an
-issue moving it down a tier: `prost` as the `T: prost::Message` bound on
-`Protobuf<T>` ([#1215](https://github.com/getkono/kynos/issues/1215)).
+No crates are public API today without being in the allowance.
+
+**Owning the contract instead:** where the only remedy a version-suffixed
+feature leaves is two features whose blanket impls would overlap, Kynos owns
+the trait and the application's own dependency implements it through a
+derive. `Protobuf<T>` is bounded by Kynos's own `protobuf::Message`, and
+`#[derive(ProtobufMessage)]` expands to calls on `::prost` resolved in the
+application's crate, so Kynos compiles no `prost` and a `prost` release is
+the application's to take.
 
 `mise run api:check` reads the list and that paragraph, the count included,
 and holds `cargo public-api --all-features` for `kynos-openapi` and `kynos` to
@@ -302,7 +308,7 @@ dependency is a change to this list and to a snapshot, both in review;
 | JSON | `serde_json` | ambient | public API | built |
 | Form codec | `serde_html_form` | [`extract/body/form.rs`](../crates/kynos/src/extract/body/form.rs), [`response/codec/form.rs`](../crates/kynos/src/response/codec/form.rs), [`test/mod.rs`](../crates/kynos/src/test/mod.rs) | auxiliary | built |
 | Multipart codec | `multer` | [`extract/body/multipart.rs`](../crates/kynos/src/extract/body/multipart.rs) | auxiliary | built |
-| Protobuf codec | `prost` | [`extract/body/protobuf.rs`](../crates/kynos/src/extract/body/protobuf.rs), [`response/codec/protobuf.rs`](../crates/kynos/src/response/codec/protobuf.rs) | public API | built |
+| Protobuf codec | `prost` | never in `kynos`: only [`kynos-macros/derive/protobuf.rs`](../crates/kynos-macros/src/derive/protobuf.rs), as the path `#[derive(ProtobufMessage)]` emits into the application's crate, which depends on it; a dev-dependency for the tests and examples | auxiliary | built |
 | Scalar formats, identifiers | `uuid` | [`schema/impls/identifier.rs`](../crates/kynos/src/schema/impls/identifier.rs) | public API | built |
 | Scalar formats, dates and times | `chrono`, `jiff` | [`schema/impls/temporal/`](../crates/kynos/src/schema/impls/temporal/) | public API | built |
 | Scalar formats, decimals | `rust_decimal`, `bigdecimal` | [`schema/impls/decimal/`](../crates/kynos/src/schema/impls/decimal/) | public API | built |

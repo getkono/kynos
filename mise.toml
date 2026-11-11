@@ -406,6 +406,61 @@ cargo +"$KYNOS_NIGHTLY" update -Z direct-minimal-versions
 cargo +"$KYNOS_NIGHTLY" check --workspace --all-features --exclude kynos-profile
 '''
 
+[tasks."deps:outdated"]
+description = "List every direct dependency with a newer incompatible version"
+# Dependabot is `lockfile-only`, so it never rewrites a requirement and a new
+# major of a direct dependency reaches nobody's screen. This is that signal,
+# reported and never failed on: its tier in docs/architecture.md decides what
+# adopting it is. `--ignore-rust-version`, so a major above the MSRV is listed
+# rather than hidden; `--pinned` lists an `=` requirement too. A dry run
+# writes nothing. `target/outdated-report.md` is what CI publishes.
+#
+# `cargo-edit` publishes no release binaries, so the pin is task-scoped, as
+# `cost:features`'s `cargo-llvm-lines` is.
+tools = { "cargo:cargo-edit" = "0.13.14" }
+run = '''
+set -eu
+raw="$(mktemp)"
+trap 'rm -f "$raw"' EXIT
+
+# Not through `tee`, whose exit status would stand in for the tool's.
+status=0
+cargo upgrade --dry-run --recursive false --ignore-rust-version \
+  --compatible ignore --incompatible allow --pinned allow >"$raw" 2>&1 \
+  || status=$?
+cat "$raw"
+if [ "$status" -ne 0 ]; then
+  exit "$status"
+fi
+
+# Keep only the tables: a `name` header through its last row. Progress
+# (`Checking`), the indented `compatible:`/`latest:` counts and the trailing
+# `note:`/`warning:` lines print on every run, so "None." is decided by whether
+# any table printed, not by what a filter left over.
+tables="$(sed -E 's/\x1b\[[0-9;]*m//g' "$raw" | awk '
+  /^name[[:space:]]/ { in_table = 1 }
+  in_table && /^([[:space:]]|note:|warning:|$)/ { in_table = 0 }
+  in_table { print }
+')"
+
+mkdir -p target
+{
+  echo "## Direct dependencies with a newer incompatible version"
+  echo
+  echo "Report only. Adopting one is a \`chore(deps)\` for an auxiliary or"
+  echo "core crate and a \`!\` commit for a public API one; the tiers are"
+  echo "docs/architecture.md's."
+  echo
+  if [ -n "$tables" ]; then
+    echo '```'
+    printf '%s\n' "$tables"
+    echo '```'
+  else
+    echo "None."
+  fi
+} >target/outdated-report.md
+'''
+
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
 # Rebuilds each crate from its tarball, the only check that sees a file the
@@ -441,8 +496,10 @@ description = "Compare the public API against the last published release"
 # behind a flag would surface at release; this compares `--all-features` on
 # `master` against the last published version. The report's verdict decides
 # the exit: a break fails unless `--advisory`, which is how CI reports rather
-# than blocks, and no verdict at all always fails. `semver-summary.md` records
-# the verdict for CI's job summary.
+# than blocks outside a release branch, and no verdict at all always fails. The
+# tool reads the release type from the workspace version, so on a release
+# branch a break is one that version does not declare. `semver-summary.md`
+# records the verdict for CI's job summary.
 usage = '''
 flag "--advisory" help="Pass on a break; still fail when there is no verdict"
 '''
@@ -474,11 +531,17 @@ fi
   if [ "$verdict" = clean ]; then
     echo "No break against the published baseline."
   else
-    echo "Breaks against the published baseline, listed below."
+    echo "Breaks against the published baseline, listed below, that the"
+    echo "workspace version does not declare."
     echo
-    echo "Pre-1.0, a minor bump is how a break is declared, so this is"
-    echo "evidence for the release review rather than a failure of this"
-    echo "pull request."
+    if [ "${usage_advisory:-false}" = true ]; then
+      echo "A minor bump is how a break is declared, and the release pull"
+      echo "request makes it, so this is evidence for the release review"
+      echo "rather than a failure of this pull request."
+    else
+      echo "Declare them with a minor bump, which a \`!\` commit gives the"
+      echo "release pull request, or remove them."
+    fi
   fi
   echo
   echo '```'

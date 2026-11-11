@@ -18,6 +18,7 @@ pub(crate) mod multipart;
 pub(crate) mod param_value;
 pub(crate) mod params;
 pub(crate) mod path_params;
+pub(crate) mod protobuf;
 pub(crate) mod provider;
 pub(crate) mod query_params;
 pub(crate) mod reply;

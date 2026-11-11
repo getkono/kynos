@@ -45,7 +45,8 @@ fn every_derive_has_a_witness() {
     /// Every derive witnessed in `derives.rs`. `Provider` is exercised by
     /// `the_provider_derive_supplies_every_field_it_was_not_told_to_skip`,
     /// `ApiError` and `Reply` through `implements_responses`,
-    /// `MultipartForm` through `implements_multipart`, and the rest by
+    /// `MultipartForm` through `implements_multipart`, `ProtobufMessage`
+    /// through `implements_protobuf_message`, and the rest by
     /// `every_derive_implements_its_trait`.
     const WITNESSED: &[&str] = &[
         "ApiError",
@@ -54,6 +55,7 @@ fn every_derive_has_a_witness() {
         "MultipartForm",
         "ParamValue",
         "PathParams",
+        "ProtobufMessage",
         "Provider",
         "QueryParams",
         "Reply",

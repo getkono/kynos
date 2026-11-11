@@ -277,12 +277,24 @@ async fn binary_writes_its_bytes_verbatim_under_the_type_it_was_given() {
 #[cfg(feature = "protobuf")]
 #[tokio::test]
 async fn protobuf_writes_the_encoded_message_and_states_its_type() {
-    use crate::extract::body::protobuf::Protobuf;
+    use crate::extract::body::{
+        codec::DecodeError,
+        protobuf::{Message, Protobuf},
+    };
 
-    #[derive(Clone, PartialEq, prost::Message)]
+    /// Field 1 as a one-octet varint, encoded by hand.
     struct Tagged {
-        #[prost(int32, tag = "1")]
-        value: i32,
+        value: u8,
+    }
+
+    impl Message for Tagged {
+        fn decode(_: bytes::Bytes) -> Result<Self, DecodeError> {
+            Err(DecodeError::Syntax("never read".to_owned()))
+        }
+
+        fn encode(&self) -> Vec<u8> {
+            vec![0x08, self.value]
+        }
     }
 
     let response = Protobuf(Tagged { value: 7 }).into_response();

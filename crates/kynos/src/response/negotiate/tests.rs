@@ -394,9 +394,8 @@ fn a_representation_is_offered_under_the_media_type_it_describes() {
     offered_under_what_it_describes::<crate::extract::body::form::Form<String>>();
     #[cfg(feature = "multipart")]
     offered_under_what_it_describes::<crate::extract::body::multipart::MultipartForm<Fields>>();
-    // `()` is the empty message, which `prost` implements `Message` for.
     #[cfg(feature = "protobuf")]
-    offered_under_what_it_describes::<crate::extract::body::protobuf::Protobuf<()>>();
+    offered_under_what_it_describes::<crate::extract::body::protobuf::Protobuf<Empty>>();
 }
 
 /// The handler [`negotiation_end_to_end`] mounts.
@@ -544,6 +543,28 @@ impl crate::schema::Schema for Fields {
 #[cfg(feature = "multipart")]
 impl crate::response::codec::multipart::IntoMultipart for Fields {
     fn into_parts(self) -> Vec<crate::extract::body::multipart::Part> {
+        Vec::new()
+    }
+}
+
+/// The empty protobuf message, which is all an offer's description needs.
+#[cfg(feature = "protobuf")]
+struct Empty;
+
+#[cfg(feature = "protobuf")]
+impl crate::schema::Schema for Empty {
+    fn schema(_registry: &mut Registry) -> kynos_openapi::Schema {
+        kynos_openapi::Schema::any()
+    }
+}
+
+#[cfg(feature = "protobuf")]
+impl crate::extract::body::protobuf::Message for Empty {
+    fn decode(_: bytes::Bytes) -> Result<Self, crate::extract::body::codec::DecodeError> {
+        Ok(Self)
+    }
+
+    fn encode(&self) -> Vec<u8> {
         Vec::new()
     }
 }

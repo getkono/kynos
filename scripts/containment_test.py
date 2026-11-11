@@ -1946,7 +1946,9 @@ class Main(unittest.TestCase):
              "`futures-core` is named only"),
             ("crates/kynos/src/extract/body/form.rs", "use multer::Multipart;",
              "`multer` is named only"),
-            ("crates/kynos/src/response/codec/form.rs", "use prost::Message;",
+            # The codec the derive's messages travel through, which named it
+            # until `Protobuf<T>` was bounded by Kynos's own `Message`.
+            ("crates/kynos/src/extract/body/protobuf.rs", "use prost::Message;",
              "`prost` is named only"),
             ("crates/kynos/src/schema/impls/temporal/mod.rs", "use uuid1::Uuid;",
              "`uuid1` is named only"),

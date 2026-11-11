@@ -44,9 +44,10 @@ Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `gungraun` over Valgrind, `cargo-fuzz`, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature — `cargo-deny`, and `cargo-public-api` on `KYNOS_NIGHTLY`'s
-rustdoc. Not yet present: `cargo-udeps`. `criterion` is
-not on this list and will not be: benchmarks live in `kynos-bench`.
+every feature — `cargo-deny`, `cargo-public-api` on `KYNOS_NIGHTLY`'s
+rustdoc, and `cargo-edit`'s `cargo upgrade`, as a report. Not yet present:
+`cargo-udeps`. `criterion` is not on this list and will not be: benchmarks live
+in `kynos-bench`.
 
 ## Thresholds
 
@@ -479,8 +480,9 @@ decision rather than a deferral.** The figures are
 ceiling at a measured value, but a ceiling is only worth setting where the
 quantity it guards is one this repository controls, and this one is mostly not:
 each delta is the codec's code *and* its dependency's — `serde_json`,
-`serde_html_form`, `multer`, `prost`, `async-compression` — plus the payload
-type's two derives. A ceiling over that would fail on an upstream release that
+`serde_html_form`, `multer`, `prost` (the application's own, which its
+messages' derives name), `async-compression` — plus the payload type's
+derives. A ceiling over that would fail on an upstream release that
 grew `multer` and pass through a Kynos extractor that doubled, which is the
 gate-that-cannot-fail-honestly [`performance.md`](performance.md#the-boundary)
 refuses. What the committed table buys instead is a drift column: the same
@@ -1166,7 +1168,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs`, `test/body.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `prost` is named only in `kynos-macros/derive/protobuf.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `uuid1` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `chrono04` and `jiff02` are named only under `schema/impls/temporal/` | `mise run containment:check` | `enforced` |
 | compatibility | `rust_decimal1` and `bigdecimal04` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
@@ -1249,11 +1251,12 @@ the application's to assert against its own instrumentation.
 | reliability | Every crate's published archive builds from a pristine extraction, with every feature | `mise run publish:check` (`cargo package --all-features` over every member whose manifest allows publishing), dedicated CI job | `enforced` |
 | reliability | Nothing a package publishes reads a path outside that package | `mise run containment:check`, resolving every `include_bytes!`, `include_str!` and `CARGO_MANIFEST_DIR` path literal against the package that holds it, and exempting only what the manifest's `exclude` names | `enforced`. `publish:check` cannot see this: its verify step builds the library, not the test targets, so a file the archive omits and a test target names resolves in the working tree and nowhere else |
 | compatibility | A release reports whether its API broke | `cargo-semver-checks` via release-plz, verdict in the release pull request body | `partial`: default features only, and fail-open — it is evidence for the reviewer, not a gate |
-| compatibility | A release pull request, or one labelled `ci:full`, reports whether the API broke, across every feature | `mise run semver:check`, the `API compatibility` job in `full.yml`, comparing the workspace at `--all-features` against the last published version | `partial`: advisory before 1.0 — the verdict goes to the job summary rather than failing the pull request. Pre-1.0 a minor bump is how an intentional break is declared, and the baseline is the *published* version, so one break landed for the next minor release is reported by every later run until that release ships; blocking would put a red mark meaning "the release has not happened yet" on all of them. The job still fails when the tool produces no verdict at all, which is the fail-open hole the release-time copy has. Reaching 1.0, or an explicit change to the `master` ruleset, is what would make it required |
+| compatibility | A release pull request fails on an API break its version does not declare, across every feature; one labelled `ci:full` reports it | `mise run semver:check`, the `API compatibility` job in `full.yml`, comparing the workspace at `--all-features` against the last published version, which reads the release type from the workspace version | `enforced` on a `release-plz-` head, where release-plz has bumped the version: a minor bump declares a break, so what still fails is one no `!` commit declared, behind any flag. `partial` elsewhere: advisory, the verdict going to the job summary, because the version there is the one last published, so one break landed for the next minor release is reported by every later run until that release ships, and blocking would put a red mark meaning "the release has not happened yet" on all of them. Both fail when the tool produces no verdict at all, which is the fail-open hole the release-time copy has |
 | security | No crate in the graph, at any feature, carries a RustSec advisory or is yanked, unless `deny.toml` waives it with a reason | `mise run deny:check` (`cargo deny check`), the `Dependencies` CI job | `enforced`, and blocking. It can fail a pull request that changed no dependency, when an advisory is published against something already locked: that is the point of it. One waiver today, RUSTSEC-2026-0009 in `time`, reached only through the `rcgen` dev-dependency and fixed only above the MSRV |
 | compatibility | Every dependency is under a licence an MIT application can redistribute | `mise run deny:check`, against `deny.toml`'s permissive allow list | `enforced` |
 | reliability | Every dependency comes from crates.io, and no requirement is a wildcard | `mise run deny:check` | `enforced` |
 | reliability | Every declared dependency lower bound builds | `mise run minimal-versions:check` (`cargo -Z direct-minimal-versions`, then `cargo check --workspace --all-features`), the nightly `minimal-versions.yml` job | `partial`: a scheduled job, not a pull-request gate, so a bound a change leaves stale surfaces the next night. Direct dependencies only, the library targets only, and `kynos-profile` excluded: a transitive minimum is another crate's promise, and neither a dev-dependency's bound nor the unpublished harness's reaches an application |
+| reliability | A newer incompatible version of a direct dependency is visible before the version Kynos requires stops receiving fixes | `mise run deps:outdated` (`cargo upgrade --dry-run --incompatible allow` from `cargo-edit`), the nightly `outdated.yml` job, to its job summary and an artifact | `partial`: a report, never a failure, and it files nothing, so a major is seen only by whoever reads the run. Dependabot is `lockfile-only` and never shows one. What adopting it is follows the dependency's tier in [`architecture.md`](architecture.md#what-an-upstream-fix-may-change) |
 | reliability | Every reachable feature combination compiles | `mise run features:check` (`cargo hack --feature-powerset`) | `enforced` |
 | reliability | Every test target compiles and runs at baseline features, not only `--all-features` | `mise run test:baseline` | `enforced` |
 | reliability | Every test target is built at the feature sets its own `#[cfg]` gates decide, not only at all-on, default and baseline | `mise run lint:codecs`, six `-p kynos --all-targets` Clippy runs over `openapi31 + macros` and each optional codec in turn | `enforced` for the codec flags, which is where a per-feature-gated target lives today; a target gated on some other flag would need its set added to that list |

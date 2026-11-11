@@ -271,7 +271,7 @@ derives are redundant.
 Coupling them would be a real narrowing, and the examples already show what it
 would break:
 
-- `protobuf.rs` derives `prost::Message` and `Schema` with no serde at all. A
+- `protobuf.rs` derives `prost::Message`, `ProtobufMessage` and `Schema` with no serde at all. A
   described type is not always a serde type.
 - `payloads.rs` derives `Schema` and `MultipartForm` for a multipart body, and
   no serde derive: a multipart payload is decoded part by part rather than

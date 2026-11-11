@@ -1191,7 +1191,7 @@ mod protobuf {
     };
     use prost::Message as _;
 
-    #[derive(Clone, PartialEq, prost::Message, Schema)]
+    #[derive(Clone, PartialEq, prost::Message, kynos::ProtobufMessage, Schema)]
     struct Batch {
         #[prost(string, tag = "1")]
         #[schema(max_length = 3)]

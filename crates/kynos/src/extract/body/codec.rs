@@ -148,7 +148,7 @@ pub enum DecodeError {
 /// draws it.
 // By value to fit `map_err`.
 #[allow(clippy::needless_pass_by_value)]
-fn rejection(error: DecodeError) -> BodyRejection {
+pub(super) fn rejection(error: DecodeError) -> BodyRejection {
     match error {
         DecodeError::Syntax(detail) => BodyRejection::Syntax { detail },
         DecodeError::Data(detail) => BodyRejection::schema_at(String::new(), detail),

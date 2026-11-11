@@ -165,6 +165,11 @@ struct Upload {
     name: String,
 }
 
+/// The empty message.
+#[cfg(feature = "protobuf")]
+#[derive(Clone, PartialEq, prost::Message, kynos::ProtobufMessage, Schema)]
+struct Empty {}
+
 #[cfg(all(feature = "json", feature = "openapi32"))]
 #[derive(Schema, serde::Deserialize)]
 struct Reading {
@@ -227,8 +232,7 @@ witnesses! {
 
     // A streamed body rejects with the same type, which is what makes a
     // mid-stream failure a status the operation already declares rather than
-    // a mechanism of its own. `()` is the empty message, which `prost`
-    // implements `Message` for.
+    // a mechanism of its own.
     fn a_body_extractor_rejects_with_the_body_type {
         body_rejects_with(BodyRejection, (), Text);
         body_rejects_with(
@@ -259,7 +263,7 @@ witnesses! {
             kynos::extract::body::multipart::MultipartForm<Upload>
         );
         #[cfg(feature = "protobuf")]
-        body_rejects_with(BodyRejection, (), kynos::extract::body::protobuf::Protobuf<()>);
+        body_rejects_with(BodyRejection, (), kynos::extract::body::protobuf::Protobuf<Empty>);
         #[cfg(all(feature = "json", feature = "openapi32"))]
         body_rejects_with(
             BodyRejection,
