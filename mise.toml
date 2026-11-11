@@ -433,6 +433,16 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 
+# Keep only the tables: a `name` header through its last row. Progress
+# (`Checking`), the indented `compatible:`/`latest:` counts and the trailing
+# `note:`/`warning:` lines print on every run, so "None." is decided by whether
+# any table printed, not by what a filter left over.
+tables="$(sed -E 's/\x1b\[[0-9;]*m//g' "$raw" | awk '
+  /^name[[:space:]]/ { in_table = 1 }
+  in_table && /^([[:space:]]|note:|warning:|$)/ { in_table = 0 }
+  in_table { print }
+')"
+
 mkdir -p target
 {
   echo "## Direct dependencies with a newer incompatible version"
@@ -441,11 +451,13 @@ mkdir -p target
   echo "core crate and a \`!\` commit for a public API one; the tiers are"
   echo "docs/architecture.md's."
   echo
-  echo '```'
-  sed -E 's/\x1b\[[0-9;]*m//g' "$raw" \
-    | grep -vE '^[[:space:]]*Checking |^note: Re-run |^warning: aborting upgrade' \
-    || echo "None."
-  echo '```'
+  if [ -n "$tables" ]; then
+    echo '```'
+    printf '%s\n' "$tables"
+    echo '```'
+  else
+    echo "None."
+  fi
 } >target/outdated-report.md
 '''
 
