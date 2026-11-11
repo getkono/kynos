@@ -144,7 +144,9 @@ the graph.
   the bound on this.
 - Features are additive only.
 - Macros expand to readable code and carry user spans.
-- Ship 1.0, freeze the core, and put subsequent velocity into satellite crates.
+- Freeze the core, and put subsequent velocity into satellite crates. The
+  version stays `0.x` throughout, for the security reason
+  [`releasing.md`](releasing.md#versioning-stays-0x) records.
 
 ## Dependencies
 

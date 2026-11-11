@@ -17,8 +17,11 @@ an advisory ship together, and you are credited unless you ask otherwise.
 ## Supported versions
 
 The latest published release is supported, alongside `master`. Nothing older
-is: Kynos is pre-1.0, and a fix is issued as a new patch release rather than
-backported.
+is: a fix is issued as a new release rather than backported, a patch where it
+can be and a minor where it must change the public API. Kynos stays on `0.x`
+permanently for exactly this reason: a security fix that needs a breaking
+change ships as the next minor, never as a new major version. See
+[`docs/releasing.md`](../docs/releasing.md#versioning-stays-0x).
 
 | Version | Supported |
 | --- | --- |

@@ -4,7 +4,8 @@ Release-plz does the release. This records the parts it cannot: the loop a human
 drives, and the Trusted Publishing config that lives on crates.io rather than in
 this repository.
 
-This is a runbook. Nothing here is normative for implementation work.
+This is a runbook, plus the [versioning policy](#versioning-stays-0x) it
+releases under. Nothing else here is normative for implementation work.
 
 ## The loop
 
@@ -60,6 +61,26 @@ not ship.
 
 Publishing happens before tagging. A failed publish therefore leaves no tag
 behind, and the run is safe to retry once the cause is fixed.
+
+## Versioning stays 0.x
+
+Kynos stays on `0.x` permanently, however settled its API becomes: there is no
+1.0 to wait for. Under Cargo's semver a `0.x` minor is the breaking release and
+a patch is the compatible one, so a breaking change is declared by a minor bump,
+now and later.
+
+The reason is security. A severe vulnerability can need a public API change to
+fix properly, and under a guaranteed 1.x surface that fix would be a major
+version. At `0.x` it ships as the next minor, which is also the only supported
+release ([`SECURITY.md`](../.github/SECURITY.md)), so nobody is left choosing
+between a known hole and a migration.
+
+Stability therefore shows in the release history rather than the version
+number: a run of patch and minor releases whose public API change is
+negligible. The README's [stability grades](../README.md#how-settled-each-part-is)
+say where change is still expected. A `frozen` row is settled: it is not
+reshaped for convenience, and when it must break, as a security fix may make
+it, the break is a `!` commit the changelog lists.
 
 ## Before handing off
 

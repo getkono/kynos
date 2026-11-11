@@ -60,7 +60,8 @@ in the `commit-msg` hook and in CI. Merge commits are exempt.
 - Atomic: each commit builds, passes the gates, and does one thing. The one
   exception is a bug fix's red-test commit below, which fails by design.
 - A breaking change is a `!` commit, and the changelog lists it. That applies
-  to rows the README marks `frozen` too, while the API is 0.x.
+  to rows the README marks `frozen` too, and it ships as a 0.x minor, since
+  the version stays 0.x ([`docs/releasing.md`](docs/releasing.md#versioning-stays-0x)).
 - Pull requests are usually merged rather than squashed, so the series is what
   lands. Fix up history before review, not after.
 

@@ -6,9 +6,9 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-blue)](#msrv)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-> The API is pre-1.0 — see [what v1 freezes](#what-v1-freezes) for which parts
-> are settled, which are still expected to move, and what a 0.x release may
-> still break. Contributions with human oversight are welcome; we
+> Kynos stays on 0.x permanently, so a minor release is how a break is
+> declared — see [how settled each part is](#how-settled-each-part-is) for
+> which parts are settled and which are still expected to move. Contributions with human oversight are welcome; we
 > have had enough AI-generated pull requests in various repositories.
 
 Kynos is an idiomatic, performance-focused Rust framework for building REST APIs with first-class OpenAPI 3.1 and 3.2 support.
@@ -202,13 +202,13 @@ arrive additively, over `h3` and `quinn`, alongside the existing driver. See
 [`docs/architecture.md`](docs/architecture.md#why-http3-is-deferred) for what
 would reopen it.
 
-## What v1 freezes
+## How settled each part is
 
-The core is what every operation passes through, so it freezes at 1.0: a change there is a breaking change. Everything else is additive — it composes onto the core, and the core names none of it. That is what makes each row separable, and it is why the rows furthest out settle last: a part that only ever sits at the edge of a stack is the one you will have exercised least, so it gets the most time to be argued with before it is fixed.
+The core is what every operation passes through, so it is frozen first: a change there is a breaking change. Everything else is additive — it composes onto the core, and the core names none of it. That is what makes each row separable, and it is why the rows furthest out settle last: a part that only ever sits at the edge of a stack is the one you will have exercised least, so it gets the most time to be argued with before it is fixed.
 
-`frozen` commits to the surface at 1.0. Before 1.0 a `frozen` row may still break in a 0.x minor release, only through a `!` commit, which the changelog lists. `settling` means the shape is right and the details may still move. `open` means expect the surface to move — use it, and say where it is wrong.
+Kynos stays on 0.x permanently — [`docs/releasing.md`](docs/releasing.md#versioning-stays-0x) records why — so no version number marks the surface as fixed. `frozen` means the surface is settled: it is not reshaped for convenience, and when it must break, as a security fix may make it, the break ships in a 0.x minor release through a `!` commit, which the changelog lists. `settling` means the shape is right and the details may still move. `open` means expect the surface to move — use it, and say where it is wrong.
 
-| Part | Flag | Freezes |
+| Part | Flag | Grade |
 | --- | --- | --- |
 | Document model and validation | `openapi31`, `openapi32` | frozen |
 | Schema, and the scalar formats | `uuid1`, `time-*`, `decimal-*` | frozen |
