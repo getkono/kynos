@@ -62,16 +62,6 @@ impl Authenticator<Bearer<Caller>, App> for Keys {
             .then_some(Caller)
             .ok_or_else(AuthRejection::unauthenticated)
     }
-
-    async fn authorize(
-        &self,
-        credential: &Caller,
-        scopes: &[kynos::security::Unscoped],
-        context: &App,
-    ) -> Result<(), AuthRejection> {
-        let _ = (credential, scopes, context);
-        Ok(())
-    }
 }
 
 impl Authenticator<Basic<Caller>, App> for Keys {
@@ -86,16 +76,6 @@ impl Authenticator<Basic<Caller>, App> for Keys {
         .then_some(Caller)
         .ok_or_else(AuthRejection::unauthenticated)
     }
-
-    async fn authorize(
-        &self,
-        credential: &Caller,
-        scopes: &[kynos::security::Unscoped],
-        context: &App,
-    ) -> Result<(), AuthRejection> {
-        let _ = (credential, scopes, context);
-        Ok(())
-    }
 }
 
 impl Authenticator<ServiceKey, App> for Keys {
@@ -108,16 +88,6 @@ impl Authenticator<ServiceKey, App> for Keys {
         constant_time_eq(presented.as_str().as_bytes(), API_KEY.as_bytes())
             .then_some(Caller)
             .ok_or_else(AuthRejection::unauthenticated)
-    }
-
-    async fn authorize(
-        &self,
-        credential: &Caller,
-        scopes: &[kynos::security::Unscoped],
-        context: &App,
-    ) -> Result<(), AuthRejection> {
-        let _ = (credential, scopes, context);
-        Ok(())
     }
 }
 

@@ -11,7 +11,7 @@ use crate::{
         Continued, Interceptor, MiddlewareError, Next,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::{ErasedInterceptor, ErasedTerminal},
-        stack::{CompatibleWith, Cons},
+        stack::{self, CompatibleWith, Cons},
     },
     router::{
         dispatch,
@@ -220,6 +220,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
         I: CompatibleWith<N, C>,
     {
         let () = <I as CompatibleWith<N, C>>::CHECK;
+        const { stack::unscoped::<C, N>() };
 
         let mut builder: EndpointBuilder<C, H, A, P, Cons<N, I>> = self.retype();
         builder.interceptors.push(Arc::new(interceptor));

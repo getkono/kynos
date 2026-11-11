@@ -19,15 +19,6 @@ impl<S: Carries<Credential = String>, C: Sync> Authenticator<S, C> for Verifier 
     async fn authenticate(&self, _: S::Presented, _: &C) -> Result<String, AuthRejection> {
         Err(AuthRejection::unauthenticated())
     }
-
-    async fn authorize(
-        &self,
-        _: &String,
-        _: &[S::Scope],
-        _: &C,
-    ) -> Result<(), AuthRejection> {
-        Ok(())
-    }
 }
 
 struct App;

@@ -123,7 +123,8 @@ impl Body {
         Self::from_body(body.map_err(Into::into))
     }
 
-    /// Reports how this body ends, exactly once.
+    /// Reports how this body ends, exactly once, with the data octets read
+    /// when it ended.
     ///
     /// From whichever comes first: the poll that exhausts the body, or its drop.
     ///
@@ -141,6 +142,7 @@ impl Body {
         Self::from_body(watched::Watched {
             inner,
             report: Some(report),
+            bytes: 0,
         })
     }
 }
@@ -203,7 +205,10 @@ pub(crate) fn bodiless(status: super::StatusCode) -> super::Response {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Delivery {
     /// The body was read to its end.
-    Complete,
+    Complete {
+        /// The octets its data frames carried; trailers are not counted.
+        bytes: u64,
+    },
     /// The body was dropped before its end.
     ///
     /// A peer that went away mid-response, or a stream that failed part-way.

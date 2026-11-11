@@ -1,4 +1,5 @@
-//! Where a server accepts traffic: the addresses it resolves and binds itself.
+//! Where a server accepts traffic: the addresses it resolves and binds itself,
+//! on one socket each or, on Linux and Android, on one per accept shard.
 //! A listener bound elsewhere is handed over as the standard library's own
 //! type, through [`Server::listener`](crate::server::Server::listener).
 //!
@@ -9,6 +10,7 @@
 use std::{
     fmt, io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    num::NonZeroU32,
 };
 
 use crate::{extract::connection::TransportAddress, server::error::ServerError};
@@ -142,4 +144,81 @@ pub(in crate::server) async fn resolve(
         )));
     }
     Ok(resolved)
+}
+
+/// Binds `address` as `tokio::net::TcpListener::bind` binds it, but with
+/// `backlog` rather than the standard library's fixed 128.
+pub(in crate::server) fn bind_listener(
+    address: SocketAddr,
+    backlog: NonZeroU32,
+) -> std::result::Result<tokio::net::TcpListener, ServerError> {
+    socket(address)
+        .and_then(|socket| listen(socket, address, backlog))
+        .map_err(|source| ServerError::Bind { address, source })
+}
+
+/// Binds `address` once per shard, every socket with `SO_REUSEPORT` and
+/// `backlog`, and returns the address they share with them.
+///
+/// The first socket settles a zero port and the rest join it, so the shards
+/// are one address the kernel spreads connections across, not several. The
+/// first failure drops every socket already bound.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub(in crate::server) fn bind_shards(
+    address: SocketAddr,
+    shards: std::num::NonZeroUsize,
+    backlog: NonZeroU32,
+) -> std::result::Result<(SocketAddr, Vec<tokio::net::TcpListener>), ServerError> {
+    let failed = |address| move |source| ServerError::Bind { address, source };
+    let bind_one = |address| {
+        let socket = socket(address)?;
+        socket.set_reuseport(true)?;
+        listen(socket, address, backlog)
+    };
+    let first = bind_one(address).map_err(failed(address))?;
+    let shared = first.local_addr().map_err(failed(address))?;
+    let mut listeners = Vec::with_capacity(shards.get());
+    listeners.push(first);
+    for _ in 1..shards.get() {
+        listeners.push(bind_one(shared).map_err(failed(shared))?);
+    }
+    Ok((shared, listeners))
+}
+
+/// A socket for `address`'s family, with `SO_REUSEADDR` where
+/// `tokio::net::TcpListener::bind` sets it: everywhere but Windows, where it
+/// would let another socket take the port.
+fn socket(address: SocketAddr) -> io::Result<tokio::net::TcpSocket> {
+    let socket = if address.is_ipv4() {
+        tokio::net::TcpSocket::new_v4()
+    } else {
+        tokio::net::TcpSocket::new_v6()
+    }?;
+    #[cfg(not(windows))]
+    socket.set_reuseaddr(true)?;
+    Ok(socket)
+}
+
+/// Binds `socket` to `address` and listens with `backlog`.
+///
+/// A backlog past `i32::MAX` reaches `listen(2)` as `i32::MAX` (see
+/// [`kernel_backlog`]), and the kernel caps whatever reaches it at its own
+/// ceiling.
+fn listen(
+    socket: tokio::net::TcpSocket,
+    address: SocketAddr,
+    backlog: NonZeroU32,
+) -> io::Result<tokio::net::TcpListener> {
+    socket.bind(address)?;
+    socket.listen(kernel_backlog(backlog))
+}
+
+/// The backlog handed to `TcpSocket::listen`: `backlog`, clamped to
+/// `i32::MAX`.
+///
+/// `listen(2)` takes an `int`, and tokio before 1.54 casts the `u32` it is
+/// handed with `as`, so anything past `i32::MAX`, the default `u32::MAX`
+/// included, would reach the kernel negative.
+pub(in crate::server) fn kernel_backlog(backlog: NonZeroU32) -> u32 {
+    backlog.get().min(i32::MAX.unsigned_abs())
 }

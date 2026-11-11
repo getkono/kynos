@@ -24,13 +24,14 @@
 
 use std::{borrow::Cow, future::Future, marker::PhantomData};
 
-use kynos_openapi::{ComponentName, SecurityRequirement};
+use kynos_openapi::{ComponentName, Parameter, SecurityRequirement};
 
 use crate::{
     error::rejection::AuthRejection,
     http::Parts,
     router::operation::OperationCx,
-    security::{Authenticates, Authenticator, Scope, SecurityScheme, carrier::Carries},
+    schema::registry::Registry,
+    security::{Authenticates, Authenticator, Authorizer, Scope, SecurityScheme, carrier::Carries},
 };
 
 /// What closes the set of requirements.
@@ -78,6 +79,13 @@ pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// Registers every scheme named, and returns the alternatives in the order
     /// the operation's `security` lists them.
     fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement>;
+
+    /// The request headers the schemes named read beside their credentials:
+    /// every [`SecurityScheme::reads`], in declaration order.
+    ///
+    /// An [`AnyOf`]'s are not required, since no one alternative is; an
+    /// [`AllOf`]'s keep what each scheme declared, since every one is read.
+    fn reads(registry: &mut Registry) -> Vec<Parameter>;
 }
 
 /// A [`Requirement`] the context `C` can check against a request.
@@ -164,6 +172,10 @@ impl<S: SecurityScheme> Requirement for S {
 
     fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
         vec![require::<S>(operation, defaults::<S>())]
+    }
+
+    fn reads(registry: &mut Registry) -> Vec<Parameter> {
+        <S as SecurityScheme>::reads(registry)
     }
 }
 
@@ -297,6 +309,15 @@ fn alternative(alternatives: &mut Vec<SecurityRequirement>, requirement: Securit
     }
 }
 
+/// `reads` with none required: what a guard declares of headers it reads only
+/// where one alternative among several was presented.
+pub(in crate::security) fn optional(mut reads: Vec<Parameter>) -> Vec<Parameter> {
+    for parameter in &mut reads {
+        parameter.required = None;
+    }
+    reads
+}
+
 /// One [`AnyOf`] alternative's outcome: its credential where it was satisfied,
 /// and otherwise `None`, keeping the first refusal in `refused`. An absent
 /// credential is skipped.
@@ -344,6 +365,12 @@ macro_rules! any_of {
                     );
                 )+
                 alternatives
+            }
+
+            fn reads(registry: &mut Registry) -> Vec<Parameter> {
+                let mut reads = Vec::new();
+                $( reads.extend(<$scheme as SecurityScheme>::reads(registry)); )+
+                optional(reads)
             }
         }
 
@@ -450,6 +477,12 @@ macro_rules! all_of {
                         .extend(require::<$scheme>(operation, defaults::<$scheme>()).0);
                 )+
                 vec![together]
+            }
+
+            fn reads(registry: &mut Registry) -> Vec<Parameter> {
+                let mut reads = Vec::new();
+                $( reads.extend(<$scheme as SecurityScheme>::reads(registry)); )+
+                reads
             }
         }
 

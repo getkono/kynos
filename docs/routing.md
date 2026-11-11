@@ -211,6 +211,32 @@ and no describe-then-finish split ships, because the language already expresses
 this; an opaque stack cannot be checked against another interceptor, so a
 router returned that way is finished, which is what such a function means.
 
+### Editing the description
+
+`map_openapi(edit)` registers an edit the four readers all run, after the
+document is assembled and before it is checked. A post-processed copy of
+`openapi`'s result reaches only that copy; the edit also reaches the document a
+built `Service` holds, validates responses against in `assert_conformance` and
+serves through `docs`. Validation reads the edited document, so an edit that
+breaks it fails `build` like any other violation, and the version is chosen
+after it, from what it uses.
+
+An edit may describe an operation differently, but not change which operations
+there are. The router mounted them and dispatches by what the document says of
+each one, so adding, removing or moving one, changing its `operationId`,
+adding or removing its security requirement, changing the media types its
+`QUERY` body accepts, or removing its `x-kynos-opaque` marker is a
+`RouterError::MappedOperation` violation. Security presence keeps the response
+cache from sharing a response a guard admitted, and a `QUERY`'s media types are
+the `Accept-Query` its 415 sends, so both must stay what the handler enforces. Edits run in call order. An edit sees the whole document, so it is
+set on the root router: on an absorbed one it is a
+`RouterError::NestedRouterPolicy` violation, like the policies
+[below](#application-level-policies).
+
+No marker records that a document was mapped. The edit is the application's own
+declaration, checked like the rest of the document, which `Opaque` marks are
+not: they record what Kynos cannot check.
+
 ### Which version `openapi` emits
 
 The lowest one that expresses the API without loss: 3.1 for an API using no
@@ -398,9 +424,10 @@ where nothing implements `OPTIONS` — see
   syntax without a translation step.
 - A capture is a borrowed slice of the request path, not an owned `String`.
   The routing path's allocation requirements in [`nfr.md`](nfr.md#routing) rest
-  on this property: zero heap allocations is recorded there as `absent` and
-  unmet, beside what a static match measures, and the enforced ceilings bound
-  the path in the meantime, lowered as the gap closes.
+  on this property: zero heap allocations is recorded there as `absent`, and
+  as decided rather than open, since each block a static match still
+  allocates is attributed and kept, and the enforced ceilings hold the path at
+  that count.
 - Catch-all patterns are understood by `matchit` and rejected by Kynos above it,
   which is why the anti-pattern and the crate can coexist.
 

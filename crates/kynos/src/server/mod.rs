@@ -18,18 +18,50 @@
 //! [`address`] holds the addresses bound, the private `accept` module the
 //! listeners and their accept loop,
 //! the private `connection` module socket read and write, the private
+//! `proxy_protocol` module the PROXY protocol header a trusted proxy opens a
+//! connection with, the private
 //! `request_body` module the idle timeout every request body is read under,
-//! and [`shutdown`] the signal; timers live with the work they bound.
+//! the private `descriptors` module the open-file limit the connection cap
+//! needs, and [`shutdown`] the signal; timers live with the work they bound.
 //! [`protocol`], [`tcp`] and
 //! [`tls`] are configuration; [`lifecycle`] is the state every part observes,
-//! and the [`Draining`](lifecycle::Draining) extractor a handler observes it
+//! and the [`Draining`](lifecycle::Draining) and
+//! [`Readiness`](lifecycle::Readiness) extractors a handler observes it
 //! through.
 
 mod accept;
 mod connection;
 mod describe;
+// Every Unix but those whose `rustix` has no `getrlimit`.
+#[cfg(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "redox",
+        target_os = "vita"
+    ))
+))]
+mod descriptors;
+/// Where no `getrlimit` is reachable, there is no limit to fit.
+#[cfg(not(all(
+    unix,
+    not(any(
+        target_os = "espidf",
+        target_os = "fuchsia",
+        target_os = "horizon",
+        target_os = "redox",
+        target_os = "vita"
+    ))
+)))]
+mod descriptors {
+    pub(in crate::server) const fn fit(_max_connections: usize, _listeners: usize) {}
+}
 // Crate-visible so the test client bounds a body as a served one is.
 pub(crate) mod request_body;
+// Crate-visible so the fuzz entry reaches its parser.
+pub(crate) mod proxy_protocol;
 
 pub mod address;
 pub mod error;
@@ -41,23 +73,34 @@ pub mod tcp;
 #[cfg(feature = "tls")]
 pub mod tls;
 
-use std::{future::pending, io, net::SocketAddr, num::NonZeroUsize, sync::Arc, time::Duration};
+use std::{
+    convert::Infallible,
+    future::pending,
+    io,
+    net::SocketAddr,
+    num::{NonZeroU32, NonZeroUsize},
+    sync::Arc,
+    time::Duration,
+};
 
 use tokio::{
     io::{AsyncRead, AsyncWrite},
     net::TcpListener,
-    sync::{Semaphore, mpsc, watch},
-    task::{JoinError, JoinSet},
+    sync::{Semaphore, mpsc, oneshot, watch},
+    task::{JoinError, JoinHandle, JoinSet},
 };
 
 #[cfg(unix)]
 use crate::extract::connection::TransportAddress;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::server::address::bind_shards;
 use crate::{
     error::Result,
+    http::forwarded::TrustedProxies,
     router::service::Service,
     server::{
         accept::{TcpAcceptor, accept_loop},
-        address::{BindAddress, resolve},
+        address::{BindAddress, bind_listener, resolve},
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
@@ -73,9 +116,6 @@ use crate::server::protocol::http1::Http1Config;
 use crate::server::protocol::http2::Http2Config;
 #[cfg(feature = "tls")]
 use crate::server::tls::{TlsConfig, TlsRuntime, document::apply_mutual_tls};
-
-const DEFAULT_CONNECTION_LIMIT: usize = 10_000;
-const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// An HTTP server.
 #[derive(Debug)]
@@ -93,10 +133,43 @@ pub struct Server<C> {
     #[cfg(feature = "tls")]
     tls: Option<TlsConfig>,
     shutdown: Option<Shutdown>,
+    deregistration_delay: Duration,
     shutdown_timeout: Duration,
     max_connections: NonZeroUsize,
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    accept_shards: NonZeroUsize,
+    listen_backlog: NonZeroU32,
     tcp_keepalive: Option<TcpKeepAlive>,
     request_body_idle_timeout: Option<Duration>,
+    proxy_protocol: TrustedProxies,
+}
+
+/// The defaults [`Server::new`] starts from, whatever the context type.
+///
+/// Declared on `Server<()>` alone, so the bare `Server::DEFAULT_*` path names
+/// them without a type annotation.
+impl Server<()> {
+    /// The default [`max_connections`](Self::max_connections) cap: 10,000.
+    ///
+    /// ```
+    /// # use kynos::server::Server;
+    /// assert_eq!(Server::DEFAULT_MAX_CONNECTIONS.get(), 10_000);
+    /// ```
+    pub const DEFAULT_MAX_CONNECTIONS: NonZeroUsize = NonZeroUsize::new(10_000).unwrap();
+
+    /// The default [`shutdown_timeout`](Self::shutdown_timeout) drain
+    /// deadline: 25 seconds, leaving a margin under the common 30-second
+    /// orchestrator termination window.
+    pub const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(25);
+
+    /// The default [`listen_backlog`](Self::listen_backlog): as long a queue
+    /// as the kernel allows, so its own ceiling is the limit.
+    ///
+    /// ```
+    /// # use kynos::server::Server;
+    /// assert_eq!(Server::DEFAULT_LISTEN_BACKLOG.get(), u32::MAX);
+    /// ```
+    pub const DEFAULT_LISTEN_BACKLOG: NonZeroU32 = NonZeroU32::MAX;
 }
 
 impl<C: 'static> Server<C> {
@@ -116,11 +189,15 @@ impl<C: 'static> Server<C> {
             #[cfg(feature = "tls")]
             tls: None,
             shutdown: None,
-            shutdown_timeout: DEFAULT_SHUTDOWN_TIMEOUT,
-            max_connections: NonZeroUsize::new(DEFAULT_CONNECTION_LIMIT)
-                .expect("the default connection limit is non-zero"),
+            deregistration_delay: Duration::ZERO,
+            shutdown_timeout: Server::DEFAULT_SHUTDOWN_TIMEOUT,
+            max_connections: Server::DEFAULT_MAX_CONNECTIONS,
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            accept_shards: NonZeroUsize::MIN,
+            listen_backlog: Server::DEFAULT_LISTEN_BACKLOG,
             tcp_keepalive: Some(TcpKeepAlive::default()),
             request_body_idle_timeout: Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+            proxy_protocol: TrustedProxies::none(),
         }
     }
 
@@ -223,7 +300,9 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Stops accepting when `shutdown` resolves, then drains active requests.
+    /// Stops accepting when `shutdown` resolves, or once the
+    /// [`deregistration_delay`](Self::deregistration_delay) after it has
+    /// passed, then drains active requests.
     ///
     /// A connection upgraded by a `Router::upgrade_unchecked` route leaves the
     /// drain once its `101` is written: the socket then belongs to the
@@ -234,8 +313,56 @@ impl<C: 'static> Server<C> {
         self
     }
 
-    /// Sets the drain deadline. The default is 25 seconds, leaving a margin
-    /// under the common 30-second orchestrator termination window.
+    /// Keeps accepting and serving for `delay` after the first shutdown
+    /// signal, reporting not-ready through
+    /// [`Readiness`](lifecycle::Readiness) all the while, and only then stops
+    /// accepting and drains. The default is [`Duration::ZERO`], which drains
+    /// at the signal.
+    ///
+    /// A load balancer takes a while to stop routing to an instance once told
+    /// to — Kubernetes removing it from a Service's endpoints, or a target
+    /// group deregistering it — and a connection that arrives in that window
+    /// is refused by a server that has already closed its listeners. Set
+    /// `delay` to that propagation time, and answer the readiness probe from
+    /// [`Readiness`](lifecycle::Readiness), so the instance leaves rotation
+    /// while it still serves. [`Draining`](lifecycle::Draining) does not
+    /// resolve until the delay has passed.
+    ///
+    /// The [`shutdown_timeout`](Self::shutdown_timeout) bounds the drain
+    /// alone and starts when the delay ends, so the two add up: fit their sum
+    /// in the orchestrator's termination window. A second signal from a
+    /// built-in trigger forces shutdown during the delay as during the drain,
+    /// and a listener that stops accepting ends the delay and drains at once.
+    /// Without a [`graceful_shutdown`](Self::graceful_shutdown) trigger there
+    /// is no signal to delay.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use kynos::{
+    ///     Router,
+    ///     server::{Server, shutdown::Shutdown},
+    /// };
+    ///
+    /// # fn main() -> kynos::Result<()> {
+    /// let server = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("0.0.0.0", 3000))
+    ///     .graceful_shutdown(Shutdown::signals())
+    ///     // Five seconds out of rotation, then up to twenty to drain.
+    ///     .deregistration_delay(Duration::from_secs(5))
+    ///     .shutdown_timeout(Duration::from_secs(20));
+    /// # drop(server);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn deregistration_delay(mut self, delay: Duration) -> Self {
+        self.deregistration_delay = delay;
+        self
+    }
+
+    /// Sets the drain deadline. The default is
+    /// [`DEFAULT_SHUTDOWN_TIMEOUT`](Server::DEFAULT_SHUTDOWN_TIMEOUT).
     ///
     /// [`Duration::ZERO`] forces immediate shutdown and reports
     /// [`ServerError::ShutdownTimeout`].
@@ -246,14 +373,107 @@ impl<C: 'static> Server<C> {
     }
 
     /// Caps accepted connections and TLS handshakes across all listeners. The
-    /// default is 10,000.
+    /// default is [`DEFAULT_MAX_CONNECTIONS`](Server::DEFAULT_MAX_CONNECTIONS).
     ///
     /// A connection upgraded by a `Router::upgrade_unchecked` route releases
     /// its permit once its `101` is written, so upgraded sockets the handler
     /// still holds do not count toward the cap.
+    ///
+    /// Each connection holds a file descriptor. On Unix,
+    /// [`prepare`](Self::prepare) raises the process's soft `RLIMIT_NOFILE`,
+    /// as far as its hard limit allows, to the cap plus one per listener and
+    /// 128 to spare, and logs a warning naming the limit and what the cap
+    /// needs where that falls short: past the limit, accepts fail and are
+    /// retried, so clients stall rather than the server failing to start. The
+    /// raised limit is the process's, inherited by every child it spawns.
+    ///
+    /// Each server judges the limit against its own cap and listeners alone.
+    /// Two servers in one process, such as an application and its metrics
+    /// endpoint each at the default cap, can together hold twice what either
+    /// found satisfied, with no warning; size the limit for their sum
+    /// (`LimitNOFILE=`, `ulimit -n`), or lower the caps to fit it.
     #[must_use]
     pub fn max_connections(mut self, limit: NonZeroUsize) -> Self {
         self.max_connections = limit;
+        self
+    }
+
+    /// Accepts each address [`bind`](Self::bind) resolves to on `shards`
+    /// sockets, each with its own accept task, rather than on one. The default
+    /// is one.
+    ///
+    /// Every shard is bound with `SO_REUSEPORT`, and the kernel spreads new
+    /// connections across the shards by a hash of each connection's addresses,
+    /// so accepting is no longer serialised behind one task. That pays only
+    /// where accepting is the bottleneck, such as many short-lived connections
+    /// a second on a host with many cores: measure before raising it.
+    /// [`max_connections`](Self::max_connections) still caps connections
+    /// across every shard.
+    ///
+    /// A port of 0 is chosen once, by the first shard, and the rest bind the
+    /// same one, so [`BoundServer::local_addrs`] lists each address once. A
+    /// shard is a listener like any other: one that stops accepting stops the
+    /// server, as [`BoundServer::serve`] says. While serving, any socket of
+    /// the same user that sets `SO_REUSEPORT` may bind the same port and take
+    /// a share of its connections.
+    ///
+    /// Linux and Android only, whose kernels balance connections across
+    /// `SO_REUSEPORT` sockets.
+    ///
+    /// [`prepare`](Self::prepare) refuses more than one shard alongside a
+    /// listener added through [`listener`](Self::listener) or
+    /// [`unix_listener`](Self::unix_listener): a socket bound elsewhere cannot
+    /// be sharded once bound. To shard one, bind each of its sockets with
+    /// `SO_REUSEPORT` and hand each over through [`listener`](Self::listener),
+    /// leaving this at one; every listener has its own accept task.
+    ///
+    /// ```
+    /// use std::num::NonZeroUsize;
+    ///
+    /// use kynos::{Router, server::Server};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> kynos::Result<()> {
+    /// let shards = NonZeroUsize::new(4).expect("four is non-zero");
+    /// let bound = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("127.0.0.1", 0))
+    ///     .accept_shards(shards)
+    ///     .prepare()
+    ///     .await?;
+    /// assert_eq!(bound.local_addrs().len(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[must_use]
+    pub fn accept_shards(mut self, shards: NonZeroUsize) -> Self {
+        self.accept_shards = shards;
+        self
+    }
+
+    /// Sets the listen backlog of every socket the server binds: how many
+    /// connections the kernel completes and queues for an accept that has not
+    /// yet taken them. The default is
+    /// [`DEFAULT_LISTEN_BACKLOG`](Server::DEFAULT_LISTEN_BACKLOG), as long as
+    /// the kernel allows.
+    ///
+    /// At the [`max_connections`](Self::max_connections) cap the server stops
+    /// accepting, so a burst waits in this queue until a connection closes.
+    /// Once it is full, Linux drops further connection attempts, and their
+    /// clients retry only after a retransmission delay of a second or more.
+    ///
+    /// The kernel caps the value: `net.core.somaxconn` on Linux, 4096 by
+    /// default since 5.4, and `kern.ipc.somaxconn` on the BSDs and the Apple
+    /// platforms. Raise that limit to queue more. A value past `i32::MAX`
+    /// reaches the kernel as `i32::MAX`.
+    ///
+    /// Every [`accept_shards`](Self::accept_shards) socket has a queue of
+    /// this length. A listener added through [`listener`](Self::listener) or
+    /// [`unix_listener`](Self::unix_listener) keeps the backlog it was bound
+    /// with.
+    #[must_use]
+    pub fn listen_backlog(mut self, backlog: NonZeroU32) -> Self {
+        self.listen_backlog = backlog;
         self
     }
 
@@ -269,6 +489,61 @@ impl<C: 'static> Server<C> {
     #[must_use]
     pub fn tcp_keepalive(mut self, keepalive: Option<TcpKeepAlive>) -> Self {
         self.tcp_keepalive = keepalive;
+        self
+    }
+
+    /// Requires a PROXY protocol header, version 1 or 2, on every connection a
+    /// TCP listener accepts from a peer `trusted` believes, and serves that
+    /// connection as from the client the header names. The default trusts
+    /// nobody, and reads no header.
+    ///
+    /// A load balancer that relays TCP rather than HTTP — an AWS Network Load
+    /// Balancer, HAProxy in TCP mode — can name the client only this way. The
+    /// header is read before the TLS handshake and before the first request
+    /// head, within the first-head deadline the protocol configs set; with
+    /// every one of their timeouts off, only a drain bounds the wait. A
+    /// connection from a trusted peer that sends no header, or one the
+    /// specification does not admit, is closed unanswered; one from any other
+    /// peer is served as it is, so a client cannot claim an address by sending
+    /// a header of its own.
+    ///
+    /// Only whom `trusted` believes is read: a peer it names by address or
+    /// network, or any peer where it counts a hop. The [`ProxyHeader`] it
+    /// names is not, since nothing here is a header field.
+    ///
+    /// The client becomes the
+    /// [`Connection::peer`](crate::extract::connection::Connection::peer), and
+    /// so the socket peer [`Router::trusted_proxies`](crate::Router::trusted_proxies)
+    /// resolves forwarding fields from. A header that names no client — a
+    /// version 1 `UNKNOWN`, a version 2 `LOCAL` such as a health check, or a
+    /// family other than IPv4 and IPv6 — leaves the socket's peer. The local
+    /// address stays the socket's, and version 2 TLVs are ignored.
+    ///
+    /// A Unix domain socket listener and [`serve_io`](Self::serve_io) read no
+    /// header: their peers have no address to trust.
+    ///
+    /// [`ProxyHeader`]: crate::http::forwarded::ProxyHeader
+    ///
+    /// ```
+    /// use kynos::{
+    ///     Router,
+    ///     http::forwarded::{ProxyHeader, TrustedProxies},
+    ///     server::Server,
+    /// };
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// // The load balancer's subnet, the only peer that may relay.
+    /// let balancers = TrustedProxies::networks(ProxyHeader::Forwarded, ["10.0.0.0/16".parse()?]);
+    /// let server = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("0.0.0.0", 3000))
+    ///     .proxy_protocol(balancers);
+    /// # drop(server);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn proxy_protocol(mut self, trusted: TrustedProxies) -> Self {
+        self.proxy_protocol = trusted;
         self
     }
 
@@ -318,6 +593,9 @@ impl<C: 'static> Server<C> {
     ///   Unix, [`ServerError::InvalidConfiguration`] too when a Unix domain
     ///   socket listener was added, checked with the settings so no socket is
     ///   bound.
+    /// - On Linux and Android, [`ServerError::InvalidConfiguration`] when
+    ///   more than one [`accept_shards`](Self::accept_shards) meets a listener
+    ///   bound elsewhere, checked with the settings so no socket is bound.
     /// - [`ServerError::Listener`], [`ServerError::Resolve`] or
     ///   [`ServerError::Bind`] when a supplied listener, an address, or a
     ///   resolved address fails; every listener already bound is dropped.
@@ -329,6 +607,15 @@ impl<C: 'static> Server<C> {
         if self.tls.is_some() && !self.unix_listeners.is_empty() {
             return Err(ServerError::InvalidConfiguration(
                 "TLS is not served over a Unix socket listener",
+            )
+            .into());
+        }
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if self.accept_shards > NonZeroUsize::MIN
+            && !(self.listeners.is_empty() && self.unix_listeners.is_empty())
+        {
+            return Err(ServerError::InvalidConfiguration(
+                "accept_shards shards only the addresses the server binds, so no listener bound elsewhere may be added",
             )
             .into());
         }
@@ -355,22 +642,32 @@ impl<C: 'static> Server<C> {
         }
 
         let mut listeners = Vec::new();
+        let mut local_addrs = Vec::new();
         for listener in self.listeners {
             listener
                 .set_nonblocking(true)
                 .map_err(ServerError::Listener)?;
             let listener = TcpListener::from_std(listener).map_err(ServerError::Listener)?;
-            listener.local_addr().map_err(ServerError::Listener)?;
-            listeners.push(listener);
+            let local_addr = listener.local_addr().map_err(ServerError::Listener)?;
+            listeners.push((listener, local_addr));
+            local_addrs.push(local_addr);
         }
 
         for configured in self.addresses {
             let resolved = resolve(&configured).await?;
             for address in resolved {
-                let listener = TcpListener::bind(address)
-                    .await
-                    .map_err(|source| ServerError::Bind { address, source })?;
-                listeners.push(listener);
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if self.accept_shards > NonZeroUsize::MIN {
+                    let (local_addr, shards) =
+                        bind_shards(address, self.accept_shards, self.listen_backlog)?;
+                    listeners.extend(shards.into_iter().map(|shard| (shard, local_addr)));
+                    local_addrs.push(local_addr);
+                    continue;
+                }
+                let listener = bind_listener(address, self.listen_backlog)?;
+                let local_addr = listener.local_addr().map_err(ServerError::Listener)?;
+                listeners.push((listener, local_addr));
+                local_addrs.push(local_addr);
             }
         }
 
@@ -387,18 +684,13 @@ impl<C: 'static> Server<C> {
             unix_listeners.push((listener, TransportAddress::from(local_addr)));
         }
         #[cfg(unix)]
-        let unlistened = listeners.is_empty() && unix_listeners.is_empty();
+        let listened = listeners.len() + unix_listeners.len();
         #[cfg(not(unix))]
-        let unlistened = listeners.is_empty();
-        if unlistened {
+        let listened = listeners.len();
+        if listened == 0 {
             return Err(ServerError::NoListeners.into());
         }
-
-        let local_addrs = listeners
-            .iter()
-            .map(TcpListener::local_addr)
-            .collect::<io::Result<Vec<_>>>()
-            .map_err(ServerError::Listener)?;
+        descriptors::fit(config.max_connections.get(), listened);
 
         Ok(BoundServer {
             service,
@@ -407,8 +699,11 @@ impl<C: 'static> Server<C> {
             #[cfg(unix)]
             unix_listeners,
             socket: SocketOptions::new(self.tcp_keepalive),
+            proxy_protocol: (!self.proxy_protocol.trusts_nobody())
+                .then(|| Arc::new(self.proxy_protocol)),
             config,
             shutdown: self.shutdown,
+            deregistration_delay: self.deregistration_delay,
         })
     }
 
@@ -441,8 +736,8 @@ impl<C: 'static> Server<C> {
     /// HTTP/2 are told apart from the first bytes, as on a plaintext listener.
     ///
     /// Nothing that belongs to listeners applies: no address is bound, and the
-    /// connection limit, TCP keepalive, graceful shutdown and its timeout are
-    /// ignored. The connection ends when the client closes `io` or when the
+    /// connection limit, TCP keepalive, the PROXY protocol, graceful shutdown,
+    /// its deregistration delay and its timeout are ignored. The connection ends when the client closes `io` or when the
     /// returned future is dropped, which closes it without draining. A
     /// connection upgraded by a `Router::upgrade_unchecked` route is the
     /// exception: the future resolves once the `101` is written, handing `io`
@@ -556,14 +851,19 @@ impl<C: 'static> Server<C> {
 #[derive(Debug)]
 pub struct BoundServer<C> {
     service: Arc<Service<C>>,
-    listeners: Vec<TcpListener>,
+    /// Every TCP listener and its address, one per accept shard.
+    listeners: Vec<(TcpListener, SocketAddr)>,
+    /// One per address, however many shards accept on it.
     local_addrs: Vec<SocketAddr>,
     #[cfg(unix)]
     unix_listeners: Vec<(tokio::net::UnixListener, TransportAddress)>,
     /// Held once per listener, unlike the per-socket `TransportConfig`.
     socket: SocketOptions,
+    /// The TCP peers whose PROXY protocol header is required, where any are.
+    proxy_protocol: Option<Arc<TrustedProxies>>,
     config: TransportConfig,
     shutdown: Option<Shutdown>,
+    deregistration_delay: Duration,
 }
 
 #[derive(Clone, Debug)]
@@ -581,7 +881,8 @@ pub(in crate::server) struct TransportConfig {
 
 impl<C: 'static> BoundServer<C> {
     /// The addresses the TCP listeners are bound to, including
-    /// operating-system-selected ports.
+    /// operating-system-selected ports, each listed once however many accept
+    /// shards share it.
     ///
     /// A Unix domain socket listener is not listed: its caller bound it, and
     /// so already knows its address.
@@ -611,11 +912,12 @@ impl<C: 'static> BoundServer<C> {
         let (failure_sender, mut failures) = mpsc::unbounded_channel();
         let mut accept_loops = JoinSet::new();
 
-        for (listener, local_addr) in self.listeners.into_iter().zip(self.local_addrs) {
+        for (listener, local_addr) in self.listeners {
             let acceptor = TcpAcceptor {
                 listener,
                 local_addr,
                 socket: self.socket.clone(),
+                proxy_protocol: self.proxy_protocol.clone(),
             };
             accept_loops.spawn(accept_loop(
                 acceptor,
@@ -646,21 +948,40 @@ impl<C: 'static> BoundServer<C> {
         );
         tokio::pin!(shutdown);
 
-        let (root_error, force) = tokio::select! {
+        let (mut root_error, mut force, signalled) = tokio::select! {
             biased;
-            Some(error) = failures.recv() => (Some(error), Box::pin(pending()) as ForceFuture),
+            Some(error) = failures.recv() => (Some(error), Box::pin(pending()) as ForceFuture, false),
             completed = accept_loops.join_next() => match completed {
-                Some(Ok(())) | None => (None, Box::pin(pending()) as ForceFuture),
-                Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture),
+                Some(Ok(())) | None => (None, Box::pin(pending()) as ForceFuture, false),
+                Some(Err(error)) => (Some(accept_loop_failure(&error)), Box::pin(pending()) as ForceFuture, false),
             },
             signal = &mut shutdown => match signal {
-                Ok(force) => (None, force),
-                Err(error) => (Some(ServerError::Signal(error)), Box::pin(pending()) as ForceFuture),
+                Ok(force) => (None, force, true),
+                Err(error) => (Some(ServerError::Signal(error)), Box::pin(pending()) as ForceFuture, false),
             },
         };
 
+        // Only a signal is delayed: a failed listener drains at once.
+        let mut forced = false;
+        if signalled && !self.deregistration_delay.is_zero() {
+            lifecycle_sender.send_replace(Lifecycle::Deregistering);
+            tokio::select! {
+                biased;
+                () = &mut force => forced = true,
+                Some(error) = failures.recv() => root_error = Some(error),
+                completed = accept_loops.join_next() => {
+                    if let Some(Err(error)) = completed {
+                        root_error = Some(accept_loop_failure(&error));
+                    }
+                }
+                () = tokio::time::sleep(self.deregistration_delay) => {}
+            }
+        }
+
         lifecycle_sender.send_replace(Lifecycle::Draining);
-        let drain = if self.config.shutdown_timeout.is_zero() {
+        let drain = if forced {
+            Drain::Forced
+        } else if self.config.shutdown_timeout.is_zero() {
             Drain::TimedOut
         } else {
             let wait_for_accept_loops = async { while accept_loops.join_next().await.is_some() {} };
@@ -689,6 +1010,103 @@ impl<C: 'static> BoundServer<C> {
             }
             .into()),
             Drain::Forced => Err(ServerError::ShutdownForced.into()),
+        }
+    }
+
+    /// Serves on a spawned task, as [`serve`](Self::serve) would, and
+    /// returns the handle that stops it.
+    ///
+    /// The listeners are already bound, so a client may connect to
+    /// [`Running::local_addr`] at once. [`Running::shutdown`] begins graceful
+    /// shutdown alongside any [`Server::graceful_shutdown`] trigger: whichever
+    /// comes first begins it, under the
+    /// [`deregistration_delay`](Server::deregistration_delay) and the
+    /// [`shutdown_timeout`](Server::shutdown_timeout) either would. Begun by
+    /// the handle, a built-in trigger still forces the drain on its second
+    /// signal.
+    ///
+    /// ```
+    /// use kynos::{Router, server::Server};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> kynos::Result<()> {
+    /// let running = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("127.0.0.1", 0))
+    ///     .prepare()
+    ///     .await?
+    ///     .spawn();
+    /// let address = running.local_addr().expect("one TCP listener is bound");
+    /// # let _ = address;
+    /// // ...drive a client against `address`...
+    /// running.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Outside a tokio runtime, as `tokio::spawn` does.
+    #[must_use = "dropping the handle begins shutdown at once"]
+    pub fn spawn(mut self) -> Running {
+        let (trigger, triggered) = oneshot::channel::<Infallible>();
+        self.shutdown = Some(Shutdown::or_on(self.shutdown.take(), async move {
+            let _ = triggered.await;
+        }));
+        Running {
+            local_addrs: self.local_addrs.clone(),
+            trigger,
+            task: tokio::spawn(self.serve()),
+        }
+    }
+}
+
+/// A server serving on its own task, from [`BoundServer::spawn`].
+///
+/// Dropping it begins graceful shutdown without waiting for the drain, whose
+/// result is then discarded; [`shutdown`](Self::shutdown) waits for it.
+#[derive(Debug)]
+pub struct Running {
+    local_addrs: Vec<SocketAddr>,
+    /// Never sent: dropping it is the trigger.
+    trigger: oneshot::Sender<Infallible>,
+    task: JoinHandle<Result<()>>,
+}
+
+impl Running {
+    /// The first address [`local_addrs`](Self::local_addrs) lists, or `None`
+    /// where only Unix domain socket listeners were bound.
+    #[must_use]
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.local_addrs.first().copied()
+    }
+
+    /// The addresses the TCP listeners are bound to, as
+    /// [`BoundServer::local_addrs`] lists them.
+    #[must_use]
+    pub fn local_addrs(&self) -> &[SocketAddr] {
+        &self.local_addrs
+    }
+
+    /// Begins graceful shutdown, unless the server already stopped, and waits
+    /// for it to end.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`BoundServer::serve`] reports, including a failure that
+    /// stopped the server before this was called. A task the runtime
+    /// cancelled, as it does every task when it shuts down, is reported as
+    /// [`ServerError::ShutdownForced`].
+    ///
+    /// # Panics
+    ///
+    /// Where the serving task panicked, with its panic.
+    pub async fn shutdown(self) -> Result<()> {
+        let Self { trigger, task, .. } = self;
+        drop(trigger);
+        match task.await {
+            Ok(served) => served,
+            Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
+            Err(_) => Err(ServerError::ShutdownForced.into()),
         }
     }
 }

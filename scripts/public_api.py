@@ -59,7 +59,7 @@ NUMBERS = {
 
 ALLOWANCE_MARKER = "**Public dependencies.**"
 PENDING = re.compile(
-    r"^(\w+) crates are public API today without being in the allowance(.*?)(?:\n\n|\Z)",
+    r"^(\w+) (?:crates are|crate is) public API today without being in the allowance(.*?)(?:\n\n|\Z)",
     re.MULTILINE | re.DOTALL,
 )
 BACKTICKED = re.compile(r"`([^`]+)`")
@@ -471,8 +471,8 @@ def main(architecture=None, listings=None, recorded=None, overwrite=None, root=R
             failures += snapshot_failures(crate, recorded.get(crate), listing)
         failures += surface_failures(crate, listing, runtime_items, boxed)
         for line in listing.splitlines():
-            for root in roots(line):
-                named.setdefault(root, line)
+            for foreign in roots(line):
+                named.setdefault(foreign, line)
     if listings:
         failures += dependency_failures(named, allowed, awaiting, tiered)
 

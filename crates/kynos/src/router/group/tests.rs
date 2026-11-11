@@ -1,7 +1,81 @@
 use std::convert::Infallible;
 
-use super::{ShortCircuit, described_statuses, mismatch_between, short_circuit_mismatch};
+use kynos_openapi::Method;
+
+use super::{
+    Methods, ShortCircuit, covering, described_statuses, mismatch_between, short_circuit_mismatch,
+};
 use crate::schema::registry::Registry;
+
+#[test]
+fn safe_and_unsafe_split_every_method_between_them() {
+    for &method in Method::all() {
+        assert_ne!(
+            Methods::SAFE.contains(method),
+            Methods::UNSAFE.contains(method),
+            "{method}"
+        );
+    }
+
+    // RFC 9110 section 9.2.1, and RFC 10008 for `QUERY`.
+    assert_eq!(
+        format!("{:?}", Methods::UNSAFE),
+        r#"{"PUT", "POST", "DELETE", "PATCH"}"#
+    );
+    #[cfg(feature = "openapi32")]
+    assert!(Methods::SAFE.contains(Method::Query));
+}
+
+#[test]
+fn an_empty_set_holds_no_method() {
+    let none = Methods::only(&[]);
+
+    assert!(Method::all().iter().all(|method| !none.contains(*method)));
+}
+
+#[test]
+fn two_sets_overlap_exactly_where_they_share_a_method() {
+    let get = Methods::only(&[Method::Get]);
+
+    assert!(!Methods::SAFE.overlaps(Methods::UNSAFE));
+    assert!(get.overlaps(Methods::SAFE));
+    assert!(!get.overlaps(Methods::only(&[Method::Head])));
+    assert!(Methods::EVERY.overlaps(get));
+    // An empty set covers nothing, so it meets nothing, not even every method.
+    assert!(!Methods::only(&[]).overlaps(Methods::EVERY));
+    assert!(Methods::EVERY.is_every());
+    assert!(!Methods::SAFE.is_every());
+}
+
+#[test]
+fn an_operation_takes_only_the_interceptors_its_method_is_in() {
+    let scoped = [
+        (Methods::EVERY, "outer"),
+        (Methods::UNSAFE, "writes"),
+        (Methods::SAFE, "reads"),
+    ];
+
+    assert_eq!(covering(&scoped, None, Method::Get).0, ["outer", "reads"]);
+    assert_eq!(covering(&scoped, None, Method::Post).0, ["outer", "writes"]);
+}
+
+#[test]
+fn the_guard_point_counts_only_the_interceptors_covering_the_operation() {
+    // `guard_first` called after the first two: two are outside it on a
+    // write, and only one on a read, which the second does not cover.
+    let scoped = [
+        (Methods::EVERY, "outer"),
+        (Methods::UNSAFE, "writes"),
+        (Methods::EVERY, "inner"),
+    ];
+
+    assert_eq!(covering(&scoped, Some(2), Method::Post).1, Some(2));
+    assert_eq!(
+        covering(&scoped, Some(2), Method::Get),
+        (vec!["outer", "inner"], Some(1))
+    );
+    assert_eq!(covering(&scoped, None, Method::Get).1, None);
+}
 
 fn responses(statuses: &[u16]) -> kynos_openapi::Responses {
     statuses

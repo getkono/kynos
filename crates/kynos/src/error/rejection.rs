@@ -23,10 +23,13 @@ use std::{collections::BTreeMap, marker::PhantomData, time::Duration};
 use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::{
-    error::problem::{
-        Branch, IntoProblem, Member, PointerError, Problem, narrowed_response, problem_response,
+    error::{
+        members::{Head, ProblemOrigin, Rendered, served},
+        problem::{
+            Branch, IntoProblem, Member, PointerError, Problem, narrowed_response, problem_response,
+        },
     },
-    http::{HeaderValue, StatusCode, header, retry_after_header, set_retry_after},
+    http::{HeaderValue, Parts, StatusCode, header, retry_after_header, set_retry_after},
     response::{IntoResponse, Responses},
     schema::registry::Registry,
     security::{SecurityScheme, auth::Scopes},
@@ -38,16 +41,19 @@ use crate::{
 /// declares itself in [`auth_responses`].
 ///
 /// `errors` names the status a schema failure answers with, if any, and
-/// whether every response at it sends the [`pointer_errors`] member.
+/// whether every response at it sends the [`pointer_errors`] member. `served`
+/// adds the members the router installs, which only a rejection the router
+/// serves carries.
 fn problem_responses(
     registry: &mut Registry,
     statuses: &[StatusCode],
     errors: Option<(StatusCode, bool)>,
+    served: bool,
 ) -> kynos_openapi::Responses {
     statuses
         .iter()
         .fold(kynos_openapi::Responses::new(), |responses, status| {
-            let members: Vec<Member> = errors
+            let members: Vec<Member<'static>> = errors
                 .filter(|(at, _)| at == status)
                 .map(|(_, sent)| ("errors", pointer_errors_schema(registry), sent))
                 .into_iter()
@@ -55,49 +61,111 @@ fn problem_responses(
 
             responses.with(
                 status.as_u16(),
-                narrowed_problem(registry, *status, &members),
+                narrowed_problem(registry, *status, &members, served),
             )
         })
 }
 
 /// The response one status declares: the shared component narrowed to
-/// `about:blank` and sending `members`, with no summary beyond the reason
-/// phrase.
+/// `about:blank` and sending `members`, and those the router installs where
+/// `served`, with no summary beyond the reason phrase.
 fn narrowed_problem(
     registry: &mut Registry,
     status: StatusCode,
-    members: &[Member],
+    members: &[Member<'static>],
+    served: bool,
 ) -> kynos_openapi::Response {
     let problem = registry.resolve::<Problem>();
+    let members = with_installed(registry, members, served);
 
-    narrowed_response(&problem, status.as_u16(), &[(None, None, members)])
+    narrowed_response(&problem, status.as_u16(), &[(None, None, &members)])
+}
+
+/// `own`, followed where `served` by each member
+/// [`Router::problem_members`](crate::router::Router::problem_members)
+/// declares on every problem the router serves.
+fn with_installed<'a>(
+    registry: &'a Registry,
+    own: &[Member<'static>],
+    served: bool,
+) -> Vec<Member<'a>> {
+    let installed = registry
+        .problem_members()
+        .iter()
+        .filter(|_| served)
+        .map(|(name, schema, sent)| (name.as_str(), schema.clone(), *sent));
+
+    own.iter().cloned().chain(installed).collect()
+}
+
+/// `problem`, answering the routed request whose head is `head`: with the
+/// members the router installs, then whatever `finish` writes onto it. The
+/// 500 that replaces it where those members cannot be sent gets nothing more.
+fn served_response(
+    problem: Problem,
+    origin: ProblemOrigin,
+    head: Head<'_>,
+    finish: impl FnOnce(&mut crate::http::Response),
+) -> crate::http::Response {
+    match served(problem, origin, head) {
+        Rendered::Kept(mut response) => {
+            finish(&mut response);
+            response
+        }
+        Rendered::Refused(refused) => refused,
+    }
 }
 
 /// Emits the two implementations that are mechanical for every rejection: the
-/// bridge to a response, and the description built from `statuses()`.
+/// bridge to a response, and the description built from `statuses()`, each
+/// with its served form carrying the members the router installs under
+/// `origin`.
 ///
 /// `errors: STATUS => SENT` declares the [`pointer_errors`] member under the
 /// status a schema failure answers with, required where `SENT` says every
 /// response at that status carries it.
 macro_rules! rejection_response {
-    (@[$errors:expr] $rejection:ty) => {
+    (@[$errors:expr] $rejection:ty, $origin:expr) => {
         impl IntoResponse for $rejection {
             fn into_response(self) -> crate::http::Response {
                 IntoProblem::into_problem(self).into_response()
+            }
+
+            fn __into_response_for(self, request: &Parts) -> crate::http::Response {
+                served_response(
+                    IntoProblem::into_problem(self),
+                    $origin,
+                    Head::from(request),
+                    |_| {},
+                )
             }
         }
 
         impl Responses for $rejection {
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                problem_responses(registry, <$rejection as IntoProblem>::statuses(), $errors)
+                problem_responses(
+                    registry,
+                    <$rejection as IntoProblem>::statuses(),
+                    $errors,
+                    false,
+                )
+            }
+
+            fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+                problem_responses(
+                    registry,
+                    <$rejection as IntoProblem>::statuses(),
+                    $errors,
+                    true,
+                )
             }
         }
     };
-    ($rejection:ty, errors: $status:expr => $sent:expr) => {
-        rejection_response!(@[Some(($status, $sent))] $rejection);
+    ($rejection:ty, $origin:expr, errors: $status:expr => $sent:expr) => {
+        rejection_response!(@[Some(($status, $sent))] $rejection, $origin);
     };
-    ($rejection:ty) => {
-        rejection_response!(@[None] $rejection);
+    ($rejection:ty, $origin:expr) => {
+        rejection_response!(@[None] $rejection, $origin);
     };
 }
 
@@ -134,22 +202,26 @@ fn schema_problem(status: StatusCode, type_uri: Option<&'static str>) -> Problem
 ///
 /// What an extractor adds to its rejection's own declaration, which already
 /// declares `about:blank` at `status` for every failure no schema names a type
-/// for; the two join into a choice.
+/// for; the two join into a choice. `served` declares the members the router
+/// installs as well, as an extractor's rejection carries them and an
+/// interceptor's does not.
 pub(crate) fn constraint_responses(
     registry: &mut Registry,
     status: StatusCode,
     named: &[&'static str],
+    served: bool,
 ) -> kynos_openapi::Responses {
     if named.is_empty() {
         return kynos_openapi::Responses::new();
     }
 
-    let members: [Member; 1] = [("errors", pointer_errors_schema(registry), true)];
+    let errors: [Member<'static>; 1] = [("errors", pointer_errors_schema(registry), true)];
+    let problem = registry.resolve::<Problem>();
+    let members = with_installed(registry, &errors, served);
     let branches: Vec<Branch<'_>> = named
         .iter()
         .map(|uri| (Some(*uri), None, &members[..]))
         .collect();
-    let problem = registry.resolve::<Problem>();
 
     kynos_openapi::Responses::new().with(
         status.as_u16(),
@@ -170,6 +242,7 @@ macro_rules! parameter_rejection {
     (
         @[$($cfg:meta)?]
         subject: $subject:literal,
+        origin: $origin:expr,
         $(#[$meta:meta])*
         pub enum $name:ident {
             $(#[$invalid:meta])*
@@ -241,7 +314,7 @@ macro_rules! parameter_rejection {
         }
 
         $(#[cfg($cfg)])?
-        rejection_response!($name, errors: StatusCode::BAD_REQUEST => false);
+        rejection_response!($name, $origin, errors: StatusCode::BAD_REQUEST => false);
     };
     ($($rest:tt)*) => {
         parameter_rejection!(@[] $($rest)*);
@@ -250,6 +323,7 @@ macro_rules! parameter_rejection {
 
 parameter_rejection! {
     subject: "parameter",
+    origin: ProblemOrigin::PathParameter,
     /// A path parameter did not match its declared schema.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -271,6 +345,7 @@ parameter_rejection! {
 
 parameter_rejection! {
     subject: "parameter",
+    origin: ProblemOrigin::QueryParameter,
     /// A query parameter was missing or malformed.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -295,6 +370,7 @@ parameter_rejection! {
 
 parameter_rejection! {
     subject: "header",
+    origin: ProblemOrigin::HeaderField,
     /// A header was missing or malformed.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -317,6 +393,7 @@ parameter_rejection! {
 parameter_rejection! {
     #[cfg(feature = "cookie")]
     subject: "cookie",
+    origin: ProblemOrigin::CookieValue,
     /// A cookie was missing or malformed.
     #[derive(Debug, thiserror::Error)]
     #[non_exhaustive]
@@ -514,6 +591,25 @@ impl IntoResponse for BodyRejection {
 
         IntoProblem::into_problem(self).into_response()
     }
+
+    fn __into_response_for(self, request: &Parts) -> crate::http::Response {
+        #[cfg(feature = "openapi32")]
+        let refused = matches!(self, Self::UnsupportedMediaType { .. });
+
+        served_response(
+            IntoProblem::into_problem(self),
+            ProblemOrigin::Content,
+            Head::from(request),
+            |response| {
+                #[cfg(feature = "openapi32")]
+                if refused {
+                    response.extensions_mut().insert(MediaTypeRefused);
+                }
+                #[cfg(not(feature = "openapi32"))]
+                let _ = response;
+            },
+        )
+    }
 }
 
 impl Responses for BodyRejection {
@@ -522,6 +618,16 @@ impl Responses for BodyRejection {
             registry,
             <Self as IntoProblem>::statuses(),
             Some((StatusCode::UNPROCESSABLE_ENTITY, true)),
+            false,
+        )
+    }
+
+    fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        problem_responses(
+            registry,
+            <Self as IntoProblem>::statuses(),
+            Some((StatusCode::UNPROCESSABLE_ENTITY, true)),
+            true,
         )
     }
 }
@@ -579,7 +685,7 @@ impl IntoProblem for NegotiationRejection {
     }
 }
 
-rejection_response!(NegotiationRejection);
+rejection_response!(NegotiationRejection, ProblemOrigin::Negotiation);
 
 /// No requested byte range is satisfiable.
 ///
@@ -641,6 +747,32 @@ impl IntoResponse for RangeRejection {
     }
 }
 
+#[cfg(feature = "assets")]
+impl RangeRejection {
+    /// The 416 an asset endpoint answers the request whose head is `head`
+    /// with: carrying the members the router installs, and the
+    /// `Content-Range` [`into_response`](IntoResponse::into_response) writes.
+    ///
+    /// Declared by [`served_responses`](Self::served_responses). A handler
+    /// returns its rejection with no request in reach, so it renders through
+    /// `into_response` and declares through `responses`.
+    pub(crate) fn served_for(self, head: Head<'_>) -> crate::http::Response {
+        let field = self.content_range();
+        served_response(
+            IntoProblem::into_problem(self),
+            ProblemOrigin::ByteRange,
+            head,
+            |response| crate::response::headers::write_or_refuse(response, &field),
+        )
+    }
+
+    /// The 416 [`served_for`](Self::served_for) answers with, declaring the
+    /// members the router installs.
+    pub(crate) fn served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        range_responses(registry, true)
+    }
+}
+
 /// The 416, carrying the field it sends.
 ///
 /// Declared through the handler's return type rather than by `Range<T>`, so
@@ -648,23 +780,32 @@ impl IntoResponse for RangeRejection {
 /// advertise it.
 impl Responses for RangeRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let mut responses =
-            problem_responses(registry, <RangeRejection as IntoProblem>::statuses(), None);
-
-        let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
-        if let Some(kynos_openapi::RefOr::Item(response)) =
-            responses.responses.get_mut(&unsatisfiable)
-        {
-            response.headers.insert(
-                "Content-Range".to_owned(),
-                kynos_openapi::RefOr::Item(
-                    crate::response::range::headers::ContentRange::unsatisfied_header(),
-                ),
-            );
-        }
-
-        responses
+        range_responses(registry, false)
     }
+}
+
+/// [`RangeRejection`]'s 416 with its `Content-Range`, declaring the members the
+/// router installs where `served`.
+fn range_responses(registry: &mut Registry, served: bool) -> kynos_openapi::Responses {
+    let mut responses = problem_responses(
+        registry,
+        <RangeRejection as IntoProblem>::statuses(),
+        None,
+        served,
+    );
+
+    let unsatisfiable = StatusCode::RANGE_NOT_SATISFIABLE.as_u16().to_string();
+    if let Some(kynos_openapi::RefOr::Item(response)) = responses.responses.get_mut(&unsatisfiable)
+    {
+        response.headers.insert(
+            "Content-Range".to_owned(),
+            kynos_openapi::RefOr::Item(
+                crate::response::range::headers::ContentRange::unsatisfied_header(),
+            ),
+        );
+    }
+
+    responses
 }
 
 /// The connection has no IP peer for
@@ -703,7 +844,7 @@ impl IntoProblem for ConnectInfoRejection {
     }
 }
 
-rejection_response!(ConnectInfoRejection);
+rejection_response!(ConnectInfoRejection, ProblemOrigin::Transport);
 
 /// A credential was absent, invalid, or insufficient, or could not be checked.
 ///
@@ -743,7 +884,7 @@ pub enum AuthRejection {
         ///
         /// An [`Authenticator`](crate::security::Authenticator) leaves this
         /// `None`, as both constructors do, and a guard replaces it: a refusal
-        /// from [`Authenticator::authorize`](crate::security::Authenticator::authorize)
+        /// from [`Authorizer::authorize`](crate::security::Authorizer::authorize)
         /// carries
         /// [`SecurityScheme::insufficient_scope_challenge`],
         /// and one from
@@ -995,23 +1136,52 @@ impl IntoProblem for AuthRejection {
 /// the challenge the rejection carries; and a 503's `Retry-After`.
 impl IntoResponse for AuthRejection {
     fn into_response(self) -> crate::http::Response {
-        let challenge = self.challenge();
-        let retry_after = self.retry_after();
+        let fields = AuthFields::of(&self);
         let mut response = IntoProblem::into_problem(self).into_response();
+        fields.write(&mut response);
+        response
+    }
 
-        if let Some(delay) = retry_after {
-            set_retry_after(&mut response, delay);
+    fn __into_response_for(self, request: &Parts) -> crate::http::Response {
+        let fields = AuthFields::of(&self);
+        served_response(
+            IntoProblem::into_problem(self),
+            ProblemOrigin::Authentication,
+            Head::from(request),
+            |response| fields.write(response),
+        )
+    }
+}
+
+/// The fields an [`AuthRejection`] sends beside its problem.
+struct AuthFields {
+    challenge: Option<&'static str>,
+    retry_after: Option<Duration>,
+}
+
+impl AuthFields {
+    fn of(rejection: &AuthRejection) -> Self {
+        Self {
+            challenge: rejection.challenge(),
+            retry_after: rejection.retry_after(),
+        }
+    }
+
+    fn write(self, response: &mut crate::http::Response) {
+        if let Some(delay) = self.retry_after {
+            set_retry_after(response, delay);
         }
 
         // `from_str` refuses a challenge that would splice a header; it is then
         // dropped rather than panicking, as `Auth`'s description also does.
-        if let Some(value) = challenge.and_then(|challenge| HeaderValue::from_str(challenge).ok()) {
+        if let Some(value) = self
+            .challenge
+            .and_then(|challenge| HeaderValue::from_str(challenge).ok())
+        {
             response
                 .headers_mut()
                 .insert(header::WWW_AUTHENTICATE, value);
         }
-
-        response
     }
 }
 
@@ -1021,23 +1191,25 @@ impl IntoResponse for AuthRejection {
 /// [`SecurityScheme::FORBIDS`] of a scheme the guard names, says one can be
 /// sent; and the 503 only where `unavailable`,
 /// [`SecurityScheme::MAY_BE_UNAVAILABLE`] of a scheme the guard names, says
-/// one can be sent.
+/// one can be sent. `served` declares the members the router installs on each
+/// narrowed one, as a guard's or an argument's refusal carries them.
 pub(crate) fn auth_responses(
     registry: &mut Registry,
     named: Option<&'static str>,
     forbids: bool,
     unavailable: bool,
+    served: bool,
 ) -> kynos_openapi::Responses {
     <AuthRejection as IntoProblem>::statuses().iter().fold(
         kynos_openapi::Responses::new(),
         |responses, status| {
             let declared = match *status {
                 StatusCode::FORBIDDEN if !forbids => return responses,
-                StatusCode::FORBIDDEN => forbidden(registry, *status, named),
+                StatusCode::FORBIDDEN => forbidden(registry, *status, named, served),
                 StatusCode::SERVICE_UNAVAILABLE if !unavailable => return responses,
-                StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(registry, *status, &[])
+                StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(registry, *status, &[], served)
                     .with_header("Retry-After", retry_after_header()),
-                _ => narrowed_problem(registry, *status, &[]),
+                _ => narrowed_problem(registry, *status, &[], served),
             };
 
             responses.with(status.as_u16(), declared)
@@ -1050,22 +1222,26 @@ pub(crate) fn auth_responses(
 ///
 /// Never the named URI alone: [`AuthRejection::forbidden`] stays available to
 /// every authorizer, so both bodies are observable. Naming none leaves the
-/// shared component, since the authorizer may then send any URI.
+/// shared component, since the authorizer may then send any URI. The wide
+/// component already admits whatever members the router installs, so only a
+/// narrowed 403 declares them.
 fn forbidden(
     registry: &mut Registry,
     status: StatusCode,
     named: Option<&'static str>,
+    served: bool,
 ) -> kynos_openapi::Response {
     let Some(named) = named else {
         return problem_response(registry, crate::http::describe_code(status.as_u16()));
     };
 
     let problem = registry.resolve::<Problem>();
+    let members = with_installed(registry, &[], served);
 
     narrowed_response(
         &problem,
         status.as_u16(),
-        &[(None, None, &[]), (Some(named), None, &[])],
+        &[(None, None, &members), (Some(named), None, &members)],
     )
 }
 
@@ -1129,6 +1305,10 @@ impl<R: Scopes> IntoResponse for ScopedRejection<R> {
     fn into_response(self) -> crate::http::Response {
         self.rejection.into_response()
     }
+
+    fn __into_response_for(self, request: &Parts) -> crate::http::Response {
+        self.rejection.__into_response_for(request)
+    }
 }
 
 /// The 401 and the 403, the second narrowed to what
@@ -1139,7 +1319,11 @@ impl<R: Scopes> IntoResponse for ScopedRejection<R> {
 /// authorizer that may refuse it.
 impl<R: Scopes> Responses for ScopedRejection<R> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, R::FORBIDDEN_TYPE, true, false)
+        auth_responses(registry, R::FORBIDDEN_TYPE, true, false, false)
+    }
+
+    fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        auth_responses(registry, R::FORBIDDEN_TYPE, true, false, true)
     }
 }
 
@@ -1152,7 +1336,11 @@ impl<R: Scopes> Responses for ScopedRejection<R> {
 /// keeps the 403 and declares no 503.
 impl Responses for AuthRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, None, true, false)
+        auth_responses(registry, None, true, false, false)
+    }
+
+    fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        auth_responses(registry, None, true, false, true)
     }
 }
 

@@ -103,7 +103,7 @@ pub(super) fn unique_tags(declared: &[kynos_openapi::Tag]) -> Vec<kynos_openapi:
 /// The `Accept-Query` naming the media types of `operation`'s request body,
 /// where it is a `QUERY` and some content key can be a member.
 #[cfg(feature = "openapi32")]
-fn accept_query(
+pub(super) fn accept_query(
     method: kynos_openapi::Method,
     operation: &kynos_openapi::Operation,
 ) -> Option<crate::http::HeaderValue> {

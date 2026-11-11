@@ -172,7 +172,10 @@ by naming the row X displaces rather than by arguing that X is good.
   closes rather than defers. `httparse` has a second dependent: with
   `multipart` on, `multer` parses each part's headers with it, from request
   body bytes a reverse proxy does not parse. Not naming it still holds; it is
-  not reached through `hyper` alone.
+  not reached through `hyper` alone. `multer` is named only in the multipart
+  module, so an advisory reached only on that second path is fixed within the
+  multipart codec's auxiliary row; the field a part carries is still decided by
+  Kynos's own `Content-Disposition` reader, never by `multer`'s.
 - A new dependency arrives feature-gated and additive, never as a widening of
   the default build. A corollary that has already bitten: a capability in the
   *default* build cannot be gated, so it cannot take a dependency at all —
@@ -226,6 +229,16 @@ and a breaking release. An incompatible bump of any other dependency is
 `chore(deps)` that needs a change outside those paths has found a containment
 bug, and that bug is what gets fixed.
 
+**The scalar-format exception:** a scalar-format crate is public API only
+through Kynos's trait impls on its types, so its feature and its dependency key
+name the major those impls are for: the features `uuid1`, `time-chrono04`,
+`time-jiff02`, `decimal-rust1` and `decimal-big04`, over the package-renamed
+keys `uuid1`, `chrono04`, `jiff02`, `rust_decimal1` and `bigdecimal04`. A new
+major arrives as a new feature and key beside the old, which is additive,
+because the impls are on distinct types and both can be on while an
+application moves. The old one is removed in a later breaking release, and
+that removal is the `!` commit. The `time` and `decimal` umbrellas name no crate and stay unversioned.
+
 **The auxiliary guarantee:** every built-in codec is re-implementable through
 [`BodyCodec`](../crates/kynos/src/extract/body/codec.rs) and `Encoded<C, T>`, so
 a codec advisory never leaves an application waiting on a Kynos release: it
@@ -244,13 +257,13 @@ keep:
 - `http-body` — `impl Body for http::Body`.
 - `tokio` — the `Server::serve_io` bound.
 - `tower-service` and `tower-layer` — `unchecked`.
+- `uuid`, `chrono`, `jiff`, `rust_decimal` and `bigdecimal` — trait impls on
+  their types under `schema/impls/`, each behind a feature naming its major, so
+  a new major is additive (the scalar-format exception above).
 
-Six crates are public API today without being in the allowance, and each has
-an issue moving it down a tier: `uuid`, `chrono`, `jiff`, `rust_decimal` and
-`bigdecimal` as trait impls on their types under `schema/impls/`
-([#1214](https://github.com/getkono/kynos/issues/1214)); and `prost` as the
-`T: prost::Message` bound on `Protobuf<T>`
-([#1215](https://github.com/getkono/kynos/issues/1215)).
+One crate is public API today without being in the allowance, and it has an
+issue moving it down a tier: `prost` as the `T: prost::Message` bound on
+`Protobuf<T>` ([#1215](https://github.com/getkono/kynos/issues/1215)).
 
 `mise run api:check` reads the list and that paragraph, the count included,
 and holds `cargo public-api --all-features` for `kynos-openapi` and `kynos` to
@@ -274,6 +287,7 @@ dependency is a change to this list and to a snapshot, both in review;
 | Protocol driver, HTTP/1 and HTTP/2 | `hyper` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs), [`http/body.rs`](../crates/kynos/src/http/body.rs); its `client` half in `server/connection.rs`, gated on `test-util`, for `TestClient::through_server` | core | built |
 | tokio adapters for the driver | `hyper-util` | [`server/connection.rs`](../crates/kynos/src/server/connection.rs) | auxiliary | built |
 | Accepted-socket options tokio does not expose | `socket2` | [`server/tcp.rs`](../crates/kynos/src/server/tcp.rs) | auxiliary | built |
+| The open-file limit, on Unix | `rustix` | [`server/descriptors.rs`](../crates/kynos/src/server/descriptors.rs) | auxiliary | built |
 | HTTP/1 parsing | `httparse` | never — reached through `hyper`, and through `multer` for each multipart part's headers | core | built |
 | HTTP/2 framing | `h2` | never — reached through `hyper` | core | built |
 | TLS | `rustls`, via `tokio-rustls` | [`server/tls/`](../crates/kynos/src/server/tls/) | auxiliary | built |
@@ -338,31 +352,38 @@ only job is to give a value a JSON Schema `format` — which is why "can we add
 because there was nothing in that position to displace. The rule the layer
 inherits is the ordinary one: each crate is named only under
 [`schema/impls/`](../crates/kynos/src/schema/impls/), each arrives behind an
-off-by-default feature, and none is reachable from a default build.
+off-by-default feature, and none is reachable from a default build. The one
+thing the layer adds is version-suffixing: a crate's feature and dependency key
+name its major, so its new major arrives as a new feature beside the old, and
+the old is removed in a later breaking release (the [scalar-format
+exception](#what-an-upstream-fix-may-change)).
 
 ### What does not move, and why
 
 **hyper.** hyper parses HTTP/1 with `httparse`, so owning the codec would mean
 owning framing and buffering rather than parsing — and hyper's framing is close
 to allocation-free already: header values are `Bytes` slices into the read
-buffer, and the `HeaderMap` is recycled between requests on a connection. Two
-limits are real, and are recorded here rather than argued away. hyper allocates
+buffer, and the `HeaderMap` is recycled between requests on a connection. One
+limit is real, and is recorded here rather than argued away. hyper allocates
 an 8 KiB write buffer at connection construction and never shrinks the read
 buffer below 8 KiB, with no pool and no way to supply one, so roughly 16 KiB
 per live connection is not configurable; `max_buf_size` moves the ceiling, not
-the floor. And hyper releases HTTP/2 flow-control capacity as soon as a frame
-is polled, so backpressure on an HTTP/2 request body is not expressible through
-it — the `h2` crate's `release_capacity` is the only remedy, and taking it
-means owning the connection driver. The question reopens on one measurement:
+the floor, and what that ceiling costs at the defaults is
+[`nfr.md`](nfr.md#what-the-defaults-let-one-connection-hold)'s arithmetic. HTTP/2 request-body backpressure is not a
+second: hyper releases a frame's flow-control capacity when the body's reader
+polls it, so a reader that stops closes the window, and what a reader has
+polled but not consumed is its own buffer, bounded by the body limit whatever
+the window does, which
+[`nfr.md`](nfr.md#runtime) weighs and does not ask upstream for. The question reopens on one measurement:
 RSS delta at 100k idle keep-alive connections, with and without TLS. Until that
 number exists it stays closed.
 
 **matchit.** A `{param}` matches exactly one path segment, never crossing a
 `/`, and captures a borrowed slice of the request path rather than an owned
 string — the property the routing path's allocation requirements rest on.
-[`nfr.md`](nfr.md#routing) records zero heap allocations there as `absent` and
-unmet, beside what a static match measures, and enforces recorded ceilings in
-the meantime; lowering one is what closing the gap looks like. matchit also
+[`nfr.md`](nfr.md#routing) records zero heap allocations there as `absent`, and
+as decided rather than open: each block a static match still allocates is
+attributed and kept, and recorded ceilings hold the path at that count. matchit also
 understands catch-all patterns, which Kynos does not: a catch-all has no OpenAPI equivalent, so the
 router rejects that syntax before matchit is asked to insert it. That check is
 syntactic and belongs above the dependency rather than inside it, which is why
@@ -565,6 +586,89 @@ without one. `criterion` and `divan` were the alternatives, and both time: the
 exclusion [`nfr.md`](nfr.md#tooling-gaps) records is of a wall-clock gate, and
 a count taken under Callgrind is not one.
 
+### JSON codecs other than serde_json, refused
+
+**`Json<T>` is serde_json, and Kynos ships no feature that swaps it.** Decided
+in November 2026 on measurement, not preference: the
+[serde-json-contenders report](https://github.com/getkono/serde-json-contenders/blob/90ec52bffb9cc45f6daa548b724262ab7a44f73f/report/README.md#rules)
+put sonic-rs, simd-json, flexon and jiter behind `Json<T>`'s own contract,
+x86-64 Linux only, and none answers every request as serde_json does. A swap
+behind `Json<T>` would change responses clients already see, so speed alone
+cannot decide it. What each one gets wrong:
+
+- **sonic-rs** aborts the process with a stack overflow on a deeply nested
+  value it skips (an unknown field), accepts an invalid `\u` escape inside one,
+  and decodes `-0.0` into `f64` as `0.0`.
+- **simd-json** decodes a lone surrogate escape as U+0000 where serde_json
+  refuses it, writes NaN and the infinities as numbers serde_json refuses to
+  read back, and answers some shape errors 400 rather than 422 and the reverse.
+- **flexon** accepts trailing bytes after a document, which RFC 8259 forbids,
+  refuses integer map keys serde_json reads, overflows the stack decoding a
+  `Value` 10,000 levels deep on a tokio worker's stack, and Miri reports
+  undefined behaviour in it.
+- **jiter** refuses every integer above `i64::MAX`, and has no encoder.
+
+What this gives up is real but narrow, and it grows with the body
+([codec share](https://github.com/getkono/serde-json-contenders/blob/90ec52bffb9cc45f6daa548b724262ab7a44f73f/report/README.md#e2e-counted),
+[throughput](https://github.com/getkono/serde-json-contenders/blob/90ec52bffb9cc45f6daa548b724262ab7a44f73f/report/README.md#e2e-timed)).
+The codec is 29 % of a 1 KiB request, where sonic-rs and flexon raised
+throughput by about 5 %; it is 93 % of a 64 KiB request, where sonic-rs,
+simd-json and flexon raised it by 18 % to 53 %. Responses gain less: simd-json
+lost a fifth of the throughput of a 64 KiB response. The question reopens for
+a codec the report recommends, which takes passing its conformance
+differential, soundness review and end-to-end threshold as well as a CPU or
+heap win; nothing else reopens it.
+
+**An application that wants the win anyway brings its own codec.** A
+[`BodyCodec<T>`](../crates/kynos/src/extract/body/codec.rs) may name
+`application/json`, and `Encoded<C, T>` then carries `T` through it in place
+of `Json<T>`, on the request and the response. Kynos still owns the 415, the
+body limit, the content-coding refusal, the 400/422 split, `T`'s bounds, the
+500 and the description, and it hands `decode` the `Bytes` it read:
+
+```rust
+struct SonicJson;
+
+impl<T: Serialize + DeserializeOwned> BodyCodec<T> for SonicJson {
+    const MEDIA_TYPE: &'static str = "application/json";
+
+    fn decode(bytes: &Bytes) -> Result<T, DecodeError> {
+        sonic_rs::from_slice(bytes).map_err(|e| {
+            if e.is_syntax() || e.is_eof() {
+                DecodeError::Syntax("the body is not JSON".to_owned())
+            } else {
+                DecodeError::Data("the body does not fit the type".to_owned())
+            }
+        })
+    }
+
+    fn encode(value: &T, out: &mut impl Write) -> std::io::Result<()> {
+        out.write_all(&sonic_rs::to_vec(value).map_err(std::io::Error::other)?)
+    }
+}
+```
+
+What the application takes on in exchange:
+
+- **Its codec's answers.** Every divergence above becomes its own, and so does
+  bounding them. The default 2 MiB body limit does not: the nesting that aborts
+  sonic-rs fits in about 2 MB, and the report shows it surviving only up to
+  10,000 levels. A route mounting such a codec lowers its own limit with
+  [`BodySize`](../crates/kynos/src/middleware/limits/body_size.rs), or checks
+  depth before decoding.
+- **Its codec's error text.** A `DecodeError` reaches the client verbatim, and
+  sonic-rs's errors quote the body they failed on, which the detail must not
+  repeat; hence the fixed messages above.
+- **A root pointer.** A shape error is a 422 at `""`, where `Json<T>` names the
+  member that failed.
+- **One more copy on encode.** `encode` is handed `impl Write`, and sonic-rs's
+  `to_writer` takes only its own writer trait, so the value is written to a
+  `Vec` first.
+- **One codec per media type.** The `Encoded` cannot sit beside a `Json<T>` in
+  a `OneOf` or a `Negotiated` offer, both being `application/json`. `JsonAs`,
+  problem documents, JSON Lines, Server-Sent Events and the description stay
+  serde_json.
+
 ### What each feature gates
 
 The [README](../README.md#feature-flags) says what a flag *adds*, which is what
@@ -589,7 +693,7 @@ module column is also where the `#[cfg]` lives.
 | `cookie` | cookie parameters, response cookies and `SetCookies`. Names no crate: Kynos owns the RFC 6265 | [`standards.md`](standards.md) |
 | `compression` | `middleware/compression/` and `middleware/decompression/`, two of the six runtime-allowance rows | [`middleware.md`](middleware.md) |
 | `trace` | the `tracing` facade only; the subscriber stays the application's | [`middleware.md`](middleware.md) |
-| `uuid`, `time-*`, `decimal-*` | one `schema/impls/` module each. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
+| `uuid1`, `time-*`, `decimal-*` | one `schema/impls/` module each, behind a feature naming the crate's major. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
 | `yaml` | the second document emitter, in `kynos-openapi` and re-exported | [`standards.md`](standards.md) |
 | `test-util` | `test/`, and the JSON Schema validator its conformance assertions need; with `server`, hyper's `client` half and tokio's `duplex`, which `TestClient::through_server` drives `Server::serve_io` with from `server/connection.rs` | [`testing.md`](testing.md) |
 | `cache` | `middleware/cache/` and `middleware/conditional/`: the seam, never a store | [`middleware.md`](middleware.md) |
@@ -640,6 +744,22 @@ listener's would, and a stream recorded without one is sniffed as plaintext.
 That exposes the connection driver's
 existing `AsyncRead + AsyncWrite` bound rather than adding a coupling point,
 and accepting those streams stays the application's job.
+
+**The PROXY protocol is in, on TCP listeners, under `server`.** Behind a load
+balancer that relays TCP rather than HTTP, its header is the only place the
+client's address arrives, and reading it on `serve_io` instead would give up
+the connection limit, drain and TLS a listener provides
+([#1231](https://github.com/getkono/kynos/issues/1231)).
+`Server::proxy_protocol` takes the `TrustedProxies` the forwarding fields
+already use, reading only whom it believes: the same question, asked of the
+socket peer, and one policy type rather than two. A believed peer must send the
+header, read before TLS and within the first-head deadline, and one that does
+not is closed; any other peer is served as it is, so a client cannot claim an
+address by sending one. The client becomes the `Connection`'s peer, which
+`Router::trusted_proxies` then resolves from. It is a reader of a few hundred
+lines with no dependency, inside the connection coupling point, so no feature
+of its own gates it. A Unix listener reads no header, its peer having no
+address to trust.
 
 **WebSockets are deferred, and the description they need is AsyncAPI.** A
 WebSocket stops being request/response once it is established, and OpenAPI
@@ -799,15 +919,39 @@ connections. It wins nothing where the workload is dominated by a database
 round-trip or by serde CPU time, which describes most JSON APIs — including most
 of what Kynos is for.
 
-The diagnostic is therefore syscalls per request. At roughly four syscalls per
-request there is nothing left to win, which is why the runtime question is
-closed rather than deferred: the alternative was never going to pay for the
-abstraction it would have cost.
+The diagnostic is therefore syscalls per request. A kept-alive `plaintext`
+request costs three — one `epoll_wait`, one read and one vectored write — which
+is what hyper alone and axum pay on the same path
+([`nfr.md`](nfr.md#runtime)), and one wait returns every connection that is
+ready at once. At three there is nothing left to win, which is why the runtime
+question is closed rather than deferred: the alternative was never going to pay
+for the abstraction it would have cost.
 
 Two deployment facts compound this. io_uring is Linux-only, and it is disabled
 by seccomp policy by default on many managed platforms. That makes it a
 deployment-restricted optimization, which is a poor thing to build a foundation
 on.
+
+### Why accept sharding is opt-in
+
+Each listener has one accept task, so a bound address accepts serially. A
+very high accept rate on a many-core host is where that could bound
+throughput: clients that do not keep connections alive, or TLS at the edge.
+`Server::accept_shards` binds each address the server resolves on that many
+`SO_REUSEPORT` sockets, each with its own accept task, and the kernel spreads
+new connections across them. It stays opt-in at one until a measurement shows
+accept is the bottleneck ([getkono/kynos-bench#124](https://github.com/getkono/kynos-bench/issues/124)).
+A default tied to the worker count would change every deployment's
+sockets on a guess, and would let any process of the same user join the port.
+
+It ships on Linux and Android only, whose kernels balance connections across
+`SO_REUSEPORT` sockets. Elsewhere the option does not balance, as on the
+Apple platforms, is spelled differently, as FreeBSD's `SO_REUSEPORT_LB`, or
+does not exist, as on Windows, so there the method does not exist either
+rather than doing nothing; another platform is an addition, not a break. A listener bound elsewhere cannot be
+sharded once bound, so more than one shard beside one is refused. An
+application sharding its own sockets binds each with `SO_REUSEPORT` and hands
+each to `Server::listener`, which gives every listener its own accept task.
 
 ### Why hyper stays
 
@@ -824,7 +968,8 @@ timers, and what the per-connection handler in
 [`server/connection.rs`](../crates/kynos/src/server/connection.rs) adds — the
 connection metadata it inserts into the request's extensions and the incoming
 body it erases — are counted to the duplex ([`nfr.md`](nfr.md)'s
-`connection_*` row), as a trend with no gate. A per-request figure over a real
+`connection_*` row), as a trend with no gate; `connection_tls` alone reaches
+a TLS listener over a loopback socket, since `serve_io` terminates no TLS. A per-request figure over a real
 socket is the general measurement
 [`performance.md`](performance.md#the-boundary) sends to `kynos-bench`. What
 Kynos's routing path adds is also gated, against the ceilings
@@ -877,7 +1022,10 @@ costs in total is not guarded anywhere: that would have to include the peer
 certificate chain `TlsIdentity` owns, which a `size_of` sees as one
 pointer-width triple and a multi-certificate mTLS chain makes kilobytes of heap
 the reading does not see, along with the connection task's future, the service
-handle and the semaphore permit, none of which is bounded today.
+handle and the semaphore permit, none of which is bounded today. What the
+default limits let a client make one connection hold is stated instead, as
+arithmetic rather than a guard, in
+[`nfr.md`](nfr.md#what-the-defaults-let-one-connection-hold).
 
 **ALPN.** Traced through the dependencies it runs on rather than measured,
 re-sniffing ALPN costs no read syscall on the one path where ALPN exists.
@@ -923,15 +1071,24 @@ Erasure costs one step further out, on the server path, where
 on a router with no observer registered, one allocation per request that
 arrives over a socket, and one more for a response body that is not empty. A
 request body that is not already over is erased inside its idle timer instead,
-which is the same one allocation, plus one for the timer the first time a read
-of it has to wait. The
+which is the same one allocation, plus one for the `Arc<AtomicBool>` stall flag
+the bound shares with the connection, and one more for the timer the first time
+a read of it has to wait. The
 qualifier is the condition
 [`dispatch.rs`](../crates/kynos/src/router/dispatch.rs)'s `finish` branches on
 — a router with an observer erases the response body a second time through a
 `Watched` that is not zero-sized and holds the disconnect report inline, for
-one more. No gated test counts that figure, since `Body::from_incoming` is
-`pub(crate)`; the `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
-count it to the duplex, as a trend.
+one more. That observer's allocation and the timer's are ungated. The rest, on
+a router with no observer — the erasure box and, for a body not yet over, the
+stall flag — sits behind `pub(crate)` constructors, so it is gated where a
+request crosses a connection:
+[`alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs) serves the second
+request on an HTTP/1.1 connection through `Server::serve_io` over a duplex,
+without a body and with one, and holds each beside the same request's
+in-process count: exactly on Linux and Windows, where it was read, and as a
+floor elsewhere, macOS's `pthread`-backed std locks each adding a block. The `connection_*` groups of [`nfr.md`](nfr.md)'s profile row
+count the rest of the connection path to the duplex, as a trend, save
+`connection_tls`, which reaches a TLS listener over a loopback socket.
 [`alloc_body.rs`](../crates/kynos/tests/alloc_body.rs) counts both constructors
 — zero for `Body::empty`, one for `Body::from_bytes` — and
 [`size.rs`](../crates/kynos/tests/size.rs) holds the zero-sized reason as a

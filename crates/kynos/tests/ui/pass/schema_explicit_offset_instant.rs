@@ -6,6 +6,6 @@
 fn describable<T: kynos::schema::Schema>() {}
 
 fn main() {
-    describable::<chrono::DateTime<chrono::Utc>>();
-    describable::<chrono::DateTime<chrono::FixedOffset>>();
+    describable::<chrono04::DateTime<chrono04::Utc>>();
+    describable::<chrono04::DateTime<chrono04::FixedOffset>>();
 }

@@ -37,11 +37,12 @@
 //!   once, so neither is a string a handler passes or an authorizer parses.
 //!   And both are checked: every guard naming `DelegatedAccess` hands its
 //!   scopes to `authorize`, exactly as `/reports` hands it `ReadReports`.
-//! * **A context declares what it can verify.** One `App`, seven
+//! * **A context declares what it can verify.** One `App`, eight
 //!   implementations, so the set of schemes an application supports is visible
 //!   in one place rather than spread across the handlers requiring them. Only
-//!   one of them verifies for real, one reports its store down, and the other
-//!   five say so in their name.
+//!   one of them verifies for real, one reports its store down, one is handed
+//!   a header its carrier read beside the token, and the other five say so in
+//!   their name.
 //! * **An operation takes one guard.** A second credential argument does not
 //!   compile, because both would run while the description listed them as
 //!   alternatives. `/exports` accepts either of two schemes through `AnyOf`,
@@ -80,7 +81,7 @@ use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator, Scope, Unscoped,
+        Authenticates, Authenticator, Authorizer, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{ApiKey, BearerToken, Carries, Credentials},
         requirement::{AllOf, AnyOf, Either2},
@@ -262,7 +263,12 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
             .cloned()
             .ok_or_else(AuthRejection::unauthenticated)
     }
+}
 
+/// `AccessToken` names `scope = Grant`, so a context authenticates it only
+/// once its authenticator also authorizes those scopes. A scheme that names no
+/// scope type needs no such impl, as `Sessions` below shows.
+impl<C: Sync> Authorizer<AccessToken, C, Grant> for Tokens {
     async fn authorize(
         &self,
         credential: &Claims,
@@ -300,16 +306,6 @@ impl<C: Sync> Authenticator<SessionCookie, C> for Sessions {
         let _ = (presented, context);
         Err(AuthRejection::unavailable::<SessionCookie>().with_retry_after(Duration::from_secs(5)))
     }
-
-    async fn authorize(
-        &self,
-        credential: &String,
-        scopes: &[Unscoped],
-        context: &C,
-    ) -> Result<(), AuthRejection> {
-        let _ = (credential, scopes, context);
-        Ok(())
-    }
 }
 
 impl Authenticates<SessionCookie> for App {
@@ -317,6 +313,53 @@ impl Authenticates<SessionCookie> for App {
 
     fn authenticator(&self) -> &Self::Authenticator {
         &Sessions
+    }
+}
+
+/// A peer's bearer token, sent with a signature beside it.
+///
+/// `reads = RequestSignature` names the header the signature travels in. The
+/// carrier reads it beside the token, so the authenticator is handed both, and
+/// every operation this scheme guards declares `Signature` without a handler
+/// argument that exists only to declare it.
+#[derive(SecurityScheme)]
+#[security(bearer, reads = RequestSignature)]
+struct PeerToken;
+
+/// The header `PeerToken`'s carrier reads beside the token.
+#[derive(HeaderParams)]
+struct RequestSignature {
+    #[header(rename = "Signature")]
+    signature: String,
+}
+
+/// A stand-in for a peer's signature check.
+///
+/// A real one verifies the signature with the peer's key. One computed over
+/// the method and path needs the request line as well, which the derived
+/// carrier does not present: such a scheme writes `carrier = manual` and keeps
+/// `reads` for the declaration.
+struct Peers;
+
+impl<C: Sync> Authenticator<PeerToken, C> for Peers {
+    async fn authenticate(
+        &self,
+        (token, signed): (BearerToken, RequestSignature),
+        context: &C,
+    ) -> Result<String, AuthRejection> {
+        let _ = context;
+        if signed.signature.is_empty() {
+            return Err(AuthRejection::unauthenticated());
+        }
+        Ok(token.into_inner())
+    }
+}
+
+impl Authenticates<PeerToken> for App {
+    type Authenticator = Peers;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Peers
     }
 }
 
@@ -330,13 +373,7 @@ impl Authenticates<SessionCookie> for App {
 /// context that cannot verify `S` is a compile error rather than a 500.
 struct Rejects;
 
-impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects
-where
-    // `Sync` and not `Default`: nothing here builds a credential, but
-    // `authorize` holds a reference to one across an await, and the trait
-    // requires that future to be `Send`.
-    S::Credential: Sync,
-{
+impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects {
     async fn authenticate(
         &self,
         presented: S::Presented,
@@ -345,11 +382,15 @@ where
         let _ = (presented, context);
         Err(AuthRejection::unauthenticated())
     }
+}
 
+/// Of the five, only `DelegatedAccess` names a scope type, so it alone needs
+/// an authorizer; the other four's `Rejects` already is one.
+impl<C: Sync> Authorizer<DelegatedAccess, C, Grant> for Rejects {
     async fn authorize(
         &self,
-        credential: &S::Credential,
-        scopes: &[S::Scope],
+        credential: &String,
+        scopes: &[Grant],
         context: &C,
     ) -> Result<(), AuthRejection> {
         let _ = (credential, scopes, context);
@@ -359,7 +400,7 @@ where
 
 /// The application context.
 ///
-/// Two fields, seven implementations. A context declares what it can verify, so
+/// Two fields, eight implementations. A context declares what it can verify, so
 /// the set of schemes an application supports is visible in one place rather
 /// than spread across the handlers that happen to require them.
 struct App {
@@ -473,6 +514,13 @@ async fn federated_me(auth: Auth<Federated>) -> NoContent {
     NoContent
 }
 
+/// Accepts a peer's signed sync, declaring `Signature` beside the token.
+#[kynos::post("/peers/sync")]
+async fn peer_sync(auth: Auth<PeerToken>) -> NoContent {
+    let _ = auth.into_inner();
+    NoContent
+}
+
 /// The scopes one operation demands, as a type.
 ///
 /// Distinct from the scopes on `DelegatedAccess`: those are what every
@@ -562,6 +610,7 @@ async fn main() -> kynos::Result<()> {
         partner_event,
         delegated_users,
         federated_me,
+        peer_sync,
         reports,
         report_summary,
         exports,

@@ -32,6 +32,12 @@ slow-timeout = { period = "60s", terminate-after = 30 }
 filter = 'binary(ui)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# Checks a package depending on `kynos` from a cold target directory on its
+# first run, which is a build rather than a deadlock, for `ui`'s reason.
+[[profile.default.overrides]]
+filter = 'binary(readme_quickstart)'
+slow-timeout = { period = "60s", terminate-after = 10 }
+
 # Inherits the default profile; only the log shape differs.
 #
 # The UI suite is *not* filtered out here. It was, and the filter is

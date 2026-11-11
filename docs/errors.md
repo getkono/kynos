@@ -125,11 +125,13 @@ enum StoreError {
 | Position | Key | Meaning |
 | --- | --- | --- |
 | type | `base` | URI prefix, as a string literal or a path to a `const` of type `&str`; `type` defaults to it plus the kebab-cased variant name |
+| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type` |
-| field | `extension` | serialize this field as an extension member under its own name, and declare it by its type's schema |
+| variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
+| field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
 
 **`title` is read twice, and its absence is answered differently each time.**
@@ -185,6 +187,36 @@ syntactically as parameters are: it is sent only when it holds a value, as
 `detail` is, so it is declared by `T`'s schema and left optional rather than
 sent as `null`.
 
+**A value the failure determines is not a field.** A stable catalog code is
+the same on every occurrence of a variant, so carrying it as a
+`#[problem(extension)]` field makes every construction site pass a value the
+variant already fixes, lets one pass another variant's, and declares only
+`type: string`. The variant says it once instead:
+
+```rust
+#[error("no such upload session")]
+#[problem(status = 404, extension(code = "error.upload.session_not_found"))]
+SessionNotFound,
+```
+
+The value goes on the wire through the same `Serialize` a field's does, before
+the fields', and is declared as a JSON Schema `const` of what it serializes to,
+beside the `type` that value has, and required, so a generated client learns
+the exact value set per status. Failures sharing one type URI are one branch
+([below](#what-the-declared-response-narrows-to)), where their constants under
+one name become one `enum`, keeping the type they share; a member only some of
+them send stays optional. A `const` path keeps one catalog for several error
+types, as `base` does. A `const` whose `Serialize` refuses answers 500, as a
+field does, and since it refuses every time, building the description panics
+rather than declaring a member nothing sends. One serializing to `null`, such
+as a `const` holding `None`, is refused the same way rather than sent as
+`null`: a member a failure sends only sometimes is an `Option` field. A type-level
+`fn(&self) -> &'static str` mapping was rejected: the schema could then say
+only `string`, and the value set would be lost from the description. Its
+name is refused where RFC 9457 defines the member (`type`, `title`, `status`,
+`detail`, `instance`) and where a field on the same failure is already
+published under it, since one name holds one value.
+
 **A header one failure sends is that failure's.** `Retry-After` on a 429 is
 `#[problem(headers)]` on a field of the 429's variant, holding a group deriving
 `HeaderParams`. `WithHeaders<E, H>` would declare it on every status `E`
@@ -209,6 +241,35 @@ declare is unioned rather than replaced, so the description names every type
 reaching it, the enum's own first. The union is built in `const` items, so the
 held type cannot name the enum's generic parameters.
 
+**An operation that cannot fail every way names a subset.** A rejection
+type's statuses are declared on every operation returning it, so a `HEAD`
+sharing a `PUT`'s enum would declare a 409 it can never send. The narrower
+enum says `#[problem(subset_of = ChunkRejection)]` and lists the variants it
+keeps, with the wider variants' names and fields:
+
+```rust
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum HeadRejection {
+    NotFound { id: ChunkId },
+    Unavailable(RetryAfter),
+}
+```
+
+The derive generates `From<HeadRejection> for ChunkRejection`, moving each
+variant's fields into the wider variant of the same name, so a variant or field
+the wider enum lacks, one it has that the subset omits, and a field of another
+type are compile errors at the subset's variant. The subset answers by that
+conversion, so its status, `type`, `title`, `detail` (the wider `Display`),
+extension members and headers are the wider variant's and cannot drift; any
+`#[problem(...)]` below the subset is refused for that reason. It declares only
+its own variants' statuses, and describes each as the wider enum describes the
+variants it keeps: a status two wider variants share names only the one the
+subset holds. A derive sees one item, so the wider enum publishes what a subset
+reads as hidden inherent items, and `subset_of` names a derived `ApiError`
+enum, a subset included. A per-operation exclusion was rejected, because it
+moves the guarantee from the type to a run-time check.
+
 **A refusal Kynos ships is held the same way.** Every interceptor refusal that
 sends a problem — `BodySizeExceeded`, `RateLimited`, `Undecodable` and the rest
 — implements `IntoProblem`, so an interceptor answering with one of them or a
@@ -230,8 +291,16 @@ type is no header group, and a type with no
 `Display` are all compile errors, each with a case
 in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). So are `headers` on a
 variant or type, beside `extension` on one field, twice on one failure, and
-over a transparent variant's field, each with a case in the derive's own
-diagnostic ledger. What `base`, `title`,
+over a transparent variant's field, and `extension` on a field named like a
+member RFC 9457 defines, raw prefix aside, each with a case in the derive's own
+diagnostic ledger. So is an `extension(...)` list on an enum or a transparent
+variant, naming no member, naming one by a path, by a registered member's name
+or twice, giving one no value or one that is neither a literal nor a path, or
+naming a field the failure already publishes; a `const` value whose type is not
+`Serialize` is a compile error at the path, with a case in
+[`tests/ui/macros`](../crates/kynos/tests/ui/macros). A `subset_of` on a variant or a struct, beside another key,
+naming the subset's generic parameter, or over a variant or field with a
+`#[problem(...)]` of its own is a compile error with a case in both. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
@@ -278,8 +347,11 @@ Two rules follow from what is actually on the wire:
   `title` at all — the description already says the only thing that status
   publishes. The one branch must match what each of those variants sends, so
   it declares every extension member any of them does, a member they type
-  differently as an `anyOf` of the types, and requires a member only where
-  every one of them sends it.
+  differently as an `anyOf` of the types, constants of one type as an `enum`
+  of their values, and requires a member only where every one of them sends
+  it. The cross-source union below keeps an `anyOf` even of constants: it
+  validates the same instances, and only the derive's own branch reads them as
+  a value set.
 
 **A status an extractor also claims publishes both halves of it.** An argument's
 rejection is contributed before the return type's responses, and a description
@@ -494,6 +566,75 @@ log line and rate-limit bucket believes, and an `Option` would put a branch
 for every IP-only deployment into every handler. A handler that runs over
 either transport takes `Connection` and matches `Connection::peer`.
 
+## Members on the problems Kynos renders
+
+A rejection is Kynos's type, so an application whose problem contract puts a
+member on *every* problem — a stable code a client localizes offline, the
+request ID — has no field to put it in. `Router::problem_members::<M>()` names
+one [`ProblemMembers`](../crates/kynos/src/error/members.rs) type that both
+produces those members and declares them, so the description cannot drift
+from the wire (RFC 9457 section 3.2). `M::for_problem` reads a `ProblemCx`: the
+problem as built, a `ProblemOrigin` saying which part of Kynos refused (a path
+parameter, the body, a credential, the router), and the request head the
+operation saw, interceptors' extensions included.
+
+**What it reaches.** Every problem Kynos renders while the request head is in
+hand: each rejection a handler's argument or guard raises, the 400 an
+interceptor's `Reads` header group answers with, an asset endpoint's 416, the
+404, 405 and 501 under `FallbackPolicy::Problem`, a CORS preflight's 405 and
+501 for an `OPTIONS` that is not one, and the 400 a `QUERY` naming no media
+type gets. Each such response an operation declares narrows its branch to
+`M`'s properties, required as `M`'s schema requires them; the wide 403
+`AuthRejection` declares stays wide, since it already admits them. The
+router's and the preflight's answers belong to no operation, so they are sent
+and declared nowhere, as they always were.
+
+**What it does not reach**, which carries none and declares none, and why:
+
+- An application's own `ApiError`, which has `#[problem(extension)]`.
+- A rejection a handler *returns* (a `RangeRejection` from `Range::apply`) and
+  a ranged `Delivery`'s 416, which the handler renders before it returns.
+  Rendering either with the request would keep the head borrowed across the
+  handler's own await, eight bytes in every endpoint future
+  ([`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds that width), and
+  declaring it would need a served form of every return type that can hold
+  one.
+- An interceptor's own refusal — `BodySizeExceeded`, `BodyTooSlow`,
+  `RateLimited`, `AtCapacity`, `TimedOut`, `Undecodable`, `NotAcceptable`,
+  `UntrustedHost`, `CrossSite` and any `Short` an application writes. The
+  interceptor takes the request by value and renders its `Short` after it has
+  given the request away, so no head is left to read; keeping a copy would
+  cost every request through every interceptor.
+- A recovered panic's 500. The request moved into the future that unwound,
+  at every scope a recovery branch covers, so the same copy would be paid on
+  every request that could panic.
+
+**Sending and declaring are one switch.** A rejection reaches the request only
+where the handler renders it, so `IntoResponse` and `Responses` carry a hidden
+pair the handler calls for an argument's or guard's rejection instead of the
+public methods. A type overriding both sends and declares the members; every
+other type, an `ApiError` holding a rejection transparently included, does
+neither. A status two contributors share keeps a member required only where
+both send it, by [the union rule](#what-the-declared-response-narrows-to).
+
+**What `M` must be.** An object naming each member as a property — a struct
+deriving `Schema` and `Serialize`, with no `flatten`. A member named like one
+RFC 9457 registers, or `errors`, is a `ProblemMemberReserved` violation while
+the router is described, and a schema of another shape is
+`ProblemMembersNotObject`. A value whose `Serialize` fails answers 500 in place
+of the problem, as an `ApiError` member does. Set on the root router: a nested
+one's is a `NestedRouterPolicy` violation, as for every application-wide
+policy.
+
+**What it costs.** Without it, the lookup a rejection makes once it has
+refused, and eight bytes in the future of an endpoint whose last argument
+reads a body: the handler keeps the head it lent that extractor, to render its
+rejection ([`nfr.md`](nfr.md#routing) records the width). With it, a routed
+request, and one no operation answers that the root router's interceptors
+see, carries one extension more, holding a function pointer: its own block,
+since `http::Extensions` boxes every value, so an application that did not ask
+for members does not pay it.
+
 ## What is not an error type
 
 **Interceptor statuses.** A status an interceptor refuses with — a 429 from
@@ -597,9 +738,11 @@ the refusal it rests on is recorded there.
 
 `IntoResponse::into_response(self)` takes no context, and an extraction
 rejection short-circuits to a response before any handler runs. **There is no
-point in the pipeline where a request and a `Problem` coexist.** So localizing
-an error is something done *to* a finished response, and an interceptor is the
-only thing that holds one.
+point in the pipeline where a request and an application's `Problem`
+coexist.** [`problem_members`](#members-on-the-problems-kynos-renders) is one
+for Kynos's own, and it only adds members. So localizing an error is something
+done *to* a finished response, and an interceptor is the only thing that holds
+one.
 
 That is a design constraint rather than a preference, and it has a payoff: an
 interceptor reaches every problem the service can produce, because a rejection's

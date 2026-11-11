@@ -17,25 +17,25 @@ const ZONED: &str = concat!(
     r"([Zz]|[+-]\d{2}:?\d{2})\[[^\]]+\]$",
 );
 
-impl Schema for ::jiff::civil::Date {
+impl Schema for ::jiff02::civil::Date {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::date()
     }
 }
 
-impl Schema for ::jiff::civil::Time {
+impl Schema for ::jiff02::civil::Time {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::local_time()
     }
 }
 
-impl Schema for ::jiff::civil::DateTime {
+impl Schema for ::jiff02::civil::DateTime {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::local_date_time()
     }
 }
 
-impl Schema for ::jiff::Timestamp {
+impl Schema for ::jiff02::Timestamp {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::instant()
     }
@@ -43,7 +43,7 @@ impl Schema for ::jiff::Timestamp {
 
 // RFC 9557's bracketed zone is not a `date-time`, and no registered format
 // covers it, so the format is Kynos's own and the pattern carries the contract.
-impl Schema for ::jiff::Zoned {
+impl Schema for ::jiff02::Zoned {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         with_object(formatted(SchemaType::String, "date-time-zoned"), |object| {
             object.pattern = Some(ZONED.to_owned());
@@ -52,13 +52,13 @@ impl Schema for ::jiff::Zoned {
 }
 
 // Both duration types write the ISO 8601 form `duration` names.
-impl Schema for ::jiff::Span {
+impl Schema for ::jiff02::Span {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::duration()
     }
 }
 
-impl Schema for ::jiff::SignedDuration {
+impl Schema for ::jiff02::SignedDuration {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         temporal::duration()
     }
@@ -66,10 +66,10 @@ impl Schema for ::jiff::SignedDuration {
 
 // jiff's serde writes through `Display`, so a parameter carries a body's text;
 // the exceptions `ParamValue` lists hold here exactly as in a body.
-impl ParamValue for ::jiff::civil::Date {}
-impl ParamValue for ::jiff::civil::Time {}
-impl ParamValue for ::jiff::civil::DateTime {}
-impl ParamValue for ::jiff::Timestamp {}
-impl ParamValue for ::jiff::Zoned {}
-impl ParamValue for ::jiff::Span {}
-impl ParamValue for ::jiff::SignedDuration {}
+impl ParamValue for ::jiff02::civil::Date {}
+impl ParamValue for ::jiff02::civil::Time {}
+impl ParamValue for ::jiff02::civil::DateTime {}
+impl ParamValue for ::jiff02::Timestamp {}
+impl ParamValue for ::jiff02::Zoned {}
+impl ParamValue for ::jiff02::Span {}
+impl ParamValue for ::jiff02::SignedDuration {}

@@ -1,6 +1,7 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
 //! URI prefix with, unions a transparent variant's statuses with, sends its
-//! extension members through, and sends and declares a failure's
+//! extension members through, declares a constant one by, and sends and
+//! declares a failure's
 //! `#[problem(headers)]` group with, and logs a 5xx failure through before its
 //! problem consumes it.
 //!
@@ -65,6 +66,36 @@ pub fn write_headers<H: EncodeHeaders>(response: &mut crate::http::Response, gro
 #[must_use]
 pub fn to_member<T: serde::Serialize + ?Sized>(value: &T) -> Option<serde_json::Value> {
     serde_json::to_value(value).ok()
+}
+
+/// A variant's `#[problem(extension(name = value))]` member as its failure
+/// sends it: as [`to_member`] serializes it, and `None` where that refuses or
+/// yields `null`, which no member is sent as. The derive answers
+/// [`unserializable_member`] in either case.
+#[must_use]
+pub fn to_constant<T: serde::Serialize + ?Sized>(value: &T) -> Option<serde_json::Value> {
+    to_member(value).filter(|member| !member.is_null())
+}
+
+/// The schema a variant's `#[problem(extension(name = value))]` member is
+/// declared by: a `const` of `value` as [`to_constant`] sends it, so the wire
+/// and the description serialize it once each, the same way.
+///
+/// # Panics
+///
+/// Where `value`'s `Serialize` refuses or yields `null`. The value is a
+/// constant, so it does so every time, and the description is refused when it
+/// is built rather than declaring a member the failure can never send.
+#[must_use]
+pub fn constant<T: serde::Serialize + ?Sized>(value: &T) -> OpenApiSchema {
+    let value = to_member(value)
+        .expect("a constant extension member's value serializes, as its failure must send it");
+    assert!(
+        !value.is_null(),
+        "a constant extension member's value is never null: a member is sent only when it holds \
+         a value, so an optional one is an `Option` field rather than a constant holding `None`"
+    );
+    crate::error::problem::constant(value)
 }
 
 /// The 500 a derived problem answers with in place of one whose extension

@@ -1,0 +1,53 @@
+error: a constant extension member is the value one failure sends, so it belongs on each variant sending it. Move it to the variants
+  --> tests/ui/macros/api_error_constant_refusals.rs:12:21
+   |
+12 | #[problem(extension(code = "store.failed"))]
+   |                     ^^^^
+
+error: a constant extension member is named by one identifier, the name it is sent under
+  --> tests/ui/macros/api_error_constant_refusals.rs:22:39
+   |
+22 |     #[problem(status = 404, extension(error::code = "store.missing"))]
+   |                                       ^^^^^
+
+error: a constant extension member is `name = value`; give `code` the value this failure always sends, or mark a field `#[problem(extension)]`
+  --> tests/ui/macros/api_error_constant_refusals.rs:29:39
+   |
+29 |     #[problem(status = 404, extension(code))]
+   |                                       ^^^^
+
+error: `status` is a member RFC 9457 defines, which the problem already sends; an extension member takes a name of its own
+  --> tests/ui/macros/api_error_constant_refusals.rs:36:39
+   |
+36 |     #[problem(status = 404, extension(status = 410))]
+   |                                       ^^^^^^
+
+error: this failure already sends the extension member `code`
+  --> tests/ui/macros/api_error_constant_refusals.rs:43:51
+   |
+43 |     #[problem(status = 404, extension(code = "a", code = "b"))]
+   |                                                   ^^^^
+
+error: a constant extension member's value is a string, number or boolean literal, or the path to a `const` whose type is `Serialize`
+  --> tests/ui/macros/api_error_constant_refusals.rs:50:46
+   |
+50 |     #[problem(status = 404, extension(code = format!("store.{}", 1)))]
+   |                                              ^^^^^^
+
+error: `extension(...)` names no member; write `extension(name = value)`
+  --> tests/ui/macros/api_error_constant_refusals.rs:57:29
+   |
+57 |     #[problem(status = 404, extension())]
+   |                             ^^^^^^^^^
+
+error: a transparent variant publishes the extension members of the error it holds, so it sends no constant of its own. Declare it on that error, or drop `transparent`
+  --> tests/ui/macros/api_error_constant_refusals.rs:71:38
+   |
+71 |     #[problem(transparent, extension(code = "store.lookup"))]
+   |                                      ^^^^
+
+error: the field `id` is already published as this extension member; send it from the field or as a constant, not both
+  --> tests/ui/macros/api_error_constant_refusals.rs:78:39
+   |
+78 |     #[problem(status = 404, extension(id = 1))]
+   |                                       ^^

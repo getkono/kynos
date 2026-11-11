@@ -84,6 +84,16 @@ class Pending(unittest.TestCase):
         _, failures = failures_of(gate.pending, text)
         self.assertIn("names 2", failures[0])
 
+    def test_one_left_is_read_in_the_singular(self):
+        text = ARCHITECTURE.replace(
+            "Two crates are public API today without being in the allowance, and each has\n"
+            "an issue: `uuid` under `schema/impls/`; and `tracing` as the",
+            "One crate is public API today without being in the allowance, and it has\n"
+            "an issue: `tracing` as the",
+        )
+        crates, failures = failures_of(gate.pending, text)
+        self.assertEqual((crates, failures), (["tracing"], []))
+
     def test_none_left_is_a_count_of_zero(self):
         text = ARCHITECTURE.replace(
             "Two crates are public API today without being in the allowance, and each has\n"
@@ -285,6 +295,29 @@ class Main(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(stderr.count("public-api: "), 1)
         self.assertIn("mio", stderr)
+
+    def test_overwrite_records_every_crate_after_the_first(self):
+        listings = {
+            "kynos-openapi": "pub fn kynos_openapi::a(serde_core::X)",
+            "kynos": self.LISTING,
+        }
+        with tempfile.TemporaryDirectory() as root:
+            root = pathlib.Path(root)
+            for crate in listings:
+                (root / "crates" / crate).mkdir(parents=True)
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(
+                io.StringIO()
+            ):
+                status = gate.main(
+                    architecture=self.ARCHITECTURE,
+                    listings=listings,
+                    recorded={},
+                    overwrite=True,
+                    root=root,
+                )
+            for crate, listing in listings.items():
+                self.assertEqual((root / "crates" / crate / gate.SNAPSHOT).read_text(), listing)
+        self.assertEqual(status, 0)
 
     def test_a_listing_matching_its_snapshot_and_the_documents_passes(self):
         self.assertEqual(self.run_main(self.LISTING), (0, ""))

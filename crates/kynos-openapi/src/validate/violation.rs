@@ -234,23 +234,6 @@ pub enum SpecError {
     #[error("an operation must declare at least one response")]
     NoResponses,
 
-    /// A `QUERY` operation declared no request body, or one a client may
-    /// omit.
-    ///
-    /// A policy beyond the specification, which leaves `requestBody` optional
-    /// on every method. RFC 10008 section 2 makes a `QUERY`'s content and its
-    /// media type the query and requires a server to fail one without a
-    /// `Content-Type`, so a description that does not require the body
-    /// describes requests that can only fail. A body given by a reference is
-    /// judged by the component it names, and not at all where that leaves the
-    /// document.
-    #[cfg(feature = "openapi32")]
-    #[error(
-        "a `QUERY` operation must declare a `requestBody` with `required: true`: RFC 10008 makes \
-         the request content and its media type the query"
-    )]
-    QueryWithoutRequiredBody,
-
     /// A Responses Object key is not one a reader takes back as a status.
     ///
     /// Only `1XX`-`5XX` and three digits beginning `1`-`5` are status keys:
@@ -564,4 +547,24 @@ pub enum SpecError {
         /// Locations of the fields standing in the way.
         blockers: Vec<String>,
     },
+
+    // Implicit discriminants follow declaration order, gated variants
+    // included: a variant added after a release goes below every released
+    // one, so none of those moves.
+    /// A `QUERY` operation declared no request body, or one a client may
+    /// omit.
+    ///
+    /// A policy beyond the specification, which leaves `requestBody` optional
+    /// on every method. RFC 10008 section 2 makes a `QUERY`'s content and its
+    /// media type the query and requires a server to fail one without a
+    /// `Content-Type`, so a description that does not require the body
+    /// describes requests that can only fail. A body given by a reference is
+    /// judged by the component it names, and not at all where that leaves the
+    /// document.
+    #[cfg(feature = "openapi32")]
+    #[error(
+        "a `QUERY` operation must declare a `requestBody` with `required: true`: RFC 10008 makes \
+         the request content and its media type the query"
+    )]
+    QueryWithoutRequiredBody,
 }

@@ -1337,9 +1337,11 @@ dependencies = [
  "http-body",
  "kynos",
  "prost",
+ "rcgen",
  "serde",
  "serde_json",
  "tokio",
+ "tokio-rustls",
  "tower-layer",
  "tracing",
 ]

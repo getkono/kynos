@@ -25,7 +25,7 @@ use kynos::{
     response::status::NoContent,
     router::{group::Group, operation::Route},
     security::{
-        Authenticates, Authenticator, Unscoped,
+        Authenticates, Authenticator,
         auth::{Auth, MaybeAuth},
         carrier::ApiKey,
     },
@@ -78,10 +78,6 @@ impl Authenticator<UploadKey, Gate> for Keys {
             "k_panic" => panic!("the credential store failed"),
             _ => Err(AuthRejection::unauthenticated()),
         }
-    }
-
-    async fn authorize(&self, _: &Holder, _: &[Unscoped], _: &Gate) -> Result<(), AuthRejection> {
-        Ok(())
     }
 }
 

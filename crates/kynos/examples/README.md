@@ -25,7 +25,7 @@ as reading the authenticated caller in a handler, which is
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`schema.rs`](schema.rs) | `#[derive(Schema)]`: constraints, serde interop, map keys, and the escape hatch | `pattern` |
-| [`scalars.rs`](scalars.rs) | Which types outside `std` map to which JSON Schema `format` | `uuid,time-chrono,time-jiff,decimal-rust,decimal-big` |
+| [`scalars.rs`](scalars.rs) | Which types outside `std` map to which JSON Schema `format` | `uuid1,time-chrono04,time-jiff02,decimal-rust1,decimal-big04` |
 
 ## Requests
 
@@ -42,7 +42,7 @@ as reading the authenticated caller in a handler, which is
 | [`responses.rs`](responses.rs) | Status in the return type: `Created`, `Accepted`, `Redirect<CODE>`, `Reply`, `WithHeaders`, typed URIs | — |
 | [`negotiation.rs`](negotiation.rs) | Choosing a representation from the client's `Accept` header, including a version of a `+json` document, and a format Kynos does not ship through a `BodyCodec` | — |
 | [`localization.rs`](localization.rs) | Choosing a language from `Accept-Language`, and why that field *is* a parameter where `Accept` is not | — |
-| [`errors.rs`](errors.rs) | `#[derive(ApiError)]`, RFC 9457 problem documents, a header only one failure sends, and every other way a status reaches an operation | — |
+| [`errors.rs`](errors.rs) | `#[derive(ApiError)]`, RFC 9457 problem documents, a header only one failure sends, a subset for an operation failing fewer ways, and every other way a status reaches an operation | — |
 | [`localized_errors.rs`](localized_errors.rs) | Translating a problem's `title` from the application's own catalogue, including the rejections Kynos raises | — |
 | [`sse.rs`](sse.rs) | Server-Sent Events: discriminated event types, resumption, reconnection advice, keep-alive, ending on shutdown | `openapi32`, `compression` |
 | [`streaming.rs`](streaming.rs) | JSON Lines, JSON text sequences, byte streams, and the whole-query-string parameter | `openapi32` |
@@ -51,7 +51,7 @@ as reading the authenticated caller in a handler, which is
 
 | Example | Shows | Features |
 | --- | --- | --- |
-| [`composition.rs`](composition.rs) | `nest` versus `merge` versus `Group`, the four tag scopes, an interceptor on one operation, the fallback policies, and one router value both described and built | — |
+| [`composition.rs`](composition.rs) | `nest` versus `merge` versus `Group`, the four tag scopes, an interceptor on one operation, the fallback policies, one router value both described and built, and a `/ready` probe that leaves rotation through a deregistration delay before the drain | — |
 | [`state.rs`](state.rs) | Compile-time dependency injection: `#[derive(Provider)]` and `Inject<T>` | — |
 | [`document.rs`](document.rs) | Document metadata, validation, version refusal, and serving the description as a route | `openapi32,yaml` |
 

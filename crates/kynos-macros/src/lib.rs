@@ -644,9 +644,28 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// default. Its type is sent through `Serialize` and declared by its `Schema`,
 /// which follows the same serde attributes, so the two cannot drift; it is
 /// required on its failure's branch. An `Option<T>` member is sent only when
-/// it holds a value, so it is declared by `T` and optional. A member whose
+/// it holds a value, so it is declared by `T` and optional. A field named, raw
+/// prefix aside, like a member RFC 9457 defines is refused. A member whose
 /// `Serialize` fails answers 500 in place of its problem, as a JSON body that
 /// cannot be serialized does.
+///
+/// A member whose value the failure itself determines is not a field: the
+/// variant, or a struct, names it as `extension(name = value)`, the value a
+/// literal or the path to a `const` whose type is `Serialize`:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum SessionRejection {
+///     #[error("no such upload session")]
+///     #[problem(status = 404, extension(code = "error.upload.session_not_found"))]
+///     SessionNotFound,
+/// }
+/// ```
+///
+/// It is sent on every occurrence, and declared as a JSON Schema `const` of
+/// that value, required; failures sharing one type URI declare the values
+/// they send as one `enum`. A name RFC 9457 defines, or one a field of the
+/// same failure is published under, is refused.
 ///
 /// A header only one failure sends lives on that failure: one field of a
 /// variant, or of a struct, may say `#[problem(headers)]`, its type a header
@@ -702,6 +721,28 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// its own, publishes no `extension`, sends no `headers` of its own, and
 /// its field's type cannot name the enum's generic parameters, since the
 /// statuses are a `const`.
+///
+/// An operation that fails only some of a derived enum's ways returns a
+/// subset of it, so it declares no status it cannot send:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(subset_of = ChunkRejection)]
+/// enum HeadRejection {
+///     NotFound { id: ChunkId },
+///     Unavailable(RetryAfter),
+/// }
+/// ```
+///
+/// Each variant names a variant of the wider enum and its fields, and the
+/// derive generates `From<HeadRejection> for ChunkRejection` moving them
+/// across, so a name, field or type the wider enum does not have is a compile
+/// error. The subset answers by that conversion: its problem, `detail` from the
+/// wider `Display`, and headers are the wider variant's, so no
+/// `#[problem(...)]` is written below it and `subset_of` stands alone. It
+/// declares only its variants' statuses, each described as the wider enum
+/// describes the variants it keeps. The wider enum is a derived `ApiError`
+/// enum, a subset included, and cannot name the subset's generic parameters.
 ///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.
@@ -1018,9 +1059,11 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// Kynos implements for `FilePart`, `Bytes` and every `ParamValue`, such as
 /// `String` or an enum deriving it, which travels as its text.
 ///
-/// A part naming no declared field is ignored, unless the struct carries
+/// A part naming no declared field is dropped unread, unless the struct carries
 /// `#[serde(deny_unknown_fields)]`, which closes its description and makes such
-/// a part a 422.
+/// a part a 422 before it is read. A declared part is read under its element's
+/// `FromPart::LIMIT`: `TEXT_PART_LIMIT` for a `ParamValue`, none beyond the
+/// body's for `FilePart` and `Bytes`; past it, the request is a 413.
 ///
 /// There is no attribute of its own; it reads serde's, without requiring a
 /// serde derive. Derive [`Schema`](macro@Schema) alongside to put the parts in

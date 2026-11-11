@@ -158,7 +158,7 @@ impl Preflight {
             headers.get(header::ORIGIN),
             headers.get(header::ACCESS_CONTROL_REQUEST_METHOD),
         ) else {
-            return self.not_a_preflight();
+            return self.not_a_preflight(request);
         };
 
         let mut response = crate::http::body::bodiless(StatusCode::NO_CONTENT);
@@ -212,14 +212,16 @@ impl Preflight {
         response
     }
 
-    /// The dispatcher's own answer, for an `OPTIONS` that is not a preflight.
-    fn not_a_preflight(&self) -> Response {
+    /// The dispatcher's own answer, for an `OPTIONS` `request` that is not a
+    /// preflight: a refusal carries the members the router installed, as the
+    /// dispatcher's does.
+    fn not_a_preflight(&self, request: &Request) -> Response {
         #[cfg(feature = "openapi32")]
         if let (Some(allow), Some(accept_query)) = (&self.allow, &self.accept_query) {
             return crate::router::dispatch::options_answer(allow, accept_query);
         }
 
-        crate::router::dispatch::method_refusal(self.allow.as_ref(), &self.fallback)
+        crate::router::dispatch::method_refusal(self.allow.as_ref(), &self.fallback, request)
     }
 }
 

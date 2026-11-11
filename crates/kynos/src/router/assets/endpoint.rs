@@ -296,6 +296,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             self.asset.media_type(),
             &self.headers(&chosen),
             &requested,
+            &request,
         )
     }
 }

@@ -1,8 +1,8 @@
 error[E0277]: `DateTime<Local>` cannot describe itself as a schema
   --> tests/ui/schema/environment_dependent_offset.rs:10:19
    |
-10 |     describable::<chrono::DateTime<chrono::Local>>();
-   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not describable
+10 |     describable::<chrono04::DateTime<chrono04::Local>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ not describable
    |
    = help: the trait `kynos::schema::Schema` is not implemented for `DateTime<Local>`
    = note: derive it with `#[derive(kynos::Schema)]`
@@ -10,11 +10,11 @@ error[E0277]: `DateTime<Local>` cannot describe itself as a schema
 help: the following other types implement trait `kynos::schema::Schema`
   --> src/schema/impls/temporal/chrono.rs
    |
-   | impl Schema for ::chrono::DateTime<::chrono::Utc> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DateTime<Utc>`
+   | impl Schema for ::chrono04::DateTime<::chrono04::Utc> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DateTime<Utc>`
 ...
-   | impl Schema for ::chrono::DateTime<::chrono::FixedOffset> {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DateTime<FixedOffset>`
+   | impl Schema for ::chrono04::DateTime<::chrono04::FixedOffset> {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `DateTime<FixedOffset>`
 note: required by a bound in `describable`
   --> tests/ui/schema/environment_dependent_offset.rs:7:19
    |

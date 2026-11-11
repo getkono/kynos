@@ -441,15 +441,6 @@ impl kynos::security::Authenticator<ScrapeToken, ()> for Scrape {
             _ => Err(kynos::error::rejection::AuthRejection::unauthenticated()),
         }
     }
-
-    async fn authorize(
-        &self,
-        (): &(),
-        _: &[kynos::security::Unscoped],
-        (): &(),
-    ) -> Result<(), kynos::error::rejection::AuthRejection> {
-        Ok(())
-    }
 }
 
 impl kynos::security::Authenticates<ScrapeToken> for () {

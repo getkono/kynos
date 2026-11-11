@@ -16,7 +16,7 @@ use tokio::io::AsyncWrite;
 
 use crate::{
     http::body::BoxError,
-    middleware::compression::codec::{Coding, Levels, zstd_window},
+    middleware::compression::codec::{Coding, Levels, brotli_params, zstd_window},
 };
 
 /// How eagerly encoded bytes are handed to the client.
@@ -62,9 +62,10 @@ impl Encoder {
 
         match coding {
             Coding::Gzip => Self::Gzip(Box::new(GzipEncoder::with_quality(Vec::new(), level))),
-            Coding::Brotli => {
-                Self::Brotli(Box::new(BrotliEncoder::with_quality(Vec::new(), level)))
-            }
+            Coding::Brotli => Self::Brotli(Box::new(BrotliEncoder::with_params(
+                Vec::new(),
+                brotli_params(levels),
+            ))),
             Coding::Zstd => Self::Zstd(Box::new(ZstdEncoder::with_quality_and_params(
                 Vec::new(),
                 level,

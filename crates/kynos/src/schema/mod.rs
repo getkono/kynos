@@ -58,23 +58,25 @@
 //! # Behind a feature flag
 //!
 //! A scalar type from outside `std` gets an implementation once its crate is a
-//! Kynos dependency. Each arrives additive and off by default.
+//! Kynos dependency. Each arrives additive and off by default, and names the
+//! crate's major version, so the crate's next major arrives as a feature beside
+//! it rather than in its place.
 //!
 //! | Rust | Schema | Feature |
 //! | --- | --- | --- |
-//! | `uuid::Uuid` | `string`/`uuid` | `uuid` |
-//! | `chrono::NaiveDate` | `string`/`date` | `time-chrono` |
-//! | `chrono::NaiveTime` | `string`/`time-local` | `time-chrono` |
-//! | `chrono::NaiveDateTime` | `string`/`date-time-local` | `time-chrono` |
-//! | `chrono::DateTime<Utc>`, `<FixedOffset>` | `string`/`date-time` | `time-chrono` |
-//! | `jiff::civil::Date` | `string`/`date` | `time-jiff` |
-//! | `jiff::civil::Time` | `string`/`time-local` | `time-jiff` |
-//! | `jiff::civil::DateTime` | `string`/`date-time-local` | `time-jiff` |
-//! | `jiff::Timestamp` | `string`/`date-time` | `time-jiff` |
-//! | `jiff::Zoned` | `string`/`date-time-zoned`, with a pattern | `time-jiff` |
-//! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff` |
-//! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust` |
-//! | `bigdecimal::BigDecimal` | `string`/`decimal` | `decimal-big` |
+//! | `uuid::Uuid` | `string`/`uuid` | `uuid1` |
+//! | `chrono::NaiveDate` | `string`/`date` | `time-chrono04` |
+//! | `chrono::NaiveTime` | `string`/`time-local` | `time-chrono04` |
+//! | `chrono::NaiveDateTime` | `string`/`date-time-local` | `time-chrono04` |
+//! | `chrono::DateTime<Utc>`, `<FixedOffset>` | `string`/`date-time` | `time-chrono04` |
+//! | `jiff::civil::Date` | `string`/`date` | `time-jiff02` |
+//! | `jiff::civil::Time` | `string`/`time-local` | `time-jiff02` |
+//! | `jiff::civil::DateTime` | `string`/`date-time-local` | `time-jiff02` |
+//! | `jiff::Timestamp` | `string`/`date-time` | `time-jiff02` |
+//! | `jiff::Zoned` | `string`/`date-time-zoned`, with a pattern | `time-jiff02` |
+//! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff02` |
+//! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust1` |
+//! | `bigdecimal::BigDecimal` | `string`/`decimal` | `decimal-big04` |
 //!
 //! `time` is an umbrella carrying the shapes a backend maps onto; it names no
 //! crate and does not compile alone.

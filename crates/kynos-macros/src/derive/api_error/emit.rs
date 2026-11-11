@@ -1,11 +1,11 @@
-//! The bodies of the four implementations, from the failures read.
+//! The statuses and what goes on the wire, from the failures read; the
+//! description is `describe`'s.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
 use syn::{Ident, Lifetime, Type, spanned::Spanned};
 
-use super::{Extension, Failure, HEADERS_BINDING, Outcome, Transparent};
-use crate::derive::common::optional;
+use super::{Failure, HEADERS_BINDING, Outcome, Transparent};
 
 /// The statuses as a `&'static [u16]` expression, in declaration order without
 /// repeats.
@@ -34,6 +34,12 @@ pub(super) fn codes(outcomes: &[Outcome], statuses: &[u16]) -> TokenStream2 {
         }
     });
 
+    union(parts)
+}
+
+/// `parts`, each a `&'static [u16]` expression, joined in `const` items into
+/// one without repeats, in order of first appearance.
+pub(super) fn union(parts: impl Iterator<Item = TokenStream2>) -> TokenStream2 {
     quote! {{
         const __KYNOS_PROBLEM_PARTS: &[&[u16]] = &[#(#parts),*];
         const __KYNOS_PROBLEM_UNION_LEN: usize =
@@ -224,11 +230,30 @@ fn problem(failure: &Failure) -> TokenStream2 {
         .title
         .as_ref()
         .map(|title| quote!(problem.title = ::std::borrow::Cow::Borrowed(#title);));
-    // An `Option` member is sent only when it holds a value, as `detail` is.
     let label = Lifetime::new(PROBLEM_LABEL, Span::call_site());
+    // Serialized as a field is, so a `const` whose type is not `Serialize` is
+    // reported where its path is written, and one that refuses, or yields
+    // `null`, answers the same 500.
+    let with_constants = failure.constants.iter().map(|constant| {
+        let name = &constant.name;
+        let value = &constant.value;
+        let to_constant =
+            quote_spanned!(value.span()=> ::kynos::__private::problem::to_constant(&#value));
+        quote! {
+            match #to_constant {
+                ::core::option::Option::Some(member) => {
+                    problem = problem.with_extension(#name, member);
+                }
+                ::core::option::Option::None => {
+                    break #label ::kynos::__private::problem::unserializable_member();
+                }
+            }
+        }
+    });
+    // An `Option` member is sent only when it holds a value, as `detail` is.
     let with_extensions = failure.extensions.iter().map(|extension| {
         let binding = &extension.name;
-        let name = binding.to_string();
+        let name = extension.wire_name();
         let (ty, value) = extension.optional().map_or_else(
             || (&extension.ty, quote!(#binding)),
             |inner| (inner, quote!(value)),
@@ -268,120 +293,22 @@ fn problem(failure: &Failure) -> TokenStream2 {
         #with_type
         #with_title
         problem.detail = detail;
+        #(#with_constants)*
         #(#with_extensions)*
         problem
     };
     // Labelled only where a member can refuse to serialize, so no label goes
     // unused.
-    if failure.extensions.is_empty() {
-        quote!({ #build })
-    } else {
+    if failure.sends_members() {
         quote!(#label: { #build })
+    } else {
+        quote!({ #build })
     }
 }
 
 /// The label of a problem block an unserializable extension member breaks out
 /// of with the 500 that replaces it.
 const PROBLEM_LABEL: &str = "'__kynos_problem";
-
-/// The `responses` body: one response per distinct status, over the `Problem`
-/// component, shaped by `kynos::__private::problem::response`, then each
-/// transparent variant's responses in declaration order, a status met twice
-/// unioned rather than replaced.
-pub(super) fn responses(
-    failures: &[&Failure],
-    statuses: &[u16],
-    delegates: &[&Transparent],
-) -> TokenStream2 {
-    let entries = statuses.iter().map(|status| {
-        // Every failure declaring this status, in declaration order.
-        let declaring: Vec<&&Failure> = failures
-            .iter()
-            .filter(|failure| failure.status == *status)
-            .collect();
-        let branches = declaring.iter().map(|failure| {
-            let uri = optional(failure.type_uri.as_ref());
-            let summary = optional(failure.title.as_deref().or(failure.doc.as_deref()));
-            let members = failure.extensions.iter().map(member);
-            quote!((#uri, #summary, &[#(#members),*]))
-        });
-        let response =
-            quote!(::kynos::__private::problem::response(&schema, #status, &[#(#branches),*]));
-
-        if declaring.iter().all(|failure| failure.headers.is_none()) {
-            return quote! {
-                responses = responses.with(#status, #response);
-            };
-        }
-
-        // One group per failure, `()` where it sends none, so a header only
-        // some of them send is declared without being required.
-        let groups = declaring.iter().map(|failure| {
-            failure.headers.as_ref().map_or_else(
-                || quote!(::kynos::__private::problem::headers::<()>(registry)),
-                |field| {
-                    let ty = &field.ty;
-                    // Only the path is spanned to the field: `registry` keeps
-                    // the derive's hygiene context, wherever the type's tokens
-                    // came from.
-                    let headers =
-                        quote_spanned!(ty.span()=> ::kynos::__private::problem::headers::<#ty>);
-                    quote!(#headers(registry))
-                },
-            )
-        });
-
-        quote! {
-            responses = responses.with(#status, {
-                let mut response = #response;
-                ::kynos::__private::problem::declare_headers(&mut response, &[#(#groups),*]);
-                response
-            });
-        }
-    });
-
-    let handed_over = delegates.iter().map(|delegate| {
-        let ty = &delegate.ty;
-        // As for a headers group: the type's path is spanned, the bindings
-        // are not.
-        let inner = quote_spanned!(ty.span()=> <#ty as ::kynos::response::Responses>::responses);
-        quote! {
-            ::kynos::__private::problem::union_responses(&mut responses, &#inner(registry));
-        }
-    });
-
-    // Resolved only where a declared status reads it.
-    let schema = if !statuses.is_empty() {
-        quote!(let schema = registry.resolve::<::kynos::Problem>();)
-    } else if delegates.is_empty() {
-        quote!(let _ = registry;)
-    } else {
-        TokenStream2::new()
-    };
-
-    quote! {
-        #schema
-        let mut responses = ::kynos::openapi::Responses::new();
-        #(#entries)*
-        #(#handed_over)*
-        responses
-    }
-}
-
-/// One extension member as the helper declares it: its name, its type's
-/// schema, and whether every occurrence sends it. An `Option<T>` is described
-/// by `T`, since `None` is not sent rather than sent as `null`.
-fn member(extension: &Extension) -> TokenStream2 {
-    let name = extension.name.to_string();
-    let (ty, sent) = extension
-        .optional()
-        .map_or((&extension.ty, true), |inner| (inner, false));
-    // The type is spanned to the field, so one with no schema is reported
-    // where it is named; `registry` is not, so it keeps the derive's hygiene
-    // context when a `macro_rules!` hands the type over.
-    let resolve = quote_spanned!(ty.span()=> resolve::<#ty>);
-    quote!((#name, registry.#resolve(), #sent))
-}
 
 /// The statuses in declaration order, without repeats; two variants may share
 /// a status.

@@ -10,13 +10,12 @@ use syn::{
 
 use super::{
     Extension, Failure, HeaderField, Outcome, Transparent, TypeUri,
-    args::{Base, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
+    args::{Base, Constant, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
 };
 use crate::doc::doc_string;
 
 /// Every way the type can fail, read from the `#[problem(...)]` declarations.
-pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
-    let args = parse_problem(&input.attrs, Position::Type)?;
+pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<Vec<Outcome>> {
     let base = args.base.as_ref();
 
     match &input.data {
@@ -29,13 +28,20 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
                      that its variants fail differently. Move it to the variants",
                 ));
             }
+            if let Some(constant) = args.constants.first() {
+                return Err(syn::Error::new(
+                    constant.span,
+                    "a constant extension member is the value one failure sends, so it belongs \
+                     on each variant sending it. Move it to the variants",
+                ));
+            }
 
             data.variants
                 .iter()
                 .map(|variant| {
                     let markers = check_field_markers(&variant.fields)?;
 
-                    let args = parse_problem(&variant.attrs, Position::Variant)?;
+                    let mut args = parse_problem(&variant.attrs, Position::Variant)?;
                     if let Some(span) = args.transparent {
                         return transparent(variant, &args, span, &markers, &input.generics)
                             .map(Outcome::Transparent);
@@ -53,10 +59,13 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
                     };
 
                     let name = &variant.ident;
+                    let extensions = extensions(&variant.fields, &markers);
 
                     Ok(Outcome::Declared(Failure {
                         path: quote!(Self::#name),
-                        extensions: extensions(&variant.fields, &markers),
+                        variant: Some(name.clone()),
+                        constants: constants(std::mem::take(&mut args.constants), &extensions)?,
+                        extensions,
                         headers: header_field(&variant.fields, &markers)?,
                         status,
                         type_uri: type_uri(&args, base, &variant.ident),
@@ -78,13 +87,17 @@ pub(super) fn outcomes(input: &DeriveInput) -> syn::Result<Vec<Outcome>> {
                 ));
             };
 
+            let extensions = extensions(&data.fields, &markers);
+
             Ok(vec![Outcome::Declared(Failure {
                 path: quote!(Self),
-                extensions: extensions(&data.fields, &markers),
+                variant: None,
+                constants: constants(args.constants.clone(), &extensions)?,
+                extensions,
                 headers: header_field(&data.fields, &markers)?,
                 status,
-                type_uri: type_uri(&args, base, &input.ident),
-                title: args.title,
+                type_uri: type_uri(args, base, &input.ident),
+                title: args.title.clone(),
                 doc: doc_string(&input.attrs),
             })])
         }
@@ -107,6 +120,14 @@ fn transparent(
             span,
             "a transparent variant answers as the error it holds, so its status, title and type \
              are that error's. Drop them, or drop `transparent`",
+        ));
+    }
+
+    if let Some(constant) = args.constants.first() {
+        return Err(syn::Error::new(
+            constant.span,
+            "a transparent variant publishes the extension members of the error it holds, so it \
+             sends no constant of its own. Declare it on that error, or drop `transparent`",
         ));
     }
 
@@ -161,7 +182,7 @@ fn transparent(
 }
 
 /// The first of `generics`' parameters `ty` names, if any.
-fn generic_named_in(ty: &Type, generics: &Generics) -> Option<String> {
+pub(super) fn generic_named_in(ty: &Type, generics: &Generics) -> Option<String> {
     let params: Vec<String> = generics
         .params
         .iter()
@@ -248,6 +269,27 @@ fn extensions(fields: &Fields, markers: &[Markers]) -> Vec<Extension> {
             })
         })
         .collect()
+}
+
+/// The failure's constant members, refusing one named like a field it
+/// publishes: one name on the wire holds one value.
+fn constants(constants: Vec<Constant>, extensions: &[Extension]) -> syn::Result<Vec<Constant>> {
+    for constant in &constants {
+        if extensions
+            .iter()
+            .any(|extension| extension.wire_name() == constant.name)
+        {
+            return Err(syn::Error::new(
+                constant.span,
+                format!(
+                    "the field `{}` is already published as this extension member; send it \
+                     from the field or as a constant, not both",
+                    constant.name
+                ),
+            ));
+        }
+    }
+    Ok(constants)
 }
 
 /// The one field marked `#[problem(headers)]`, by its `markers`, refusing a

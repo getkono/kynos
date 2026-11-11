@@ -49,6 +49,18 @@ const BOUNDARY: &str = "boundary";
 /// The parameters this codec reads: [`BOUNDARY`].
 pub(super) const PARAMETERS: &[&str] = &[BOUNDARY];
 
+/// The most octets a part read as text may carry: 408 KiB, the default HTTP/1
+/// head buffer.
+///
+/// A text part becomes its field through the same [`FromStr`](std::str::FromStr)
+/// a parameter does, and a parameter arrives in a request head, which a
+/// default HTTP/1 connection holds to this figure; so a form field costs its
+/// parser no more than its parameter twin could. The part is refused with
+/// [`BodyRejection::TooLarge`] past it, under any body limit, so a large text
+/// value is declared as [`Bytes`] and parsed by the handler. A [`FilePart`] or
+/// [`Bytes`] part is bounded only by the body's limit.
+pub const TEXT_PART_LIMIT: u64 = 8 * 1024 + 100 * 4 * 1024;
+
 /// One uploaded file within a [`MultipartForm`].
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FilePart {
@@ -110,8 +122,11 @@ impl From<Part> for FilePart {
 /// [`Form`](super::form::Form). `#[derive(MultipartForm)]` writes it, along
 /// with its writing counterpart, from the field declarations.
 ///
-/// The parts arrive in the order the client sent them, and a part naming no
-/// declared field is left for the implementation to ignore or refuse.
+/// The parts arrive in the order the client sent them. Before a part's octets
+/// are read, [`admit`](Self::admit) decides from its name whether it is read,
+/// how much of it may be held, or whether it is dropped unread; the default
+/// reads every part, leaving one naming no declared field for
+/// [`from_parts`](Self::from_parts) to ignore or refuse.
 ///
 /// ```
 /// use kynos::{
@@ -141,6 +156,38 @@ pub trait FromMultipart: Sized {
     /// Returns the rejection describing which part was missing, repeated or
     /// unreadable.
     fn from_parts(parts: Vec<Part>) -> Result<Self, BodyRejection>;
+
+    /// How the part carrying the field `name` is read, decided before any of
+    /// its octets are.
+    ///
+    /// The default reads every part with no bound beyond the body's own.
+    /// `#[derive(MultipartForm)]` reads a declared field's part under its
+    /// element's [`FromPart::LIMIT`], drops a part no field declares unread,
+    /// and, under `deny_unknown_fields`, refuses one as `from_parts` would.
+    ///
+    /// # Errors
+    ///
+    /// Returns the rejection that ends the read at this part.
+    fn admit(name: &str) -> Result<Admission, BodyRejection> {
+        let _ = name;
+        Ok(Admission::Read { limit: None })
+    }
+}
+
+/// What [`FromMultipart::admit`] decides for one part, before it is read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Admission {
+    /// The part is read and handed to [`FromMultipart::from_parts`]. Past
+    /// `limit` octets, when one is set, the request is refused with
+    /// [`BodyRejection::TooLarge`] before the rest of the part is held.
+    Read {
+        /// The most octets the part may carry.
+        limit: Option<u64>,
+    },
+    /// The part is dropped unread; its octets still count toward the body's
+    /// limit as they are skipped.
+    Skip,
 }
 
 /// How one declared field is built from the part carrying it.
@@ -154,6 +201,14 @@ pub trait FromMultipart: Sized {
 /// field as an optional part and a `Vec<T>` field as a repeated one, so an
 /// implementation only ever answers for a single part.
 pub trait FromPart: Sized {
+    /// The most octets one part read into this type may carry, or `None` to
+    /// leave it to the body's limit alone, as [`FilePart`] and [`Bytes`] do.
+    ///
+    /// `#[derive(MultipartForm)]` hands it to [`Admission::Read`], so a part
+    /// past it is refused with a 413 before it is held whole. Every
+    /// [`ParamValue`] is read under [`TEXT_PART_LIMIT`].
+    const LIMIT: Option<u64> = None;
+
     /// Builds the field from one part.
     ///
     /// # Errors
@@ -193,6 +248,8 @@ impl FromPart for Bytes {
 /// `'static` because that is what tells `String` apart; a part is owned, so no
 /// value built from one borrows anyway.
 impl<T: ParamValue + 'static> FromPart for T {
+    const LIMIT: Option<u64> = Some(TEXT_PART_LIMIT);
+
     fn from_part(part: Part) -> Result<Self, BodyRejection> {
         if TypeId::of::<T>() == TypeId::of::<String>() {
             let mut text = Some(owned_text(part)?);
@@ -230,7 +287,7 @@ fn owned_text(part: Part) -> Result<String, BodyRejection> {
 /// skipped here as it is there, and a `;` inside a quoted value ends nothing. An unacceptable media type is the 415; an
 /// accepted one without a `boundary`, or with an empty one, is a 400, since no
 /// parser can find the parts.
-fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
+pub(crate) fn boundary(headers: &HeaderMap) -> Result<String, BodyRejection> {
     if !super::offers(headers, MEDIA_TYPE) {
         return Err(super::unsupported_media_type(headers));
     }
@@ -263,19 +320,31 @@ fn malformed_body(error: &multer::Error) -> BodyRejection {
 /// `multer` yields a part it holds whole as one chunk sharing the body's
 /// buffer, which is kept rather than copied; its own `bytes` copies every part
 /// into a fresh buffer and boxes it again to share it. A part spread over
-/// several chunks is joined.
-async fn octets(mut field: multer::Field<'_>) -> Result<Bytes, multer::Error> {
-    let Some(first) = field.chunk().await? else {
+/// several chunks is joined. Past `limit`, the read stops at the chunk that
+/// crossed it, and the rest of the part is never held.
+async fn octets(mut field: multer::Field<'_>, limit: Option<u64>) -> Result<Bytes, BodyRejection> {
+    let mut next = async || field.chunk().await.map_err(|e| malformed_body(&e));
+    let within = |held: usize| match limit {
+        Some(limit) if u64::try_from(held).unwrap_or(u64::MAX) > limit => {
+            Err(BodyRejection::TooLarge { limit })
+        }
+        _ => Ok(()),
+    };
+
+    let Some(first) = next().await? else {
         return Ok(Bytes::new());
     };
-    let Some(second) = field.chunk().await? else {
+    within(first.len())?;
+    let Some(second) = next().await? else {
         return Ok(first);
     };
+    within(first.len() + second.len())?;
 
     let mut joined = Vec::with_capacity(first.len() + second.len());
     joined.extend_from_slice(&first);
     joined.extend_from_slice(&second);
-    while let Some(chunk) = field.chunk().await? {
+    while let Some(chunk) = next().await? {
+        within(joined.len() + chunk.len())?;
         joined.extend_from_slice(&chunk);
     }
     Ok(Bytes::from(joined))
@@ -295,8 +364,10 @@ impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm
         let boundary = boundary(&head.headers)?;
         super::refuse_undecoded(&head.headers)?;
 
-        // Every part is held until `T` is built, so the limit bounds the whole
-        // stream.
+        // Every part read is held until `T` is built, so the limit bounds the
+        // whole stream; `T::admit` bounds each part within it. `multer`'s own
+        // `allowed_fields` and per-field limits are keyed by its name scan,
+        // which `disposition` exists not to trust.
         let limit = super::limit::of(head);
         super::limit::refuse_declared(&head.headers, limit)?;
         let constraints =
@@ -317,10 +388,16 @@ impl<C: Sync, T: FromMultipart + Schema + Send> FromRequest<C> for MultipartForm
                 .map_err(str::to_owned)
                 .and_then(disposition::parse)
                 .map_err(|detail| BodyRejection::Syntax { detail })?;
+            // Decided from Kynos's own reading of the name, never `multer`'s,
+            // so the part read is the part a field declared.
+            let limit = match T::admit(&name)? {
+                Admission::Read { limit } => limit,
+                Admission::Skip => continue,
+            };
             let content_type = field
                 .content_type()
                 .map(|mime| AsRef::<str>::as_ref(mime).to_owned());
-            let bytes = octets(field).await.map_err(|e| malformed_body(&e))?;
+            let bytes = octets(field, limit).await?;
 
             parts.push(Part {
                 name,

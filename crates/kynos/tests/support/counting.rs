@@ -9,6 +9,12 @@
 //!
 //! Why the counter has to be a per-thread one, and what holds it to being
 //! that, is [`alloc.rs`](../alloc.rs).
+//!
+//! [`counted`] is the in-process driver only. A request served over a
+//! connection reads, writes and arms timers, so it is never ready on one poll;
+//! [`alloc_serve.rs`](../alloc_serve.rs) drives that half itself, on a
+//! current-thread runtime that polls on the measuring thread, and reads it
+//! against this one.
 
 use std::future::Future;
 use std::pin::pin;

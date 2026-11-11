@@ -9,7 +9,9 @@
 //!   headers it reads are three associated types. Attaching one to a group
 //!   documents its effect on every operation underneath.
 //! - An [`Observer`] sees everything and changes nothing, so it needs to
-//!   declare nothing. Logging, tracing and metrics live here.
+//!   declare nothing. Logging, tracing and metrics live here, except a span
+//!   the rest of the chain runs inside: holding one across it takes an
+//!   interceptor that declares nothing, as `trace::TraceSpan` is.
 //!
 //! The `unchecked` feature restores `Layer` support, at the price of a
 //! description marked non-authoritative.
@@ -185,7 +187,7 @@ use crate::{
     http::{Request, Response},
     middleware::erased::{ErasedInterceptor, ErasedTerminal},
     response::ShortCircuit,
-    router::operation::Route,
+    router::{group::Methods, operation::Route},
 };
 
 /// Middleware that can affect the exchange, and says how in its own signature.
@@ -231,6 +233,23 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     /// declares nothing.
     type Short: ShortCircuit;
 
+    /// The declared responses [`Adds`](Interceptor::Adds) is described on.
+    ///
+    /// Only where the group is described at all, which
+    /// [`HeaderParams::DESCRIBED`] decides. Defaults to
+    /// [`Placement::Success`].
+    ///
+    /// [`HeaderParams::DESCRIBED`]: crate::extract::params::header::HeaderParams::DESCRIBED
+    const ADDS_ON: Placement = Placement::Success;
+
+    /// Not part of the API: the methods of the operations a stack element
+    /// covers, which the collision check reads.
+    ///
+    /// Every interceptor but [`When`](stack::When) leaves it at its default,
+    /// and mounting one that does not fails to compile.
+    #[doc(hidden)]
+    const __METHODS: Methods = Methods::EVERY;
+
     /// Handles a request, calling `next` to continue.
     ///
     /// `reads` arrives already extracted from the request headers; a failure to
@@ -242,6 +261,44 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
         context: &C,
         next: Next<'_, C>,
     ) -> impl Future<Output = Result<Continued<Self::Adds>, Self::Short>> + Send;
+}
+
+/// Which of an operation's declared responses an interceptor's response headers
+/// are described on: its [`Interceptor::ADDS_ON`].
+///
+/// A declaration rather than a guarantee. [`Continued::with_headers`] attaches
+/// the group to whatever response the rest of the chain produced, and an
+/// interceptor may write the same fields onto its own
+/// [`Short`](Interceptor::Short) response; only its author knows which
+/// responses actually carry them. `docs/middleware.md`, "Where a described
+/// header lands", gives the reasoning.
+///
+/// Each placement files the header on the declared responses it reaches, under
+/// whatever key each is already declared at, and never mints an entry, a range
+/// included. It leaves a response held as a `$ref` and a header that response
+/// already declares alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Placement {
+    /// Every successful (`2XX`) response the operation declares when this
+    /// interceptor is described: the handler's and an extractor's, never a
+    /// response only a short circuit or panic recovery adds after it.
+    #[default]
+    Success,
+
+    /// Every response the finished operation declares, whatever contributed
+    /// it: the handler, an extractor, any interceptor's short circuit this one
+    /// included, and panic recovery's 500.
+    ///
+    /// For a header written onto every response, as a request identifier is.
+    Every,
+
+    /// Every response the finished operation declares with an
+    /// `application/problem+json` body, and no other.
+    ///
+    /// For a header meaningful only on a failure, as `Retry-After` on a 429 or
+    /// 503 is.
+    Problems,
 }
 
 /// An interceptor configured with a combination it cannot honour.
@@ -550,14 +607,29 @@ pub trait Observer<C>: Send + Sync + 'static {
     ///
     /// `elapsed` measures producing the response head, not delivering the
     /// body; a streaming response is reported long before its last frame.
-    /// [`on_disconnect`](Observer::on_disconnect) reports a body that never
-    /// finished.
+    /// Exactly one of [`on_complete`](Observer::on_complete), for a body
+    /// that finished, and [`on_disconnect`](Observer::on_disconnect), for one
+    /// that did not, follows.
     fn on_response(
         &self,
         response: &Response,
         route: Option<Route<'_>>,
         elapsed: std::time::Duration,
     );
+
+    /// Called when the response body [`on_response`](Observer::on_response)
+    /// reported was read to its end.
+    ///
+    /// The last frame was handed to the connection, which may still be
+    /// buffering it: this is the end of producing the body, not an
+    /// acknowledgement from the peer. A body with nothing to send, such as a
+    /// 204's or a HEAD response's, completes once the connection releases it.
+    ///
+    /// Called from whatever task reads or drops the body: record and return,
+    /// never block or await.
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+        let _ = (route, completion);
+    }
 
     /// Called when a response body was dropped before its end.
     ///
@@ -591,6 +663,26 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// interceptor replaced with a short circuit of its own.
     fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
         let _ = (payload, route);
+    }
+}
+
+/// A response body read to its end, as [`Observer::on_complete`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Completion {
+    /// From the request arriving to the body's last frame being read.
+    pub elapsed: std::time::Duration,
+    /// The octets the body's data frames carried, as sent: after any content
+    /// coding, and without the transfer framing or trailers around them.
+    pub body_bytes: u64,
+}
+
+impl Completion {
+    pub(crate) fn new(elapsed: std::time::Duration, body_bytes: u64) -> Self {
+        Self {
+            elapsed,
+            body_bytes,
+        }
     }
 }
 

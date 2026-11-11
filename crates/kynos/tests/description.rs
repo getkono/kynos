@@ -993,6 +993,271 @@ fn a_cookie_an_interceptor_sets_is_declared_where_a_consumer_resolves_it() {
     assert!(declared.contains(&"Set-Cookie".to_owned()), "{declared:?}");
 }
 
+// --- Which responses an interceptor's header is declared on -----------------
+//
+// `Interceptor::ADDS_ON` names them. `Success`, the default, is pinned above by
+// `RequestId`. `Every` and `Problems` read the finished operation, so the
+// fixture puts a contributor after each of them in describe order: a group's
+// `Timeout` (408), described after the router's own interceptors, and the
+// router's panic recovery (500), described last of all. A placement filed when
+// its interceptor was described would miss both.
+
+/// A field written onto every response.
+#[derive(kynos::HeaderParams)]
+struct Stamp {
+    /// Which deployment answered.
+    #[header(rename = "X-Stamp")]
+    deployment: String,
+}
+
+/// A field written onto failures alone.
+#[derive(kynos::HeaderParams)]
+struct Backoff {
+    /// How long to wait before retrying.
+    #[header(rename = "X-Backoff")]
+    seconds: u64,
+}
+
+/// Declares `Stamp` on every response.
+struct Stamping;
+
+impl kynos::middleware::Interceptor<()> for Stamping {
+    type Reads = ();
+    type Adds = Stamp;
+    type Short = std::convert::Infallible;
+
+    const ADDS_ON: kynos::middleware::Placement = kynos::middleware::Placement::Every;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        (): (),
+        (): &(),
+        next: kynos::middleware::Next<'_, ()>,
+    ) -> Result<kynos::middleware::Continued<Stamp>, std::convert::Infallible> {
+        Ok(next.run(request).await.with_headers(Stamp {
+            deployment: "eu-1".to_owned(),
+        }))
+    }
+}
+
+/// Declares `Backoff` on problem responses.
+struct BackingOff;
+
+impl kynos::middleware::Interceptor<()> for BackingOff {
+    type Reads = ();
+    type Adds = Backoff;
+    type Short = std::convert::Infallible;
+
+    const ADDS_ON: kynos::middleware::Placement = kynos::middleware::Placement::Problems;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        (): (),
+        (): &(),
+        next: kynos::middleware::Next<'_, ()>,
+    ) -> Result<kynos::middleware::Continued<Backoff>, std::convert::Infallible> {
+        Ok(next.run(request).await.with_headers(Backoff { seconds: 1 }))
+    }
+}
+
+/// `/placed/reviews/{id}` under `interceptor`, with a 408 and a 500 described
+/// after it.
+fn placed<I: kynos::middleware::Interceptor<()>>(interceptor: I) -> kynos::openapi::Operation {
+    let document = Router::<()>::new()
+        .catch_panics()
+        .intercept(interceptor)
+        .group(
+            Group::<()>::new("/placed")
+                .intercept(Timeout::new(std::time::Duration::from_secs(1)))
+                .mount(kynos::routes![review]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    let operation = operation(&document, "/placed/reviews/{id}");
+    let statuses: BTreeSet<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        statuses,
+        BTreeSet::from(["204", "400", "408", "500"]),
+        "the fixture declares a success, a rejection, a later interceptor's \
+         short circuit and recovery"
+    );
+    operation
+}
+
+#[test]
+fn an_interceptor_adding_on_every_response_is_declared_on_each_one() {
+    let operation = placed(Stamping);
+
+    for status in operation.responses.responses.keys() {
+        let declared = declared_headers(&operation, status).expect("a declared status");
+        assert!(
+            declared.contains(&"X-Stamp".to_owned()),
+            "{status} declares {declared:?}"
+        );
+    }
+}
+
+#[test]
+fn an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone() {
+    let operation = placed(BackingOff);
+
+    let declaring: BTreeSet<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .filter(|status| {
+            declared_headers(&operation, status)
+                .expect("a declared status")
+                .contains(&"X-Backoff".to_owned())
+        })
+        .map(String::as_str)
+        .collect();
+
+    // 204 carries no body, so no problem document either.
+    assert_eq!(declaring, BTreeSet::from(["400", "408", "500"]));
+}
+
+/// An extractor declaring a 422 whose problem document is keyed in another
+/// case and with a parameter.
+struct Unprocessable;
+
+impl kynos::extract::describe::Describe for Unprocessable {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        operation.add_responses(&kynos::openapi::Responses::new().with(
+            422,
+            kynos::openapi::Response::with_content(
+                "unprocessable",
+                "Application/Problem+JSON; charset=utf-8",
+                kynos::openapi::MediaType::new(kynos::openapi::Schema::Bool(true)),
+            ),
+        ));
+    }
+}
+
+impl<C: Sync> kynos::extract::FromRequestParts<C> for Unprocessable {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut kynos::http::Parts,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        Ok(Self)
+    }
+}
+
+#[kynos::get("/unprocessable")]
+async fn unprocessable(checked: Unprocessable) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// A media type's essence is matched in any ASCII case, whatever parameters
+/// follow it, so a problem document keyed otherwise is still reached.
+#[test]
+fn an_interceptor_adding_on_problems_matches_the_problem_media_type_loosely() {
+    let document = Router::<()>::new()
+        .intercept(BackingOff)
+        .mount(kynos::routes![unprocessable])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/unprocessable");
+
+    assert!(
+        declared_headers(&operation, "422")
+            .expect("a declared 422")
+            .contains(&"X-Backoff".to_owned())
+    );
+    assert!(
+        !declared_headers(&operation, "204")
+            .expect("a declared 204")
+            .contains(&"X-Backoff".to_owned())
+    );
+}
+
+/// The `$ref` an extractor declares its 503 as.
+fn unavailable() -> kynos::openapi::RefOr<kynos::openapi::Response> {
+    kynos::openapi::RefOr::Ref(kynos::openapi::Ref::response("Unavailable"))
+}
+
+/// An extractor declaring an inline problem 422 and a 503 held as a `$ref`.
+struct Referencing;
+
+impl kynos::extract::describe::Describe for Referencing {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        operation.add_responses(
+            &kynos::openapi::Responses::new()
+                .with(
+                    422,
+                    kynos::openapi::Response::with_content(
+                        "unprocessable",
+                        "application/problem+json",
+                        kynos::openapi::MediaType::new(kynos::openapi::Schema::Bool(true)),
+                    ),
+                )
+                .with_pattern(kynos::openapi::StatusPattern::Code(503), unavailable()),
+        );
+    }
+}
+
+impl<C: Sync> kynos::extract::FromRequestParts<C> for Referencing {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut kynos::http::Parts,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        Ok(Self)
+    }
+}
+
+#[kynos::get("/referencing")]
+async fn referencing(checked: Referencing) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// A response held as a `$ref` is left as written by both deferred
+/// placements, as `Placement` promises: its headers live where it is defined,
+/// which the operation does not own.
+#[test]
+fn an_interceptor_adding_on_every_response_or_problems_leaves_a_ref_alone() {
+    let document = Router::<()>::new()
+        .intercept(Stamping)
+        .intercept(BackingOff)
+        .mount(kynos::routes![referencing])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/referencing");
+
+    assert_eq!(
+        operation.responses.responses.get("503"),
+        Some(&unavailable()),
+        "the `$ref` was replaced or reached into"
+    );
+
+    // The controls: each placement did file its header on the inline
+    // responses it reaches, so the `$ref` above was skipped rather than never
+    // visited.
+    assert_eq!(
+        declared_headers(&operation, "422"),
+        Some(vec!["X-Stamp".to_owned(), "X-Backoff".to_owned()])
+    );
+    assert_eq!(
+        declared_headers(&operation, "204"),
+        Some(vec!["X-Stamp".to_owned()])
+    );
+}
+
 // --- Scope in the document's tags -------------------------------------------
 //
 // The same question again, on the axis the sections above do not reach. A tag
@@ -1575,11 +1840,13 @@ impl<C: Sync, P: kynos::security::Scope>
         let _ = (presented, context);
         Err(kynos::error::rejection::AuthRejection::unauthenticated())
     }
+}
 
+impl<C: Sync> kynos::security::Authorizer<Granted, C, Grant> for Tokens {
     async fn authorize(
         &self,
         credential: &Claims,
-        scopes: &[P],
+        scopes: &[Grant],
         context: &C,
     ) -> Result<(), kynos::error::rejection::AuthRejection> {
         let _ = (credential, scopes, context);
@@ -1594,6 +1861,8 @@ struct Guarded;
 
 impl<P: kynos::security::Scope>
     kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims, P>> for Guarded
+where
+    Tokens: kynos::security::Authorizer<kynos::security::schemes::Bearer<Claims, P>, Self, P>,
 {
     type Authenticator = Tokens;
 
@@ -1862,16 +2131,6 @@ impl<C: Sync> kynos::security::Authenticator<Session, C> for Sessions {
     ) -> Result<String, kynos::error::rejection::AuthRejection> {
         let _ = (presented, context);
         Err(kynos::error::rejection::AuthRejection::unavailable::<Session>())
-    }
-
-    async fn authorize(
-        &self,
-        credential: &String,
-        scopes: &[kynos::security::Unscoped],
-        context: &C,
-    ) -> Result<(), kynos::error::rejection::AuthRejection> {
-        let _ = (credential, scopes, context);
-        Ok(())
     }
 }
 

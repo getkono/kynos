@@ -1,6 +1,8 @@
 //! A field's `#[problem(...)]` markers are bare and written once, and a field
 //! is either an extension member or a header group. A failure sends one
-//! header group, so a second is refused rather than merged.
+//! header group, so a second is refused rather than merged. An extension
+//! field named like a member RFC 9457 defines is refused, since the problem
+//! already sends that member.
 //!
 //! The controls are `pass/api_error_extension_with_a_name.rs` and
 //! `pass/api_error_headers_a_group.rs`: one marker on each field, and one
@@ -59,6 +61,16 @@ struct Throttled {
     retry: RetryAfter,
     #[problem(headers)]
     limit: RateLimit,
+}
+
+#[derive(Debug, thiserror::Error, ApiError)]
+enum QuotaError {
+    #[error("quota exhausted")]
+    #[problem(status = 429)]
+    Exhausted {
+        #[problem(extension)]
+        title: String,
+    },
 }
 
 fn main() {}

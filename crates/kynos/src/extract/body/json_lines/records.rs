@@ -38,6 +38,9 @@ enum State {
     Reading,
     /// The body ended; whatever is left in the buffer is the last record.
     Ended,
+    /// The body passed the limit; the buffer holds its first `limit` bytes,
+    /// and once their delimited records are read the 413 follows.
+    Exceeded,
     /// Nothing further will be produced.
     Fused,
 }
@@ -67,7 +70,7 @@ enum State {
 /// | breaks a bound `T`'s schema declares | 422 at each offending member, under `/{index}` | the stream continues, for the same reason |
 /// | did not arrive, because the transport failed | 400 | the stream ends |
 /// | opens a `json-seq` body without a record separator | 400 | the stream ends |
-/// | is longer than the operation's body limit | 413 | the stream ends — the rest of the record was never read, so nothing after it can be framed |
+/// | reaches past the operation's body limit | 413, after every record wholly within it | the stream ends — nothing past the limit is read |
 ///
 /// Every pointer starts at the record's index in the body, as OpenAPI 3.2
 /// reads a sequential media type as an array: `/3` names the fourth record,
@@ -100,17 +103,24 @@ enum State {
 /// [`BodySize`](crate::middleware::limits::body_size::BodySize#what-it-costs-a-streaming-read)
 /// says when.
 ///
-/// # What one record may cost
+/// # What the body may cost
 ///
-/// The body as a whole is unbounded, but each record is held whole before
-/// decoding, so the operation's body limit —
+/// The operation's body limit —
 /// [`DEFAULT_LIMIT`](crate::extract::body::limit::DEFAULT_LIMIT), or the figure
-/// a covering `BodySize` names — bounds each record, with a 413.
+/// a covering `BodySize` or `Decompression` names — bounds the whole body, as it does a buffered
+/// one, and so every record in it and the `Vec` that
+/// [`read_all`](Records::read_all) builds. A declared `Content-Length` past it
+/// is refused at extraction, before a byte is read and before the handler
+/// runs. A length-less body is buffered only up to it: every record wholly
+/// within the limit is read, and the 413 takes the place of the first that is
+/// not, wherever the body's frames happened to split.
 pub struct Records<T> {
     /// The undecoded body, as the frames it arrives in.
     body: BodyDataStream<Body>,
-    /// The longest record, in bytes, that will be held for decoding.
+    /// The most bytes, in total, that will be read from the body.
     limit: u64,
+    /// How many bytes have been read from the body so far.
+    received: u64,
     /// Bytes read but not yet framed into a record.
     buffer: BytesMut,
     /// How far into `buffer` the delimiter search has reached, so a record
@@ -137,7 +147,8 @@ impl<T> fmt::Debug for Records<T> {
 
 impl<T> Records<T> {
     /// Enforces the content type and refuses an undecoded coding (the shared
-    /// 415s), then takes the body unread.
+    /// 415s) and a declared length past the limit (the 413), then takes the
+    /// body unread.
     pub(super) fn new(
         parts: &Parts,
         body: Body,
@@ -145,9 +156,12 @@ impl<T> Records<T> {
         framing: Framing,
     ) -> Result<Self, BodyRejection> {
         crate::extract::body::admit(&parts.headers, media_type)?;
+        let limit = crate::extract::body::limit::of(parts);
+        crate::extract::body::limit::refuse_declared(&parts.headers, limit)?;
 
         Ok(Self {
-            limit: crate::extract::body::limit::of(parts),
+            limit,
+            received: 0,
             body: body.into_data_stream(),
             buffer: BytesMut::new(),
             scanned: 0,
@@ -187,13 +201,6 @@ impl<T> Records<T> {
                 .iter()
                 .position(|byte| *byte == delimiter)
                 .map(|position| from + position);
-
-            // A record still arriving is refused as soon as it passes the limit.
-            let held = found.unwrap_or(self.buffer.len()).saturating_sub(prefix);
-            if u64::try_from(held).unwrap_or(u64::MAX) > self.limit {
-                self.state = State::Fused;
-                return Some(Err(BodyRejection::TooLarge { limit: self.limit }));
-            }
 
             let mut frame = match found {
                 // A newline ends this record; a separator begins the next.
@@ -242,7 +249,8 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
     ///
     /// The convenience for a body that fits in memory: it returns at the first
     /// rejection, including the 422 that [`next`](Records::next) would have
-    /// carried on past, and drops what has not been read.
+    /// carried on past, and drops what has not been read. What it collects is
+    /// bounded by the operation's body limit, which ends it with the 413.
     pub async fn read_all(mut self) -> Result<Vec<T>, BodyRejection> {
         let mut records = Vec::new();
         while let Some(record) = self.next().await {
@@ -263,12 +271,33 @@ impl<T: serde::de::DeserializeOwned + Schema> Records<T> {
                 Some(Ok(record)) => return Poll::Ready(Some(self.decode(&record))),
                 Some(Err(rejection)) => return Poll::Ready(Some(Err(rejection))),
                 None if self.state == State::Ended => return Poll::Ready(None),
+                // A record cut by the limit is never framed.
+                None if self.state == State::Exceeded => {
+                    self.state = State::Fused;
+                    self.buffer = BytesMut::new();
+                    return Poll::Ready(Some(Err(BodyRejection::TooLarge { limit: self.limit })));
+                }
                 None => {}
             }
 
             match Pin::new(&mut self.body).poll_next(context) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Some(Ok(chunk))) => self.buffer.extend_from_slice(&chunk),
+                // Only the body's first `limit` bytes are ever buffered, so the
+                // records read do not depend on where its frames split.
+                Poll::Ready(Some(Ok(chunk))) => {
+                    let room = self.limit - self.received;
+                    let length = u64::try_from(chunk.len()).unwrap_or(u64::MAX);
+                    if length > room {
+                        // `room` is under `chunk.len()`, so it fits a `usize`.
+                        let room = usize::try_from(room).unwrap_or(chunk.len());
+                        self.buffer.extend_from_slice(&chunk[..room]);
+                        self.received = self.limit;
+                        self.state = State::Exceeded;
+                    } else {
+                        self.buffer.extend_from_slice(&chunk);
+                        self.received += length;
+                    }
+                }
                 // A transport failure is a 408 or a 400, as for a whole-body read.
                 Poll::Ready(Some(Err(error))) => {
                     self.state = State::Fused;

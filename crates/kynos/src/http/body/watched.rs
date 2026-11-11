@@ -20,6 +20,8 @@ pub(super) struct Watched<F: FnOnce(Delivery)> {
     pub(super) inner: UnsyncBoxBody<Bytes, BoxError>,
     /// `None` once the report has been made.
     pub(super) report: Option<F>,
+    /// The octets the data frames read so far carried.
+    pub(super) bytes: u64,
 }
 
 // Never structurally pinned: `report` is only ever moved out whole, and
@@ -46,11 +48,17 @@ impl<F: FnOnce(Delivery)> HttpBody for Watched<F> {
         let this = self.get_mut();
         let polled = Pin::new(&mut this.inner).poll_frame(context);
 
+        if let Poll::Ready(Some(Ok(frame))) = &polled {
+            if let Some(data) = frame.data_ref() {
+                this.bytes += data.len() as u64;
+            }
+        }
+
         match &polled {
-            Poll::Ready(None) => this.report(Delivery::Complete),
+            Poll::Ready(None) => this.report(Delivery::Complete { bytes: this.bytes }),
             // A driver may stop polling once the last frame declares the end.
             Poll::Ready(Some(Ok(_))) if this.inner.is_end_stream() => {
-                this.report(Delivery::Complete);
+                this.report(Delivery::Complete { bytes: this.bytes });
             }
             // A failed frame is reported as interrupted on drop.
             Poll::Ready(Some(_)) | Poll::Pending => {}
@@ -72,7 +80,7 @@ impl<F: FnOnce(Delivery)> Drop for Watched<F> {
     fn drop(&mut self) {
         // A body at its end was delivered even if never polled (an empty one).
         let delivery = if self.inner.is_end_stream() {
-            Delivery::Complete
+            Delivery::Complete { bytes: self.bytes }
         } else {
             Delivery::Interrupted
         };

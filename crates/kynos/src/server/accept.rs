@@ -1,8 +1,9 @@
 //! The listeners and their accept loop.
 //!
-//! One task per listener. It holds the connection semaphore, backs off on a
-//! failing accept, and stops accepting the moment the lifecycle leaves
-//! `Running` or its backoff gives up — then waits for its own connections
+//! One task per listener, and so one per accept shard, since each shard is a
+//! listener of its own. It holds the connection semaphore, backs off on a
+//! failing accept, and stops accepting the moment the lifecycle reaches
+//! `Draining`, accepting on through `Deregistering`, or its backoff gives up — then waits for its own connections
 //! rather than the server waiting for all of them at once.
 //!
 //! The loop is generic over [`Acceptor`], the kinds of listener it serves: a
@@ -23,6 +24,7 @@ use tokio::{
 use crate::extract::connection::PeerCredentials;
 use crate::{
     extract::connection::{Connection, TlsIdentity, TransportAddress},
+    http::forwarded::TrustedProxies,
     router::service::Service,
     server::{
         TransportConfig,
@@ -52,6 +54,9 @@ pub(in crate::server) struct Peer {
     /// The credentials the kernel recorded for a Unix domain socket's peer.
     #[cfg(unix)]
     pub(in crate::server) credentials: Option<PeerCredentials>,
+    /// Whether the peer is a trusted proxy whose PROXY protocol header must
+    /// open the connection.
+    pub(in crate::server) proxied: bool,
 }
 
 impl From<TransportAddress> for Peer {
@@ -60,6 +65,7 @@ impl From<TransportAddress> for Peer {
             address,
             #[cfg(unix)]
             credentials: None,
+            proxied: false,
         }
     }
 }
@@ -82,12 +88,15 @@ impl Peer {
     }
 }
 
-/// A TCP listener, and the options every socket it accepts is given.
+/// A TCP listener, the options every socket it accepts is given, and the
+/// proxies whose PROXY protocol header it requires.
 #[derive(Debug)]
 pub(in crate::server) struct TcpAcceptor {
     pub(in crate::server) listener: TcpListener,
     pub(in crate::server) local_addr: SocketAddr,
     pub(in crate::server) socket: SocketOptions,
+    /// `None` where no peer is trusted to send one.
+    pub(in crate::server) proxy_protocol: Option<Arc<TrustedProxies>>,
 }
 
 impl Acceptor for TcpAcceptor {
@@ -96,7 +105,12 @@ impl Acceptor for TcpAcceptor {
     async fn accept(&self) -> io::Result<(TcpStream, Peer)> {
         let (stream, peer_addr) = self.listener.accept().await?;
         self.socket.apply(&stream, self.local_addr, peer_addr);
-        Ok((stream, TransportAddress::from(peer_addr).into()))
+        let mut peer = Peer::from(TransportAddress::from(peer_addr));
+        peer.proxied = self
+            .proxy_protocol
+            .as_deref()
+            .is_some_and(|trusted| trusted.trusts_peer(peer_addr.ip()));
+        Ok((stream, peer))
     }
 }
 
@@ -114,6 +128,7 @@ impl Acceptor for tokio::net::UnixListener {
             Peer {
                 address: std::os::unix::net::SocketAddr::from(peer_addr).into(),
                 credentials,
+                proxied: false,
             },
         ))
     }
@@ -273,7 +288,7 @@ impl AcceptBackoff {
     }
 }
 
-/// Accepts on `listener` until the lifecycle leaves `Running` or the backoff
+/// Accepts on `listener` until the lifecycle reaches `Draining` or the backoff
 /// gives up, then drains the connections it accepted until they finish or the
 /// lifecycle reaches `Forced`.
 ///

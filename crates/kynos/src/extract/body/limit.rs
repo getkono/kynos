@@ -17,11 +17,11 @@ use crate::{
 /// The most bytes a body extractor holds in memory when no limit covering its
 /// operation names another: 2 MiB.
 ///
-/// Every extractor that buffers a body — each codec in
-/// [`body`](crate::extract::body), and each record of a streamed one — refuses
-/// past it with [`BodyRejection::TooLarge`], so every operation reading a body
-/// declares a 413. A declared `Content-Length` past it is refused before a byte
-/// is read.
+/// Every body extractor — each codec in [`body`](crate::extract::body), the
+/// streamed ones included, which hold one record at a time but read no more of
+/// the body than this — refuses past it with [`BodyRejection::TooLarge`], so
+/// every operation reading a body declares a 413. A declared `Content-Length`
+/// past it is refused before a byte is read.
 ///
 /// A covering [`BodySize`](crate::middleware::limits::body_size::BodySize), or
 /// the `compression` feature's `Decompression`, replaces this figure for that

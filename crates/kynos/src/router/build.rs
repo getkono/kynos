@@ -142,6 +142,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             method_not_allowed,
             trailing_slashes: self.trailing_slashes.unwrap_or_default(),
             trusted_proxies: self.trusted_proxies.unwrap_or_default(),
+            problem_members: self.problem_members.map(|hook| hook.produce),
             implemented,
         });
 
@@ -365,7 +366,7 @@ fn mounted_links<C>(paths: &[PathEntry<C>]) -> crate::extract::link::Links {
 
 /// Whether `operation` declares a security requirement: a non-empty list does,
 /// even one holding the empty (anonymous) requirement beside a scheme.
-fn declares_security(operation: &kynos_openapi::Operation) -> bool {
+pub(super) fn declares_security(operation: &kynos_openapi::Operation) -> bool {
     operation
         .security
         .as_ref()

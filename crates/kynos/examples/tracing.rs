@@ -27,11 +27,13 @@
 //!   formatted and what is filtered stays with the application — which is why
 //!   the first statement in `main` is the one line here another deployment would
 //!   certainly write differently.
-//! * **Two events per request, not a span.** An observer is told when a request
-//!   arrives and when a response leaves and holds nothing in between, so there
-//!   is no suspension point to keep a span entered across. Nothing is lost: the
-//!   pair carries what a span would have, and the closing event adds `status`
-//!   and `latency`.
+//! * **Two events per request from the observer; the span is an interceptor.**
+//!   An observer is told when a request arrives and when a response leaves and
+//!   holds nothing in between, so there is no suspension point to keep a span
+//!   entered across. `Trace::span` is the same configuration as an interceptor
+//!   that declares nothing: it holds one `request` span across the rest of the
+//!   chain, so the handler's own events carry the operation and the request's
+//!   identifier without logging either.
 //! * **The records are keyed by the operation, not by the request path.**
 //!   [`Route::path`] is the same string that appears as the `paths` key, so a
 //!   field's cardinality is bounded by the number of operations rather than by
@@ -44,13 +46,15 @@
 //!   that can panic; the fallback below is there only because the parameter
 //!   has the type it has on the other hooks, where a request that matched
 //!   nothing is still worth a line.
-//! * **`on_response` is not the end of the request, and `on_disconnect` is why
-//!   the difference matters.** The closing event fires when the head is ready,
+//! * **`on_response` is not the end of the request; `on_complete` and
+//!   `on_disconnect` are.** The closing event fires when the head is ready,
 //!   so its `latency` measures producing a response rather than delivering one
-//!   -- for a download or an event stream the two are worlds apart. A body
-//!   dropped before its last frame means the client never received what was
-//!   already logged as sent, and only `on_disconnect` says so. It is defaulted
-//!   like `on_panic`, and left out just as easily.
+//!   -- for a download or an event stream the two are worlds apart. Exactly one
+//!   of the two follows it: `on_complete` once the body's last frame was sent,
+//!   with the full latency and the content octets after any content coding,
+//!   or `on_disconnect` when
+//!   the client never received what was already logged as sent. Both are
+//!   defaulted like `on_panic`, and left out just as easily.
 //!
 //! [`Route::path`]: kynos::router::operation::Route::path
 
@@ -59,7 +63,7 @@ use std::{any::Any, collections::HashMap, net::Ipv4Addr, time::Duration};
 use kynos::{
     http,
     middleware::{
-        Observer,
+        Completion, Observer,
         request_id::{Random, RequestId},
         trace::{Level, Trace},
     },
@@ -130,6 +134,19 @@ impl<C> Observer<C> for Slo {
         }
     }
 
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+        // The delivered figures a bytes-sent or full-latency metric records:
+        // `body_bytes` counts the content octets after any content coding,
+        // without transfer framing or trailers.
+        tracing::debug!(
+            target: "slo",
+            operation_id = route.map_or("<unmatched>", |route| route.operation_id()),
+            body_bytes = completion.body_bytes,
+            elapsed_ms = completion.elapsed.as_millis(),
+            "delivered",
+        );
+    }
+
     fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: Duration) {
         // Not a budget overrun: the operation may have been well inside its
         // budget and the client simply left. Recorded at `info` rather than
@@ -164,15 +181,16 @@ impl<C> Observer<C> for Slo {
 
 /// Lists users.
 ///
-/// The body logs with a plain `tracing::info!`, which inherits whatever span
-/// the application established rather than anything `Trace` opened -- an
-/// observer opens none. So this line carries `count` and nothing else: the
-/// operation, the matched path and the status are on `Trace`'s own two events,
-/// which bracket it. Tying them together is the subscriber's job, and an
-/// application-opened span is where that would come from. There is still no
-/// per-endpoint logging to attach and nothing to forget.
+/// The body logs with a plain `tracing::info!`, which inherits the `request`
+/// span `Trace::span` opened: the line carries `count`, and the subscriber
+/// prints the span's `method`, `matched_path`, `operation_id` and `request_id`
+/// before it. `user_id` was declared on the span empty, so whatever admits the
+/// caller -- here the handler itself -- records it once and every later line
+/// in the request carries it. There is still no per-endpoint logging to attach
+/// and nothing to forget.
 #[kynos::get("/users")]
 async fn list_users() -> NoContent {
+    tracing::Span::current().record("user_id", "u-1");
     tracing::info!(count = 0, "listed users");
     NoContent
 }
@@ -201,14 +219,21 @@ async fn main() -> kynos::Result<()> {
         )
         .init();
 
+    // Mounted first so a response carries an identifier at all. Where it
+    // lands is worth seeing: `trust_client(false)` means an inbound header
+    // is not believed, so `request_id` is empty on the arrival event even
+    // when the client sent one, and carries the minted value on the
+    // departure one. `Random` mints identifiers that stay unique across
+    // restarts and a fleet, so a log aggregator can join on them.
+    let request_id = RequestId::new().trust_client(false).source(Random::new());
+    // Mounted after `RequestId`, so the span opens with the identifier it
+    // minted rather than whatever the client sent, and closes with `status`
+    // and `latency_ms`.
+    let span = Trace::new().correlating(&request_id).span(&["user_id"]);
+
     let router = Router::<()>::new()
-        // Mounted first so a response carries an identifier at all. Where it
-        // lands is worth seeing: `trust_client(false)` means an inbound header
-        // is not believed, so `request_id` is empty on the arrival event even
-        // when the client sent one, and carries the minted value on the
-        // departure one. `Random` mints identifiers that stay unique across
-        // restarts and a fleet, so a log aggregator can join on them.
-        .intercept(RequestId::new().trust_client(false).source(Random::new()))
+        .intercept(request_id)
+        .intercept(span)
         // What Kynos ships: two events per request -- one on arrival and one
         // on departure -- carrying `method`, `matched_path`, `operation_id` and
         // `request_id`, with `status` and `latency` on the closing one. The

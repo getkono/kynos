@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run -p kynos --example scalars --features \
-//!   uuid,time-chrono,time-jiff,decimal-rust,decimal-big
+//!   uuid1,time-chrono04,time-jiff02,decimal-rust1,decimal-big04
 //! ```
 //!
 //! An application picks *one* date backend and *one* decimal backend. Both of
@@ -23,6 +23,8 @@
 //!   a date needs a date library, and choosing one for an application would be
 //!   the sort of prescription this framework avoids. What it does prescribe is
 //!   the shape both map onto, so `date-time-local` cannot mean two things.
+//!   Each feature also names the crate's major version, so `jiff`'s next major
+//!   would arrive as a feature beside `time-jiff02` rather than replacing it.
 //! * **The offset-less types are not `date-time`.** `NaiveDateTime` and
 //!   `civil::DateTime` carry no offset, so they are not RFC 3339 timestamps,
 //!   and saying otherwise would document a request body the service rejects.
@@ -34,6 +36,14 @@
 //! type rather than from the encoder.
 
 use std::net::Ipv4Addr;
+
+// Kynos's own manifest keys each crate by its major, so this example reaches
+// them through those names; an application names them as its manifest does.
+use bigdecimal04 as bigdecimal;
+use chrono04 as chrono;
+use jiff02 as jiff;
+use rust_decimal1 as rust_decimal;
+use uuid1 as uuid;
 
 use kynos::{prelude::*, server::Server};
 use serde::{Deserialize, Serialize};

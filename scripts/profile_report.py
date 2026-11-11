@@ -9,6 +9,13 @@ with the heap's history, so only the benchmark binary's count (Kynos and every
 Rust dependency, statically linked) is compared; shared objects are reported
 beside it. DHAT counts the allocator's work exactly.
 
+**So is aws-lc's.** The TLS rows' crypto is aws-lc's C and assembly, which
+`aws-lc-sys` links statically into that binary, so it would be compared with
+the program; it is split off by the source file or symbol each cost line
+belongs to and reported beside the program's count, never compared, as libc's
+is. What it executes is the cipher suite's and the CPU's, not Kynos's.
+`aws-lc-rs`'s Rust, the binding rustls calls, stays in the program's count.
+
 **Exact per host, not across hosts.** Dependencies pick routines from the CPU
 they find, so the baseline records its host and a report taken elsewhere says
 so.
@@ -105,7 +112,10 @@ CALIBRATION = {
 
 #: `scenario` is the catalog name the benchmark was set up with, read off its
 #: summary; `None` where the summary names none.
-Row = namedtuple("Row", "benchmark program other blocks bytes scenario", defaults=(None,))
+#: `crypto` is aws-lc's share of the program object, which `program` excludes.
+Row = namedtuple(
+    "Row", "benchmark program other blocks bytes scenario crypto", defaults=(None, 0)
+)
 
 COLUMNS = ("benchmark", "program_instructions", "heap_blocks", "heap_bytes")
 
@@ -114,17 +124,50 @@ class Unreadable(Exception):
     """Output this cannot read, which is a measurement not made."""
 
 
-def split_by_object(text, program):
-    """Instructions per object in a Callgrind output file, as (program, other).
+#: The source files of aws-lc's C and assembly: `aws-lc-sys` maps its tree to
+#: `/aws-lc`, and an unmapped build keeps it under the crate's `aws-lc/`.
+#: `aws-lc-rs-<version>/` is the Rust binding's, and does not match.
+CRYPTO_FILE = re.compile(r"(?:^|/)aws-lc/")
 
-    `program` is the benchmark executable's path; everything else is summed
-    into `other`. Only self cost is counted: the line after a `calls=` line is
+#: aws-lc's exported symbols, every one prefixed with its version by
+#: `aws-lc-sys`: what names a function whose cost line has no source file.
+CRYPTO_FUNCTION = re.compile(r"^aws_lc_\d+_\d+_\d+_")
+
+#: What one Callgrind output counted: the program's own instructions, aws-lc's
+#: inside the program object, and every other object's.
+Split = namedtuple("Split", "program crypto other")
+
+# Each name kind Callgrind compresses, by the specification that names it;
+# the call-side spellings share their table with the cost side's.
+NAME_KINDS = {
+    "ob": "object",
+    "cob": "object",
+    "fl": "file",
+    "fi": "file",
+    "fe": "file",
+    "cfi": "file",
+    "cfl": "file",
+    "fn": "function",
+    "cfn": "function",
+}
+
+
+def split_by_object(text, program):
+    """Instructions per object in a Callgrind output file, as a `Split`.
+
+    `program` is the benchmark executable's path; every other object is summed
+    into `other`, and the program's own lines that belong to aws-lc, by their
+    source file or failing that their function, into `crypto` rather than
+    `program`. Only self cost is counted: the line after a `calls=` line is
     the inclusive cost of that call, already counted where the callee's own
     lines are, so reading it would count the callee twice.
 
     Callgrind compresses a repeated name to `(id)` after its first spelling as
-    `(id) name`, and `cob=` shares that table with `ob=`, so both are read into
-    one map even though only `ob=` decides where a cost line belongs.
+    `(id) name`, one table per kind: `cob=` shares the objects' with `ob=`,
+    `cfn=` the functions' with `fn=`, and `fi=`, `fe=`, `cfi=` and `cfl=` the
+    files' with `fl=`. Only `ob=` decides where a cost line's object is, `fl=`,
+    `fi=` and `fe=` its file, and `fn=` its function, which also returns the
+    file to the `fl=` one.
 
     Only `positions: line` is read. A position column per `--dump-instr` or
     `--dump-line` setting moves the first cost to a later field, and a file
@@ -132,10 +175,12 @@ def split_by_object(text, program):
     header is refused rather than guessed at.
     """
     names = {}
-    current = None
+    current = {"object": None, "file": None, "function": None}
+    source = None
     events = None
     positions = None
     counts = {}
+    crypto = 0
     after_call = False
 
     for line in text.splitlines():
@@ -145,14 +190,19 @@ def split_by_object(text, program):
         if line.startswith("positions:"):
             positions = line.split()[1:]
             continue
-        match = re.match(r"^(c?ob)=(?:\((\d+)\))?\s*(.*)$", line)
+        match = re.match(r"^(c?ob|fl|fi|fe|cfi|cfl|c?fn)=(?:\((\d+)\))?\s*(.*)$", line)
         if match:
-            kind, index, name = match.groups()
+            spelling, index, name = match.groups()
+            kind = NAME_KINDS[spelling]
             if index is not None and name:
-                names[index] = name
-            resolved = names.get(index, name) if index is not None else name
-            if kind == "ob":
-                current = resolved
+                names[kind, index] = name
+            resolved = names.get((kind, index), name) if index is not None else name
+            if spelling in ("ob", "fl", "fn"):
+                current[kind] = resolved
+            if spelling in ("fl", "fn"):
+                source = current["file"]
+            elif spelling in ("fi", "fe"):
+                source = resolved
             continue
         if line.startswith("calls="):
             after_call = True
@@ -163,7 +213,11 @@ def split_by_object(text, program):
                 continue
             fields = line.split()
             if len(fields) >= 2:
-                counts[current] = counts.get(current, 0) + int(fields[1])
+                cost = int(fields[1])
+                obj = current["object"]
+                counts[obj] = counts.get(obj, 0) + cost
+                if obj == program and is_crypto(source, current["function"]):
+                    crypto += cost
 
     if events is None or events[:1] != ["Ir"]:
         raise Unreadable("a Callgrind output with no `events: Ir ...` header")
@@ -175,7 +229,19 @@ def split_by_object(text, program):
 
     program_count = sum(count for obj, count in counts.items() if obj == program)
     other = sum(count for obj, count in counts.items() if obj != program)
-    return program_count, other
+    return Split(program_count - crypto, crypto, other)
+
+
+def is_crypto(source, function):
+    """Whether a cost line in `source`, inside `function`, is aws-lc's.
+
+    Either names it: an exported function is aws-lc's wherever a line of it
+    was inlined from, a system header's `memcpy` included, and a static one,
+    which carries no prefix, is by the file it was compiled from.
+    """
+    if function is not None and CRYPTO_FUNCTION.match(function):
+        return True
+    return source is not None and CRYPTO_FILE.search(source) is not None
 
 
 def dhat(summary):
@@ -212,7 +278,7 @@ def measure(directory):
     for summary, root, output in summaries(directory):
         callgrind = output / f"callgrind.{summary['function_name']}.{summary['id']}.out"
         program = str(root / summary["benchmark_exe"])
-        instructions, other = split_by_object(callgrind.read_text(), program)
+        instructions, crypto, other = split_by_object(callgrind.read_text(), program)
         if instructions == 0:
             raise Unreadable(
                 f"{callgrind} attributes nothing to {program}; the executable's "
@@ -228,6 +294,7 @@ def measure(directory):
                 blocks,
                 octets,
                 scenario_of(summary),
+                crypto,
             )
         )
     return rows
@@ -338,7 +405,8 @@ def in_trend(benchmark, trend):
 
 
 def counts(row):
-    """What is compared of a row: everything but the uncompared libc count."""
+    """What is compared of a row: everything but the uncompared libc and aws-lc
+    counts."""
     return (row.program, row.blocks, row.bytes)
 
 
@@ -411,12 +479,13 @@ def report(rows, recorded, host=None, recorded_host=None, trend=frozenset(), bas
         "Instructions (program)",
         "Δ",
         "Instructions (libc, not compared)",
+        "Instructions (aws-lc, not compared)",
         "Heap blocks",
         "Δ",
         "Heap bytes",
         "Δ",
     )
-    lines += ["| " + " | ".join(header) + " |", "| --- |" + " ---: |" * 7]
+    lines += ["| " + " | ".join(header) + " |", "| --- |" + " ---: |" * 8]
     for row in rows:
         if in_trend(row.benchmark, trend):
             moved = ("trend", "trend", "trend")
@@ -428,6 +497,7 @@ def report(rows, recorded, host=None, recorded_host=None, trend=frozenset(), bas
             row.program,
             moved[0],
             row.other,
+            row.crypto,
             row.blocks,
             moved[1],
             row.bytes,

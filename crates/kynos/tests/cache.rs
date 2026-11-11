@@ -963,15 +963,6 @@ impl<C: Sync> Authenticator<ReportKey, C> for Keys {
             Err(AuthRejection::unauthenticated())
         }
     }
-
-    async fn authorize(
-        &self,
-        _: &Holder,
-        _: &[kynos::security::Unscoped],
-        _: &C,
-    ) -> Result<(), AuthRejection> {
-        Ok(())
-    }
 }
 
 impl Authenticates<ReportKey> for () {

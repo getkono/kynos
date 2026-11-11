@@ -31,9 +31,28 @@ pub(crate) fn expand(input: TokenStream2) -> syn::Result<TokenStream2> {
         .map(member)
         .collect::<syn::Result<Vec<_>>>()?;
 
-    Ok(quote! {
-        ( #(#members,)* )
-    })
+    Ok(nest(members))
+}
+
+/// The widest tuple `IntoEndpoints` is implemented for, in
+/// `kynos::router::endpoint::set`.
+const WIDEST_TUPLE: usize = 16;
+
+/// `members` as one tuple, nested so no level is wider than [`WIDEST_TUPLE`].
+///
+/// A tuple of tuples is itself `IntoEndpoints`, and registers its members in
+/// order, so the nesting changes no mounted route and no declaration order.
+fn nest(members: Vec<TokenStream2>) -> TokenStream2 {
+    if members.len() <= WIDEST_TUPLE {
+        return quote! { ( #(#members,)* ) };
+    }
+    let mut members = members.into_iter().peekable();
+    let mut chunks = Vec::new();
+    while members.peek().is_some() {
+        let chunk = members.by_ref().take(WIDEST_TUPLE);
+        chunks.push(quote! { ( #(#chunk,)* ) });
+    }
+    nest(chunks)
 }
 
 /// One member: an operation, then the interceptors scoped to it alone.
