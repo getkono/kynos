@@ -5,6 +5,7 @@ pub use kynos::HeaderParams
 pub use kynos::MultipartForm
 pub use kynos::ParamValue
 pub use kynos::PathParams
+pub use kynos::ProtobufMessage
 pub use kynos::Provider
 pub use kynos::QueryParams
 pub use kynos::Reply
@@ -1600,7 +1601,7 @@ pub const T::LIMIT: core::option::Option<u64>
 pub fn T::from_part(kynos::extract::body::multipart::Part) -> core::result::Result<Self, kynos::error::rejection::BodyRejection>
 pub mod kynos::extract::body::protobuf
 pub struct kynos::extract::body::protobuf::Protobuf<T>(pub T)
-impl<C: core::marker::Sync, T: prost::message::Message + core::default::Default + kynos::schema::Schema + core::marker::Send> kynos::extract::FromRequest<C> for kynos::extract::body::protobuf::Protobuf<T>
+impl<C: core::marker::Sync, T: kynos::extract::body::protobuf::Message + kynos::schema::Schema + core::marker::Send> kynos::extract::FromRequest<C> for kynos::extract::body::protobuf::Protobuf<T>
 pub type kynos::extract::body::protobuf::Protobuf<T>::Rejection = kynos::error::rejection::BodyRejection
 pub async fn kynos::extract::body::protobuf::Protobuf<T>::from_request(&mut kynos::http::Parts, kynos::http::body::Body, &C) -> core::result::Result<Self, Self::Rejection>
 impl<C: kynos::extract::body::codec::BodyCodec<T>, T: kynos::schema::Schema, U: kynos::schema::Schema> kynos::extract::body::alternative::Alternative<kynos::extract::body::codec::Encoded<C, T>> for kynos::extract::body::protobuf::Protobuf<U>
@@ -1624,6 +1625,8 @@ impl<T: core::default::Default> core::default::Default for kynos::extract::body:
 pub fn kynos::extract::body::protobuf::Protobuf<T>::default() -> kynos::extract::body::protobuf::Protobuf<T>
 impl<T: core::fmt::Debug> core::fmt::Debug for kynos::extract::body::protobuf::Protobuf<T>
 pub fn kynos::extract::body::protobuf::Protobuf<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: kynos::extract::body::protobuf::Message> kynos::response::IntoResponse for kynos::extract::body::protobuf::Protobuf<T>
+pub fn kynos::extract::body::protobuf::Protobuf<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::schema::Schema, M: kynos::http::media::MediaType> kynos::extract::body::alternative::Alternative<kynos::extract::body::binary::Binary<M>> for kynos::extract::body::protobuf::Protobuf<T>
 pub const kynos::extract::body::protobuf::Protobuf<T>::DISTINCT: ()
 impl<T: kynos::schema::Schema, M: kynos::http::media::MediaType> kynos::extract::body::alternative::Alternative<kynos::extract::body::protobuf::Protobuf<T>> for kynos::extract::body::binary::Binary<M>
@@ -1660,8 +1663,6 @@ pub fn kynos::extract::body::protobuf::Protobuf<T>::media_types() -> alloc::vec:
 pub fn kynos::extract::body::protobuf::Protobuf<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::protobuf::Protobuf<T>
 pub fn kynos::extract::body::protobuf::Protobuf<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<T: prost::message::Message> kynos::response::IntoResponse for kynos::extract::body::protobuf::Protobuf<T>
-pub fn kynos::extract::body::protobuf::Protobuf<T>::into_response(self) -> kynos::http::Response
 impl<T> core::marker::StructuralPartialEq for kynos::extract::body::protobuf::Protobuf<T>
 impl<T> kynos::response::negotiate::representation::Representation for kynos::extract::body::protobuf::Protobuf<T> where kynos::extract::body::protobuf::Protobuf<T>: kynos::response::IntoResponse + kynos::response::Responses
 pub fn kynos::extract::body::protobuf::Protobuf<T>::media_type() -> &'static str
@@ -1672,6 +1673,9 @@ impl<T> core::marker::Unpin for kynos::extract::body::protobuf::Protobuf<T> wher
 impl<T> core::marker::UnsafeUnpin for kynos::extract::body::protobuf::Protobuf<T> where T: core::marker::UnsafeUnpin
 impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::extract::body::protobuf::Protobuf<T> where T: core::panic::unwind_safe::RefUnwindSafe
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos::extract::body::protobuf::Protobuf<T> where T: core::panic::unwind_safe::UnwindSafe
+pub trait kynos::extract::body::protobuf::Message: core::marker::Sized
+pub fn kynos::extract::body::protobuf::Message::decode(bytes::bytes::Bytes) -> core::result::Result<Self, kynos::extract::body::codec::DecodeError>
+pub fn kynos::extract::body::protobuf::Message::encode(&self) -> alloc::vec::Vec<u8>
 pub mod kynos::extract::body::text
 pub struct kynos::extract::body::text::Text(pub alloc::string::String)
 impl core::clone::Clone for kynos::extract::body::text::Text
@@ -2631,7 +2635,7 @@ pub async fn kynos::extract::body::binary::Binary<M>::from_request(&mut kynos::h
 impl<C: core::marker::Sync, T: kynos::extract::body::multipart::FromMultipart + kynos::schema::Schema + core::marker::Send> kynos::extract::FromRequest<C> for kynos::extract::body::multipart::MultipartForm<T>
 pub type kynos::extract::body::multipart::MultipartForm<T>::Rejection = kynos::error::rejection::BodyRejection
 pub async fn kynos::extract::body::multipart::MultipartForm<T>::from_request(&mut kynos::http::Parts, kynos::http::body::Body, &C) -> core::result::Result<Self, Self::Rejection>
-impl<C: core::marker::Sync, T: prost::message::Message + core::default::Default + kynos::schema::Schema + core::marker::Send> kynos::extract::FromRequest<C> for kynos::extract::body::protobuf::Protobuf<T>
+impl<C: core::marker::Sync, T: kynos::extract::body::protobuf::Message + kynos::schema::Schema + core::marker::Send> kynos::extract::FromRequest<C> for kynos::extract::body::protobuf::Protobuf<T>
 pub type kynos::extract::body::protobuf::Protobuf<T>::Rejection = kynos::error::rejection::BodyRejection
 pub async fn kynos::extract::body::protobuf::Protobuf<T>::from_request(&mut kynos::http::Parts, kynos::http::body::Body, &C) -> core::result::Result<Self, Self::Rejection>
 impl<C: core::marker::Sync, T: serde_core::de::DeserializeOwned + kynos::schema::Schema + core::marker::Send> kynos::extract::FromRequest<C> for kynos::extract::body::form::Form<T>
@@ -5648,6 +5652,7 @@ pub use kynos::prelude::HeaderParams
 pub use kynos::prelude::MultipartForm
 pub use kynos::prelude::ParamValue
 pub use kynos::prelude::PathParams
+pub use kynos::prelude::ProtobufMessage
 pub use kynos::prelude::Provider
 pub use kynos::prelude::QueryParams
 pub use kynos::prelude::Reply
@@ -7771,6 +7776,8 @@ impl<T: kynos::error::problem::ProblemType> kynos::response::IntoResponse for ky
 pub fn kynos::middleware::rate_limit::refusal::RateLimitedFields<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::error::problem::ProblemType> kynos::response::IntoResponse for kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub fn kynos::middleware::trusted_hosts::UntrustedHost<T>::into_response(self) -> kynos::http::Response
+impl<T: kynos::extract::body::protobuf::Message> kynos::response::IntoResponse for kynos::extract::body::protobuf::Protobuf<T>
+pub fn kynos::extract::body::protobuf::Protobuf<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse, L: kynos::response::language::offer::Languages> kynos::response::IntoResponse for kynos::response::language::Localized<T, L>
 pub fn kynos::response::language::Localized<T, L>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::middleware::compression::policy::WithEncoding<T>
@@ -7787,8 +7794,6 @@ impl<T: kynos::response::range::rangeable::Rangeable> kynos::response::IntoRespo
 pub fn kynos::response::range::Ranged<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::range::rangeable::Rangeable> kynos::response::IntoResponse for kynos::response::range::parts::RangedParts<T>
 pub fn kynos::response::range::parts::RangedParts<T>::into_response(self) -> kynos::http::Response
-impl<T: prost::message::Message> kynos::response::IntoResponse for kynos::extract::body::protobuf::Protobuf<T>
-pub fn kynos::extract::body::protobuf::Protobuf<T>::into_response(self) -> kynos::http::Response
 impl<T: serde_core::ser::Serialize> kynos::response::IntoResponse for kynos::extract::body::form::Form<T>
 pub fn kynos::extract::body::form::Form<T>::into_response(self) -> kynos::http::Response
 impl<T: serde_core::ser::Serialize> kynos::response::IntoResponse for kynos::extract::body::json::Json<T>

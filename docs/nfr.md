@@ -479,8 +479,9 @@ decision rather than a deferral.** The figures are
 ceiling at a measured value, but a ceiling is only worth setting where the
 quantity it guards is one this repository controls, and this one is mostly not:
 each delta is the codec's code *and* its dependency's — `serde_json`,
-`serde_html_form`, `multer`, `prost`, `async-compression` — plus the payload
-type's two derives. A ceiling over that would fail on an upstream release that
+`serde_html_form`, `multer`, `prost` (the application's own, which its
+messages' derives name), `async-compression` — plus the payload type's
+derives. A ceiling over that would fail on an upstream release that
 grew `multer` and pass through a Kynos extractor that doubled, which is the
 gate-that-cannot-fail-honestly [`performance.md`](performance.md#the-boundary)
 refuses. What the committed table buys instead is a drift column: the same
@@ -1166,7 +1167,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `tracing` is named only under `server/` and in `middleware/trace.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `futures-core` is named only under `response/stream/` and `extract/body/json_lines/` and in `http/body.rs`, `test/body.rs` and `test/mod.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `prost` is named only in `extract/body/protobuf.rs` and `response/codec/protobuf.rs` | `mise run containment:check` | `enforced` |
+| compatibility | `prost` is named only in `kynos-macros/derive/protobuf.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `uuid1` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `chrono04` and `jiff02` are named only under `schema/impls/temporal/` | `mise run containment:check` | `enforced` |
 | compatibility | `rust_decimal1` and `bigdecimal04` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |

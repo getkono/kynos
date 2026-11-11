@@ -32,7 +32,8 @@
 //! **A codec's delta is its code, its dependency's code, and its payload
 //! type's.** Mounting `Json` pulls `serde_json`; `Form` pulls
 //! `serde_html_form`; `MultipartForm` pulls `multer`; `Protobuf` pulls
-//! `prost`; `Compression` pulls `async-compression` and its three encoders. A
+//! `prost`, the application's own dependency rather than Kynos's, through the
+//! message's derives; `Compression` pulls `async-compression` and its three encoders. A
 //! payload type is not free either: it carries a `Schema` derive and the
 //! codec's own serialization derive, and a mounted operation that named no type
 //! would not be a mounted operation. So a row of `codec.tsv` is the cost of the
@@ -173,7 +174,8 @@ mod protobuf {
     /// Derived twice, for the reason `examples/protobuf.rs` gives at length:
     /// `prost::Message` decides the octets and `Schema` decides what the
     /// description says they mean, and neither is derivable from the other.
-    #[derive(Clone, PartialEq, prost::Message, Schema)]
+    /// `ProtobufMessage` only hands the first to Kynos.
+    #[derive(Clone, PartialEq, prost::Message, kynos::ProtobufMessage, Schema)]
     pub(crate) struct Reading {
         #[prost(uint64, tag = "1")]
         id: u64,

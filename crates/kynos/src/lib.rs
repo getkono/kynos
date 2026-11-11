@@ -153,6 +153,8 @@ pub use kynos_macros::{
 pub use kynos_macros::CookieParams;
 #[cfg(all(feature = "macros", feature = "multipart"))]
 pub use kynos_macros::MultipartForm;
+#[cfg(all(feature = "macros", feature = "protobuf"))]
+pub use kynos_macros::ProtobufMessage;
 #[cfg(all(feature = "macros", feature = "assets"))]
 pub use kynos_macros::assets;
 #[cfg(all(feature = "macros", feature = "openapi32"))]
@@ -194,6 +196,9 @@ pub mod prelude {
 
     #[cfg(all(feature = "macros", feature = "multipart"))]
     pub use crate::MultipartForm;
+
+    #[cfg(all(feature = "macros", feature = "protobuf"))]
+    pub use crate::ProtobufMessage;
 
     #[cfg(feature = "server")]
     pub use crate::server::Server;

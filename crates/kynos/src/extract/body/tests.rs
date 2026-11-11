@@ -1255,22 +1255,42 @@ mod a_form_body_decodes_what_it_describes {
     }
 }
 
-/// The message a protobuf body carries is the one the extractor yields.
-///
-/// A non-default value, so an extractor that skipped the decode and yielded
-/// `T::default()` cannot pass.
+/// What `Protobuf<T>` makes of each answer its `Message` gives, read through a
+/// message decoded by hand, so no protobuf implementation stands between the
+/// extractor and the assertion. What the derive makes of `prost`'s answers is
+/// `tests/derives.rs`'s to hold.
 #[cfg(feature = "protobuf")]
-#[tokio::test]
-async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
+mod protobuf {
+    use bytes::Bytes;
+
+    use super::extract;
     use crate::{
-        extract::body::protobuf::Protobuf,
-        http::{HeaderValue, body::Body, header},
+        error::rejection::BodyRejection,
+        extract::body::{
+            codec::DecodeError,
+            protobuf::{Message, Protobuf},
+        },
+        http::{HeaderValue, Request, StatusCode, body::Body, header},
     };
 
-    #[derive(Clone, PartialEq, prost::Message)]
-    struct Tagged {
-        #[prost(int32, tag = "1")]
-        value: i32,
+    /// Field 1 as a one-octet varint, `[0x08, value]`, and nothing else.
+    #[derive(Debug, PartialEq)]
+    pub(super) struct Tagged {
+        value: u8,
+    }
+
+    impl Message for Tagged {
+        fn decode(bytes: Bytes) -> Result<Self, DecodeError> {
+            match bytes[..] {
+                [0x08, 0] => Err(DecodeError::Data("a tag of zero".to_owned())),
+                [0x08, value] if value < 0x80 => Ok(Self { value }),
+                _ => Err(DecodeError::Syntax("not field 1 as one octet".to_owned())),
+            }
+        }
+
+        fn encode(&self) -> Vec<u8> {
+            vec![0x08, self.value]
+        }
     }
 
     // An open schema declaring no bound: this reads the decoding alone.
@@ -1281,48 +1301,58 @@ async fn a_protobuf_body_decodes_to_the_message_it_encodes() {
         }
     }
 
-    // Field 1, varint wire type, value 7 -- the whole message.
-    let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(&[0x08, 0x07])));
-    request.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/protobuf"),
-    );
+    fn request(body: &'static [u8]) -> Request {
+        let mut request = Request::new(Body::from_bytes(Bytes::from_static(body)));
+        request.headers_mut().insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/protobuf"),
+        );
+        request
+    }
 
-    let Protobuf(message) = extract::<Protobuf<Tagged>>(request)
-        .await
-        .expect("a well-formed message");
+    /// The message a protobuf body carries is the one the extractor yields.
+    #[tokio::test]
+    async fn a_body_decodes_to_the_message_it_encodes() {
+        let Protobuf(message) = extract::<Protobuf<Tagged>>(request(&[0x08, 0x07]))
+            .await
+            .expect("a well-formed message");
 
-    assert_eq!(message, Tagged { value: 7 });
-}
+        assert_eq!(message, Tagged { value: 7 });
+    }
 
-/// Bytes protobuf cannot decode are a 400 syntax rejection, not a 422: no
-/// message exists for a bound to be checked against. The detail is `prost`'s
-/// own sentence, so only its presence is asserted.
-#[cfg(feature = "protobuf")]
-#[tokio::test]
-async fn a_protobuf_body_that_does_not_decode_is_a_syntax_rejection() {
-    use crate::{
-        error::rejection::BodyRejection,
-        extract::body::protobuf::Protobuf,
-        http::{HeaderValue, StatusCode, body::Body, header},
-    };
+    /// Bytes that are not a message are a 400 syntax rejection, not a 422: no
+    /// message exists for a bound to be checked against. The detail is the
+    /// decoder's own.
+    #[tokio::test]
+    async fn a_body_that_does_not_decode_is_a_syntax_rejection() {
+        let rejection = extract::<Protobuf<Tagged>>(request(&[0x08]))
+            .await
+            .expect_err("a truncated message");
 
-    // Field 1, varint wire type, and then no varint: the buffer ends first.
-    let mut request = Request::new(Body::from_bytes(bytes::Bytes::from_static(&[0x08])));
-    request.headers_mut().insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static("application/protobuf"),
-    );
+        assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
+        let BodyRejection::Syntax { detail } = rejection else {
+            panic!("refused as {rejection:?} rather than as syntax");
+        };
+        assert_eq!(detail, "not field 1 as one octet");
+    }
 
-    let rejection = extract::<Protobuf<()>>(request)
-        .await
-        .expect_err("a truncated message");
+    /// A message that decodes and does not fit the type is a 422 at the root
+    /// pointer, as an `Encoded` body's `DecodeError::Data` is.
+    #[tokio::test]
+    async fn a_message_that_does_not_fit_is_a_data_rejection() {
+        let rejection = extract::<Protobuf<Tagged>>(request(&[0x08, 0x00]))
+            .await
+            .expect_err("a message holding a value the type refuses");
 
-    assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
-    let BodyRejection::Syntax { detail } = rejection else {
-        panic!("refused as {rejection:?} rather than as syntax");
-    };
-    assert!(!detail.is_empty());
+        assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        let BodyRejection::Schema { failures, .. } = rejection else {
+            panic!("refused as {rejection:?} rather than as data");
+        };
+        assert_eq!(
+            failures,
+            std::collections::BTreeMap::from([(String::new(), "a tag of zero".to_owned())])
+        );
+    }
 }
 
 /// A body still under a content coding was decoded by nothing, since
@@ -1496,7 +1526,11 @@ mod an_undecoded_content_coding_is_refused {
     #[cfg(feature = "protobuf")]
     #[tokio::test]
     async fn by_a_protobuf_body() {
-        holds::<crate::extract::body::protobuf::Protobuf<()>>("application/protobuf", b"").await;
+        holds::<crate::extract::body::protobuf::Protobuf<super::protobuf::Tagged>>(
+            "application/protobuf",
+            &[0x08, 0x07],
+        )
+        .await;
     }
 
     #[cfg(all(feature = "json", feature = "openapi32"))]

@@ -38,7 +38,7 @@ impl From<Echo> for EchoParts {
 }
 
 /// `echo-post`'s document as a Protocol Buffers message.
-#[derive(Clone, PartialEq, prost::Message, Schema)]
+#[derive(Clone, PartialEq, prost::Message, kynos::ProtobufMessage, Schema)]
 struct EchoMessage {
     #[prost(uint64, tag = "1")]
     id: u64,

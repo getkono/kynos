@@ -1200,7 +1200,8 @@ mod protobuf {
     /// Derived twice, for the reason `examples/protobuf.rs` gives at length:
     /// `prost::Message` decides the octets and `Schema` decides what the
     /// description says they mean, and neither is derivable from the other.
-    #[derive(Clone, PartialEq, prost::Message, Schema)]
+    /// `ProtobufMessage` only hands the first to Kynos.
+    #[derive(Clone, PartialEq, prost::Message, kynos::ProtobufMessage, Schema)]
     struct Reading {
         #[prost(uint64, tag = "1")]
         id: u64,

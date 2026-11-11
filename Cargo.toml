@@ -53,6 +53,8 @@ multer = "3.1.0"
 # For `#[cfg_attr(test, mutants::skip)]`; a dev-dependency only.
 mutants = "0.0.4"
 percent-encoding = "2.3.2"
+# What `#[derive(ProtobufMessage)]` calls from an application's crate; a
+# dev-dependency of `kynos` and a dependency of `kynos-profile` only.
 prost = "0.14.4"
 rcgen = "0.14.9"
 proc-macro2 = "1.0.101"

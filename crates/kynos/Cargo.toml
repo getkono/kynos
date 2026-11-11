@@ -318,7 +318,9 @@ tls = ["server", "dep:tokio-rustls"]
 json = []
 form = ["dep:serde_html_form"]
 multipart = ["dep:multer"]
-protobuf = ["dep:prost"]
+# No `prost` crate: the application's own implements `protobuf::Message`
+# through `#[derive(ProtobufMessage)]`, so a prost release never waits on Kynos.
+protobuf = []
 # No `cookie` crate: it would put a foreign type in a public signature.
 cookie = []
 compression = ["dep:async-compression"]
@@ -428,7 +430,6 @@ jsonschema = { workspace = true, optional = true }
 matchit = { workspace = true }
 multer = { workspace = true, optional = true }
 percent-encoding = { workspace = true }
-prost = { workspace = true, optional = true }
 regex = { workspace = true, optional = true }
 rust_decimal1 = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"] }
@@ -485,6 +486,9 @@ opentelemetry-otlp = { workspace = true, features = ["grpc-tonic", "trace"] }
 opentelemetry-semantic-conventions = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 uuid1 = { workspace = true, features = ["serde"] }
+# The protobuf implementation the tests and examples derive messages with, as
+# an application would; `kynos` itself never names it.
+prost = { workspace = true }
 
 # `getrlimit` and `setrlimit` under `server`, which fits the open-file limit to
 # the connection cap.
