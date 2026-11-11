@@ -608,14 +608,17 @@ fn a_chain_does_not_widen_the_dispatch_future() {
 /// holds the relation everywhere.
 const ENDPOINT_FUTURE_BYTES: usize = 320;
 
-/// The same, for a handler whose last argument consumes a JSON body: 576 bytes
-/// on Linux, from 632 while the read collected through `http-body-util`'s
-/// collector, with its frame queue and trailer map, and 1528 before that, when
-/// each `async fn` from the endpoint down to the codec's read kept a request of
-/// its own. What it holds past [`ENDPOINT_FUTURE_BYTES`] is the read itself:
-/// the body, its first frame, and the buffer later frames are joined into.
+/// The same, for a handler whose last argument consumes a JSON body: 584 bytes
+/// on Linux. 576 before the handler kept the head it lends the body extractor
+/// across that read, to render the extractor's rejection with the members
+/// `Router::problem_members` installs; 632 while the read collected through
+/// `http-body-util`'s collector, with its frame queue and trailer map, and 1528
+/// before that, when each `async fn` from the endpoint down to the codec's read
+/// kept a request of its own. What it holds past [`ENDPOINT_FUTURE_BYTES`] is
+/// the read itself: the body, its first frame, and the buffer later frames are
+/// joined into.
 #[cfg(feature = "json")]
-const BODY_ENDPOINT_FUTURE_BYTES: usize = 576;
+const BODY_ENDPOINT_FUTURE_BYTES: usize = 584;
 
 /// The width of the future
 /// [`Endpoint::call`](kynos::router::endpoint::Endpoint::call) returns for an

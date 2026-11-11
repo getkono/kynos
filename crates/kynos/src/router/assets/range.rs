@@ -8,17 +8,14 @@
 use bytes::Bytes;
 
 use crate::{
-    error::rejection::RangeRejection,
+    error::{members::Head, rejection::RangeRejection},
     extract::params::header::{EncodeHeaders, HeaderParams},
-    http::{HeaderValue, Response, StatusCode, header},
-    response::{
-        IntoResponse,
-        range::{
-            self, Selection,
-            headers::{AcceptRanges, ContentRange},
-            rangeable::clamped,
-            spec::{Ignored, Spec},
-        },
+    http::{HeaderValue, Request, Response, StatusCode, header},
+    response::range::{
+        self, Selection,
+        headers::{AcceptRanges, ContentRange},
+        rangeable::clamped,
+        spec::{Ignored, Spec},
     },
     router::operation::OperationCx,
 };
@@ -39,7 +36,8 @@ pub(super) fn precondition_failed(
     Some(crate::http::body::bodiless(StatusCode::PRECONDITION_FAILED))
 }
 
-/// The whole representation, the part a `Range` asked for, or a 416.
+/// The whole representation, the part a `Range` asked for, or a 416 answering
+/// `request`.
 ///
 /// For octets already in hand; a file on disk calls [`range::select`] and
 /// [`assembled`] itself.
@@ -48,13 +46,14 @@ pub(super) fn respond<H: EncodeHeaders>(
     media_type: &str,
     headers: &H,
     requested: &Result<Vec<Spec>, Ignored>,
+    request: &Request,
 ) -> Response {
     let complete_length = u64::try_from(octets.len()).unwrap_or(u64::MAX);
 
     let selection = match range::select(requested, complete_length) {
         Ok(selection) => selection,
         // Section 15.5.17's 416, with the `Content-Range` it owes.
-        Err(rejection) => return rejection.into_response(),
+        Err(rejection) => return rejection.served_for(Head::from(request)),
     };
 
     let body = match selection {
@@ -102,9 +101,9 @@ pub(super) fn describe(operation: &mut OperationCx<'_>, media_type: &str) {
     let partial = range::delivery::content_response("the requested part of the file", media_type);
     operation.add_responses(&kynos_openapi::Responses::new().with(206, partial));
 
-    // Declared by the rejection that produces it.
-    let unsatisfiable =
-        <RangeRejection as crate::response::Responses>::responses(operation.registry());
+    // Declared by the rejection that produces it, as it answers here: with the
+    // members the router installs.
+    let unsatisfiable = RangeRejection::served_responses(operation.registry());
     operation.add_responses(&unsatisfiable);
 
     operation.add_parameter(range::parameter());

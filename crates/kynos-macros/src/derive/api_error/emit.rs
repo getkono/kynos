@@ -230,11 +230,30 @@ fn problem(failure: &Failure) -> TokenStream2 {
         .title
         .as_ref()
         .map(|title| quote!(problem.title = ::std::borrow::Cow::Borrowed(#title);));
-    // An `Option` member is sent only when it holds a value, as `detail` is.
     let label = Lifetime::new(PROBLEM_LABEL, Span::call_site());
+    // Serialized as a field is, so a `const` whose type is not `Serialize` is
+    // reported where its path is written, and one that refuses, or yields
+    // `null`, answers the same 500.
+    let with_constants = failure.constants.iter().map(|constant| {
+        let name = &constant.name;
+        let value = &constant.value;
+        let to_constant =
+            quote_spanned!(value.span()=> ::kynos::__private::problem::to_constant(&#value));
+        quote! {
+            match #to_constant {
+                ::core::option::Option::Some(member) => {
+                    problem = problem.with_extension(#name, member);
+                }
+                ::core::option::Option::None => {
+                    break #label ::kynos::__private::problem::unserializable_member();
+                }
+            }
+        }
+    });
+    // An `Option` member is sent only when it holds a value, as `detail` is.
     let with_extensions = failure.extensions.iter().map(|extension| {
         let binding = &extension.name;
-        let name = binding.to_string();
+        let name = extension.wire_name();
         let (ty, value) = extension.optional().map_or_else(
             || (&extension.ty, quote!(#binding)),
             |inner| (inner, quote!(value)),
@@ -274,15 +293,16 @@ fn problem(failure: &Failure) -> TokenStream2 {
         #with_type
         #with_title
         problem.detail = detail;
+        #(#with_constants)*
         #(#with_extensions)*
         problem
     };
     // Labelled only where a member can refuse to serialize, so no label goes
     // unused.
-    if failure.extensions.is_empty() {
-        quote!({ #build })
-    } else {
+    if failure.sends_members() {
         quote!(#label: { #build })
+    } else {
+        quote!({ #build })
     }
 }
 

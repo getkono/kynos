@@ -6,14 +6,14 @@ error[E0080]: evaluation panicked: two interceptors covering this route add the 
   |
  ::: src/middleware/stack.rs
   |
-  | /         assert!(
-  | |             header_names_disjoint(
-  | |                 <N::Adds as HeaderParams>::NAMES,
-  | |                 <H::Adds as HeaderParams>::NAMES,
+  | /             assert!(
+  | |                 header_names_disjoint(
+  | |                     <N::Adds as HeaderParams>::NAMES,
+  | |                     <H::Adds as HeaderParams>::NAMES,
 ... |
-  | |              mount them at different scopes, or have one of them stop adding it"
-  | |         );
-  | |_________- in this macro invocation
+  | |                  mount them at different scopes, or have one of them stop adding it"
+  | |             );
+  | |_____________- in this macro invocation
 
 note: erroneous constant encountered
  --> src/middleware/stack.rs

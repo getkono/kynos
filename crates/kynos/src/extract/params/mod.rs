@@ -35,6 +35,6 @@ fn describe_parameters(
 /// Declares the 400 of each problem type in `named`, which joins the
 /// `about:blank` one a parameter rejection declares.
 fn describe_constraints(operation: &mut OperationCx<'_>, named: &[&'static str]) {
-    let named = constraint_responses(operation.registry(), StatusCode::BAD_REQUEST, named);
+    let named = constraint_responses(operation.registry(), StatusCode::BAD_REQUEST, named, true);
     operation.add_responses(&named);
 }

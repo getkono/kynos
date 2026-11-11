@@ -172,9 +172,9 @@ exercises them: a description the corpus does not contain is not covered.
 | performance | Route dispatch allocates at most a recorded number of times per route shape, and a replayed request costs what the first one did | [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs), over a handler that allocates nothing, counting fresh allocations and reallocations across a 10k-request replay | `enforced` |
 | performance | Zero heap allocations on the routing path | — | `absent`, and decided rather than open: the row above enforces a ceiling, which is the opposite direction, and each of the five blocks a static match still allocates is attributed below and kept, since removing any needs a public bound, `unsafe` or a dependency the default build cannot take, or a change to `http` |
 | performance | Route resolution p99 ≤ TBD at 1000 registered operations | `criterion` with a regression gate | `kynos-bench` |
-| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path, in plaintext and over a TLS session: a full handshake, a resumed one, and a request on an established session; and so is each element of the per-request surface, priced as the difference from the row it alone changes: routing past three captures and every answer the router gives without an operation, a layer or panic recovery at each scope, an observer and `Trace` with and without a subscriber, each extractor and guard, each body codec and refusal, ranged, conditional, negotiated and created responses, a JSON body against bare `serde_json`, every shipped interceptor, each streamed body, an embedded asset and the served description, and a typical production stack | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted; `connection_tls` adds a TLS 1.3 session terminated with `rustls` on that duplex, counted from each poll of the server so its client is not, with aws-lc's crypto reported beside libc and not compared. The `routing` through `realistic` groups are the ablation matrix: each row names its base in `lib.rs`, and the report gives the difference beside the counts | `partial`: each exact row's recorded counts are its ceiling, enforced by `full.yml`'s `profile` job — heap blocks and bytes exactly, program instructions within 0.5% — so a release or `ci:full` pull request is held to it before merging and any other only on master once merges settle; the connection path is counted to the duplex and no further, so no socket, syscall or kernel buffer is (`kynos-bench`'s), nor is Kynos's own TLS acceptor, which a listener reaches only through a socket ([#1311](https://github.com/getkono/kynos/issues/1311)), and `connection_h2` and `rate_limit` are `trend` rather than exact, since what each counts reads the wall clock, as are `form_echo` and `request_id_random`, since what each counts depends on a key the process draws at random ([`performance.md`](performance.md)) — below |
+| performance | What one request of each `kynos-bench` scenario, and of each row of the compression sweep `Compression`'s default `min_size` is read from, executes in process is recorded as a count exact on one host: instructions in the program object, and heap blocks and bytes; and so is what a request costs that enters through the server's connection path, in plaintext and over a TLS session: a full handshake, a resumed one, and a request on an established session; and so is each element of the per-request surface, priced as the difference from the row it alone changes: routing past three captures and every answer the router gives without an operation, a layer or panic recovery at each scope, an observer, and `Trace` as an observer and as its per-request span, each with and without a subscriber, each extractor and guard, each body codec and refusal, ranged, conditional, negotiated and created responses, a JSON body against bare `serde_json`, every shipped interceptor, each streamed body, an embedded asset and the served description, and a typical production stack | `mise run profile:requests`: gungraun over Callgrind and DHAT on [`kynos-profile`](../crates/kynos-profile/), split by object and compared with [`requests.tsv`](../crates/kynos-profile/requests.tsv) by [`profile_report.py`](../scripts/profile_report.py), which also holds DHAT's block counts to `tests/alloc.rs`'s. The `connection_*` groups drive `Server::serve_io` over an in-memory duplex, so hyper's parse, its per-connection builder, buffers and timers, `Body::from_incoming` and the `Connection` extension are counted; `connection_tls` sends the request over a TLS 1.3 session to Kynos's own TLS listener on a loopback socket, so its accept loop, its acceptor, handshake deadline and certificate resolver are counted too, from each round of the runtime that ends once the server has written, so its client is not, with aws-lc's crypto reported beside libc and not compared. The `routing` through `realistic` groups are the ablation matrix: each row names its base in `lib.rs`, and the report gives the difference beside the counts | `partial`: each exact row's recorded counts are its ceiling, enforced by `full.yml`'s `profile` job — heap blocks and bytes exactly, program instructions within 0.5% — so a release or `ci:full` pull request is held to it before merging and any other only on master once merges settle; the connection path is counted to the duplex and no further, so no syscall or kernel buffer is (`kynos-bench`'s), and only `connection_tls` opens a socket, whose userspace side alone it counts, and `connection_h2` and `rate_limit` are `trend` rather than exact, since what each counts reads the wall clock, as are `form_echo`, `request_id_random` and `connection_tls`, since what each counts depends on a key the process draws at random ([`performance.md`](performance.md)) — below |
 | performance | Erasing a body through the boxed trait object costs a recorded number of allocations per construction | [`tests/alloc_body.rs`](../crates/kynos/tests/alloc_body.rs), counting `Body::empty` and `Body::from_bytes` | `enforced` |
-| performance | A request served through the connection path, request body erasure included, costs a recorded number of allocations beside the same request in-process | [`tests/alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs), serving the second request on an HTTP/1.1 connection through `Server::serve_io` over a duplex, without a body and with one, each held exactly | `enforced` |
+| performance | A request served through the connection path, request body erasure included, costs a recorded number of allocations beside the same request in-process | [`tests/alloc_serve.rs`](../crates/kynos/tests/alloc_serve.rs), serving the second request on an HTTP/1.1 connection through `Server::serve_io` over a duplex, without a body and with one, each held exactly on Linux and Windows, the futex-lock platforms it was read on, and as a floor elsewhere: on macOS each `pthread` lock boxes itself on first use, and no runner reads the other futex-lock platforms | `enforced` |
 | reliability | Route conflicts and ambiguity are rejected before the service runs | `trybuild` compile-fail suite for statically expressible conflicts; [`tests/routing.rs`](../crates/kynos/tests/routing.rs) over `Router::validate` for those only visible once the tree is assembled, each refusal with its pass control | `enforced` |
 | security | A served asset path is enumerated, never joined from request input | [`tests/assets.rs`](../crates/kynos/tests/assets.rs) asserting an embedded set registers only literal `paths` keys, and [`router/assets/fs/tests.rs`](../crates/kynos/src/router/assets/fs/tests.rs) sweeping every escape a resolver must refuse against a control that must not be | `enforced` |
 | correctness | A route with no expressible template is recorded rather than described | [`tests/unchecked.rs`](../crates/kynos/tests/unchecked.rs) asserting a catch-all takes no `paths` key and reaches `x-kynos-opaque-routes` | `enforced` |
@@ -253,21 +253,23 @@ off.
 
 **Over TLS, the handshake is the connection's cost and the record layer a
 request's.** Measured on one host, an AMD Ryzen 7 7800X3D, against that host's
-plaintext rows. `connection_tls.full` serves `connection_h1.plaintext`'s
-request after a full TLS 1.3 handshake and counts 59796 program instructions,
-179 blocks and 58803 bytes against 14152, 27 and 36361; aws-lc executes about
-1.02 million more, reported and not compared. `connection_tls.resumed` counts
-64890, 193 and 58563: a resumption skips the certificate and its signature but
-still runs a key exchange, decrypts the ticket and seals two fresh ones, so in
-the program it costs more than the full handshake, not less, and aws-lc's
-share is the same. `connection_tls.second`, a request on a session past its
-handshake, counts 16183, 16 and 2099 against `connection_h1.second`'s 11646,
-11 and 1801, with 3260 in aws-lc: about 4500 instructions and five blocks a
-request for decrypting it and encrypting its answer. These are `rustls`'s and
-the serving path's on a session the harness terminates; Kynos's own acceptor
-is uncounted ([#1311](https://github.com/getkono/kynos/issues/1311)), and with
-it the SNI name its certificate resolver lowercases into a new string on
-every handshake, full or resumed.
+plaintext rows, through Kynos's own TLS listener on a loopback socket.
+`connection_tls.full` accepts a connection and serves
+`connection_h1.plaintext`'s request after a full TLS 1.3 handshake, and
+counts 69061 program instructions, 183 blocks and 71740 bytes against 14176,
+27 and 36361; aws-lc executes about 1.02 million more, reported and not
+compared. The largest block is the connection's task, 12928 bytes, which the
+accept loop spawns once per connection and which holds the whole connection
+future, handshake and serving path inline. `connection_tls.resumed` counts
+74158, 197 and 71500: a resumption skips the certificate and its signature
+but still runs a key exchange, decrypts the ticket and seals two fresh ones,
+so in the program it costs more than the full handshake, not less, and
+aws-lc's share is the same. `connection_tls.second`, a request on a session
+past its handshake, counts 19070, 17 and 2131 against `connection_h1.second`'s
+11666, 11 and 1801, with 3260 in aws-lc: about 7400 instructions and six
+blocks a request for decrypting it and encrypting its answer, and for the
+runtime's I/O driver and the socket's reads and writes, which the duplex rows
+do not pay.
 
 **Against axum, the gap is Kynos's own futures.** The same plaintext request,
 counted the same way on one connection with a per-request allocation counter,
@@ -388,12 +390,15 @@ handed the body, and lends the head on to each extractor; a body extractor's
 `FromRequest::from_request` takes the same pair rather than a request rebuilt
 for it. A handler taking nothing boxes 320 bytes, from 536 when
 `Endpoint::call` and the handler each kept a request of their own, and 808
-before that; one taking a JSON body boxes 632, from 1528 and 1800, and what it
-holds past the head is the codec's read: the collector buffering the body,
-with its frame queue and trailer map.
+before that; one taking a JSON body boxes 584, from 576 before the handler
+kept the head it lent the body extractor, to render that extractor's
+rejection with the members `Router::problem_members` installs
+([`errors.md`](errors.md#members-on-the-problems-kynos-renders)), and from
+632, 1528 and 1800 before that. What it holds past the head is the codec's
+read: the body, its first frame, and the buffer later frames are joined into.
 [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the first to under
 two requests everywhere and to its 320 on Linux, and the second to under
-three, the read being just over one request wide, and to its 632. An endpoint
+three, the read being just over one request wide, and to its 584. An endpoint
 with interceptors of its own still keeps the head beside the request it
 rebuilds for its chain, since `Next::run` takes a whole request; nothing
 guards that width.
@@ -461,8 +466,10 @@ rewrite.
 | security | Per-IP connection caps | — | `absent`, and recorded below and in [`middleware.md`](middleware.md#what-bounds-a-request-before-an-interceptor-runs): a connection is counted before any header is read, and `Router::trusted_proxies` applies only after routing. A per-IP request rate, `RateLimit` keyed `ByClientAddress`, is the supported bound |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
+| correctness | A member `Router::problem_members` installs is sent on every problem whose response declares it, and declared on every response whose problem sends it | [`tests/problem_members.rs`](../crates/kynos/tests/problem_members.rs) validating each refusal's body with `assert_conformance` against the schema requiring the members; a hidden `IntoResponse` and `Responses` pair that a type overrides both halves of or neither | `enforced` for extractor and guard rejections, an interceptor's `Reads` 400, an asset endpoint's 416, the router's fallbacks and a CORS preflight's 405 and 501; `absent` for a returned rejection, a ranged `Delivery`'s 416, an interceptor's own refusal and a recovered panic's 500, which carry none and declare none, each for the reason [`errors.md`](errors.md#members-on-the-problems-kynos-renders) records |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator cannot read a request field the scheme did not declare | Structural: `Authenticator::authenticate` receives `S::Presented` and is never given the request | `enforced` |
+| security | A header a carrier reads beside its credential is declared on every operation a guard naming the scheme covers, required only where every admitted request presents that credential | A derived `reads = T` writes `SecurityScheme::reads` and the carrier from one `T`; [`tests/derives.rs`](../crates/kynos/tests/derives.rs) reads the group only beside a presented credential and declares it, and [`security/auth/tests.rs`](../crates/kynos/src/security/auth/tests.rs) declares it required under `Auth`, `Scoped` and `AllOf` and optional under `MaybeAuth` and `AnyOf`. A hand-written `Carries` reading more than its credential is held to its own override | `enforced` for a derived carrier; `absent` for a hand-written one, which the type system cannot tie to its declaration |
 | performance | An opt-in body codec's added allocations on an operation that mounts it are at most a recorded number, in both directions | [`tests/alloc_codecs.rs`](../crates/kynos/tests/alloc_codecs.rs), taking each codec against the same service's bodyless floor, its `Binary<OctetStream>` transport floor and its bodyless responding floor | `enforced` |
 | performance | What mounting an opt-in payload codec costs a linked artifact is recorded and compared | `mise run cost:codecs` over [`cost/codec.rs`](../crates/kynos/cost/codec.rs), which mounts one operation each way per codec above a transport floor, with `.text` deltas against the committed [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) | `partial`: a release is refused only for numbers nobody recorded, never a pull request for a cost, and **no ceiling is set** — the figures in [`cost/codec.tsv`](../crates/kynos/cost/codec.tsv) are a first recorded measurement in the sense [Thresholds](#thresholds) requires, and none of them yet supports one |
 
@@ -571,7 +578,10 @@ resolves.
 | correctness | A short circuit's description declares the body it sends, and declares none only where it sends none | `every_short_circuit_declares_the_content_it_sends` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs) driving every constructible implementation against `every_short_circuit_kynos_ships_is_accounted_for`'s set, plus the declaration-of-none check in [`test/conformance.rs`](../crates/kynos/src/test/conformance.rs) that [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) runs over a live exchange | `enforced` |
 | correctness | Two interceptors covering one operation never add one response header or answer with one status | `CompatibleWith` forced at every mount site, with a `trybuild` case per scope in [`tests/ui/antipattern/`](../crates/kynos/tests/ui/antipattern/) and a pass control for each | `enforced` for what the two sides declare; the two rows below are where a declaration is missing |
 | correctness | The check does not depend on the order the scopes were written in | `endpoint_interceptor_then_router_interceptor_collide`, `group_interceptor_then_router_interceptor_collide` and `group_mount_then_group_intercept_collide` mount a scope *before* the interceptor that conflicts with it, which is the order that used to compile | `enforced`; this row is why the one above is not a restatement |
+| correctness | An interceptor scoped to methods runs on, and is declared on, only the operations whose method it names, with an undeclared `HEAD` covered exactly when `GET` is | `a_method_scoped_interceptor_runs_only_on_the_methods_it_names`, `an_undeclared_head_is_covered_exactly_when_get_is` and `a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs); the `guard_first` point recounted per operation in `router/group/tests.rs` | `enforced` |
+| correctness | Two scoped interceptors are compared for a collision only where their methods overlap, since disjoint methods cover no operation in common | the passing and `compile_fail` doctests on `Group::intercept_when`; `interceptors_scoped_to_disjoint_methods_never_meet_on_an_operation` in [`tests/interceptors.rs`](../crates/kynos/tests/interceptors.rs); `two_sets_overlap_exactly_where_they_share_a_method` in `router/group/tests.rs` | `enforced` at compile time, by method set rather than by mounted operation: overlapping sets collide even where no operation declares a shared method ([`middleware.md`](middleware.md#the-order-a-chain-runs-in)) |
 | correctness | An interceptor attaches exactly the header group it declared, and that group writes only the names it declared | `with_headers` on `Continued<()>` alone, pinned by `interceptor_attaches_an_undeclared_header`; the encode-subset `debug_assert` in the one writer, pinned by `a_group_encoding_an_undeclared_field_is_refused` | `enforced` in debug; the assert is compiled out of release |
+| correctness | An interceptor's described response headers land on the responses its `ADDS_ON` names, including those declared after it is described | `an_interceptors_response_header_is_declared_where_a_consumer_resolves_it`, `an_interceptor_adding_on_every_response_is_declared_on_each_one` and `an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone` in [`tests/description.rs`](../crates/kynos/tests/description.rs), over an operation whose 408 and 500 are declared after the interceptor | `enforced` for where the declaration is filed; `by-design` that `Every` and `Problems` are the author's claim, which the framework does not narrow to the responses that pass through the interceptor ([`middleware.md`](middleware.md#declaring-is-not-describing)) |
 | correctness | An endpoint-scoped interceptor reaching a router through an `Endpoints` collection is checked | — | `absent`, and recorded in [`middleware.md`](middleware.md#what-the-compile-time-check-still-cannot-see): a collection erases what its members carry, and a build-time backstop would need a declaration method on the public `Endpoint` trait — the `contribution` method the design refuses. Use `routes!`. |
 | correctness | Two interceptors covering one operation never write one response header when either writes it from a short circuit | — | `by-design`, and recorded in [`middleware.md`](middleware.md#what-the-framework-computes-and-what-it-does-not): a `Short` response's headers are in no `const`, so `Retry-After` written from a 429 is compared against nothing. A `HEADERS` const on `ShortCircuit` is what would close it, and on a `ShortCircuit` written by hand beside its own `IntoResponse` it would be a declaration beside the behaviour — the `contribution` method the design refuses. Unreachable with what Kynos ships: only one short circuit answers a request |
 | correctness | Contribution composition is order-sensitive and deterministic | Permuted stacks produce differing, stable documents | `planned` for the *document*; the composition **check** is no longer order-sensitive, which is the order-insensitivity row above |
@@ -679,6 +689,7 @@ which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 | --- | --- | --- | --- |
 | reliability | Graceful shutdown drains all in-flight requests with zero dropped responses | Integration tests in `crates/kynos/src/server/tests.rs` covering HTTP/1 drain, HTTP/2 stream drain, TLS handshake cancellation, a completed TLS handshake that then sends nothing, timeout exhaustion, a Unix domain socket listener shut down after serving, its socket file left to its caller, and a handler waiting on `Draining` woken by the drain; [`tests/sse.rs`](../crates/kynos/tests/sse.rs) over a real socket, for an event stream ended on shutdown ending when the drain begins, against one that holds the drain to its timeout | `enforced` |
 | reliability | No connection is refused while a load balancer may still route to the server: through a configured deregistration delay after the first shutdown signal the server accepts and serves while `Readiness` reports not-ready and `Draining` stays unresolved, and the drain begins when the delay ends | Integration tests in `crates/kynos/src/server/tests.rs` covering a connection opened after the signal accepted and served not-ready and not draining, the drain following the delay, and a second signal forcing shutdown during it; a unit test over the lifecycle states pinning that `Deregistering` moves neither the `Draining` latch nor the accept loops' stop | `enforced`. A listener that stops accepting during the delay ending it is not exercised, since no test makes an accept fail terminally on cue |
+| reliability | A server spawned through `BoundServer::spawn` stops gracefully through its `Running` handle: `shutdown` drains under the `shutdown_timeout` and resolves to `serve`'s result, dropping the handle begins the same shutdown without waiting, and a configured `Shutdown` trigger still begins it, or forces a drain the handle began, as it would alone | Integration tests in `crates/kynos/src/server/tests.rs` covering a request drained before `shutdown` resolves cleanly, the timeout reported for one that outlives it, a dropped handle closing the listener, a configured trigger stopping a server whose handle is held, a configured force ending a drain the handle began, and a failing trigger's error reaching the handle | `enforced`. A serving task that panics, or that the runtime cancels as it shuts down, is not exercised: `serve` has no panic a test can cause, and a cancelled task needs a second runtime awaiting the handle |
 | reliability | Backpressure is bounded by default at the connection, not at the handler: at most 10,000 open connections (`Server::DEFAULT_MAX_CONNECTIONS`), at most 200 concurrent HTTP/2 streams on each, a 30 s header-read timeout counted from accept, a 10 s TLS handshake timeout, and 30 s between request-body frames. A handler's runtime and the number of requests in flight have no default bound; `Timeout` and `Concurrency` bound them where mounted, as [`middleware.md`](middleware.md#what-bounds-a-request-before-an-interceptor-runs)'s table records | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) reading the 10,000 cap off a new server and the 200 streams off `Http2Config::default()`, holding the next socket unaccepted at a cap of one, and closing a silent connection at the header-read timeout; [`tests/connection_adversarial.rs`](../crates/kynos/tests/connection_adversarial.rs) letting go of a client that never starts its TLS handshake, at a set handshake timeout; the request-body gap as the 408 row below holds it; [`tests/limits.rs`](../crates/kynos/tests/limits.rs) for the opt-in `Concurrency` only, shedding a request past its cap with 503 rather than queueing it; a load test at 2× capacity for the memory bound | `enforced` for the connection cap, the stream cap and the header-read and body-gap timeouts; `partial` for the TLS handshake timeout, whose expiry is held at a set value and whose 10 s default no test reads; `absent` for a default handler deadline and a default in-flight bound, so with default settings a slow handler is never timed out and in-flight requests are bounded only by connections × streams, 2,000,000 over HTTP/2; `kynos-bench` for the load test ([getkono/kynos-bench#107](https://github.com/getkono/kynos-bench/issues/107)) |
 | reliability | Connections arriving past the connection cap queue in the kernel up to its own ceiling by default, not a fixed 128, and the backlog of every socket the server binds is configurable | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over loopback sockets nothing accepts from: a bound address and an accept shard each given a backlog of two complete exactly three connections before the kernel drops the next SYN; the default read off a new server | `enforced` on Linux for a set backlog; the default reaching the kernel's ceiling is not exercised, since it would take `somaxconn` plus one sockets, and other kernels' queue arithmetic is not pinned |
 | reliability | A peer that vanishes without a FIN or RST releases its connection permit and buffers within a bounded time, by default | [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over real sockets: an HTTP/2 peer that never acknowledges a PING is pinged and then disconnected, and a socket the server accepted carries the configured TCP keepalive and `TCP_USER_TIMEOUT` as the kernel reads them back. The defaults — a PING after 30 s of silence with 20 s to answer, TCP probes after 60 s idle every 15 s, and a 195 s user timeout — release an HTTP/2 connection within 50 s, any connection with nothing in flight within 195 s at Linux's nine probes, and one whose sent data the peer stopped acknowledging within 195 s | `enforced` for HTTP/2 and for an idle connection; `enforced` for an HTTP/1 peer lost mid-response on Linux, Android, Fuchsia and Cygwin; `absent` for that peer elsewhere, where no `TCP_USER_TIMEOUT` exists and only retransmission timeouts bound it, because the kernel sends no probe while data is unacknowledged |
@@ -870,8 +881,10 @@ way: `Router::build` and the match table it fills sit in a private
 `derive/api_error/` and
 `derive/security_scheme/` were split because each held two concerns, a derive's
 attribute grammar and the code that expands it, and since nothing in
-`kynos-macros` is public but the derives, the split cost no path. The rest were
-not.
+`kynos-macros` is public but the derives, the split cost no path.
+`derive/security_scheme/carrier.rs` later took the derived `Carries` and the
+`reads` declaring what it reads beside the credential, which change when a
+carrier reads more rather than when the description does. The rest were not.
 
 `middleware/limits/` was split at the path cost, because it was never one
 family: four interceptors sharing no type, each with its own response and its
@@ -1057,6 +1070,34 @@ can hold, and none shares state with another. What pushed it over was issue
 parser, each file would hold one forwarding function, a module per target that
 the targets already are.
 
+`router/operation.rs` is `status.rs`'s shape. It declares `Route`,
+`OperationCx`, `Tag` and `DeclaredTag`, so a split would turn
+`operation::DeclaredTag`, the type every `add_tag` call names, into a longer
+path. What pushed it over was issue #1271's `ADDS_ON` placements: a header an
+interceptor adds on every response, or on problems alone, is filed by
+`OperationCx::finish`, because only then has the last contributor declared its
+responses. Filing a header is describing the operation, through the same
+`declare_header` an explicit `add_response_header` goes through, so the two are
+one concern: what one operation's description holds when it is finished.
+
+`router/group.rs` is `status.rs`'s shape. It declares `Group`, `Methods`,
+`MethodSet`, `SafeMethods` and `UnsafeMethods`, so a split would turn
+`group::SafeMethods`, the argument `intercept_when` takes, into
+`group::methods::SafeMethods`. What pushed it over was issue #1277's
+`intercept_when`, whose documentation says which operations a scoped
+interceptor covers, and issue #1331's `MethodSet`, which carries the set in the
+type so the collision check can read it. The sets exist for that one method,
+and resolving them per operation is part of mounting a group, so the two are
+one concern: what a group puts in front of each operation it holds.
+
+`middleware/stack.rs` is `status.rs`'s shape. It declares `Cons`, `When`,
+`Both`, `InterceptorList`, `Flatten`, `CompatibleWith` and `CompatibleStack`,
+so a split would turn `stack::When`, the element a group's type names, into a
+longer path. What pushed it over was issue #1277's `When`, whose method set
+the check reads to skip two interceptors that cover no operation in common. A
+stack element and the check that reads it are one concern: which interceptors
+a type says cover an operation, and whether two of them collide.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1080,12 +1121,15 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
+- `crates/kynos/src/middleware/stack.rs`
 - `crates/kynos/src/middleware/trace.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`
 - `crates/kynos/src/router/dispatch.rs`
+- `crates/kynos/src/router/group.rs`
 - `crates/kynos/src/router/mod.rs`
+- `crates/kynos/src/router/operation.rs`
 - `crates/kynos/src/schema/constraints.rs`
 - `crates/kynos/src/schema/mod.rs`
 - `crates/kynos/src/schema/registry.rs`

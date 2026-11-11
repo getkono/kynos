@@ -60,6 +60,12 @@ pub struct Registry {
     /// A contested scheme name is not a [`SchemaConflict`]: the remedy is a
     /// different `SecurityScheme::NAME`, not a renamed schema.
     scheme_conflicts: Vec<ContributionConflict>,
+
+    /// The extension members
+    /// [`Router::problem_members`](crate::router::Router::problem_members)
+    /// adds to every problem Kynos renders itself: each one's name, schema, and
+    /// whether every problem sends it. Read by each such problem's response.
+    problem_members: Vec<(String, OpenApiSchema, bool)>,
 }
 
 impl Registry {
@@ -303,6 +309,18 @@ impl Registry {
         if !self.key_patterns.contains(&refused) {
             self.key_patterns.push(refused);
         }
+    }
+
+    /// Declares `members` on every problem Kynos renders itself, before any
+    /// operation is described.
+    pub(crate) fn declare_problem_members(&mut self, members: Vec<(String, OpenApiSchema, bool)>) {
+        self.problem_members = members;
+    }
+
+    /// What [`declare_problem_members`](Self::declare_problem_members)
+    /// declared; empty where nothing did.
+    pub(crate) fn problem_members(&self) -> &[(String, OpenApiSchema, bool)] {
+        &self.problem_members
     }
 
     /// Every key pattern [`admit_key_pattern`](Registry::admit_key_pattern)

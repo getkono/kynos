@@ -14,6 +14,9 @@
 //! member := status = <400..=599>                   required, exactly once
 //!         | title = "<human-readable summary>"
 //!         | type = "<absolute URI>"
+//!         | extension( <name> = <value> [, <name> = <value>]* )
+//! value  := <string, number or boolean literal>
+//!         | <path to a `const` whose type is `Serialize`>
 //! ```
 //!
 //! A key outside its position's grammar, a qualified key, and a key written
@@ -28,7 +31,17 @@
 //! its type's `Serialize`, and declared by its type's `Schema` on its failure's
 //! branch, required; an `Option<T>` is sent only when it holds a value, so it
 //! is declared by `T` and optional. One that refuses to serialize breaks out of
-//! the problem block with the 500 `unserializable_member` builds.
+//! the problem block with the 500 `unserializable_member` builds. Its name,
+//! unprefixed, is refused where RFC 9457 defines it, as `with_extension`
+//! would drop the member the schema declares.
+//!
+//! An `extension(name = value)` member is a variant's, or a struct's, never
+//! an enum's: sent through `to_constant`, which also refuses `null`, before
+//! the fields', and
+//! declared, required, by `kynos::__private::problem::constant` as a `const`
+//! of what it serializes to, which the shared-URI branch unions into an
+//! `enum`. Its name is refused where RFC 9457 defines it or a field on the
+//! same failure is published under it.
 //!
 //! A `headers` field holds a header group, its type implementing
 //! `EncodeHeaders`: `into_response` writes it onto that failure's problem, and
@@ -55,9 +68,9 @@ mod subset;
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote, quote_spanned};
-use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, spanned::Spanned};
+use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, ext::IdentExt, spanned::Spanned};
 
-use args::{Position, parse_problem};
+use args::{Constant, Position, parse_problem};
 use describe::responses;
 use emit::{codes, distinct_statuses, into_problem, into_response};
 use outcomes::outcomes;
@@ -241,6 +254,10 @@ struct Failure {
     /// The variant, or `None` for a struct.
     variant: Option<Ident>,
 
+    /// The `extension(name = value)` members, in declaration order, sent
+    /// before the fields'.
+    constants: Vec<Constant>,
+
     /// The extension members, in declaration order.
     extensions: Vec<Extension>,
 
@@ -255,14 +272,20 @@ struct Failure {
     doc: Option<String>,
 }
 
-/// A `#[problem(extension)]` field: the name it is published under, which is
-/// also the binding the pattern gives it, and its type.
+/// A `#[problem(extension)]` field: its name, which is the binding the pattern
+/// gives it and, unprefixed, the member it is published under, and its type.
 struct Extension {
     name: Ident,
     ty: Type,
 }
 
 impl Extension {
+    /// The member's name on the wire and in the schema, a raw identifier
+    /// unprefixed, as serde and the `Schema` derive spell it.
+    fn wire_name(&self) -> String {
+        self.name.unraw().to_string()
+    }
+
     /// The `T` of an `Option<T>` member, which is sent only when it holds a
     /// value; the recognition is syntactic, so an alias for it is sent always.
     fn optional(&self) -> Option<&Type> {
@@ -280,6 +303,11 @@ struct HeaderField {
 const HEADERS_BINDING: &str = "__kynos_problem_headers";
 
 impl Failure {
+    /// Whether the failure sends any extension member, a constant or a field.
+    fn sends_members(&self) -> bool {
+        !self.constants.is_empty() || !self.extensions.is_empty()
+    }
+
     /// The pattern binding every published extension member.
     fn pattern(&self) -> TokenStream2 {
         let path = &self.path;

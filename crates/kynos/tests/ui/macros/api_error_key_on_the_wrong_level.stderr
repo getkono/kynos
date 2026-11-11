@@ -4,7 +4,7 @@ error: `base` is the prefix every type URI shares, so it belongs on the type rat
 20 |     #[problem(status = 404, base = "https://example.com/")]
    |                             ^^^^
 
-error: `extension` marks a field to publish, so it belongs on a field
+error: a bare `extension` marks a field to publish, so it belongs on a field; a member this failure always sends the same value of is `extension(name = value)`
   --> tests/ui/macros/api_error_key_on_the_wrong_level.rs:26:25
    |
 26 | #[problem(status = 404, extension)]

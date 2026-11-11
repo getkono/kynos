@@ -11,7 +11,6 @@ use std::any::Any;
 use std::future::{Future, poll_fn};
 use std::io;
 use std::pin::{Pin, pin};
-use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use bytes::Bytes;
@@ -21,10 +20,9 @@ use kynos::{
     extract::connection::Connection,
     http::{Request, Response, StatusCode, body::Body},
     router::service::Service,
-    server::Server,
+    server::{Server, tls::TlsConfig},
 };
 use tokio::io::DuplexStream;
-use tokio_rustls::server::TlsStream;
 
 /// How many frames a drained body may produce before collecting them would
 /// allocate inside the region.
@@ -56,6 +54,13 @@ pub enum Driver {
     /// group of these may be inexact; `requests.tsv` marks such a group
     /// `trend`.
     Runtime,
+    /// [`Runtime`](Self::Runtime) with its I/O driver enabled too, for a row a
+    /// listener serves over a loopback socket.
+    ///
+    /// Apart from `Runtime` because the I/O driver changes how the runtime
+    /// parks, so enabling it there would move every `Runtime` row's count with
+    /// nothing those rows serve having changed.
+    Network,
 }
 
 impl Driver {
@@ -71,6 +76,13 @@ impl Driver {
             Self::Poll => Runner(Engine::Poll),
             Self::Runtime => Runner(Engine::Runtime(
                 tokio::runtime::Builder::new_current_thread()
+                    .enable_time()
+                    .build()
+                    .expect("a current-thread runtime builds"),
+            )),
+            Self::Network => Runner(Engine::Runtime(
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_io()
                     .enable_time()
                     .build()
                     .expect("a current-thread runtime builds"),
@@ -106,6 +118,19 @@ impl Runner {
                 }
             }
             Engine::Runtime(runtime) => runtime.block_on(future),
+        }
+    }
+
+    /// The runtime, for spawning a listener's server onto it and registering
+    /// a client's socket with its I/O driver.
+    ///
+    /// # Panics
+    ///
+    /// When this is [`Driver::Poll`]'s, which has none.
+    pub(crate) fn runtime(&self) -> &tokio::runtime::Runtime {
+        match &self.0 {
+            Engine::Poll => panic!("a listener is served only under a runtime"),
+            Engine::Runtime(runtime) => runtime,
         }
     }
 }
@@ -187,19 +212,25 @@ pub trait Served {
     /// service should make it do.
     fn connect(self: Box<Self>, io: DuplexStream, connection: Connection) -> Connecting;
 
-    /// As [`connect`](Self::connect), for a stream that is ready only once
-    /// `handshake` resolves to it and the `Connection` it recorded: the
-    /// handshake and [`Server::serve_io`]'s call both run inside the
-    /// connection's future, so a [`tls`](crate::connection::tls) row's region
-    /// counts them, as they are on the path of a caller that terminates TLS
-    /// itself.
-    fn connect_after(self: Box<Self>, handshake: Handshake) -> Connecting;
+    /// Hands the service to a [`Server`] serving `listener` over `tls`, and
+    /// spawns it onto `runner`'s runtime, which polls it first the next time
+    /// the runtime runs: Kynos's own accept loop, acceptor and connection task,
+    /// what a [`tls`](crate::connection::tls) row's rounds drive. The server
+    /// serves until the runtime is dropped, and its tasks are dropped with it,
+    /// so drop the returned value only after `runner`: what it holds, such as
+    /// a subscriber guard, must outlive the server's last task.
+    ///
+    /// # Panics
+    ///
+    /// When `runner` is not a runtime, or the server refuses `listener` or
+    /// `tls`, which no profiled service should make it do.
+    fn listen(
+        self: Box<Self>,
+        runner: &Runner,
+        listener: std::net::TcpListener,
+        tls: TlsConfig,
+    ) -> Box<dyn Any>;
 }
-
-/// A TLS handshake over the duplex, resolving to the decrypted stream and the
-/// `Connection` it recorded.
-pub type Handshake =
-    Pin<Box<dyn Future<Output = io::Result<(TlsStream<DuplexStream>, Connection)>>>>;
 
 /// A connection's future, boxed so that one type holds every service's, and
 /// the server it was served from.
@@ -210,8 +241,8 @@ pub type Handshake =
 /// end counts no service teardown, which the in-process rows likewise leave
 /// to theirs.
 ///
-/// The future is not `Send`: a row drives it on the thread that built it, and
-/// a TLS row's holds the server it calls `serve_io` on once its handshake ends.
+/// The future is not required to be `Send`: a row drives it on the thread
+/// that built it.
 pub struct Connecting {
     /// The connection: what a connection row's region drives.
     pub future: Pin<Box<dyn Future<Output = io::Result<()>>>>,
@@ -243,20 +274,17 @@ impl<C: 'static> Served for Service<C> {
         }
     }
 
-    fn connect_after(self: Box<Self>, handshake: Handshake) -> Connecting {
-        let server = Arc::new(Server::new(*self));
-        let serving = Arc::clone(&server);
-        let future = Box::pin(async move {
-            let (stream, connection) = handshake.await?;
-            serving
-                .serve_io(stream, connection)
-                .map_err(io::Error::other)?
-                .await
-        });
-        Connecting {
-            future,
-            server: Box::new(server),
-        }
+    fn listen(
+        self: Box<Self>,
+        runner: &Runner,
+        listener: std::net::TcpListener,
+        tls: TlsConfig,
+    ) -> Box<dyn Any> {
+        let server = runner
+            .run(Server::new(*self).listener(listener).tls(tls).prepare())
+            .expect("the listener and the TLS configuration are accepted");
+        runner.runtime().spawn(server.serve());
+        Box::new(())
     }
 }
 

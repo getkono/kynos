@@ -87,6 +87,32 @@ pub enum RouterError {
         policy: &'static str,
     },
 
+    /// The type [`problem_members`](crate::Router::problem_members) names
+    /// does not describe an object naming its members as properties, so no
+    /// problem could carry them beside its own.
+    ///
+    /// A struct deriving `Schema` describes one; a `#[serde(flatten)]`, an
+    /// enum or a newtype does not.
+    #[error("problem members `{members}` must describe an object naming each member as a property")]
+    ProblemMembersNotObject {
+        /// The type's name, as `std::any::type_name` spells it.
+        members: &'static str,
+    },
+
+    /// The type [`problem_members`](crate::Router::problem_members) names
+    /// declares a member a problem Kynos renders already sends: one RFC 9457
+    /// registers, or `errors`.
+    #[error(
+        "problem members `{members}` declare `{member}`, which a problem Kynos renders already \
+         sends; rename it"
+    )]
+    ProblemMemberReserved {
+        /// The type's name, as `std::any::type_name` spells it.
+        members: &'static str,
+        /// The member, as the type's schema names it.
+        member: String,
+    },
+
     /// A [`map_openapi`](crate::Router::map_openapi) edit changed which
     /// operation the document describes at a method and path, where the
     /// router serves one, or what the router serves it by.

@@ -20,16 +20,14 @@ use bytes::Bytes;
 use kynos_openapi::{OpaqueReason, OpaqueRoute};
 
 use crate::{
+    error::members::Head,
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderValue, Request, Response, StatusCode, header},
     middleware::catch_panic::PanicPolicy,
-    response::{
-        IntoResponse,
-        range::{
-            Selection,
-            source::{ByteSource, Spans},
-            spec,
-        },
+    response::range::{
+        Selection,
+        source::{ByteSource, Spans},
+        spec,
     },
     router::{
         Router,
@@ -268,7 +266,7 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     let selection = match crate::response::range::select(&range_set, metadata.len()) {
         Ok(selection) => selection,
         // Section 15.5.17's 416, with the `Content-Range` it owes.
-        Err(rejection) => return rejection.into_response(),
+        Err(rejection) => return rejection.served_for(Head::from(request)),
     };
 
     // Opened here, so a file that cannot be opened is still a 404 rather than

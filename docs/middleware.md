@@ -152,6 +152,31 @@ at all — a redirect — gets no entry rather than an invented one: the header 
 still sent, and understating a description by one header beats claiming a
 response that does not exist.
 
+That is the default, `Placement::Success`, and `Interceptor::ADDS_ON` changes
+it. The type cannot say which responses carry the group: `with_headers` writes
+it onto whatever the rest of the chain produced, a 4xx included, and an
+interceptor may write the same fields onto its own `Short` response. Only the
+author knows, so the author declares it:
+
+| `ADDS_ON` | Described on | For |
+| --- | --- | --- |
+| `Success` | each `2XX` the operation declares when the interceptor is described | a header meaningful on a success alone |
+| `Every` | every response the finished operation declares | a request identifier, a protocol version |
+| `Problems` | every response the finished operation declares with an `application/problem+json` body | `Retry-After` on a refusal |
+
+`Every` and `Problems` read the *finished* operation, after every interceptor's
+`Short` and panic recovery's 500 are declared, so a response contributed after
+the interceptor is described is still reached. `Success` is filed on the spot,
+as it always was, so a default interceptor's document is unchanged. None of the
+three mints a response or reaches into a `$ref`, and a header the response
+already declares under that name keeps its entry.
+
+`Every` and `Problems` are claims, and the framework does not narrow them to
+what passes through the interceptor. They overstate by any response its
+`with_headers` never sees and it writes nothing onto itself — an outer
+interceptor's short circuit, for one — as `Success` understates by every
+failure the group rides.
+
 A body is declared nowhere at all — `Continued::take_body` and
 `Continued::set_body` need no declaration, because a body has no name to collide
 on. Two interceptors rewriting one compose; two setting one header do not. An
@@ -769,6 +794,24 @@ fn writes(
 `intercept_all` is `intercept` once per element, so each element is checked
 exactly as that call would be. It is on `Group` only: a group is the unit a
 chain is shared between, and a router takes its own scope's chain once.
+
+**An interceptor that acts on some methods is scoped to them, not split into
+groups.** `Group::intercept_when(UnsafeMethods, guard)` runs `guard` on, and
+declares it on, only the group's operations whose method is in the set, so a
+`425` refusing replayed writes stays off the `GET` beside them. The set is
+resolved per operation when the group is mounted: an operation it does not name
+runs a chain without it, and a request pays no method check. An undeclared
+`HEAD` is answered by the `GET` operation, so it is covered exactly when `GET`
+is. The set is a type, a `MethodSet`, and the stack names the element
+`When<UnsafeMethods, N>`, so the collision check reads it: two scoped
+interceptors are compared only where their sets share a method. Disjoint sets
+cover no operation in common, so two sharing a status compose. Overlapping sets
+are compared even where the group declares no operation with a shared method,
+so mounting one later never turns a group that compiled into one that does not.
+A set being a type is what costs a custom one a declaration of its own, a unit
+type implementing `MethodSet`: a value the compiler cannot read would leave the
+check comparing every pair, and a check moved to `build` would trade a compile
+error for a run-time one.
 
 ## What bounds a request before an interceptor runs
 
@@ -1692,9 +1735,10 @@ cardinality is bounded and the label cannot disagree with the description.
 
 It is *not* handed one while declaring, because there is no declaring step left
 to hand it to. Declaring differently per operation is expressed by mounting
-different instances at different scopes — which is the same principle as above,
-and which every interceptor Kynos ships was already doing: not one of them
-consulted the `Route` argument the old `contribution` method gave it.
+different instances at different scopes, or one instance scoped to methods with
+`Group::intercept_when` — which is the same principle as above, and which every
+interceptor Kynos ships was already doing: not one of them consulted the
+`Route` argument the old `contribution` method gave it.
 
 ## Conformance
 

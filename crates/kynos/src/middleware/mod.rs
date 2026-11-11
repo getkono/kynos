@@ -187,7 +187,7 @@ use crate::{
     http::{Request, Response},
     middleware::erased::{ErasedInterceptor, ErasedTerminal},
     response::ShortCircuit,
-    router::operation::Route,
+    router::{group::Methods, operation::Route},
 };
 
 /// Middleware that can affect the exchange, and says how in its own signature.
@@ -233,6 +233,23 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     /// declares nothing.
     type Short: ShortCircuit;
 
+    /// The declared responses [`Adds`](Interceptor::Adds) is described on.
+    ///
+    /// Only where the group is described at all, which
+    /// [`HeaderParams::DESCRIBED`] decides. Defaults to
+    /// [`Placement::Success`].
+    ///
+    /// [`HeaderParams::DESCRIBED`]: crate::extract::params::header::HeaderParams::DESCRIBED
+    const ADDS_ON: Placement = Placement::Success;
+
+    /// Not part of the API: the methods of the operations a stack element
+    /// covers, which the collision check reads.
+    ///
+    /// Every interceptor but [`When`](stack::When) leaves it at its default,
+    /// and mounting one that does not fails to compile.
+    #[doc(hidden)]
+    const __METHODS: Methods = Methods::EVERY;
+
     /// Handles a request, calling `next` to continue.
     ///
     /// `reads` arrives already extracted from the request headers; a failure to
@@ -244,6 +261,44 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
         context: &C,
         next: Next<'_, C>,
     ) -> impl Future<Output = Result<Continued<Self::Adds>, Self::Short>> + Send;
+}
+
+/// Which of an operation's declared responses an interceptor's response headers
+/// are described on: its [`Interceptor::ADDS_ON`].
+///
+/// A declaration rather than a guarantee. [`Continued::with_headers`] attaches
+/// the group to whatever response the rest of the chain produced, and an
+/// interceptor may write the same fields onto its own
+/// [`Short`](Interceptor::Short) response; only its author knows which
+/// responses actually carry them. `docs/middleware.md`, "Where a described
+/// header lands", gives the reasoning.
+///
+/// Each placement files the header on the declared responses it reaches, under
+/// whatever key each is already declared at, and never mints an entry, a range
+/// included. It leaves a response held as a `$ref` and a header that response
+/// already declares alone.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Placement {
+    /// Every successful (`2XX`) response the operation declares when this
+    /// interceptor is described: the handler's and an extractor's, never a
+    /// response only a short circuit or panic recovery adds after it.
+    #[default]
+    Success,
+
+    /// Every response the finished operation declares, whatever contributed
+    /// it: the handler, an extractor, any interceptor's short circuit this one
+    /// included, and panic recovery's 500.
+    ///
+    /// For a header written onto every response, as a request identifier is.
+    Every,
+
+    /// Every response the finished operation declares with an
+    /// `application/problem+json` body, and no other.
+    ///
+    /// For a header meaningful only on a failure, as `Retry-After` on a 429 or
+    /// 503 is.
+    Problems,
 }
 
 /// An interceptor configured with a combination it cannot honour.

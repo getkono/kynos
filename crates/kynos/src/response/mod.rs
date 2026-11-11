@@ -70,6 +70,25 @@ use crate::{
 pub trait IntoResponse {
     /// Writes this value as a response.
     fn into_response(self) -> Response;
+
+    /// Writes this value as the rejection of the routed request whose head is
+    /// `request`, raised by a handler's argument or guard.
+    ///
+    /// Not part of the stable API: a rejection Kynos renders itself answers
+    /// it with the members
+    /// [`Router::problem_members`](crate::router::Router::problem_members)
+    /// installed, and declares them through
+    /// [`Responses::__served_responses`]. Anything else writes
+    /// [`into_response`](IntoResponse::into_response); a type overrides both
+    /// halves or neither.
+    #[doc(hidden)]
+    fn __into_response_for(self, request: &crate::http::Parts) -> Response
+    where
+        Self: Sized,
+    {
+        let _ = request;
+        self.into_response()
+    }
 }
 
 /// A value that can describe every response it may produce.
@@ -85,6 +104,16 @@ pub trait IntoResponse {
 pub trait Responses {
     /// The responses this type may produce.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses;
+
+    /// The responses this type may produce as a handler's argument or guard
+    /// rejection, which [`IntoResponse::__into_response_for`] writes.
+    ///
+    /// Not part of the stable API, as that method: [`responses`](Responses::responses)
+    /// unless the type overrides both.
+    #[doc(hidden)]
+    fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        Self::responses(registry)
+    }
 }
 
 /// A response an interceptor can produce without reaching the handler.

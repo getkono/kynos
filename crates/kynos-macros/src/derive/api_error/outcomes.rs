@@ -10,7 +10,7 @@ use syn::{
 
 use super::{
     Extension, Failure, HeaderField, Outcome, Transparent, TypeUri,
-    args::{Base, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
+    args::{Base, Constant, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
 };
 use crate::doc::doc_string;
 
@@ -28,13 +28,20 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                      that its variants fail differently. Move it to the variants",
                 ));
             }
+            if let Some(constant) = args.constants.first() {
+                return Err(syn::Error::new(
+                    constant.span,
+                    "a constant extension member is the value one failure sends, so it belongs \
+                     on each variant sending it. Move it to the variants",
+                ));
+            }
 
             data.variants
                 .iter()
                 .map(|variant| {
                     let markers = check_field_markers(&variant.fields)?;
 
-                    let args = parse_problem(&variant.attrs, Position::Variant)?;
+                    let mut args = parse_problem(&variant.attrs, Position::Variant)?;
                     if let Some(span) = args.transparent {
                         return transparent(variant, &args, span, &markers, &input.generics)
                             .map(Outcome::Transparent);
@@ -52,11 +59,13 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                     };
 
                     let name = &variant.ident;
+                    let extensions = extensions(&variant.fields, &markers);
 
                     Ok(Outcome::Declared(Failure {
                         path: quote!(Self::#name),
                         variant: Some(name.clone()),
-                        extensions: extensions(&variant.fields, &markers),
+                        constants: constants(std::mem::take(&mut args.constants), &extensions)?,
+                        extensions,
                         headers: header_field(&variant.fields, &markers)?,
                         status,
                         type_uri: type_uri(&args, base, &variant.ident),
@@ -78,10 +87,13 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                 ));
             };
 
+            let extensions = extensions(&data.fields, &markers);
+
             Ok(vec![Outcome::Declared(Failure {
                 path: quote!(Self),
                 variant: None,
-                extensions: extensions(&data.fields, &markers),
+                constants: constants(args.constants.clone(), &extensions)?,
+                extensions,
                 headers: header_field(&data.fields, &markers)?,
                 status,
                 type_uri: type_uri(args, base, &input.ident),
@@ -108,6 +120,14 @@ fn transparent(
             span,
             "a transparent variant answers as the error it holds, so its status, title and type \
              are that error's. Drop them, or drop `transparent`",
+        ));
+    }
+
+    if let Some(constant) = args.constants.first() {
+        return Err(syn::Error::new(
+            constant.span,
+            "a transparent variant publishes the extension members of the error it holds, so it \
+             sends no constant of its own. Declare it on that error, or drop `transparent`",
         ));
     }
 
@@ -249,6 +269,27 @@ fn extensions(fields: &Fields, markers: &[Markers]) -> Vec<Extension> {
             })
         })
         .collect()
+}
+
+/// The failure's constant members, refusing one named like a field it
+/// publishes: one name on the wire holds one value.
+fn constants(constants: Vec<Constant>, extensions: &[Extension]) -> syn::Result<Vec<Constant>> {
+    for constant in &constants {
+        if extensions
+            .iter()
+            .any(|extension| extension.wire_name() == constant.name)
+        {
+            return Err(syn::Error::new(
+                constant.span,
+                format!(
+                    "the field `{}` is already published as this extension member; send it \
+                     from the field or as a constant, not both",
+                    constant.name
+                ),
+            ));
+        }
+    }
+    Ok(constants)
 }
 
 /// The one field marked `#[problem(headers)]`, by its `markers`, refusing a

@@ -46,6 +46,16 @@
 //! it does. Each was read by setting it to zero and transcribing the count the
 //! failure reported, as [`nfr.md`](../../../docs/nfr.md#thresholds) requires of
 //! a first measurement.
+//!
+//! **The served column is exact only on Linux and Windows.** The standard
+//! library implements `Mutex` and `Condvar` over futexes there, as on the
+//! `android`, `freebsd`, `openbsd` and `dragonfly` targets, and over `pthread`
+//! on the remaining Unixes, macOS included, where each one boxes its
+//! `pthread_*_t` on first use. The connection driver and the runtime create
+//! such locks per request and the in-process path does not, so on macOS the
+//! served count is the record plus one block per lock. The record was read on Linux and Windows alone, so
+//! everywhere else, the futex platforms no runner reads included, only its
+//! floor is held; see [`SERVED_EXACT`].
 
 #![cfg(all(feature = "server", feature = "http1", feature = "macros"))]
 
@@ -91,6 +101,11 @@ const RECORDED: [(Method, &str, &[u8], usize, usize); 2] = [
     // A `content-length` body the handler reads, already in the duplex.
     (Method::POST, "/echo", b"Hello, World!", 9, 13),
 ];
+
+/// Whether the served column of [`RECORDED`] is exact here: on the platforms
+/// it was read on, Linux and Windows, whose std locks are futex-based and
+/// allocate nothing.
+const SERVED_EXACT: bool = cfg!(any(target_os = "linux", target_os = "windows"));
 
 /// The status every row is answered with.
 const ANSWERED: StatusCode = StatusCode::OK;
@@ -293,12 +308,21 @@ fn a_served_request_costs_what_the_table_records() {
         );
 
         let served = served(&method, target, body);
-        assert_eq!(
-            served, recorded,
-            "{method} {target} allocated {served} time(s) served over a duplex \
-             against a recorded {recorded}, and {counted} in-process; a move in \
-             the difference is a change to what the server path costs, which \
-             docs/architecture.md attributes"
-        );
+        if SERVED_EXACT {
+            assert_eq!(
+                served, recorded,
+                "{method} {target} allocated {served} time(s) served over a \
+                 duplex against a recorded {recorded}, and {counted} \
+                 in-process; a move in the difference is a change to what the \
+                 server path costs, which docs/architecture.md attributes"
+            );
+        } else {
+            assert!(
+                served >= recorded,
+                "{method} {target} allocated {served} time(s) served over a \
+                 duplex, under the recorded {recorded} that this platform's \
+                 locks can only add to; an erasure stopped happening"
+            );
+        }
     }
 }

@@ -4911,6 +4911,220 @@ mod api_error {
         ]
     }
 
+    /// The refusal of an extension field by the name it is published under;
+    /// apart, so [`ledger`] stays one a reader can hold.
+    fn field_names_ledger() -> Vec<Case> {
+        vec![case(
+            "an extension field named like a member RFC 9457 defines",
+            quote::quote!(
+                enum StoreError {
+                    #[problem(status = 404)]
+                    NotFound {
+                        #[problem(extension)]
+                        title: String,
+                    },
+                }
+            ),
+            "the field `title` would be published as a member RFC 9457 defines",
+        )]
+    }
+
+    /// A field is checked against RFC 9457's members by the name it is
+    /// published under, a raw identifier unprefixed; a second witness of the
+    /// ledger's row, so outside its count.
+    #[test]
+    fn an_extension_field_is_checked_against_the_registered_members_unprefixed() {
+        each_case_is_refused(
+            vec![case(
+                "a raw-identifier extension field published as `type`",
+                quote::quote!(
+                    #[problem(status = 404)]
+                    struct NotFound {
+                        #[problem(extension)]
+                        r#type: String,
+                    }
+                ),
+                "the field `type` would be published as a member RFC 9457 defines",
+            )],
+            expand_inner,
+        );
+    }
+
+    /// The refusals of a variant's `extension(name = value)` members; apart,
+    /// so [`ledger`] stays one a reader can hold.
+    fn constants_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a constant member on the enum, where each variant sends its own",
+                quote::quote!(
+                    #[problem(extension(code = "store.failed"))]
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        NotFound,
+                    }
+                ),
+                "belongs on each variant sending it",
+            ),
+            case(
+                "a constant member named by a path rather than the name it is sent under",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(error::code = "store.missing"))]
+                        NotFound,
+                    }
+                ),
+                "is named by one identifier",
+            ),
+            case(
+                "a constant member given no value",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(code))]
+                        NotFound,
+                    }
+                ),
+                "a constant extension member is `name = value`; give `code`",
+            ),
+            case(
+                "a constant member named like a member RFC 9457 defines",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(status = 410))]
+                        NotFound,
+                    }
+                ),
+                "`status` is a member RFC 9457 defines",
+            ),
+            case(
+                "a constant member written twice on one failure",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(code = "a", code = "b"))]
+                        NotFound,
+                    }
+                ),
+                "already sends the extension member `code`",
+            ),
+            case(
+                "a constant member whose value is computed",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(code = format!("store.{}", 1)))]
+                        NotFound,
+                    }
+                ),
+                "is a string, number or boolean literal, or the path to a `const`",
+            ),
+            case(
+                "an `extension(...)` list naming no member",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension())]
+                        NotFound,
+                    }
+                ),
+                "`extension(...)` names no member",
+            ),
+            case(
+                "a constant member on a transparent variant, which answers as what it holds",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent, extension(code = "store.lookup"))]
+                        Lookup(LookupError),
+                    }
+                ),
+                "sends no constant of its own",
+            ),
+            case(
+                "a constant member named like a field the failure publishes",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(id = 1))]
+                        NotFound {
+                            #[problem(extension)]
+                            id: u64,
+                        },
+                    }
+                ),
+                "the field `id` is already published as this extension member",
+            ),
+        ]
+    }
+
+    /// A field and a constant collide by the name both are sent under, a raw
+    /// identifier unprefixed; a second witness of the ledger's collision row,
+    /// so outside its count.
+    #[test]
+    fn a_constant_member_collides_with_a_field_by_its_unprefixed_name() {
+        each_case_is_refused(
+            vec![case(
+                "a raw-identifier constant member named like a raw-identifier field",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 404, extension(r#ref = 1))]
+                        NotFound {
+                            #[problem(extension)]
+                            r#ref: u64,
+                        },
+                    }
+                ),
+                "the field `ref` is already published as this extension member",
+            )],
+            expand_inner,
+        );
+    }
+
+    /// A value is a literal or a path, a negated number and a forwarded
+    /// fragment included; anything else is computed, which the ledger's one
+    /// row witnesses with a call.
+    #[test]
+    fn a_constant_member_takes_a_literal_or_a_path_alone() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a constant member negating a path",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(status = 404, extension(code = -CODE))]
+                            NotFound,
+                        }
+                    ),
+                    "is a string, number or boolean literal",
+                ),
+                case(
+                    "a constant member holding a byte string",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(status = 404, extension(code = b"store"))]
+                            NotFound,
+                        }
+                    ),
+                    "is a string, number or boolean literal",
+                ),
+            ],
+            expand_inner,
+        );
+
+        for accepted in [
+            quote::quote!(#[problem(status = 404, extension(code = "store.missing"))]),
+            quote::quote!(#[problem(status = 404, extension(code = -7, rate = -0.5))]),
+            quote::quote!(#[problem(status = 404, extension(retry = false, ratio = 1.5))]),
+            quote::quote!(#[problem(status = 404, extension(code = crate::codes::MISSING))]),
+            quote::quote!(#[problem(status = 404, extension(r#ref = "store"))]),
+        ] {
+            let input: syn::DeriveInput = syn::parse_quote!(
+                #[derive(Debug)]
+                enum StoreError {
+                    #accepted
+                    NotFound,
+                }
+            );
+            if let Err(error) = expand_inner(&input) {
+                panic!("`{accepted}` is a constant member: {error}");
+            }
+        }
+    }
+
     /// The refusals of a key written twice, and of a field marker outside the
     /// field grammar; apart, so [`ledger`] stays one a reader can hold.
     fn keys_ledger() -> Vec<Case> {
@@ -5249,7 +5463,7 @@ mod api_error {
                         NotFound,
                     }
                 ),
-                "takes no `status`, `title`, `type` or `base` of its own",
+                "takes no `status`, `title`, `type`, `base` or `extension` of its own",
             ),
             case(
                 "`subset_of` naming the subset's generic parameter",
@@ -5304,6 +5518,8 @@ mod api_error {
         each_case_is_refused(subset_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
+        each_case_is_refused(constants_ledger(), expand_inner);
+        each_case_is_refused(field_names_ledger(), expand_inner);
     }
 
     /// One diagnostic site refuses three keys, so the ledger's single row per
@@ -5360,6 +5576,8 @@ mod api_error {
                 + subset_ledger().len()
                 + headers_ledger().len()
                 + keys_ledger().len()
+                + constants_ledger().len()
+                + field_names_ledger().len()
                 - IN_ATTRIBUTE,
         );
     }
@@ -6030,6 +6248,15 @@ mod security_scheme {
                         struct Bearer;
                     ),
                     "`scope` is already set",
+                ),
+                case(
+                    "a read header group written twice",
+                    quote::quote!(
+                        #[security(bearer, reads = A)]
+                        #[security(reads = B)]
+                        struct Bearer;
+                    ),
+                    "`reads` is already set",
                 ),
                 case(
                     "a challenge written twice",

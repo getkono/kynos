@@ -5,7 +5,7 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, spanned::Spanned};
 
-use super::{Extension, Failure, Transparent};
+use super::{Constant, Extension, Failure, Transparent};
 use crate::derive::common::optional;
 
 /// The `responses` body: one response per distinct status, over the `Problem`
@@ -93,11 +93,15 @@ fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenSt
         .zip(kept)
         .enumerate()
         .filter_map(|(index, (failure, kept))| {
-            if failure.extensions.is_empty() {
+            if !failure.sends_members() {
                 return None;
             }
             let list = format_ident!("__kynos_members_{index}");
-            let members = failure.extensions.iter().map(member);
+            let members = failure
+                .constants
+                .iter()
+                .map(constant)
+                .chain(failure.extensions.iter().map(member));
             Some(quote! {
                 let #list: ::std::vec::Vec<(&'static str, ::kynos::openapi::Schema, bool)> =
                     if #kept {
@@ -114,11 +118,11 @@ fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenSt
         .map(|(index, (failure, kept))| {
             let uri = optional(failure.type_uri.as_ref());
             let summary = optional(failure.title.as_deref().or(failure.doc.as_deref()));
-            let members = if failure.extensions.is_empty() {
-                quote!(&[])
-            } else {
+            let members = if failure.sends_members() {
                 let list = format_ident!("__kynos_members_{index}");
                 quote!(&#list)
+            } else {
+                quote!(&[])
             };
             quote! {
                 if #kept {
@@ -186,11 +190,22 @@ fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenSt
     }
 }
 
+/// One constant member as the helper declares it: its name, a `const` of its
+/// value as the wire serializes it, and sent by every occurrence.
+fn constant(constant: &Constant) -> TokenStream2 {
+    let name = &constant.name;
+    let value = &constant.value;
+    // The whole call is spanned to the value, so a `const` that is not
+    // `Serialize` is reported where its path is written.
+    let declare = quote_spanned!(value.span()=> ::kynos::__private::problem::constant(&#value));
+    quote!((#name, #declare, true))
+}
+
 /// One extension member as the helper declares it: its name, its type's
 /// schema, and whether every occurrence sends it. An `Option<T>` is described
 /// by `T`, since `None` is not sent rather than sent as `null`.
 fn member(extension: &Extension) -> TokenStream2 {
-    let name = extension.name.to_string();
+    let name = extension.wire_name();
     let (ty, sent) = extension
         .optional()
         .map_or((&extension.ty, true), |inner| (inner, false));

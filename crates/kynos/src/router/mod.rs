@@ -44,7 +44,7 @@ use crate::{
         Interceptor, Observer,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{CompatibleStack, CompatibleWith, Cons, Flatten},
+        stack::{self, CompatibleStack, CompatibleWith, Cons, Flatten},
     },
     router::{
         dispatch::{Dispatch, EndpointTerminal, PathEntry},
@@ -163,6 +163,8 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) method_not_allowed: Option<FallbackPolicy>,
     pub(crate) trailing_slashes: Option<TrailingSlashPolicy>,
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
+    /// What [`problem_members`](Router::problem_members) installed.
+    pub(crate) problem_members: Option<crate::error::members::Hook>,
     pub(crate) deny_unchecked_schemas: bool,
     /// Each [`map_openapi`](Router::map_openapi) edit, in call order.
     pub(crate) document_edits: Vec<DocumentEdit>,
@@ -223,6 +225,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: None,
             trailing_slashes: None,
             trusted_proxies: None,
+            problem_members: None,
             deny_unchecked_schemas: false,
             document_edits: Vec::new(),
             #[cfg(feature = "unchecked")]
@@ -255,6 +258,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
+            problem_members: self.problem_members,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
             document_edits: self.document_edits,
             #[cfg(feature = "unchecked")]
@@ -374,6 +378,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.method_not_allowed.is_some(), "method_not_allowed"),
             (other.trailing_slashes.is_some(), "trailing_slashes"),
             (other.trusted_proxies.is_some(), "trusted_proxies"),
+            (other.problem_members.is_some(), "problem_members"),
             // An edit sees the whole document, which only the root assembles.
             (!other.document_edits.is_empty(), "map_openapi"),
         ] {
@@ -566,14 +571,20 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         #[cfg(feature = "unchecked")]
         let first = self.mounted.len();
 
-        self.absorb(
-            endpoints,
-            &prefix,
-            &tags,
-            &interceptors,
-            guard_first,
-            catches::<GP>(),
-        );
+        // Each operation takes only the interceptors its method is covered by,
+        // which is also what keeps the others off its description.
+        for endpoint in endpoints {
+            let (covering, guard_at) =
+                group::covering(&interceptors, guard_first, endpoint.method());
+            self.absorb(
+                vec![endpoint],
+                &prefix,
+                &tags,
+                &covering,
+                guard_at,
+                catches::<GP>(),
+            );
+        }
 
         // A group's layers cover only its operations, so they land per endpoint.
         #[cfg(feature = "unchecked")]
@@ -688,6 +699,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // this also covers every scope already mounted.
         let () = <I as CompatibleWith<N, C>>::CHECK;
         let () = <S as CompatibleWith<N, C>>::CHECK;
+        const { stack::unscoped::<C, N>() };
 
         let mut router: Router<C, P, Cons<N, I>, S> = self.retype();
         router.interceptors.push(Arc::new(interceptor));
@@ -808,6 +820,30 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     #[must_use]
     pub fn trusted_proxies(mut self, trusted: crate::http::forwarded::TrustedProxies) -> Self {
         self.trusted_proxies = Some(trusted);
+        self
+    }
+
+    /// Adds `M`'s extension members to every problem Kynos renders itself,
+    /// and declares them on every response describing one.
+    ///
+    /// Reaches each rejection a handler's argument or guard raises, the 400
+    /// an interceptor's `Reads` answers with, an asset endpoint's 416, the
+    /// 404, 405 and 501 under [`FallbackPolicy::Problem`], a CORS preflight's
+    /// 405 and 501, and the 400 a `QUERY` naming no media type gets. An
+    /// application's own `#[derive(ApiError)]` type carries its own members;
+    /// a rejection or `Delivery` a handler returns, an interceptor's own
+    /// refusal and a recovered panic's 500 carry none. See
+    /// [`ProblemMembers`] for what `M` must describe.
+    ///
+    /// One application-level policy, so it is set on the root router: on a
+    /// router that is then nested or merged, it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    /// Calling it twice keeps the second.
+    ///
+    /// [`ProblemMembers`]: crate::error::members::ProblemMembers
+    #[must_use]
+    pub fn problem_members<M: crate::error::members::ProblemMembers>(mut self) -> Self {
+        self.problem_members = Some(crate::error::members::Hook::of::<M>());
         self
     }
 

@@ -1,50 +1,42 @@
-//! The connection path over TLS 1.3, RFC 8446: a catalog request sent through
-//! a TLS session terminated over the in-memory duplex and handed to
-//! [`Server::serve_io`](kynos::server::Server::serve_io), recorded through
-//! [`Connection::from_tls_peer`] as a caller that terminates TLS itself
-//! records it.
-//!
-//! The server's configuration, [`endpoints`]', is the one `TlsConfig` builds
-//! by default but for its certificate resolver, which
-//! [`Endpoints::new`](endpoints::Endpoints::new) names, restated because `serve_io` terminates no TLS and a listener's
-//! acceptor is reached only through a socket: these rows count `rustls`'s
-//! handshake and record layer and the serving path behind them, and not
-//! Kynos's own acceptor.
+//! The connection path over TLS 1.3, RFC 8446, through Kynos's own TLS
+//! listener: a catalog request sent over a loopback socket to a server that
+//! [`Server::tls`](kynos::server::Server::tls) configured and
+//! [`Server::listener`](kynos::server::Server::listener) was handed, so that
+//! its accept loop, the acceptor `TlsConfig` builds and every connection
+//! shares, the handshake deadline and lifecycle beside it, and the
+//! `Connection` it records are counted with `rustls`'s handshake and record
+//! layer and the serving path behind them.
 //!
 //! A handshake is a conversation, so unlike [`super`]'s rows a client runs
-//! inside the region: [`Tunnel::serve`] polls the server in rounds, each one
-//! a call of [`round`], and between rounds the client reads what the server
-//! wrote and answers. The benchmark counts from [`round`] rather than from
-//! itself, so the client's work, its handshake and its encryption, is never
-//! counted; what is, is what a runtime's poll of the server's task would run
-//! each time the client's bytes arrived.
+//! inside the region: [`Tunnel::serve`] drives the runtime in rounds, each
+//! one a call of [`round`] that returns once the server has written to the
+//! client, and between rounds the client reads what the server wrote and
+//! answers. The benchmark counts from [`round`] rather than from itself, so
+//! the client's work, its handshake and its encryption, is never counted;
+//! what is, is what the runtime runs while the client's bytes are on their
+//! way to an answer: its scheduler and I/O driver, the accept loop, and the
+//! connection's task.
 
-use std::future::{Future, poll_fn};
 use std::hint::black_box;
 use std::io;
-use std::pin::Pin;
-use std::task::Poll;
+use std::net::SocketAddr;
 
-use kynos::{
-    extract::connection::{Connection, TlsIdentity},
-    http::StatusCode,
-};
-use tokio::io::DuplexStream;
-use tokio_rustls::{
-    TlsAcceptor,
-    rustls::{HandshakeKind, ServerConnection},
-};
+use kynos::http::StatusCode;
+use tokio::net::TcpStream;
+use tokio_rustls::rustls::{ClientConnection, HandshakeKind};
 
 use self::{client::Client, endpoints::Endpoints};
-use super::{CAPACITY, LOCAL, PEER, warm, wire::http1, wire::http1_answered};
+use super::{wire::http1, wire::http1_answered};
 use crate::{
     Scenario,
     app::{get, service},
-    driver::{Connecting, Driver, Handshake, Runner},
+    driver::{Driver, Runner},
 };
 
 pub(crate) mod client;
 pub mod endpoints;
+#[cfg(test)]
+mod tests;
 
 /// How far into its life a [`Sealed`] row's connection is when its region
 /// starts.
@@ -78,7 +70,7 @@ pub(crate) const TLS: &[Sealed] = &[
             service,
             request: || get("/plaintext"),
             expected: StatusCode::OK,
-            driver: Driver::Runtime,
+            driver: Driver::Network,
             base: Some("conn-h1-plaintext"),
         },
         session: Session::Full,
@@ -89,7 +81,7 @@ pub(crate) const TLS: &[Sealed] = &[
             service,
             request: || get("/plaintext"),
             expected: StatusCode::OK,
-            driver: Driver::Runtime,
+            driver: Driver::Network,
             base: Some("conn-tls-full"),
         },
         session: Session::Resumed,
@@ -100,7 +92,7 @@ pub(crate) const TLS: &[Sealed] = &[
             service,
             request: || get("/plaintext"),
             expected: StatusCode::OK,
-            driver: Driver::Runtime,
+            driver: Driver::Network,
             base: Some("conn-h1-second"),
         },
         session: Session::Established,
@@ -121,12 +113,11 @@ pub fn sealed(name: &str) -> Sealed {
         .unwrap_or_else(|| panic!("no TLS row is named {name:?}"))
 }
 
-/// A TLS connection made ready outside the region: the server's future
-/// unpolled, or for [`Session::Established`] polled until the first request
-/// was answered, and the client's end of the duplex holding every octet the
-/// client could send before the server answers it.
+/// A TLS connection made ready outside the region: connected but not yet
+/// accepted, or for [`Session::Established`] served until the first request
+/// was answered, and the client's socket holding every octet the client
+/// could send before the server answers it.
 pub struct Tunnel {
-    connection: Connecting,
     client: Client,
 }
 
@@ -140,20 +131,31 @@ impl std::fmt::Debug for Tunnel {
 }
 
 impl Sealed {
-    /// The endpoints this row's connections are opened between.
+    /// The endpoints this row's connections are opened between, its service
+    /// listening under `runner`.
+    ///
+    /// # Panics
+    ///
+    /// As [`Endpoints::new`].
     #[must_use]
-    pub fn endpoints(&self) -> Endpoints {
-        Endpoints::new(self.session)
+    pub fn endpoints(&self, runner: &Runner) -> Endpoints {
+        Endpoints::new(self.session, (self.scenario.service)(), runner)
     }
 
     /// Opens the row's connection between `endpoints`, outside the region; a
     /// [`Session::Resumed`] row first serves a connection to completion
     /// between them, so that its client holds a fresh ticket.
     ///
+    /// The socket connects and the client's first flight is written into it
+    /// without the runtime running, so the server accepts the connection in
+    /// the first round, not here: a full or resumed row's region counts the
+    /// accept and the whole handshake. Every earlier connection must have
+    /// been served to its end first, or its rounds would accept this one.
+    ///
     /// # Panics
     ///
-    /// When `runner` is not a runtime, or when setup's connections end before
-    /// their request was answered.
+    /// When `runner` is not a runtime, when the server is not listening, or
+    /// when setup's connections end before their request was answered.
     #[must_use]
     pub fn open(&self, runner: &Runner, endpoints: &Endpoints) -> Tunnel {
         if self.session == Session::Resumed {
@@ -164,12 +166,7 @@ impl Sealed {
             // Read whole, so that the tickets the server sent are stored.
             assert_eq!(priming.status(), StatusCode::OK, "the priming request");
         }
-        let (mut client, mut io) = tokio::io::duplex(CAPACITY);
-        warm(&mut io, &mut client);
-        let mut tunnel = Tunnel {
-            connection: (self.scenario.service)().connect_after(accept(endpoints.acceptor(), io)),
-            client: Client::new(client, endpoints.client()),
-        };
+        let mut tunnel = Tunnel::connect(runner, endpoints.address(), endpoints.client());
         if self.session == Session::Established {
             tunnel
                 .client
@@ -184,77 +181,79 @@ impl Sealed {
     }
 }
 
-/// The server's handshake: accepted over `io` and recorded as `Connection`
-/// records it, with what `TlsConfig`'s listener reads off the session.
-fn accept(acceptor: TlsAcceptor, io: DuplexStream) -> Handshake {
-    Box::pin(async move {
-        let stream = acceptor.accept(io).await?;
-        let identity = identity(stream.get_ref().1);
-        Ok((stream, Connection::from_tls_peer(PEER, LOCAL, identity)))
-    })
-}
-
-/// The client's verified chain, the SNI name and the ALPN protocol, as a
-/// listener records them.
-fn identity(session: &ServerConnection) -> TlsIdentity {
-    let mut identity = TlsIdentity::default().with_peer_certificates(
-        session
-            .peer_certificates()
-            .unwrap_or_default()
-            .iter()
-            .map(|certificate| bytes::Bytes::copy_from_slice(certificate.as_ref())),
-    );
-    if let Some(name) = session.server_name() {
-        identity = identity.with_server_name(name);
-    }
-    if let Some(protocol) = session.alpn_protocol() {
-        identity = identity.with_alpn_protocol(protocol);
-    }
-    identity
-}
-
-/// Polls the server's connection once inside `runner`: what a runtime runs
-/// each time the server's task is woken. The benchmark counts from here, and
-/// only [`Tunnel::serve`] calls it: setup polls through code of its own, so
-/// none of setup's polls is counted.
+/// Runs `runner`'s runtime until `client`'s socket holds something the server
+/// wrote: what the runtime runs between the client's bytes arriving and the
+/// server's answer, the server's tasks and its I/O driver among it. The
+/// benchmark counts from here, and only [`Tunnel::serve`] calls it: setup
+/// runs the runtime through code of its own, so none of setup's turns is
+/// counted.
 ///
-/// `None` while the connection waits on its client.
+/// # Panics
+///
+/// When the runtime's I/O driver fails.
 #[inline(never)]
-pub fn round(
-    runner: &Runner,
-    mut connection: Pin<&mut dyn Future<Output = io::Result<()>>>,
-) -> Option<io::Result<()>> {
-    let polled = runner.run(poll_fn(|context| {
-        Poll::Ready(match connection.as_mut().poll(context) {
-            Poll::Ready(ended) => Some(ended),
-            Poll::Pending => None,
-        })
-    }));
+pub fn round(runner: &Runner, client: &TcpStream) {
+    let readable = runner.run(client.readable());
     // Keeps the call above from becoming a jump, which would leave no frame
     // of this function in the backtraces DHAT counts allocations by.
-    black_box(polled)
+    black_box(readable).expect("the runtime reports the client's socket readable");
 }
 
 impl Tunnel {
+    /// A `session` over a socket connected to `address` and registered with
+    /// `runner`'s runtime, that has sent nothing yet.
+    fn connect(runner: &Runner, address: SocketAddr, session: ClientConnection) -> Self {
+        let socket = std::net::TcpStream::connect(address).expect("the server is listening");
+        socket
+            .set_nonblocking(true)
+            .expect("a socket can be made nonblocking");
+        let writer = socket.try_clone().expect("a socket can be cloned");
+        let stream = {
+            let _context = runner.runtime().enter();
+            TcpStream::from_std(socket).expect("the runtime registers the socket")
+        };
+        Self {
+            client: Client::new(stream, writer, session),
+        }
+    }
+
     /// Drives the connection to its end, the client answering between
-    /// rounds: the whole of what a TLS row measures.
+    /// rounds: the whole of what a TLS row measures. The server closes the
+    /// connection once its request is answered, so the end is the client
+    /// reading the socket's.
     ///
     /// # Errors
     ///
-    /// What ended the connection, if not its own close.
+    /// What ended the connection, if not the server's `close_notify` before
+    /// the socket's end.
     ///
     /// # Panics
     ///
-    /// When the server waits on a client with nothing to send.
+    /// When the client cannot read its socket or the server's TLS.
+    ///
+    /// A server waiting on a client with nothing to send is not a panic here:
+    /// the round waits until the server's own deadline ends the connection,
+    /// the handshake's or HTTP/1's header read, both at the defaults the
+    /// endpoints serve with, and that end is what this returns, an error or a
+    /// clean close with no response, which [`status`](Self::status) panics
+    /// on.
     pub fn serve(&mut self, runner: &Runner) -> io::Result<()> {
+        // No check here says the server waits on the client, as one did when a
+        // round polled the connection's future: a round now waits on the
+        // client's socket, which never says what the server waits on. Rejected
+        // are a timeout around the round, which would put a timer in the
+        // region and move every TLS row's count, and failing on a turn that
+        // read and wrote nothing, which a spurious readiness or a record split
+        // across reads also makes. Were the endpoints to disable either
+        // deadline, the reversal is a `tokio::time::timeout` around `settle`'s
+        // and `answer_first`'s waits, which count nothing, and a failing
+        // `serve` run under the same bound in a test.
         loop {
-            if let Some(ended) = round(runner, self.connection.future.as_mut()) {
+            round(runner, &self.client.stream);
+            self.client.exchange();
+            if let Some(ended) = self.client.ended() {
                 return ended;
             }
-            assert!(
-                self.client.exchange(),
-                "the server waits on a client with nothing to send"
-            );
         }
     }
 
@@ -264,24 +263,21 @@ impl Tunnel {
     ///
     /// # Errors
     ///
-    /// What ended the connection, if not its own close.
+    /// As [`serve`](Self::serve).
     ///
     /// # Panics
     ///
-    /// When the server waits on a client with nothing to send.
+    /// As [`serve`](Self::serve).
     pub fn settle(&mut self, runner: &Runner) -> io::Result<()> {
-        let Self { connection, client } = self;
-        runner.run(poll_fn(|context| {
-            loop {
-                if let Poll::Ready(ended) = connection.future.as_mut().poll(context) {
-                    return Poll::Ready(ended);
-                }
-                assert!(
-                    client.exchange(),
-                    "the server waits on a client with nothing to send"
-                );
+        loop {
+            runner
+                .run(self.client.stream.readable())
+                .expect("the runtime reports the client's socket readable");
+            self.client.exchange();
+            if let Some(ended) = self.client.ended() {
+                return ended;
             }
-        }))
+        }
     }
 
     /// The status the measured request was answered with, decrypted from what
@@ -289,9 +285,9 @@ impl Tunnel {
     ///
     /// # Panics
     ///
-    /// When the response cannot be decrypted or its status cannot be read.
-    pub fn status(&mut self) -> StatusCode {
-        self.client.exchange();
+    /// When the status cannot be read.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
         super::wire::http1_status(&self.client.received)
     }
 
@@ -301,22 +297,22 @@ impl Tunnel {
         self.client.handshake()
     }
 
-    /// Polls, the client answering between polls, until the client has
-    /// decrypted a whole response; setup's way to a session past its first
-    /// request, without calling [`round`].
+    /// Runs the runtime, the client answering between turns, until the client
+    /// has decrypted a whole response; setup's way to a session past its
+    /// first request, without calling [`round`].
     fn answer_first(&mut self, runner: &Runner) {
-        let Self { connection, client } = self;
-        runner.run(poll_fn(|context| {
-            loop {
-                assert!(
-                    connection.future.as_mut().poll(context).is_pending(),
-                    "the connection ended before its first request was answered"
-                );
-                client.exchange();
-                if http1_answered(&client.received) {
-                    return Poll::Ready(());
-                }
+        loop {
+            runner
+                .run(self.client.stream.readable())
+                .expect("the runtime reports the client's socket readable");
+            self.client.exchange();
+            assert!(
+                self.client.ended().is_none(),
+                "the connection ended before its first request was answered"
+            );
+            if http1_answered(&self.client.received) {
+                return;
             }
-        }));
+        }
     }
 }
