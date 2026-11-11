@@ -212,6 +212,12 @@ application reads and writes JSON with a library other than serde_json, and
 [`architecture.md`](architecture.md#json-codecs-other-than-serde_json-refused)
 records why Kynos does not do so itself.
 
+[getkono/cbor-contenders](https://github.com/getkono/cbor-contenders/blob/a90acd698127684a95772cbcbaa1a89b3d38461b/README.md#using-the-worked-codec)
+is the worked outside-codec example: a `BodyCodec` for `application/cbor`
+through `Encoded<C, T>` that refuses, in `decode` and `encode`, every CBOR
+value no derived schema describes (byte strings, tags, `undefined`, non-finite
+floats, non-text keys), tested through Kynos, beside #989's harness.
+
 The third row is the counter-case to the second, and the difference is the
 specification's rather than a preference.
 [`AcceptLanguage<L>`](../crates/kynos/src/response/language/mod.rs) *does*
