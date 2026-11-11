@@ -41,7 +41,7 @@ runs:
         } >> "$GITHUB_ENV"
 
     - name: Install tools
-      uses: jdx/mise-action@v4
+      uses: jdx/mise-action@v5
       with:
         version: 2026.7.18
         install: true
