@@ -20,9 +20,13 @@ program's count, so a change in how often Kynos reaches them is still held.
 Any dependency on the request path that picks code by CPU is carved out here,
 never tolerated.
 
-**Exact across hosts.** The program's count is the same on every CPU Valgrind
-runs the benchmark on; only the dispatched share and libc's are the host's, so
-the baseline records its host and a report taken elsewhere says so.
+**Exact across hosts exposing the same features.** The program's count is the
+same on every CPU whose features Valgrind exposes alike: a dispatcher's own
+code is in it, and it can branch by CPU inside the program (memchr's AVX2 setup
+inlined into `memchr::memmem::find`, httparse's swar fallback inlined into
+`simd::runtime` where AVX2 is absent). The dispatched share and libc's are each
+host's own, so the baseline records its host and a report taken elsewhere says
+so.
 
 **Calibration.** DHAT's block count for each `SHAPES` and `STACKS` row of
 `crates/kynos/tests/alloc.rs`, read off disk, must *equal* the row's count:

@@ -152,17 +152,22 @@ of its own.
 fails when a row outside a `trend` group allocates one block or byte more than
 recorded, or executes one program instruction more. Nothing is tolerated,
 because what the program count holds is Kynos's code and the Rust it compiles
-in, which does not depend on the CPU. What does is carved out of it: a
+in, which runs alike on every CPU exposing the same features. What picks its
+code by CPU is carved out of it: a
 dependency that picks its routine by a runtime CPU check is split off by source
 file or symbol, as aws-lc's crypto is, and reported beside libc, never
 compared. That is zstd's C, which chooses a BMI2 or a generic body, and the
 `#[target_feature]` bodies `httparse`, `memchr`, `crc32fast` and
 `simd-adler32` select with `is_x86_feature_detected!`; their dispatchers and
 Kynos's calls into them stay in the program's count, so how often a request
-reaches them is still held. Before the carve-out the `zstd_*` rows were the
-only ones a desktop Ryzen 7 7800X3D counted differently from CI's EPYC
-runners, by 1–7%; with it, a local run on another CPU agrees with CI on every
-compared row. A dependency that starts dispatching joins
+reaches them is still held. That code can itself branch by CPU — memchr's
+AVX2 setup is inlined into `memchr::memmem::find`, and httparse falls back to
+its swar parser inside `simd::runtime` where AVX2 is absent — so the program
+count is exact across hosts whose features Valgrind exposes alike, not across
+every CPU. Before the carve-out the `zstd_*` rows were the only ones a desktop
+Ryzen 7 7800X3D counted differently from CI's EPYC runners, by 1–7%; with it,
+a local run on another AVX2 host agrees with CI on every compared row. A
+dependency that starts dispatching joins
 [`profile_report.py`](../scripts/profile_report.py)'s `DISPATCHED` table,
 which names the versions it was checked against. A lower count passes, so a
 saving keeps the old ceiling until it is recorded; an intended rise is
