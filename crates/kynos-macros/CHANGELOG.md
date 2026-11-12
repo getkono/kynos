@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.5.0...kynos-macros-v0.6.0) - 2026-11-12
+
+### Added
+
+- *(extract)* [**breaking**] own the protobuf message contract and drop prost from the graph ([#1265](https://github.com/getkono/kynos/pull/1265))
+- *(security)* let a carrier declare the request headers it reads beside the credential ([#1329](https://github.com/getkono/kynos/pull/1329))
+- *(macros)* give an ApiError variant a constant extension member, declared as const ([#1326](https://github.com/getkono/kynos/pull/1326))
+- *(macros)* derive an ApiError enum as a subset of a wider one ([#1291](https://github.com/getkono/kynos/pull/1291))
+- *(router)* let routes! take more than sixteen operations ([#1286](https://github.com/getkono/kynos/pull/1286))
+- *(schema)* [**breaking**] version-suffixed scalar-format features ([#1263](https://github.com/getkono/kynos/pull/1263))
+- *(macros)* [**breaking**] send #[problem(extension)] members through Serialize ([#1199](https://github.com/getkono/kynos/pull/1199))
+- *(schema)* name one generic instantiation with name_instantiation! ([#1196](https://github.com/getkono/kynos/pull/1196))
+- *(error)* log a derived 5xx ApiError's source chain ([#1179](https://github.com/getkono/kynos/pull/1179))
+- *(macros)* let #[schema(as = T)] convert through a function named by via ([#1178](https://github.com/getkono/kynos/pull/1178))
+- *(macros)* let #[schema] numeric and count bounds name a const ([#1165](https://github.com/getkono/kynos/pull/1165))
+- *(error)* [**breaking**] let a broken declared bound answer with the application's problem type ([#1169](https://github.com/getkono/kynos/pull/1169))
+
+### Fixed
+
+- *(error)* refuse a constant extension member that serializes to null ([#1334](https://github.com/getkono/kynos/pull/1334))
+- *(error)* publish a raw-identifier extension field under its unprefixed name ([#1330](https://github.com/getkono/kynos/pull/1330))
+- *(extract)* bound each multipart part by its field before reading it ([#1270](https://github.com/getkono/kynos/pull/1270))
+- *(macros)* keep the Schema `as` conversion out of the field type's hygiene ([#1192](https://github.com/getkono/kynos/pull/1192))
+- *(router)* fail a QUERY without Content-Type and require a QUERY operation's body ([#1177](https://github.com/getkono/kynos/pull/1177))
+- *(macros)* keep Reply, MultipartForm and parameter group bindings out of the field type's hygiene ([#1187](https://github.com/getkono/kynos/pull/1187))
+- *(macros)* keep ApiError's bindings out of the field type's hygiene ([#1173](https://github.com/getkono/kynos/pull/1173))
+
 ## [0.5.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.4.0...kynos-macros-v0.5.0) - 2026-10-31
 
 ### Added
