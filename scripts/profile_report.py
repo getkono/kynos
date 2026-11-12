@@ -9,15 +9,23 @@ with the heap's history, so only the benchmark binary's count (Kynos and every
 Rust dependency, statically linked) is compared; shared objects are reported
 beside it. DHAT counts the allocator's work exactly.
 
-**So is aws-lc's.** The TLS rows' crypto is aws-lc's C and assembly, which
-`aws-lc-sys` links statically into that binary, so it would be compared with
-the program; it is split off by the source file or symbol each cost line
-belongs to and reported beside the program's count, never compared, as libc's
-is. What it executes is the cipher suite's and the CPU's, not Kynos's.
-`aws-lc-rs`'s Rust, the binding rustls calls, stays in the program's count.
+**So is every routine the CPU picks.** A dependency that chooses its code by
+a runtime CPU check is linked statically into that binary, so its choice would
+be compared with the program's own. Each one `DISPATCHED` lists is split off
+by the source file or symbol a cost line belongs to and reported beside the
+program's count, never compared, as libc's is: aws-lc's C and assembly, zstd's
+C, and the bodies `httparse`, `memchr`, `crc32fast` and `simd-adler32` select
+with `is_x86_feature_detected!`. The dispatcher and its call sites stay in the
+program's count, so a change in how often Kynos reaches them is still held.
+Any dependency on the request path that picks code by CPU is carved out here,
+never tolerated.
 
-**Exact per host, not across hosts.** Dependencies pick routines from the CPU
-they find, so the baseline records its host and a report taken elsewhere says
+**Exact across hosts exposing the same features.** The program's count is the
+same on every CPU whose features Valgrind exposes alike: a dispatcher's own
+code is in it, and it can branch by CPU inside the program (memchr's AVX2 setup
+inlined into `memchr::memmem::find`, httparse's swar fallback inlined into
+`simd::runtime` where AVX2 is absent). The dispatched share and libc's are each
+host's own, so the baseline records its host and a report taken elsewhere says
 so.
 
 **Calibration.** DHAT's block count for each `SHAPES` and `STACKS` row of
@@ -55,9 +63,8 @@ of record's run can be copied over the baseline.
 
 **The baseline is a ceiling.** Each row outside a `trend` group is held to
 what `requests.tsv` records for it, the first recorded measurement
-[`nfr.md`](../docs/nfr.md#thresholds) sets a threshold from: its heap blocks
-and bytes exactly, and its program instructions to within
-`TOLERANCE_PER_MILLE` of the recorded count. A compared run that exceeds one
+[`nfr.md`](../docs/nfr.md#thresholds) sets a threshold from: its heap blocks,
+heap bytes and program instructions, each exactly. A compared run that exceeds one
 fails (`EXCEEDED`); a lower count passes and is reported, since lowering the
 ceiling is re-recording. A row the baseline does not hold yet has no ceiling.
 A recording is never held to the baseline it replaces.
@@ -98,15 +105,6 @@ VALGRIND = Path(os.environ["KYNOS_VALGRIND"])
 
 MEASURED, NOTHING, DISAGREE, INEXACT, EXCEEDED = 0, 1, 2, 3, 4
 
-# How far, in thousandths of the recorded count, a row's program instructions
-# may exceed it. Runs of one build on three CI CPU models have counted every
-# exact row identically; a desktop CPU moved only the `zstd_*` rows, by up to
-# 7%, and the verdict is CI's. So this is headroom for a runner whose CPU leads
-# a dependency to another routine, not for noise: one transparent layer, the
-# smallest step a request takes, costs 315, a sixth of a static match. A heap
-# count has none, since what is asked of the allocator is not the CPU's.
-TOLERANCE_PER_MILLE = 5
-
 # `serde_json` features no application's request path is assumed to carry: a
 # harness build with one measures a parser the applications it describes do not
 # run. `kynos/test-util` is what would bring `float_roundtrip`.
@@ -130,9 +128,10 @@ CALIBRATION = {
 
 #: `scenario` is the catalog name the benchmark was set up with, read off its
 #: summary; `None` where the summary names none.
-#: `crypto` is aws-lc's share of the program object, which `program` excludes.
+#: `dispatched` is the `DISPATCHED` share of the program object, which
+#: `program` excludes.
 Row = namedtuple(
-    "Row", "benchmark program other blocks bytes scenario crypto", defaults=(None, 0)
+    "Row", "benchmark program other blocks bytes scenario dispatched", defaults=(None, 0)
 )
 
 COLUMNS = ("benchmark", "program_instructions", "heap_blocks", "heap_bytes")
@@ -142,18 +141,67 @@ class Unreadable(Exception):
     """Output this cannot read, which is a measurement not made."""
 
 
-#: The source files of aws-lc's C and assembly: `aws-lc-sys` maps its tree to
-#: `/aws-lc`, and an unmapped build keeps it under the crate's `aws-lc/`.
-#: `aws-lc-rs-<version>/` is the Rust binding's, and does not match.
-CRYPTO_FILE = re.compile(r"(?:^|/)aws-lc/")
+#: One dependency whose instructions inside the program object its CPU check
+#: chooses: a cost line is its when the line's source file matches `file` or
+#: its function matches `function`. Either may be `None`, matching nothing.
+Dispatched = namedtuple("Dispatched", "name file function")
 
-#: aws-lc's exported symbols, every one prefixed with its version by
-#: `aws-lc-sys`: what names a function whose cost line has no source file.
-CRYPTO_FUNCTION = re.compile(r"^aws_lc_\d+_\d+_\d+_")
+#: Every dependency on the request path that picks code by CPU, checked against
+#: the sources of the versions `Cargo.lock` locks: `aws-lc-sys` 0.46.0,
+#: `zstd-sys` 2.1.2+zstd.1.5.7, `httparse` 1.10.1, `memchr` 2.8.3,
+#: `crc32fast` 1.5.2, `simd-adler32` 0.3.10, and the toolchain's `std_detect`.
+#: A lockfile bump that moves one of them, or adds a dependency that dispatches,
+#: is checked against this table.
+#:
+#: - aws-lc's C and assembly picks AES-NI, AVX and SHA routines from
+#:   `OPENSSL_ia32cap`. `aws-lc-sys` maps its tree to `/aws-lc`, and an unmapped
+#:   build keeps it under the crate's `aws-lc/`; `aws-lc-rs-<version>/` is the
+#:   Rust binding's, which rustls calls, and stays the program's. Every exported
+#:   symbol carries its version prefix, which names a line with no source file.
+#: - zstd's C picks a BMI2 or a generic body with `ZSTD_cpuid` (`DYNAMIC_BMI2`
+#:   on x86-64). Its sources are under `zstd-sys`'s `zstd/lib/`; a line it
+#:   inlines from a system header (`emmintrin.h`, `string_fortified.h`) is named
+#:   by its function, every one of which zstd prefixes with its module.
+#: - `httparse` parses with an AVX2, an SSE4.2 or a SWAR body; `memchr` searches
+#:   with an AVX2 or an SSE2 one, through `memmem`'s searcher and prefilter
+#:   kinds and each `memchr_raw`-style ifunc's `find_avx2`/`find_sse2`;
+#:   `crc32fast` hashes with PCLMULQDQ or its table-driven baseline, which also
+#:   finishes the PCLMULQDQ body's tail; `simd-adler32` with one `imp` per
+#:   instruction set. A `#[target_feature]` body cannot be inlined into a caller
+#:   without the feature, so each keeps its own symbol and is named by it; the
+#:   crate's dispatcher does not match, save `simd-adler32`'s `imp::get_imp`,
+#:   whose chain of checks stops at the first set the CPU has.
+#: - `std_detect`'s first-use detection runs `cpuid` and `xgetbv` and branches
+#:   on what they return, should a measured region ever be the first to ask.
+DISPATCHED = (
+    Dispatched(
+        "aws-lc",
+        re.compile(r"(?:^|/)aws-lc/"),
+        re.compile(r"^aws_lc_\d+_\d+_\d+_"),
+    ),
+    Dispatched(
+        "zstd",
+        re.compile(r"/zstd-sys-[^/]+/zstd/lib/"),
+        re.compile(r"^(?:ZSTD|ZSTDMT|ZDICT|HUF|FSE|HIST|POOL)_"),
+    ),
+    Dispatched("httparse", None, re.compile(r"^<?httparse::simd::(?:avx2|sse42)::")),
+    Dispatched(
+        "memchr",
+        None,
+        re.compile(
+            r"^<?memchr::(?:arch::x86_64::(?:avx2|sse2)::"
+            r"|arch::x86_64::memchr::\w+::find_(?:avx2|sse2)$"
+            r"|memmem::searcher::(?:searcher|prefilter)_kind_(?:avx2|sse2)$)"
+        ),
+    ),
+    Dispatched("crc32fast", None, re.compile(r"^<?crc32fast::(?:specialized|baseline)::")),
+    Dispatched("simd-adler32", None, re.compile(r"^<?simd_adler32::imp::")),
+    Dispatched("std_detect", None, re.compile(r"^<?std_detect::")),
+)
 
-#: What one Callgrind output counted: the program's own instructions, aws-lc's
-#: inside the program object, and every other object's.
-Split = namedtuple("Split", "program crypto other")
+#: What one Callgrind output counted: the program's own instructions, the
+#: `DISPATCHED` share of the program object, and every other object's.
+Split = namedtuple("Split", "program dispatched other")
 
 # Each name kind Callgrind compresses, by the specification that names it;
 # the call-side spellings share their table with the cost side's.
@@ -174,9 +222,9 @@ def split_by_object(text, program):
     """Instructions per object in a Callgrind output file, as a `Split`.
 
     `program` is the benchmark executable's path; every other object is summed
-    into `other`, and the program's own lines that belong to aws-lc, by their
-    source file or failing that their function, into `crypto` rather than
-    `program`. Only self cost is counted: the line after a `calls=` line is
+    into `other`, and the program's own lines that belong to a `DISPATCHED`
+    entry, by their source file or their function, into `dispatched` rather
+    than `program`. Only self cost is counted: the line after a `calls=` line is
     the inclusive cost of that call, already counted where the callee's own
     lines are, so reading it would count the callee twice.
 
@@ -198,7 +246,7 @@ def split_by_object(text, program):
     events = None
     positions = None
     counts = {}
-    crypto = 0
+    dispatched = 0
     after_call = False
 
     for line in text.splitlines():
@@ -234,8 +282,8 @@ def split_by_object(text, program):
                 cost = int(fields[1])
                 obj = current["object"]
                 counts[obj] = counts.get(obj, 0) + cost
-                if obj == program and is_crypto(source, current["function"]):
-                    crypto += cost
+                if obj == program and dispatcher(source, current["function"]):
+                    dispatched += cost
 
     if events is None or events[:1] != ["Ir"]:
         raise Unreadable("a Callgrind output with no `events: Ir ...` header")
@@ -247,19 +295,24 @@ def split_by_object(text, program):
 
     program_count = sum(count for obj, count in counts.items() if obj == program)
     other = sum(count for obj, count in counts.items() if obj != program)
-    return Split(program_count - crypto, crypto, other)
+    return Split(program_count - dispatched, dispatched, other)
 
 
-def is_crypto(source, function):
-    """Whether a cost line in `source`, inside `function`, is aws-lc's.
+def dispatcher(source, function):
+    """The name of the `DISPATCHED` entry a cost line in `source`, inside
+    `function`, belongs to, or `None` where it is the program's own.
 
-    Either names it: an exported function is aws-lc's wherever a line of it
-    was inlined from, a system header's `memcpy` included, and a static one,
-    which carries no prefix, is by the file it was compiled from.
+    Either names it: a function is its dependency's wherever a line of it was
+    inlined from, a system header's `memcpy` included, and a line of a C
+    dependency's static function, which carries no prefix, is by the file it
+    was compiled from.
     """
-    if function is not None and CRYPTO_FUNCTION.match(function):
-        return True
-    return source is not None and CRYPTO_FILE.search(source) is not None
+    for entry in DISPATCHED:
+        if function is not None and entry.function and entry.function.match(function):
+            return entry.name
+        if source is not None and entry.file and entry.file.search(source):
+            return entry.name
+    return None
 
 
 def dhat(summary):
@@ -296,7 +349,7 @@ def measure(directory):
     for summary, root, output in summaries(directory):
         callgrind = output / f"callgrind.{summary['function_name']}.{summary['id']}.out"
         program = str(root / summary["benchmark_exe"])
-        instructions, crypto, other = split_by_object(callgrind.read_text(), program)
+        instructions, dispatched, other = split_by_object(callgrind.read_text(), program)
         if instructions == 0:
             raise Unreadable(
                 f"{callgrind} attributes nothing to {program}; the executable's "
@@ -312,7 +365,7 @@ def measure(directory):
                 blocks,
                 octets,
                 scenario_of(summary),
-                crypto,
+                dispatched,
             )
         )
     return rows
@@ -423,8 +476,8 @@ def in_trend(benchmark, trend):
 
 
 def counts(row):
-    """What is compared of a row: everything but the uncompared libc and aws-lc
-    counts."""
+    """What is compared of a row: everything but the uncompared libc and
+    dispatched counts."""
     return (row.program, row.blocks, row.bytes)
 
 
@@ -450,24 +503,19 @@ def inexact(runs, trend=frozenset()):
     return problems
 
 
-def instruction_ceiling(recorded):
-    """The most program instructions a row recorded at `recorded` may count."""
-    return recorded + recorded * TOLERANCE_PER_MILLE // 1000
-
-
 def exceeded(rows, recorded, trend=frozenset()):
     """Each row outside a `trend` group whose counts pass the ceiling its
-    `recorded` counts set; a row with nothing recorded has none."""
+    `recorded` counts set, each exactly; a row with nothing recorded has none."""
     problems = []
     for row in rows:
         if in_trend(row.benchmark, trend) or row.benchmark not in recorded:
             continue
         instructions, blocks, octets = recorded[row.benchmark]
         over = []
-        if row.program > (ceiling := instruction_ceiling(instructions)):
+        if row.program > instructions:
             over.append(
-                f"{row.program} program instructions, recorded {instructions}, "
-                f"ceiling {ceiling}"
+                f"{row.program} program instructions, recorded and ceiling "
+                f"{instructions}"
             )
         if row.blocks > blocks:
             over.append(f"{row.blocks} heap blocks, recorded and ceiling {blocks}")
@@ -516,8 +564,8 @@ def report(rows, recorded, host=None, recorded_host=None, trend=frozenset(), bas
     if recorded_host is not None and host is not None and host != recorded_host:
         lines += [
             f"Measured on `{host}`; the baseline was recorded on `{recorded_host}`. "
-            "Instruction deltas include whatever the two CPUs make "
-            "dependencies do differently.",
+            "The libc and dispatched columns are each host's own; the "
+            "compared counts are not.",
             "",
         ]
     header = (
@@ -525,7 +573,7 @@ def report(rows, recorded, host=None, recorded_host=None, trend=frozenset(), bas
         "Instructions (program)",
         "Δ",
         "Instructions (libc, not compared)",
-        "Instructions (aws-lc, not compared)",
+        "Instructions (dispatched, not compared)",
         "Heap blocks",
         "Δ",
         "Heap bytes",
@@ -543,7 +591,7 @@ def report(rows, recorded, host=None, recorded_host=None, trend=frozenset(), bas
             row.program,
             moved[0],
             row.other,
-            row.crypto,
+            row.dispatched,
             row.blocks,
             moved[1],
             row.bytes,
