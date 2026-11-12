@@ -114,17 +114,17 @@ def summary(
 
 class SplitByObject(unittest.TestCase):
     def test_a_call_line_is_not_counted_where_it_is_made(self):
-        program, crypto, other = report.split_by_object(CALLGRIND_SAMPLE, PROGRAM)
+        program, dispatched, other = report.split_by_object(CALLGRIND_SAMPLE, PROGRAM)
         # 25 + 5 + 10 + 5 in the program, the 120 after `calls=` skipped, and
         # libc's own 100 + 20 counted where libc's lines are.
-        self.assertEqual((program, crypto, other), (45, 0, 120))
+        self.assertEqual((program, dispatched, other), (45, 0, 120))
 
     def test_a_compressed_object_name_resolves_to_its_first_spelling(self):
         renamed = CALLGRIND_SAMPLE.replace(
             f"ob=(1) {PROGRAM}", "ob=(1) /elsewhere/requests"
         )
-        program, crypto, other = report.split_by_object(renamed, PROGRAM)
-        self.assertEqual((program, crypto, other), (0, 0, 165))
+        program, dispatched, other = report.split_by_object(renamed, PROGRAM)
+        self.assertEqual((program, dispatched, other), (0, 0, 165))
 
     def test_a_file_that_counts_something_other_than_instructions_is_refused(self):
         with self.assertRaises(report.Unreadable):
@@ -186,33 +186,130 @@ fn=(1)
 """
 
     def test_aws_lc_is_split_from_the_program_by_file_and_by_symbol(self):
-        program, crypto, other = report.split_by_object(self.SAMPLE, PROGRAM)
+        program, dispatched, other = report.split_by_object(self.SAMPLE, PROGRAM)
         # rustls's 7 + 3 and the binding's 11 are the program's; the exported
         # function's 30 + 6, its inlined header's 4, the static function's 50
         # and the file-less routine's 900 are aws-lc's; the 1000 after
         # `calls=` is counted nowhere.
-        self.assertEqual((program, crypto, other), (21, 990, 0))
+        self.assertEqual((program, dispatched, other), (21, 990, 0))
 
     def test_the_binding_crate_s_directory_is_not_aws_lc_s(self):
-        self.assertFalse(
-            report.is_crypto("/cargo/aws-lc-rs-1.18.2/src/hkdf.rs", "fill")
+        self.assertIsNone(
+            report.dispatcher("/cargo/aws-lc-rs-1.18.2/src/hkdf.rs", "fill")
         )
-        self.assertTrue(
-            report.is_crypto("/cargo/aws-lc-sys-0.33.0/aws-lc/crypto/mem.c", "f")
+        self.assertEqual(
+            report.dispatcher("/cargo/aws-lc-sys-0.46.0/aws-lc/crypto/mem.c", "f"),
+            "aws-lc",
         )
 
     def test_a_shared_object_s_lines_are_never_aws_lc_s(self):
-        program, crypto, other = report.split_by_object(
+        program, dispatched, other = report.split_by_object(
             self.SAMPLE.replace(f"ob=(1) {PROGRAM}", f"ob=(1) {LIBC}"), PROGRAM
         )
-        self.assertEqual((program, crypto, other), (0, 0, 1011))
+        self.assertEqual((program, dispatched, other), (0, 0, 1011))
 
-    def test_the_report_shows_aws_lc_beside_libc_and_compares_neither(self):
-        row = report.Row("connection_tls.full", 10, 5, 2, 3, crypto=900)
+    def test_the_report_shows_the_dispatched_share_beside_libc_and_compares_neither(self):
+        row = report.Row("connection_tls.full", 10, 5, 2, 3, dispatched=900)
         recorded = {"connection_tls.full": (10, 2, 3)}
         text = report.report([row], recorded)
         self.assertIn("| `connection_tls.full` | 10 | = | 5 | 900 | 2 | = | 3 | = |", text)
         self.assertEqual(report.counts(row), (10, 2, 3))
+
+
+class SplitDispatched(unittest.TestCase):
+    """Every routine a dependency picks by CPU is split off as aws-lc's is; a
+    dispatcher or a call site left in the program keeps how often Kynos reaches
+    it compared. Symbols and paths are spelled as CI's Callgrind output spells
+    them."""
+
+    ZSTD = "/cargo/registry/src/index.crates.io-1949cf8c6b5b557f/zstd-sys-2.1.2+zstd.1.5.7"
+
+    # A Rust caller, then zstd's C by its file, a zstd function inlining a
+    # system header Callgrind files under the header, and one placed in no file.
+    SAMPLE = f"""# callgrind format
+events: Ir
+ob=(1) {PROGRAM}
+fl=(1) /cargo/zstd-safe-8.2.0/src/lib.rs
+fn=(1) <compression_codecs::zstd::encoder::ZstdEncoder as compression_codecs::EncodeV2>::encode
+10 7
+fl=(2) {ZSTD}/zstd/lib/compress/zstd_compress.c
+fn=(2) ZSTD_compressStream2
+20 30
+fi=(3) {ZSTD}/zstd/lib/compress/../common/mem.h
+21 4
+fl=(4) /usr/lib/gcc/x86_64-linux-gnu/13/include/emmintrin.h
+fn=(3) ZSTD_compressBlock_doubleFast
+30 500
+fl=(5) ???
+fn=(4) HUF_compress4X_usingCTable_internal_bmi2
+0 60
+fl=(1)
+fn=(1)
+11 3
+"""
+
+    def test_zstd_is_split_by_its_file_and_by_its_function_where_the_file_is_not_its(self):
+        # The caller's 7 + 3 are the program's; the C file's 30, its header's 4,
+        # the intrinsic header's 500 and the file-less 60 are zstd's.
+        self.assertEqual(report.split_by_object(self.SAMPLE, PROGRAM), (10, 594, 0))
+
+    def test_each_dispatched_body_is_split_and_its_dispatcher_is_not(self):
+        registry = "/cargo/registry/src/index.crates.io-1949cf8c6b5b557f"
+        split = {
+            "httparse": (
+                "httparse::simd::avx2::match_header_value_vectored",
+                "httparse::simd::sse42::match_uri_vectored",
+            ),
+            "memchr": (
+                "<memchr::arch::x86_64::avx2::packedpair::Finder>::find_impl",
+                "<memchr::arch::x86_64::sse2::memchr::One>::find_raw",
+                "memchr::arch::x86_64::memchr::memchr_raw::find_avx2",
+                "memchr::arch::x86_64::memchr::count_raw::find_sse2",
+                "memchr::memmem::searcher::searcher_kind_avx2",
+                "memchr::memmem::searcher::prefilter_kind_sse2",
+            ),
+            "crc32fast": (
+                "crc32fast::specialized::pclmulqdq::calculate",
+                "crc32fast::baseline::update_fast_16",
+            ),
+            "simd-adler32": (
+                "simd_adler32::imp::avx2::imp::update_imp",
+                "simd_adler32::imp::scalar::update",
+                "simd_adler32::imp::get_imp",
+            ),
+            "std_detect": ("std_detect::detect::cache::detect_and_initialize",),
+        }
+        for name, functions in split.items():
+            for function in functions:
+                with self.subTest(function=function):
+                    self.assertEqual(report.dispatcher(f"{registry}/x.rs", function), name)
+        kept = (
+            "httparse::simd::runtime::match_uri_vectored",
+            "httparse::parse_headers_iter_uninit",
+            "memchr::memmem::find",
+            "memchr::arch::x86_64::memchr::memchr_raw::detect",
+            "memchr::memmem::searcher::searcher_kind_two_way_with_prefilter",
+            "<memchr::arch::all::twoway::Finder>::new",
+            "<crc32fast::Hasher>::internal_new_specialized",
+            "core::ptr::drop_glue::<memchr::arch::x86_64::avx2::packedpair::Finder>",
+            "<core::str::pattern::CharSearcher as core::str::pattern::Searcher>::next_match",
+        )
+        for function in kept:
+            with self.subTest(function=function):
+                self.assertIsNone(report.dispatcher(f"{registry}/x.rs", function))
+
+    def test_a_dispatched_body_s_cost_line_leaves_the_program_s_count(self):
+        sample = f"""# callgrind format
+events: Ir
+ob=(1) {PROGRAM}
+fl=(1) /cargo/httparse-1.10.1/src/lib.rs
+fn=(1) httparse::parse_headers_iter_uninit
+10 40
+fl=(2) /cargo/httparse-1.10.1/src/simd/swar.rs
+fn=(2) httparse::simd::avx2::match_header_value_vectored
+20 9
+"""
+        self.assertEqual(report.split_by_object(sample, PROGRAM), (40, 9, 0))
 
 
 class Calibration(unittest.TestCase):
@@ -719,16 +816,17 @@ class Ceiling(unittest.TestCase):
         rows = [report.Row("scenarios.plaintext", program, 0, blocks, octets)]
         return report.exceeded(rows, self.RECORDED, trend)
 
-    def test_instructions_may_exceed_the_record_by_the_tolerance_and_no_further(self):
-        self.assertEqual(report.instruction_ceiling(2000), 2010)
-        self.assertEqual(self.over(program=2010), [])
-        problems = self.over(program=2011)
+    def test_one_program_instruction_over_even_a_large_record_is_over(self):
+        recorded = {"compression.zstd_large": (2_000_000, 11, 4057)}
+        rows = [report.Row("compression.zstd_large", 2_000_000, 0, 11, 4057)]
+        self.assertEqual(report.exceeded(rows, recorded), [])
+        problems = report.exceeded([rows[0]._replace(program=2_000_001)], recorded)
         self.assertEqual(len(problems), 1)
-        self.assertIn("scenarios.plaintext: 2011 program instructions", problems[0])
-        self.assertIn("ceiling 2010", problems[0])
-
-    def test_the_tolerance_rounds_down_so_a_small_row_is_held_exactly(self):
-        self.assertEqual(report.instruction_ceiling(199), 199)
+        self.assertIn(
+            "compression.zstd_large: 2000001 program instructions, "
+            "recorded and ceiling 2000000",
+            problems[0],
+        )
 
     def test_one_heap_block_or_byte_over_the_record_is_over(self):
         for moved, named in (({"blocks": 12}, "12 heap blocks"), ({"octets": 4058}, "4058 heap bytes")):
