@@ -16,7 +16,7 @@ mise pins the toolchain and every tool the gates use.
 
 ```bash
 mise install
-mise exec -- hk install --mise   # commit-msg, pre-commit and pre-push hooks
+mise exec -- hk install --mise   # commit-msg and pre-commit hooks
 mise run check                   # the gates a local change owes
 mise run ci                      # every check CI runs on master and PRs
 ```

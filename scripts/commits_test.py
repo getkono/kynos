@@ -31,8 +31,8 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # No user or system git configuration reaches these repositories, and identity
 # is supplied rather than discovered. The inherited `GIT_*` names go too:
-# `commits:test` runs from `hooks:pre-push`, where git has already exported an
-# environment naming the repository being pushed, and any one of those names
+# `commits:test` can run from a git hook, where git has already exported an
+# environment naming the repository at hand, and any one of those names
 # would redirect the fixture's own `git init` at it. `AmbientGitEnvironment`
 # holds the scrub.
 HERMETIC = {
@@ -225,7 +225,7 @@ class GateTestCase(unittest.TestCase):
     def range_gate(self, base, git_dir=None, work_tree=None):
         """The range half: `commits:check` over `base..HEAD`.
 
-        The same task the `commits` CI job and `hooks:pre-push` run, through
+        The same task the `commits` CI job and `mise run ci` run, through
         the `CONVCO_RANGE` branch it already carries.
         """
         return subprocess.run(
@@ -723,12 +723,12 @@ class TheAmendResidual(GateTestCase):
 class AmbientGitEnvironment(GateTestCase):
     """The fixtures must not follow a git environment the caller exported.
 
-    `commits:test` runs from `hooks:pre-push`, where git has already exported an
-    environment naming the repository being pushed; a fixture that inherited it
-    would `git init` and `git commit` into somebody's working tree while they
-    pushed it. Four variables rather than one, because the scrub's claim is over
-    the whole namespace: `GIT_OBJECT_DIRECTORY` and `GIT_INDEX_FILE` each leave
-    their own trace in the decoy. The assertions are on the fixture rather than
+    `commits:test` can run from a git hook, where git has already exported an
+    environment naming the repository at hand; a fixture that inherited it
+    would `git init` and `git commit` into somebody's working tree. Four
+    variables rather than one, because the scrub's claim is over the whole
+    namespace: `GIT_OBJECT_DIRECTORY` and `GIT_INDEX_FILE` each leave their own
+    trace in the decoy. The assertions are on the fixture rather than
     through `gate()`, which sets `GIT_DIR` outright and would pass under no
     scrub at all.
     """

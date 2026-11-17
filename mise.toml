@@ -780,23 +780,3 @@ description = "Test that both halves of the commit rule agree about a merge"
 # to both over real repositories, including a merge through hk's hook.
 tools = { python = "3.11.16" }
 run = "python3 scripts/commits_test.py"
-
-[tasks."hooks:pre-push"]
-description = "Run all pre-push checks"
-# Formatting, the lints, the suite under coverage, the docs build and the
-# repository's own gates; each `*:test` follows the gate whose instrument it
-# tests.
-run = [
-  { task = "format:check" },
-  { task = "lint" },
-  { task = "lint:baseline" },
-  { task = "lint:codecs" },
-  { task = "coverage" },
-  { task = "docs:check" },
-  { task = "containment:check" },
-  { task = "containment:test" },
-  { task = "tooling:check" },
-  { task = "tooling:test" },
-  { task = "commits:check" },
-  { task = "commits:test" },
-]

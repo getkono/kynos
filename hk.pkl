@@ -66,15 +66,4 @@ hooks {
             }
         }
     }
-    ["pre-push"] {
-        steps {
-            ["validate"] {
-                // Git invokes pre-push even with no ref updates; run only when
-                // {{hook_stdin}} proposes one.
-                check = "if IFS= read -r _; then mise run --quiet hooks:pre-push; fi"
-                stdin = "{{ hook_stdin }}"
-                exclusive = true
-            }
-        }
-    }
 }
