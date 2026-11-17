@@ -26,31 +26,32 @@
 #
 # toolchain: 1.97.1 (8bab26f4f 2026-07-14)
 # host: x86_64-unknown-linux-gnu
-# baseline: 43826 lines
+# cc: cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+# baseline: 47067 lines
 feature	lines	copies	delta_lines	delta_copies
-openapi31	43826	1748	0	0
-assets	43141	1717	-685	-31
-assets-fs	47181	1923	3355	175
-cache	43824	1747	-2	-1
-compression	43792	1746	-34	-2
-cookie	43826	1748	0	0
-decimal-big04	43821	1747	-5	-1
-decimal-rust1	43826	1748	0	0
-docs	44595	1788	769	40
-form	43826	1748	0	0
-http1	43826	1748	0	0
-http2	43826	1748	0	0
-json	43826	1748	0	0
-macros	43826	1748	0	0
-multipart	43826	1748	0	0
-openapi32	44057	1748	231	0
-pattern	43814	1746	-12	-2
-protobuf	43826	1748	0	0
-test-util	41049	1683	-2777	-65
-time-chrono04	43826	1748	0	0
-time-jiff02	43826	1748	0	0
-trace	43826	1748	0	0
-unchecked	47866	1954	4040	206
-uuid1	43826	1748	0	0
-yaml	43843	1750	17	2
-(all-features)	47276	1922	3450	174
+openapi31	47067	1841	0	0
+assets	46990	1833	-77	-8
+assets-fs	50808	2024	3741	183
+cache	47067	1841	0	0
+compression	47066	1840	-1	-1
+cookie	47067	1841	0	0
+decimal-big04	47062	1840	-5	-1
+decimal-rust1	47067	1841	0	0
+docs	47819	1878	752	37
+form	47067	1841	0	0
+http1	47067	1841	0	0
+http2	47067	1841	0	0
+json	47067	1841	0	0
+macros	47067	1841	0	0
+multipart	47067	1841	0	0
+openapi32	47760	1855	693	14
+pattern	47055	1839	-12	-2
+protobuf	47067	1841	0	0
+test-util	44266	1777	-2801	-64
+time-chrono04	47067	1841	0	0
+time-jiff02	47067	1841	0	0
+trace	46983	1839	-84	-2
+unchecked	50885	2032	3818	191
+uuid1	47067	1841	0	0
+yaml	47084	1843	17	2
+(all-features)	51288	2034	4221	193

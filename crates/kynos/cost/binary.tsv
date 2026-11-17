@@ -13,7 +13,9 @@
 # absolutes, and an absolute moves on a toolchain bump that changed nothing
 # about Kynos. `text` is compared on the openapi31 row alone, and only under the
 # toolchain named below: that floor is what every program pays, and no delta
-# moves when it grows.
+# moves when it grows. The toolchain is rustc, its host and the system C
+# compiler `cc-rs` builds C dependencies with, since a runner image that ships
+# a newer one moves an absolute under the same rustc.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -21,31 +23,32 @@
 #
 # toolchain: 1.97.1 (8bab26f4f 2026-07-14)
 # host: x86_64-unknown-linux-gnu
-# baseline: 1073164 bytes
+# cc: cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+# baseline: 1121068 bytes
 feature	text	delta
-openapi31	1073164	0
-assets	1073164	0
-assets-fs	1108748	35584
-cache	1073100	-64
-compression	1073164	0
-cookie	1073164	0
-decimal-big04	1073164	0
-decimal-rust1	1073164	0
-docs	1080812	7648
-form	1073164	0
-http1	1073164	0
-http2	1073164	0
-json	1073164	0
-macros	1073164	0
-multipart	1073292	128
-openapi32	1169148	95984
-pattern	1073580	416
-protobuf	1073164	0
-test-util	1070044	-3120
-time-chrono04	1073164	0
-time-jiff02	1073164	0
-trace	1073164	0
-unchecked	1108748	35584
-uuid1	1073132	-32
-yaml	1079404	6240
-(all-features)	1223996	150832
+openapi31	1121068	0
+assets	1121084	16
+assets-fs	1156492	35424
+cache	1121004	-64
+compression	1121068	0
+cookie	1121068	0
+decimal-big04	1121068	0
+decimal-rust1	1121068	0
+docs	1128524	7456
+form	1121068	0
+http1	1121068	0
+http2	1121068	0
+json	1121068	0
+macros	1121068	0
+multipart	1121196	128
+openapi32	1239468	118400
+pattern	1121484	416
+protobuf	1121068	0
+test-util	1117708	-3360
+time-chrono04	1121068	0
+time-jiff02	1121068	0
+trace	1121068	0
+unchecked	1156476	35408
+uuid1	1121036	-32
+yaml	1127308	6240
+(all-features)	1291052	169984

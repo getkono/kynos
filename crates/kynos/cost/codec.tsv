@@ -35,7 +35,9 @@
 # The compared column is `delta`, for `binary.tsv`'s reason: relations outlive
 # absolutes, and an absolute moves on a toolchain bump that changed nothing
 # about Kynos. `text` is compared on the `(no codec)` floor row alone, and only
-# under the toolchain named below, for `binary.tsv`'s reason too.
+# under the toolchain named below, for `binary.tsv`'s reason too. That
+# toolchain names the system C compiler because this file needs it most:
+# `zstd-sys` is C, so the `compression` delta moves with the compiler.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -43,11 +45,12 @@
 #
 # toolchain: 1.97.1 (8bab26f4f 2026-07-14)
 # host: x86_64-unknown-linux-gnu
-# baseline: 1076876 bytes
+# cc: cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
+# baseline: 1128476 bytes
 feature	text	delta
-(no codec)	1076876	0
-compression	2058344	981468
-form	1125116	48240
-json	1139548	62672
-multipart	1185484	108608
-protobuf	1115900	39024
+(no codec)	1128476	0
+compression	2337429	1208953
+form	1178108	49632
+json	1191724	63248
+multipart	1238028	109552
+protobuf	1168076	39600
