@@ -139,14 +139,21 @@ DESCRIBE = (
 
 RECORDED_TOOLCHAIN = "1.97.1 (8bab26f4f 2026-07-14)"
 RECORDED_HOST = "x86_64-unknown-linux-gnu"
-LIVE = (RECORDED_TOOLCHAIN, RECORDED_HOST)
-OTHER_TOOLCHAIN = ("1.98.0 (0000000000 2026-09-01)", RECORDED_HOST)
+RECORDED_CC = "cc (Ubuntu 13.3.0-6ubuntu2~24.04) 13.3.0"
+LIVE = (RECORDED_TOOLCHAIN, RECORDED_HOST, RECORDED_CC)
+OTHER_TOOLCHAIN = ("1.98.0 (0000000000 2026-09-01)", RECORDED_HOST, RECORDED_CC)
+# The same rustc on a runner image whose system compiler is newer: what
+# `zstd-sys` is built by moved, and nothing about Kynos did.
+OTHER_CC = (RECORDED_TOOLCHAIN, RECORDED_HOST, "cc (Ubuntu 15.2.0-4ubuntu4) 15.2.0")
 
 
 def binary_header(baseline):
     """The real `binary.tsv` prose, so a round-trip crosses the real format."""
     return cost.BINARY_HEADER.format(
-        toolchain=RECORDED_TOOLCHAIN, host=RECORDED_HOST, baseline=baseline
+        toolchain=RECORDED_TOOLCHAIN,
+        host=RECORDED_HOST,
+        cc=RECORDED_CC,
+        baseline=baseline,
     )
 
 
@@ -215,7 +222,10 @@ def recorded_codegen(directory, rows):
         rows,
         ["lines", "copies", "delta_lines", "delta_copies"],
         cost.CODEGEN_HEADER.format(
-            toolchain=RECORDED_TOOLCHAIN, host=RECORDED_HOST, baseline=50217
+            toolchain=RECORDED_TOOLCHAIN,
+            host=RECORDED_HOST,
+            cc=RECORDED_CC,
+            baseline=50217,
         ),
     )
 
@@ -237,7 +247,10 @@ def recorded_codec(directory, rows):
         rows,
         ["text", "delta"],
         cost.CODEC_HEADER.format(
-            toolchain=RECORDED_TOOLCHAIN, host=RECORDED_HOST, baseline=883900
+            toolchain=RECORDED_TOOLCHAIN,
+            host=RECORDED_HOST,
+            cc=RECORDED_CC,
+            baseline=883900,
         ),
     )
 
@@ -330,6 +343,11 @@ class ReadRecorded(unittest.TestCase):
             back = recorded_binary(directory, binary_rows(openapi32=75920))
         self.assertEqual(back.toolchain, RECORDED_TOOLCHAIN)
         self.assertEqual(back.host, RECORDED_HOST)
+
+    def test_the_recording_c_compiler_survives_the_round_trip(self):
+        with tempfile.TemporaryDirectory() as directory:
+            back = recorded_binary(directory, binary_rows(openapi32=75920))
+        self.assertEqual(back.cc, RECORDED_CC)
 
     def test_a_missing_file_is_no_baseline(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -475,6 +493,13 @@ class Provenance(unittest.TestCase):
 
     def test_a_drift_within_one_toolchain_is_not_flagged(self):
         self.assertNotIn("mixes toolchains", self.report(LIVE))
+
+    def test_a_drift_across_c_compilers_is_flagged_and_names_both(self):
+        """A runner image's new system compiler rebuilds `zstd-sys`."""
+        text = self.report(OTHER_CC)
+        self.assertIn("mixes toolchains", text)
+        self.assertIn(RECORDED_CC, text)
+        self.assertIn(OTHER_CC[2], text)
 
     def test_a_baseline_naming_no_toolchain_is_said_to_maybe_mix_them(self):
         """A baseline older than its provenance lines, or one edited by hand."""
@@ -946,6 +971,26 @@ class ReleaseGate(unittest.TestCase):
         (reason,) = self.verdict(rows, rows, OTHER_TOOLCHAIN)
         self.assertIn(RECORDED_TOOLCHAIN, reason)
         self.assertIn(OTHER_TOOLCHAIN[0], reason)
+
+    def test_another_c_compiler_fails_rather_than_comparing(self):
+        rows = binary_rows(openapi32=75920)
+        (reason,) = self.verdict(rows, rows, OTHER_CC)
+        self.assertIn(RECORDED_CC, reason)
+        self.assertIn(OTHER_CC[2], reason)
+
+    def test_a_baseline_naming_no_c_compiler_fails(self):
+        """Every baseline recorded before the compiler joined its provenance."""
+        rows = binary_rows(openapi32=75920)
+        with tempfile.TemporaryDirectory() as directory:
+            was = written(
+                directory,
+                cost.BINARY_TSV,
+                rows,
+                ["text", "delta"],
+                f"# toolchain: {RECORDED_TOOLCHAIN}\n# host: {RECORDED_HOST}\n",
+            )
+        (reason,) = cost.unrecorded(cost.BINARY_TSV, rows, was, LIVE)
+        self.assertIn(RECORDED_CC, reason)
 
     def test_every_codegen_column_is_compared(self):
         recorded = codegen_rows(openapi32=101)
