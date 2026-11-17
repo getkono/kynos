@@ -99,6 +99,9 @@ reviewed, and it leaves each release tag carrying its own numbers, which is what
 the report's since-release section reads back. The comparison covers each delta
 and, under the recording toolchain, the baseline point's absolute — the floor a
 change that costs every program alike moves while leaving every delta still.
+That toolchain is rustc, the host and the system C compiler, because a runner
+image that ships a newer C compiler rebuilds `zstd-sys` under the same rustc
+and moves `compression` by a fifth with Kynos unchanged.
 
 **The codec sweep is the same task over a fixture that varies on purpose.**
 [`cost/codec.rs`](../crates/kynos/cost/codec.rs) mounts one operation each way

@@ -33,6 +33,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from collections import namedtuple
@@ -86,12 +87,16 @@ LLVM_LINES_ROW = re.compile(
 # without zero padding, so up to sixteen digits.
 DISAMBIGUATOR = re.compile(r"(?<=\w)\[[0-9a-f]{8,16}\]")
 
-# The header lines `write_tsv` emits that are read back: which compiler
+# The header lines `write_tsv` emits that are read back: which compilers
 # produced the rows.
-PROVENANCE = re.compile(r"^#\s*(toolchain|host):\s*(\S.*?)\s*$")
+PROVENANCE = re.compile(r"^#\s*(toolchain|host|cc):\s*(\S.*?)\s*$")
 
-# A drift is only about Kynos when both sides came from the same rustc.
-Recorded = namedtuple("Recorded", ("toolchain", "host", "rows"))
+# A drift is only about Kynos when both sides came from the same rustc, on the
+# same host, beside the same system C compiler. The last is the one a runner
+# image changes under a pinned rustc: `cc-rs` builds `zstd-sys` with it, so
+# `codec.tsv`'s `compression` row moved by +227485 on a commit that touched
+# only documentation when `ubuntu-latest` moved from 24.04 to 26.04.
+Recorded = namedtuple("Recorded", ("toolchain", "host", "cc", "rows"))
 
 # `KYNOS_COST=check` found numbers nobody recorded. Distinct from 1 and 2, which
 # say no measurement was made.
@@ -114,7 +119,9 @@ BINARY_HEADER = """\
 # absolutes, and an absolute moves on a toolchain bump that changed nothing
 # about Kynos. `text` is compared on the openapi31 row alone, and only under the
 # toolchain named below: that floor is what every program pays, and no delta
-# moves when it grows.
+# moves when it grows. The toolchain is rustc, its host and the system C
+# compiler `cc-rs` builds C dependencies with, since a runner image that ships
+# a newer one moves an absolute under the same rustc.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -122,6 +129,7 @@ BINARY_HEADER = """\
 #
 # toolchain: {toolchain}
 # host: {host}
+# cc: {cc}
 # baseline: {baseline} bytes
 """
 
@@ -164,7 +172,9 @@ CODEC_HEADER = """\
 # The compared column is `delta`, for `binary.tsv`'s reason: relations outlive
 # absolutes, and an absolute moves on a toolchain bump that changed nothing
 # about Kynos. `text` is compared on the `(no codec)` floor row alone, and only
-# under the toolchain named below, for `binary.tsv`'s reason too.
+# under the toolchain named below, for `binary.tsv`'s reason too. That
+# toolchain names the system C compiler because this file needs it most:
+# `zstd-sys` is C, so the `compression` delta moves with the compiler.
 #
 # No ceiling is set here or anywhere else. `nfr.md#thresholds` sets one from a
 # first recorded measurement, reviewed as a change to that document; this file
@@ -172,6 +182,7 @@ CODEC_HEADER = """\
 #
 # toolchain: {toolchain}
 # host: {host}
+# cc: {cc}
 # baseline: {baseline} bytes
 """
 
@@ -205,6 +216,7 @@ CODEGEN_HEADER = """\
 #
 # toolchain: {toolchain}
 # host: {host}
+# cc: {cc}
 # baseline: {baseline} lines
 """
 
@@ -317,14 +329,44 @@ def sweep_env():
 
 
 def toolchain():
-    """The rustc version string and host triple the numbers belong to."""
+    """The rustc version, host triple and C compiler the numbers belong to."""
     report = capture(["rustc", "-vV"])
     host = next(
         line.removeprefix("host: ")
         for line in report.splitlines()
         if line.startswith("host: ")
     )
-    return report.splitlines()[0].removeprefix("rustc "), host
+    return report.splitlines()[0].removeprefix("rustc "), host, c_compiler(host)
+
+
+def c_compiler(host, environ=None):
+    """The first line of `--version` from the C compiler `cc-rs` would pick.
+
+    Picked as `cc-rs` picks it for a build whose target is the host, which is
+    every build this sweep makes: the triple's own variables, then
+    `TARGET_CC`, then `CC`, then `cc`. Absent is a failure rather than a
+    blank, for `llvm_size`'s reason: a trend that silently stops naming an
+    instrument cannot say when the instrument changed.
+    """
+    environ = os.environ if environ is None else environ
+    names = (f"CC_{host}", f"CC_{host.replace('-', '_')}", "TARGET_CC", "CC")
+    command = next(
+        (shlex.split(environ[name]) for name in names if environ.get(name)), ["cc"]
+    )
+    try:
+        result = subprocess.run(
+            [*command, "--version"], capture_output=True, text=True, check=False
+        )
+    except FileNotFoundError:
+        result = None
+    if result is None or result.returncode != 0 or not result.stdout.strip():
+        return fail(
+            f"`{shlex.join(command)} --version` named no C compiler. `cc-rs` "
+            "builds `zstd-sys` with it, so a baseline records which one; "
+            "install one or point `CC` at it.",
+            2,
+        )
+    return result.stdout.strip().splitlines()[0]
 
 
 def llvm_size(host):
@@ -553,6 +595,7 @@ def parse_recorded(text):
     return Recorded(
         stated.get("toolchain"),
         stated.get("host"),
+        stated.get("cc"),
         {
             cells[0]: dict(zip(names[1:], (int(cell) for cell in cells[1:])))
             for cells in body
@@ -606,11 +649,22 @@ def write_tsv(path, header, names, rows):
     path.write_text(header + "\n".join(lines) + "\n")
 
 
-def same_toolchain(recorded, versions):
-    """Whether `recorded` was measured by the compiler this run uses."""
-    return recorded is not None and (recorded.toolchain, recorded.host) == tuple(
-        versions
+def recorded_versions(recorded):
+    """What measured `recorded`, in `toolchain()`'s order."""
+    return recorded.toolchain, recorded.host, recorded.cc
+
+
+def named(versions):
+    """A toolchain as the report states it; an unnamed part says so."""
+    rustc, host, cc = (
+        "an unnamed one" if part is None else f"`{part}`" for part in versions
     )
+    return f"{rustc} on {host} with {cc}"
+
+
+def same_toolchain(recorded, versions):
+    """Whether `recorded` was measured by the compilers this run uses."""
+    return recorded is not None and recorded_versions(recorded) == tuple(versions)
 
 
 def table(rows, recorded, value, delta, unit, versions, baseline=BASELINE):
@@ -739,21 +793,22 @@ def provenance(recorded, versions):
     """What compiler the drift column subtracts across, when there is one.
 
     A drift is a fact about Kynos only when both measurements came from the
-    same rustc; across a toolchain bump it is a fact about rustc, and the two
-    render identically in a table of numbers. `write_tsv` writes the recording
+    same rustc, host and C compiler; across a bump of any of them it is a fact
+    about the compiler, and the two render identically in a table of numbers. `write_tsv` writes the recording
     toolchain into the baseline's header; this reads it back and says so.
     """
     if recorded is None:
         return []
-    live = f"`{versions[0]}` on `{versions[1]}`"
-    if recorded.toolchain is None or recorded.host is None:
+    live = named(versions)
+    if None in recorded_versions(recorded):
         return [
-            "The recorded baseline names no toolchain, so the drift column may "
-            f"mix toolchains: this run is {live}.",
+            "The recorded baseline does not name the whole toolchain that "
+            "measured it, so the drift column may mix toolchains: this run is "
+            f"{live}.",
             "",
         ]
-    was = f"`{recorded.toolchain}` on `{recorded.host}`"
-    if (recorded.toolchain, recorded.host) == tuple(versions):
+    was = named(recorded_versions(recorded))
+    if same_toolchain(recorded, versions):
         return [f"Drift is against a baseline recorded by {was}, as here.", ""]
     return [
         f"**The drift column mixes toolchains.** The baseline was recorded by "
@@ -774,15 +829,16 @@ def unrecorded(name, rows, recorded, versions):
     fact about Kynos, and it is the one number that moves when every feature
     pays for a change.
 
-    A different toolchain or host is one reason and ends the comparison. Its
-    differences would be facts about rustc, and they are cleared the same way
-    -- by recording under the toolchain that now builds the release.
+    A different toolchain, host or C compiler is one reason and ends the
+    comparison. Its differences would be facts about the compiler, and they are
+    cleared the same way -- by recording under the toolchain that now builds
+    the release.
     """
     if recorded is None:
         return [f"`{name}` has no recorded baseline"]
-    live = f"`{versions[0]}` on `{versions[1]}`"
+    live = named(versions)
     if not same_toolchain(recorded, versions):
-        was = f"`{recorded.toolchain}` on `{recorded.host}`"
+        was = named(recorded_versions(recorded))
         return [f"`{name}` was recorded by {was}; this run is {live}"]
     reasons = []
     for label, measured in rows.items():
@@ -984,7 +1040,7 @@ def report(
     out = [
         "## Per-feature cost",
         "",
-        f"Measured by toolchain `{versions[0]}` on `{versions[1]}`. Each "
+        f"Measured by toolchain {named(versions)}. Each "
         "section states which toolchain recorded the baseline its drift column "
         "is taken against, which need not be this one, and which of the two "
         "fixtures it weighed.",
@@ -1065,6 +1121,7 @@ def main():
             k.header.format(
                 toolchain=versions[0],
                 host=versions[1],
+                cc=versions[2],
                 baseline=measured[name][k.baseline][k.value],
             ),
             list(k.columns),

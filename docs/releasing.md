@@ -39,7 +39,10 @@ releases under. Nothing else here is normative for implementation work.
    Only the codec sweep has been checked across a bump, and moved nothing
    there. A merge to `master` that moves a cost before the re-record lands
    refuses the release again, and the answer is the same step against the new
-   head.
+   head. So does a runner image that changes rustc or the system C compiler a
+   baseline names, since every number it measured is then the compiler's
+   rather than Kynos's: re-record, and do not record on a machine that is not
+   the runner.
 
    This is what makes a tag's baselines that release's own numbers, which is
    how the next release is compared against it without rebuilding it. The gate

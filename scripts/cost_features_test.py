@@ -511,7 +511,7 @@ class Provenance(unittest.TestCase):
                 ["text", "delta"],
                 "# Binary delta.\n",
             )
-        self.assertEqual((was.toolchain, was.host), (None, None))
+        self.assertEqual((was.toolchain, was.host, was.cc), (None, None, None))
         text = cost.report(
             binary_rows(openapi32=76000),
             None,
@@ -521,12 +521,51 @@ class Provenance(unittest.TestCase):
             LIVE,
         )
         self.assertIn(
-            "The recorded baseline names no toolchain, so the drift column may "
-            f"mix toolchains: this run is `{RECORDED_TOOLCHAIN}` on "
-            f"`{RECORDED_HOST}`.\n",
+            "The recorded baseline does not name the whole toolchain that "
+            "measured it, so the drift column may mix toolchains: this run is "
+            f"`{RECORDED_TOOLCHAIN}` on `{RECORDED_HOST}` with `{RECORDED_CC}`.\n",
             text,
         )
         self.assertNotIn("as here", text)
+
+
+class CCompiler(unittest.TestCase):
+    """`c_compiler`: which compiler a baseline names, picked as `cc-rs` picks it."""
+
+    def compiler(self, directory, name):
+        """A stand-in compiler whose `--version` names it `name`."""
+        path = Path(directory) / f"{name}.py"
+        path.write_text(f"print('{name} 1.0')\nprint('Copyright')\n")
+        return f"{sys.executable} -I {path}"
+
+    def test_the_first_line_of_its_version_is_what_is_named(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environ = {"CC": self.compiler(directory, "plain")}
+            self.assertEqual(cost.c_compiler(RECORDED_HOST, environ), "plain 1.0")
+
+    def test_the_triple_s_own_variable_outranks_cc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environ = {
+                "CC": self.compiler(directory, "plain"),
+                "TARGET_CC": self.compiler(directory, "target"),
+                "CC_x86_64_unknown_linux_gnu": self.compiler(directory, "triple"),
+            }
+            self.assertEqual(cost.c_compiler(RECORDED_HOST, environ), "triple 1.0")
+
+    def test_target_cc_outranks_cc(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environ = {
+                "CC": self.compiler(directory, "plain"),
+                "TARGET_CC": self.compiler(directory, "target"),
+            }
+            self.assertEqual(cost.c_compiler(RECORDED_HOST, environ), "target 1.0")
+
+    def test_no_compiler_stops_the_sweep_as_a_missing_instrument(self):
+        environ = {"CC": "kynos-no-such-compiler"}
+        with contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit) as stopped:
+                cost.c_compiler(RECORDED_HOST, environ)
+        self.assertEqual(stopped.exception.code, 2)
 
 
 class Attribution(unittest.TestCase):
