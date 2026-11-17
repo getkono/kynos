@@ -18,6 +18,7 @@ mise pins the toolchain and every tool the gates use.
 mise install
 mise exec -- hk install --mise   # commit-msg, pre-commit and pre-push hooks
 mise run check                   # the gates a local change owes
+mise run ci                      # every check CI runs on master and PRs
 ```
 
 CI splits them. Every pull request runs the fast ones and `commits:check`
@@ -32,6 +33,7 @@ feature flag, a `#[cfg]` or a platform-specific path.
 | Task | Run it when |
 | --- | --- |
 | `mise run check` | before handing off any change |
+| `mise run ci` | to answer locally what CI would, on master or a pull request |
 | `mise run test` | iterating on behaviour |
 | `mise run format` | before every commit; `format:check` is the gate |
 | `mise run lint` | Clippy over every feature, warnings denied |

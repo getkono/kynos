@@ -48,6 +48,7 @@ mise run msrv:check    # builds on the declared MSRV
 mise run containment:check # each crate is named only where it is allowed
 mise run tooling:check # the dev build profile and the Python floor hold
 mise run publish:check # every crate packages and rebuilds from its tarball
+mise run ci             # every check CI runs on master and pull requests
 ```
 
 A framework this feature-gated breaks silently without `features:check`; run it

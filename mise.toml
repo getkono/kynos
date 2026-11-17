@@ -718,6 +718,34 @@ run = [
   { task = "features:targets" },
 ]
 
+[tasks.ci]
+description = "Run every check CI runs on master and on pull requests"
+# `check` plus what only `ci.yml`'s `commits` job and `full.yml` run, so one
+# command answers what CI would. `check` comes last, keeping `features:*` last.
+# `semver:check` is advisory here as on master and pull requests; only a
+# release branch blocks on it. `cost:features` and `profile:requests` measure
+# only on the Linux x86_64 runner (docs/releasing.md forbids cost numbers from
+# any other machine, and Valgrind does not build on macOS), so elsewhere they
+# are skipped aloud. Not reproducible locally: the other platforms of
+# `full.yml`'s portability matrix, and `mutants.yml`, which runs on a
+# `ci:full` pull request.
+run = [
+  { task = "commits:check" },
+  { task = "coverage:ci" },
+  { task = "msrv:check" },
+  "mise run semver:check --advisory",
+  { task = "publish:check" },
+  { task = "fuzz:check" },
+  '''
+if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
+  mise run cost:features && mise run profile:requests
+else
+  echo "ci: skipped cost:features and profile:requests; they measure only on the Linux x86_64 runner" >&2
+fi
+''',
+  { task = "check" },
+]
+
 [tasks."commits:message"]
 description = "Validate one Conventional Commit message from stdin"
 quiet = true
