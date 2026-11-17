@@ -28,6 +28,14 @@ platform = 'cfg(windows)'
 filter = 'binary(ui)'
 slow-timeout = { period = "60s", terminate-after = 30 }
 
+# macOS runners took 377 to 527 seconds of the ten minutes, and a release run
+# that took longer was stopped at 600 with every case so far `ok`. Ahead of the
+# default for Windows' reason.
+[[profile.default.overrides]]
+platform = 'cfg(target_os = "macos")'
+filter = 'binary(ui)'
+slow-timeout = { period = "60s", terminate-after = 20 }
+
 [[profile.default.overrides]]
 filter = 'binary(ui)'
 slow-timeout = { period = "60s", terminate-after = 10 }
