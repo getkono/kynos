@@ -6277,9 +6277,9 @@ pub fn kynos::server::Server<C>::tls(self, kynos::server::tls::TlsConfig) -> Sel
 pub fn kynos::server::Server<C>::unix_listener(self, impl core::convert::Into<std::os::unix::net::listener::UnixListener>) -> Self
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::Server<C>
 pub fn kynos::server::Server<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C> core::marker::Freeze for kynos::server::Server<C>
+impl<C> !core::marker::Freeze for kynos::server::Server<C>
 impl<C> core::marker::Send for kynos::server::Server<C>
-impl<C> !core::marker::Sync for kynos::server::Server<C>
+impl<C> core::marker::Sync for kynos::server::Server<C>
 impl<C> core::marker::Unpin for kynos::server::Server<C>
 impl<C> core::marker::UnsafeUnpin for kynos::server::Server<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::Server<C>
@@ -10260,13 +10260,13 @@ pub fn kynos::server::shutdown::Shutdown::on(impl core::future::future::Future<O
 pub fn kynos::server::shutdown::Shutdown::signals() -> Self
 impl core::fmt::Debug for kynos::server::shutdown::Shutdown
 pub fn kynos::server::shutdown::Shutdown::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for kynos::server::shutdown::Shutdown
+impl !core::marker::Freeze for kynos::server::shutdown::Shutdown
 impl core::marker::Send for kynos::server::shutdown::Shutdown
-impl !core::marker::Sync for kynos::server::shutdown::Shutdown
+impl core::marker::Sync for kynos::server::shutdown::Shutdown
 impl core::marker::Unpin for kynos::server::shutdown::Shutdown
 impl core::marker::UnsafeUnpin for kynos::server::shutdown::Shutdown
-impl !core::panic::unwind_safe::RefUnwindSafe for kynos::server::shutdown::Shutdown
-impl !core::panic::unwind_safe::UnwindSafe for kynos::server::shutdown::Shutdown
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::server::shutdown::Shutdown
+impl core::panic::unwind_safe::UnwindSafe for kynos::server::shutdown::Shutdown
 pub mod kynos::server::tcp
 #[non_exhaustive] pub struct kynos::server::tcp::TcpKeepAlive
 pub kynos::server::tcp::TcpKeepAlive::idle: core::time::Duration
@@ -10418,9 +10418,9 @@ impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::openapi(&self) -> &kynos_openapi::model::document::Document
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C> core::marker::Freeze for kynos::server::BoundServer<C>
+impl<C> !core::marker::Freeze for kynos::server::BoundServer<C>
 impl<C> core::marker::Send for kynos::server::BoundServer<C>
-impl<C> !core::marker::Sync for kynos::server::BoundServer<C>
+impl<C> core::marker::Sync for kynos::server::BoundServer<C>
 impl<C> core::marker::Unpin for kynos::server::BoundServer<C>
 impl<C> core::marker::UnsafeUnpin for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::BoundServer<C>
@@ -10466,9 +10466,9 @@ pub fn kynos::server::Server<C>::tls(self, kynos::server::tls::TlsConfig) -> Sel
 pub fn kynos::server::Server<C>::unix_listener(self, impl core::convert::Into<std::os::unix::net::listener::UnixListener>) -> Self
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::Server<C>
 pub fn kynos::server::Server<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C> core::marker::Freeze for kynos::server::Server<C>
+impl<C> !core::marker::Freeze for kynos::server::Server<C>
 impl<C> core::marker::Send for kynos::server::Server<C>
-impl<C> !core::marker::Sync for kynos::server::Server<C>
+impl<C> core::marker::Sync for kynos::server::Server<C>
 impl<C> core::marker::Unpin for kynos::server::Server<C>
 impl<C> core::marker::UnsafeUnpin for kynos::server::Server<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::Server<C>
@@ -10514,7 +10514,7 @@ impl<C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestClient<C>
 pub fn kynos::test::TestClient<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<C> !core::marker::Freeze for kynos::test::TestClient<C>
 impl<C> core::marker::Send for kynos::test::TestClient<C>
-impl<C> !core::marker::Sync for kynos::test::TestClient<C>
+impl<C> core::marker::Sync for kynos::test::TestClient<C>
 impl<C> core::marker::Unpin for kynos::test::TestClient<C>
 impl<C> core::marker::UnsafeUnpin for kynos::test::TestClient<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::test::TestClient<C>
@@ -10583,7 +10583,7 @@ pub fn kynos::test::TestRequest<'_, C>::text(self, &str) -> Self
 impl<'a, C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestRequest<'a, C>
 pub fn kynos::test::TestRequest<'a, C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<'a, C> !core::marker::Freeze for kynos::test::TestRequest<'a, C>
-impl<'a, C> !core::marker::Send for kynos::test::TestRequest<'a, C>
+impl<'a, C> core::marker::Send for kynos::test::TestRequest<'a, C>
 impl<'a, C> !core::marker::Sync for kynos::test::TestRequest<'a, C>
 impl<'a, C> core::marker::Unpin for kynos::test::TestRequest<'a, C>
 impl<'a, C> core::marker::UnsafeUnpin for kynos::test::TestRequest<'a, C>

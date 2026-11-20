@@ -1844,14 +1844,12 @@ async fn the_deregistration_delay_ends_in_the_drain() {
 async fn a_second_signal_forces_shutdown_during_the_deregistration_delay() {
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
-    let shutdown = crate::server::shutdown::Shutdown {
-        future: Box::pin(async move {
-            let _ = shutdown_receiver.await;
-            Ok(Box::pin(async move {
-                let _ = force_receiver.await;
-            }) as crate::server::shutdown::ForceFuture)
-        }),
-    };
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async move {
+        let _ = shutdown_receiver.await;
+        Ok(Box::pin(async move {
+            let _ = force_receiver.await;
+        }) as crate::server::shutdown::ForceFuture)
+    }));
     let bound = crate::server::Server::new(test_service())
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .graceful_shutdown(shutdown)
@@ -2013,14 +2011,12 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     let (service, started, _release) = blocking_service();
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
-    let shutdown = crate::server::shutdown::Shutdown {
-        future: Box::pin(async move {
-            let _ = shutdown_receiver.await;
-            Ok(Box::pin(async move {
-                let _ = force_receiver.await;
-            }) as crate::server::shutdown::ForceFuture)
-        }),
-    };
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async move {
+        let _ = shutdown_receiver.await;
+        Ok(Box::pin(async move {
+            let _ = force_receiver.await;
+        }) as crate::server::shutdown::ForceFuture)
+    }));
     let bound = crate::server::Server::new(service)
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .shutdown_timeout(std::time::Duration::from_secs(25))
@@ -2082,9 +2078,9 @@ async fn zero_shutdown_timeout_reports_a_timeout_with_nothing_in_flight() {
 async fn a_failing_shutdown_trigger_ends_serving_with_its_error() {
     use std::io;
 
-    let shutdown = crate::server::shutdown::Shutdown {
-        future: Box::pin(async { Err(io::Error::other("no signal for you")) }),
-    };
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async {
+        Err(io::Error::other("no signal for you"))
+    }));
     let error = tokio::time::timeout(
         std::time::Duration::from_secs(5),
         crate::server::Server::new(test_service())
@@ -2300,15 +2296,13 @@ async fn a_configured_force_still_forces_a_drain_the_handle_began() {
     let (begin_sender, begin_receiver) = tokio::sync::oneshot::channel();
     let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
     let (observed_sender, observed_receiver) = tokio::sync::oneshot::channel();
-    let shutdown = crate::server::shutdown::Shutdown {
-        future: Box::pin(async move {
-            let _ = begin_receiver.await;
-            let _ = observed_sender.send(());
-            Ok(Box::pin(async move {
-                let _ = force_receiver.await;
-            }) as crate::server::shutdown::ForceFuture)
-        }),
-    };
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async move {
+        let _ = begin_receiver.await;
+        let _ = observed_sender.send(());
+        Ok(Box::pin(async move {
+            let _ = force_receiver.await;
+        }) as crate::server::shutdown::ForceFuture)
+    }));
     let running = crate::server::Server::new(service)
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .shutdown_timeout(std::time::Duration::from_secs(25))
@@ -2359,9 +2353,9 @@ async fn a_configured_force_still_forces_a_drain_the_handle_began() {
 /// which the handle reports rather than discards.
 #[tokio::test]
 async fn a_spawned_server_reports_a_failing_shutdown_trigger() {
-    let shutdown = crate::server::shutdown::Shutdown {
-        future: Box::pin(async { Err(std::io::Error::other("no signal for you")) }),
-    };
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async {
+        Err(std::io::Error::other("no signal for you"))
+    }));
     let running = crate::server::Server::new(test_service())
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .graceful_shutdown(shutdown)
@@ -8240,4 +8234,15 @@ mod proxy_protocol {
         assert!(response.ends_with("\r\n\r\n203.0.113.7:4711"), "{response}");
         stop(shutdown, server).await;
     }
+}
+
+/// Witnesses a type that crosses a task boundary, and is shared across one.
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// A configured server, and the trigger it holds, can be shared, so a
+/// `TestClient` driving one is shared too.
+#[test]
+fn a_server_and_its_shutdown_trigger_are_send_and_sync() {
+    assert_send_sync::<super::shutdown::Shutdown>();
+    assert_send_sync::<super::Server<()>>();
 }

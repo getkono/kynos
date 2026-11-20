@@ -7,6 +7,7 @@ use std::{
     future::{Future, pending},
     io,
     pin::Pin,
+    sync::{Mutex, PoisonError},
 };
 
 use crate::server::shutdown::signal::{platform_signals, repeatable_ctrl_c};
@@ -26,7 +27,11 @@ pub(in crate::server) type ShutdownFuture =
 /// default process behavior for the rest of the process lifetime. Kynos keeps
 /// its listeners alive through the drain so repeated signals remain effective.
 pub struct Shutdown {
-    pub(in crate::server) future: ShutdownFuture,
+    /// Behind a lock only so a trigger is `Sync` without asking that of the
+    /// future it was built from, which `unsafe_code = "forbid"` leaves no
+    /// exclusive-access wrapper to do. It is never locked: the future is
+    /// polled only after [`into_future`](Self::into_future) takes it out.
+    future: Mutex<ShutdownFuture>,
 }
 
 impl fmt::Debug for Shutdown {
@@ -36,12 +41,24 @@ impl fmt::Debug for Shutdown {
 }
 
 impl Shutdown {
+    pub(in crate::server) fn new(future: ShutdownFuture) -> Self {
+        Self {
+            future: Mutex::new(future),
+        }
+    }
+
+    /// The future that begins shutdown, and resolves to the one that forces it.
+    pub(in crate::server) fn into_future(self) -> ShutdownFuture {
+        // Never locked, so never poisoned; the inner value is sound either way.
+        self.future
+            .into_inner()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Resolves on the first Ctrl-C and forces shutdown on the second.
     #[must_use]
     pub fn ctrl_c() -> Self {
-        Self {
-            future: repeatable_ctrl_c(),
-        }
+        Self::new(repeatable_ctrl_c())
     }
 
     /// Resolves on the platform's conventional termination signals.
@@ -51,9 +68,7 @@ impl Shutdown {
     /// watched event forces shutdown immediately.
     #[must_use]
     pub fn signals() -> Self {
-        Self {
-            future: platform_signals(),
-        }
+        Self::new(platform_signals())
     }
 
     /// Resolves successfully when `future` does.
@@ -62,12 +77,10 @@ impl Shutdown {
     /// shutdown timeout remains the upper bound on their drain.
     #[must_use]
     pub fn on(future: impl Future<Output = ()> + Send + 'static) -> Self {
-        Self {
-            future: Box::pin(async move {
-                future.await;
-                Ok(Box::pin(pending()) as ForceFuture)
-            }),
-        }
+        Self::new(Box::pin(async move {
+            future.await;
+            Ok(Box::pin(pending()) as ForceFuture)
+        }))
     }
 
     /// Begins shutdown on `configured` or on `trigger`, whichever resolves
@@ -83,23 +96,22 @@ impl Shutdown {
         configured: Option<Self>,
         trigger: impl Future<Output = ()> + Send + 'static,
     ) -> Self {
-        let Some(Self { mut future }) = configured else {
+        let Some(configured) = configured else {
             return Self::on(trigger);
         };
-        Self {
-            future: Box::pin(async move {
-                let trigger = std::pin::pin!(trigger);
-                tokio::select! {
-                    biased;
-                    begun = &mut future => begun,
-                    () = trigger => Ok(Box::pin(async move {
-                        match future.await {
-                            Ok(force) => force.await,
-                            Err(_) => pending().await,
-                        }
-                    }) as ForceFuture),
-                }
-            }),
-        }
+        let mut future = configured.into_future();
+        Self::new(Box::pin(async move {
+            let trigger = std::pin::pin!(trigger);
+            tokio::select! {
+                biased;
+                begun = &mut future => begun,
+                () = trigger => Ok(Box::pin(async move {
+                    match future.await {
+                        Ok(force) => force.await,
+                        Err(_) => pending().await,
+                    }
+                }) as ForceFuture),
+            }
+        }))
     }
 }

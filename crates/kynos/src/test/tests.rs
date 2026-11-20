@@ -845,3 +845,21 @@ mod assertions {
         let _: u8 = received(StatusCode::OK, &[], b"\"x\"").json();
     }
 }
+
+/// Witnesses a type that crosses a task boundary, and is shared across one.
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// A client is shared, since `TestRequest::send` borrows it, so one behind an
+/// `Arc` drives requests from several spawned tasks — whether or not it was
+/// built over a server, since an enum's auto traits are every variant's.
+#[test]
+fn a_client_is_send_and_sync() {
+    assert_send_sync::<super::TestClient<()>>();
+}
+
+/// Witnesses a future a task can be spawned with.
+fn assert_send<T: Send>(_: &T) {}
+
+/// What a shared client is for: a request sent from a spawned task, through
+/// the `&TestClient` an `Arc` hands it. Compiled, never run.
+const _: fn(&super::TestClient<()>) = |client| assert_send(&client.get("/").send());
