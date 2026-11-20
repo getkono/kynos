@@ -59,8 +59,12 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
         |tag| quote!(&[::kynos::router::operation::DeclaredTag::of::<#tag>()]),
     );
 
+    let chrono = crate::chrono::signature_markers(&function.sig);
+
     Ok(quote! {
         #function
+
+        #chrono
 
         #[doc(hidden)]
         #[allow(non_camel_case_types)]
