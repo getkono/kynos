@@ -229,7 +229,10 @@ fn conversion<'a>(
 /// path, since a struct expression cannot name a variant through a qualified
 /// one.
 fn expression_path(wide: &Type) -> TokenStream2 {
-    let Type::Path(TypePath { qself: None, path }) = wide else {
+    let Type::Path(TypePath {
+        qself: None, path, ..
+    }) = wide
+    else {
         return quote!(Self);
     };
     let mut path = path.clone();

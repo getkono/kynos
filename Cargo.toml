@@ -81,7 +81,7 @@ serde_norway = "0.9.42"
 # TCP keepalive with an idle time, which tokio does not expose. Already in the
 # graph through tokio's `net`, with `all`.
 socket2 = { version = "0.6.5", features = ["all"] }
-syn = "2.0.106"
+syn = "3.0.10"
 thiserror = "2.0.19"
 tokio = "1.53.1"
 # The defaults, stated: `server/tls/` names `aws-lc-rs` explicitly, so it must

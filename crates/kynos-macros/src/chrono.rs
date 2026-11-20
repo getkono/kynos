@@ -102,7 +102,7 @@ fn arguments<'a>(arguments: &'a PathArguments, found: &mut Vec<&'a Type>) {
             parenthesized
                 .inputs
                 .iter()
-                .for_each(|input| collect(input, found));
+                .for_each(|input| collect(&input.ty, found));
             if let ReturnType::Type(_, ty) = &parenthesized.output {
                 collect(ty, found);
             }
