@@ -944,7 +944,7 @@ impl<C: 'static> BoundServer<C> {
 
         let shutdown = self.shutdown.map_or_else(
             || Box::pin(pending()) as ShutdownFuture,
-            |shutdown| shutdown.future,
+            Shutdown::into_future,
         );
         tokio::pin!(shutdown);
 
