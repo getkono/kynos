@@ -1,8 +1,8 @@
 name: Comprehensive
 
 # Every check too slow for a pull request to wait on: the feature matrix, the
-# other platforms, coverage, the MSRV, packaging, the API comparison, the fuzz
-# corpus and the cost sweeps. `ci.yml` is what an ordinary pull request runs.
+# other platforms, coverage, the MSRV, packaging, dependency currency, the API
+# comparison, the fuzz corpus and the cost sweeps. `ci.yml` is what an ordinary pull request runs.
 #
 # The tier runs on a release pull request (a `release-plz-` head, per
 # `docs/releasing.md`), on one labelled `ci:full`, on a manual dispatch, and
@@ -208,6 +208,32 @@ jobs:
       - name: Package every crate
         run: mise run publish:check
 
+  # Every published dependency behind its latest release, before the release
+  # ships against it. Warnings and a job summary, never a refusal, since each
+  # entry is a decision for whoever merges. A run with no verdict fails.
+  deps:
+    name: Dependency currency
+    needs: gate
+    if: needs.gate.outputs.full == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      # No `cargo-cache-key`: nothing here builds the workspace.
+      - name: Set up
+        uses: ./.github/actions/setup
+      - name: Warn of published dependencies behind their latest release
+        run: mise run deps:latest
+      - name: Add dependency currency summary
+        if: ${{ !cancelled() && hashFiles('target/deps-latest-report.md') != '' }}
+        run: cat target/deps-latest-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload dependency currency report
+        if: ${{ !cancelled() && hashFiles('target/deps-latest-report.md') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: deps-latest-report
+          path: target/deps-latest-report.md
+
   # The `fuzz/` targets, on the nightly toolchain `cargo fuzz` needs; the
   # nightly search is `fuzz.yml`. `docs/testing.md#fuzzing` has the reasons.
   fuzz:
@@ -327,6 +353,7 @@ jobs:
       - msrv
       - semver
       - package
+      - deps
       - fuzz
       - cost
       - profile
