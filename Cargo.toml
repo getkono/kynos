@@ -42,7 +42,7 @@ indexmap = "2.11.0"
 jiff02 = { package = "jiff", version = "0.2.35", default-features = false }
 # No defaults: they fetch `$ref`s over the network, and a description is
 # self-contained, so conformance checks stay hermetic.
-jsonschema = { version = "0.49.9", default-features = false }
+jsonschema = { version = "0.61.2", default-features = false }
 # The `jwt` example only; Kynos ships no JWT verifier.
 jsonwebtoken = { version = "9.3.1", default-features = false }
 listenfd = "1.0.2"
