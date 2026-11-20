@@ -30,7 +30,8 @@ releases under. Nothing else here is normative for implementation work.
    `master`, which refreshes this pull request as step 3's re-record does. A
    release that needs a newer Rust or a raised requirement is a
    [dependency bump](#dependency-bumps) to schedule, not a reason to hold the
-   release. Only a run with no verdict fails it.
+   release, and so is a compatible one a requirement in the graph holds back.
+   Only a run with no verdict fails it.
 3. **Record what the release costs.** `Cost trend` fails on the release pull
    request unless the baselines under `crates/kynos/cost/` are exactly what
    this release measures, including the floor every feature's delta is taken
