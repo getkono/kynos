@@ -8241,3 +8241,14 @@ mod proxy_protocol {
         stop(shutdown, server).await;
     }
 }
+
+/// Witnesses a type that crosses a task boundary, and is shared across one.
+fn assert_send_sync<T: Send + Sync>() {}
+
+/// A configured server, and the trigger it holds, can be shared, so a
+/// `TestClient` driving one is shared too.
+#[test]
+fn a_server_and_its_shutdown_trigger_are_send_and_sync() {
+    assert_send_sync::<super::shutdown::Shutdown>();
+    assert_send_sync::<super::Server<()>>();
+}
