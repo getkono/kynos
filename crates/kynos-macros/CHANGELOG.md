@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/getkono/kynos/compare/kynos-macros-v0.6.0...kynos-macros-v0.6.1) - 2026-11-20
+
+### Added
+
+- *(macros)* warn at a chrono type a derive or route sees under time-chrono04
+
 ## [0.6.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.5.0...kynos-macros-v0.6.0) - 2026-11-17
 
 ### Added
