@@ -22,6 +22,15 @@ releases under. Nothing else here is normative for implementation work.
    the release is where the other platforms, the feature matrix, coverage, the
    MSRV, packaging and the API's compatibility at every feature are held,
    behind its `Comprehensive` check.
+
+   Its `Dependency currency` job warns of every crate the published packages
+   depend on, transitive ones included, that is not on its latest release, and
+   its job summary sorts them by what clearing each takes. A compatible
+   release the lockfile does not hold is a `cargo update` on a branch from
+   `master`, which refreshes this pull request as step 3's re-record does. A
+   release that needs a newer Rust or a raised requirement is a
+   [dependency bump](#dependency-bumps) to schedule, not a reason to hold the
+   release. Only a run with no verdict fails it.
 3. **Record what the release costs.** `Cost trend` fails on the release pull
    request unless the baselines under `crates/kynos/cost/` are exactly what
    this release measures, including the floor every feature's delta is taken
@@ -127,6 +136,11 @@ Dependabot never raises a requirement, so a new major arrives through the
 nightly `outdated.yml` report instead: its job summary lists every direct
 dependency with a newer incompatible version. Each line is one of the bumps
 above for someone to schedule; the report files nothing itself.
+
+Neither reaches a transitive crate, or a compatible release Dependabot has not
+locked yet. The release pull request's `Dependency currency` job does: it is
+the last look at what the release ships against, step 2 of [the
+loop](#the-loop).
 
 ## Trusted Publishing
 
