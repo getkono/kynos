@@ -58,6 +58,9 @@ jobs:
       - name: Test the request-path profile's parsers and report
         run: mise run profile:test
 
+      - name: Test the dependency currency report's parsers
+        run: mise run deps:test
+
       # Not in `commits`, which runs on pull requests only.
       - name: Test that the commit rule's two halves agree
         run: mise run commits:test

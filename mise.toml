@@ -461,6 +461,23 @@ mkdir -p target
 } >target/outdated-report.md
 '''
 
+[tasks."deps:latest"]
+description = "Warn of every published dependency behind its latest release"
+# What a release PR ships against, transitive crates included: `Cargo.lock`
+# between Dependabot's weekly runs, and every newer release `deps:outdated`
+# leaves out as transitive or MSRV-bound. `cargo update --dry-run`, so the
+# verdict is resolver 3's, which respects `rust-version`. Warnings only; it fails
+# when there is no verdict. `target/deps-latest-report.md` is what CI publishes.
+# Needs the registry, so it runs in `ci`, not `check`.
+tools = { python = "3.11.16" }
+run = "python3 scripts/deps_latest.py"
+
+[tasks."deps:test"]
+description = "Test the dependency currency report's graph walk and parser"
+# A parser that stops matching empties the report and still exits zero.
+tools = { python = "3.11.16" }
+run = "python3 scripts/deps_latest_test.py"
+
 [tasks."publish:check"]
 description = "Package every crate exactly as crates.io will receive it"
 # Rebuilds each crate from its tarball, the only check that sees a file the
@@ -711,6 +728,7 @@ run = [
   { task = "cost:test" },
   { task = "profile:test" },
   { task = "commits:test" },
+  { task = "deps:test" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "test:arbitrary-precision" },
@@ -735,6 +753,7 @@ run = [
   { task = "msrv:check" },
   "mise run semver:check --advisory",
   { task = "publish:check" },
+  { task = "deps:latest" },
   { task = "fuzz:check" },
   '''
 if [ "$(uname -s)-$(uname -m)" = Linux-x86_64 ]; then
