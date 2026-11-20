@@ -191,13 +191,16 @@ def annotations(records):
     return lines
 
 
-def run(args):
-    """`args`'s stdout and stderr together, or `None` if it failed."""
-    done = subprocess.run(
-        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+def run(args, stderr=subprocess.PIPE):
+    """`args`'s stdout, or `None` if it failed.
+
+    Stderr is left out, since a cold registry fills it with fetches; pass
+    `stderr=subprocess.STDOUT` where it carries the result.
+    """
+    done = subprocess.run(args, stdout=subprocess.PIPE, stderr=stderr, text=True)
     if done.returncode != 0:
         print(done.stdout, end="", file=sys.stderr)
+        print(done.stderr or "", end="", file=sys.stderr)
         print(f"{args[0]} {args[1]} exited {done.returncode}", file=sys.stderr)
         return None
     return done.stdout
@@ -208,8 +211,11 @@ def main():
     metadata = run(
         ["cargo", "metadata", "--all-features", "--format-version", "1"]
     )
-    # Cargo prints to stderr, which `run` merges: the verbs are the result.
-    update = run(["cargo", "update", "--dry-run", "--verbose", "--color", "never"])
+    # Cargo prints the verbs to stderr: they are the result.
+    update = run(
+        ["cargo", "update", "--dry-run", "--verbose", "--color", "never"],
+        stderr=subprocess.STDOUT,
+    )
     if names is None or metadata is None or update is None:
         return 1
     roots = set(publishable(json.loads(names)))
