@@ -46,11 +46,11 @@
 # toolchain: 1.97.1 (8bab26f4f 2026-07-14)
 # host: x86_64-unknown-linux-gnu
 # cc: cc (Ubuntu 15.2.0-16ubuntu1) 15.2.0
-# baseline: 1128476 bytes
+# baseline: 1128556 bytes
 feature	text	delta
-(no codec)	1128476	0
-compression	2337429	1208953
-form	1178108	49632
-json	1191724	63248
-multipart	1238028	109552
-protobuf	1168076	39600
+(no codec)	1128556	0
+compression	2117522	988966
+form	1178268	49712
+json	1191964	63408
+multipart	1237996	109440
+protobuf	1168316	39760
