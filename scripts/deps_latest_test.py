@@ -11,6 +11,7 @@ were.
 Run as `mise run deps:test`, or directly.
 """
 
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -27,6 +28,7 @@ from deps_latest import (  # noqa: E402
     parse_update,
     published_graph,
     report,
+    run,
 )
 
 DRY_RUN = """\
@@ -143,6 +145,23 @@ class ParseUpdate(unittest.TestCase):
         ):
             with self.subTest(line=line), self.assertRaises(Unparsed):
                 parse_update(line)
+
+
+class Run(unittest.TestCase):
+    # `cargo metadata` prints its index fetch and downloads to stderr on a cold
+    # registry, as on CI; only its stdout is the JSON.
+    NOISY = [
+        sys.executable, "-c",
+        "import sys; sys.stderr.write('Downloaded x v1\\n'); print('{}')",
+    ]
+
+    def test_stderr_is_kept_out_of_the_output_by_default(self):
+        self.assertEqual(run(self.NOISY), "{}\n")
+
+    def test_stderr_is_merged_when_it_carries_the_result(self):
+        self.assertEqual(
+            run(self.NOISY, stderr=subprocess.STDOUT), "Downloaded x v1\n{}\n"
+        )
 
 
 class Report(unittest.TestCase):
