@@ -333,6 +333,8 @@ uuid1 = ["dep:uuid1"]
 # Umbrellas holding the shapes their backends share; neither compiles alone.
 # `time` is unrelated to the `time` crate.
 time = []
+# Deprecated: chrono is unmaintained (RUSTSEC-2026-0543). Each chrono type a
+# route attribute or derive is handed warns; removal is a later `!` commit.
 time-chrono04 = ["time", "dep:chrono04"]
 time-jiff02 = ["time", "dep:jiff02"]
 

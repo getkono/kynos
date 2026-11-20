@@ -78,7 +78,7 @@ backend; enabling an umbrella without a backend is a compile error.
 | --- | --- | --- |
 | `uuid1` | — | `uuid` 1.x |
 | `time` | one of the two below | *(shapes only)* |
-| `time-chrono04` | `time` | `chrono` 0.4.x |
+| `time-chrono04` | `time` | `chrono` 0.4.x. Deprecated: chrono is unmaintained (RUSTSEC-2026-0543); use `time-jiff02` |
 | `time-jiff02` | `time` | `jiff` 0.2.x |
 | `decimal` | one of the two below | *(shapes only)* |
 | `decimal-rust1` | `decimal` | `rust_decimal` 1.x |

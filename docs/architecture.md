@@ -241,6 +241,15 @@ because the impls are on distinct types and both can be on while an
 application moves. The old one is removed in a later breaking release, and
 that removal is the `!` commit. The `time` and `decimal` umbrellas name no crate and stay unversioned.
 
+**Deprecating a scalar feature:** Cargo cannot deprecate a feature and
+`#[deprecated]` on a trait impl has no effect, so the warning is an item in
+`kynos::__private` deprecated only under the feature, named by every route
+attribute and derive at each type of that crate, spanned there. An
+application's `-D warnings` build then fails where the type is written, and
+its cargo-deny or cargo-audit sees the advisory that prompted it, which
+`deny.toml` ignores with the removal as its condition. `time-chrono04` is the
+one deprecated today.
+
 **The auxiliary guarantee:** every built-in codec is re-implementable through
 [`BodyCodec`](../crates/kynos/src/extract/body/codec.rs) and `Encoded<C, T>`, so
 a codec advisory never leaves an application waiting on a Kynos release: it
