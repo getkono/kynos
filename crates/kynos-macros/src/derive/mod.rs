@@ -8,6 +8,7 @@
 
 use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
+use syn::DeriveInput;
 
 pub(crate) mod api_error;
 pub(crate) mod attribute;
@@ -36,6 +37,23 @@ pub(crate) fn run<T: syn::parse::Parse>(
         Ok(tokens) => tokens.into(),
         Err(error) => error.to_compile_error().into(),
     }
+}
+
+/// [`run`] for a derive whose fields reach `Schema` or `ParamValue`, followed
+/// by the `time-chrono04` deprecation at each chrono field type.
+///
+/// The markers sit beside the expansion, outside the `#[allow(deprecated)]`
+/// its impls carry, and are emitted only on success, so a refusal stays the
+/// one diagnostic.
+pub(crate) fn run_typed(
+    item: TokenStream,
+    expand: impl FnOnce(&DeriveInput) -> syn::Result<TokenStream2>,
+) -> TokenStream {
+    run(item, |input: &DeriveInput| {
+        let mut tokens = expand(input)?;
+        tokens.extend(crate::chrono::input_markers(input));
+        Ok(tokens)
+    })
 }
 
 #[cfg(test)]

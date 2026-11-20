@@ -4,14 +4,15 @@
 //!
 //! ```text
 //! cargo run -p kynos --example scalars --features \
-//!   uuid1,time-chrono04,time-jiff02,decimal-rust1,decimal-big04
+//!   uuid1,time-jiff02,decimal-rust1,decimal-big04
 //! ```
 //!
-//! An application picks *one* date backend and *one* decimal backend. Both of
-//! each appear here because the point of the file is the mapping, and the
-//! mapping is only visible when the alternatives sit side by side. The
-//! mapping itself is the "Behind a feature flag" table in the `kynos::schema`
-//! rustdoc.
+//! An application picks *one* decimal backend. Both appear here because the
+//! point of the file is the mapping, and the mapping is only visible when the
+//! alternatives sit side by side. Dates come from jiff alone: the other
+//! backend, `time-chrono04`, is deprecated because chrono is unmaintained, and
+//! maps onto the same shapes. The mapping itself is the "Behind a feature
+//! flag" table in the `kynos::schema` rustdoc.
 //!
 //! Three things are worth noticing:
 //!
@@ -25,8 +26,8 @@
 //!   the shape both map onto, so `date-time-local` cannot mean two things.
 //!   Each feature also names the crate's major version, so `jiff`'s next major
 //!   would arrive as a feature beside `time-jiff02` rather than replacing it.
-//! * **The offset-less types are not `date-time`.** `NaiveDateTime` and
-//!   `civil::DateTime` carry no offset, so they are not RFC 3339 timestamps,
+//! * **The offset-less types are not `date-time`.** `civil::DateTime` carries
+//!   no offset, so they are not RFC 3339 timestamps,
 //!   and saying otherwise would document a request body the service rejects.
 //!   They take the registered `date-time-local` instead. The demonstration is
 //!   in `docs/schema.md`; the assertion is in `schema/tests.rs`.
@@ -40,7 +41,6 @@ use std::net::Ipv4Addr;
 // Kynos's own manifest keys each crate by its major, so this example reaches
 // them through those names; an application names them as its manifest does.
 use bigdecimal04 as bigdecimal;
-use chrono04 as chrono;
 use jiff02 as jiff;
 use rust_decimal1 as rust_decimal;
 use uuid1 as uuid;
@@ -60,17 +60,11 @@ struct Booking {
 
     /// `string` / `date-time`. An instant carries an offset by construction, so
     /// it is an RFC 3339 timestamp and nothing has to check that it is.
-    booked_at: chrono::DateTime<chrono::Utc>,
-
-    /// `string` / `date-time`, from the other backend. The same shape: an
-    /// operation that took a `Timestamp` where another took a `DateTime<Utc>`
-    /// would emit the same schema, which is what makes the two interchangeable
-    /// to a consumer.
     confirmed_at: jiff::Timestamp,
 
     /// `string` / `date-time-zoned`, plus a `pattern`.
     ///
-    /// The one type in either backend with no registered format. RFC 9557
+    /// The one date or time type with no registered format. RFC 9557
     /// appends the IANA zone in brackets — `2026-08-11T09:00:00-04:00[America/New_York]`
     /// — and that suffix is exactly what stops it being a valid `date-time`. A
     /// consumer that has not heard of the format falls back to `type` and the
@@ -108,22 +102,22 @@ struct Booking {
 /// have different formats because they are different claims.
 #[derive(Schema, Serialize, Deserialize)]
 struct Availability {
-    /// `string` / `date`. Both backends agree, and so does JSON Schema.
+    /// `string` / `date`, as JSON Schema has it.
     on: jiff::civil::Date,
 
     /// `string` / `time-local`. Registered, and not the same as `time`: the
     /// latter requires an offset.
     opens_at: jiff::civil::Time,
 
-    /// `string` / `date-time-local`, from the chrono side.
-    last_reviewed: chrono::NaiveDateTime,
+    /// `string` / `date-time-local`: a wall-clock reading, not an instant.
+    last_reviewed: jiff::civil::DateTime,
 
     /// `string` / `duration`, the ISO 8601 form — `PT1H30M`.
     ///
-    /// This is the half of the temporal surface chrono cannot match:
-    /// `TimeDelta` serializes as a `[seconds, nanos]` array, so it is
-    /// deliberately undescribable, and the `kynos::schema` rustdoc's table of
-    /// types left without an implementation gives the remedy.
+    /// chrono's `TimeDelta` has no counterpart: it serializes as a
+    /// `[seconds, nanos]` array, so it is deliberately undescribable, and the
+    /// `kynos::schema` rustdoc's table of types left without an implementation
+    /// gives the remedy.
     slot_length: jiff::Span,
 }
 
@@ -142,8 +136,6 @@ async fn get_booking(Path(path): Path<BookingPath>) -> Json<Booking> {
     // point: Kynos describes these types and constructs none of them.
     Json(Booking {
         id: path.id,
-        booked_at: chrono::DateTime::from_timestamp(1_776_000_000, 0)
-            .expect("a valid unix timestamp"),
         confirmed_at: jiff::Timestamp::from_second(1_776_000_600).expect("a valid unix timestamp"),
         starts_at: "2026-08-11T09:00:00-04:00[America/New_York]"
             .parse()
@@ -160,10 +152,7 @@ async fn get_availability() -> Json<Availability> {
     Json(Availability {
         on: jiff::civil::date(2026, 8, 11),
         opens_at: jiff::civil::time(9, 0, 0, 0),
-        last_reviewed: chrono::NaiveDate::from_ymd_opt(2026, 7, 1)
-            .expect("a valid date")
-            .and_hms_opt(12, 0, 0)
-            .expect("a valid time"),
+        last_reviewed: jiff::civil::date(2026, 7, 1).at(12, 0, 0, 0),
         // `PT1H30M`, which is the form the schema's `duration` format names.
         slot_length: jiff::Span::new().hours(1).minutes(30),
     })

@@ -17,6 +17,7 @@
 
 #[cfg(feature = "assets")]
 mod assets;
+mod chrono;
 mod derive;
 mod doc;
 mod route;
@@ -563,7 +564,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   variant.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::schema::expand_inner)
+    derive::run_typed(item, derive::schema::expand_inner)
 }
 
 /// Names one instantiation of a generic `Schema` type, in place of the
@@ -749,7 +750,7 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// It is the only supported way to implement `IntoProblem`.
 #[proc_macro_derive(ApiError, attributes(problem))]
 pub fn derive_api_error(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::api_error::expand_inner)
+    derive::run_typed(item, derive::api_error::expand_inner)
 }
 
 /// Declares a closed set of responses, one variant per status.
@@ -802,7 +803,7 @@ pub fn derive_api_error(item: TokenStream) -> TokenStream {
 /// entry carries.
 #[proc_macro_derive(Reply, attributes(reply))]
 pub fn derive_reply(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::reply::expand_inner)
+    derive::run_typed(item, derive::reply::expand_inner)
 }
 
 /// Makes a field-less enum a `kynos::schema::ParamValue`, emitting its
@@ -840,7 +841,7 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 ///   leaves `Display` nothing to write.
 #[proc_macro_derive(ParamValue)]
 pub fn derive_param_value(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::param_value::expand_inner)
+    derive::run_typed(item, derive::param_value::expand_inner)
 }
 
 /// Declares a group of path parameters.
@@ -871,7 +872,7 @@ pub fn derive_param_value(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(PathParams, attributes(param))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::path_params::expand_inner)
+    derive::run_typed(item, derive::path_params::expand_inner)
 }
 
 /// Declares a group of query parameters.
@@ -915,7 +916,7 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(QueryParams, attributes(param))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::query_params::expand_inner)
+    derive::run_typed(item, derive::query_params::expand_inner)
 }
 
 /// Declares a group of request or response headers.
@@ -992,7 +993,7 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(HeaderParams, attributes(header))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::headers::expand_inner)
+    derive::run_typed(item, derive::headers::expand_inner)
 }
 
 /// Declares a group of request cookies.
@@ -1033,7 +1034,7 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 ///   deserialize = ...)` on the struct.
 #[proc_macro_derive(CookieParams, attributes(cookie))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::cookies::expand_inner)
+    derive::run_typed(item, derive::cookies::expand_inner)
 }
 
 /// Declares the fields of a `multipart/form-data` body, in both directions.
@@ -1085,7 +1086,7 @@ pub fn derive_cookies(item: TokenStream) -> TokenStream {
 /// (described as the one field's schema, while that field is still a part).
 #[proc_macro_derive(MultipartForm, attributes(serde))]
 pub fn derive_multipart_form(item: TokenStream) -> TokenStream {
-    derive::run(item, derive::multipart::expand_inner)
+    derive::run_typed(item, derive::multipart::expand_inner)
 }
 
 /// Lets a `prost` message travel as a `Protobuf<T>` body.

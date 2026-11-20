@@ -1,4 +1,9 @@
 //! chrono's types, mapped onto the shared shapes.
+//!
+//! Deprecated with `time-chrono04`. The warning is not here, since
+//! `#[deprecated]` on an implementation has no effect, but in
+//! [`crate::__private::temporal`], which the expansions name at each chrono
+//! type.
 
 use kynos_openapi::Schema as OpenApiSchema;
 

@@ -73,6 +73,11 @@
 //! | `jiff::civil::Time` | `string`/`time-local` | `time-jiff02` |
 //! | `jiff::civil::DateTime` | `string`/`date-time-local` | `time-jiff02` |
 //! | `jiff::Timestamp` | `string`/`date-time` | `time-jiff02` |
+//!
+//! `time-chrono04` is deprecated: chrono is unmaintained (RUSTSEC-2026-0543).
+//! Its types keep their implementations, but each one a route attribute or
+//! derive is handed warns, and the feature may be removed in any future 0.x
+//! minor. `time-jiff02` maps onto the same shapes, so moving changes no schema.
 //! | `jiff::Zoned` | `string`/`date-time-zoned`, with a pattern | `time-jiff02` |
 //! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff02` |
 //! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust1` |

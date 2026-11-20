@@ -1,0 +1,11 @@
+error: use of deprecated constant `kynos::__private::temporal::chrono_is_unmaintained`: Kynos's `time-chrono04` feature is deprecated and may be removed in any future 0.x minor: chrono is unmaintained (RUSTSEC-2026-0543). Move to `time-jiff02`, whose types map onto the same schema shapes
+  --> tests/ui/macros/schema_chrono_field_deprecated.rs:13:13
+   |
+13 |     pub on: chrono::NaiveDate,
+   |             ^^^^^^
+   |
+note: the lint level is defined here
+  --> tests/ui/macros/schema_chrono_field_deprecated.rs:6:9
+   |
+ 6 | #![deny(deprecated)]
+   |         ^^^^^^^^^^
