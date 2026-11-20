@@ -72,7 +72,6 @@ required-features = [
   "http1",
   "json",
   "uuid1",
-  "time-chrono04",
   "time-jiff02",
   "decimal-rust1",
   "decimal-big04",
