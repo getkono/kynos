@@ -19,8 +19,8 @@ releases under. Nothing else here is normative for implementation work.
    before reading the changelog, not after: this is the one merge here that
    publishes to crates.io, and it is the one whose CI does not start itself.
    That CI is the whole of `full.yml`, which an ordinary pull request skips:
-   the release is where the other platforms, the feature matrix, coverage,
-   packaging and the API's compatibility at every feature are held,
+   the release is where the other platforms, the feature matrix, coverage, the
+   MSRV, packaging and the API's compatibility at every feature are held,
    behind its `Comprehensive` check.
 
    Its `Dependency currency` job warns of every crate the published packages
