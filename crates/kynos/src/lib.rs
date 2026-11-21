@@ -92,11 +92,15 @@ compile_error!("the `server` feature requires at least one of `http1` or `http2`
 
 #[cfg(all(
     feature = "time",
-    not(any(feature = "time-chrono04", feature = "time-jiff02"))
+    not(any(
+        feature = "time-chrono04",
+        feature = "time-jiff02",
+        feature = "time-jiff1"
+    ))
 ))]
 compile_error!(
-    "the `time` feature carries no types of its own; enable a backend, either `time-chrono04` or \
-     `time-jiff02`"
+    "the `time` feature carries no types of its own; enable a backend: `time-chrono04`, \
+     `time-jiff02` or `time-jiff1`"
 );
 
 #[cfg(all(

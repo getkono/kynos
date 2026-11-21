@@ -41,6 +41,7 @@ kynos = { path = "../kynos", features = [
   "uuid1",
   "time-chrono04",
   "time-jiff02",
+  "time-jiff1",
   "decimal-rust1",
   "decimal-big04",
 ] }

@@ -77,9 +77,10 @@ backend; enabling an umbrella without a backend is a compile error.
 | Feature | Requires | Adds |
 | --- | --- | --- |
 | `uuid1` | — | `uuid` 1.x |
-| `time` | one of the two below | *(shapes only)* |
-| `time-chrono04` | `time` | `chrono` 0.4.x. Deprecated: chrono is unmaintained (RUSTSEC-2026-0543); use `time-jiff02` |
+| `time` | one of the three below | *(shapes only)* |
+| `time-chrono04` | `time` | `chrono` 0.4.x. Deprecated: chrono is unmaintained (RUSTSEC-2026-0543); use `time-jiff1` |
 | `time-jiff02` | `time` | `jiff` 0.2.x |
+| `time-jiff1` | `time` | `jiff` 1.x, whose `ZonedDateTime` is 0.2's `Zoned` renamed and takes its schema |
 | `decimal` | one of the two below | *(shapes only)* |
 | `decimal-rust1` | `decimal` | `rust_decimal` 1.x |
 | `decimal-big04` | `decimal` | `bigdecimal` 0.4.x |
@@ -118,6 +119,9 @@ hour, a birthday — which genuinely has no offset. The type that models an inst
 is `DateTime<Utc>` or `jiff::Timestamp`, and those need none of this.
 
 ### `jiff::Zoned` and the one unregistered format
+
+jiff 1 calls the type `ZonedDateTime`; it writes the same text and takes the
+same schema.
 
 `Zoned` serializes as RFC 9557 — `2024-06-19T15:22:00-04:00[America/New_York]`.
 The bracketed IANA annotation makes the string a superset of RFC 3339 and
@@ -159,7 +163,7 @@ one `FromStr` never reads that.
 | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | — |
 | `uuid::Uuid` | `uuid1` |
 | `chrono::NaiveDate`, `chrono::NaiveTime` | `time-chrono04` |
-| every `jiff` type above | `time-jiff02` |
+| every `jiff` type above | `time-jiff02`, `time-jiff1` |
 | `rust_decimal::Decimal` | `decimal-rust1` |
 
 Left out because `Display` writes something other than the format the schema

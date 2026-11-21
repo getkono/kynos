@@ -234,8 +234,9 @@ bug, and that bug is what gets fixed.
 **The scalar-format exception:** a scalar-format crate is public API only
 through Kynos's trait impls on its types, so its feature and its dependency key
 name the major those impls are for: the features `uuid1`, `time-chrono04`,
-`time-jiff02`, `decimal-rust1` and `decimal-big04`, over the package-renamed
-keys `uuid1`, `chrono04`, `jiff02`, `rust_decimal1` and `bigdecimal04`. A new
+`time-jiff02`, `time-jiff1`, `decimal-rust1` and `decimal-big04`, over the
+package-renamed keys `uuid1`, `chrono04`, `jiff02`, `jiff1`, `rust_decimal1` and
+`bigdecimal04`. A new
 major arrives as a new feature and key beside the old, which is additive,
 because the impls are on distinct types and both can be on while an
 application moves. The old one is removed in a later breaking release, and

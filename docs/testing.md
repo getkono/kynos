@@ -462,7 +462,7 @@ exactly like one that was written and holds. The check is forward only — a row
 for a flag graded elsewhere is not an error, since an element may be worth
 holding under any grade.
 
-**Fourteen rows, and the count is the check.** A row deleted or truncated
+**Fifteen rows, and the count is the check.** A row deleted or truncated
 away would otherwise leave the gate reporting that every rule holds while the
 element it named went unchecked, which is the one failure a gate must not
 have. The count is stated here for the reason `architecture.md` states its
@@ -482,6 +482,7 @@ halve.
 | the `time` feature | `feature = "time"` | `lib.rs`, `schema/impls/mod.rs` | it carries no types: enabled without a backend it is a `compile_error!`, which `features:check` probes. The two sites are the gate that says so and the module it would open; the cost is its backends' rows |
 | the `time-chrono04` feature | `chrono04`, `feature = "time-chrono04"` | `lib.rs`, `__private/temporal.rs`, `schema/impls/temporal/{mod,chrono}.rs` | `Schema` implementations for the crate's date and time types, behind the `&mut Registry` only `describe` mints, and `ParamValue` for two of them, a marker with no items. `__private/temporal.rs` gates only a `#[deprecated]` attribute on a unit constant, which expansions name to warn at compile time |
 | the `time-jiff02` feature | `jiff02`, `feature = "time-jiff02"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | the same, for the other backend: `Schema` implementations reachable only through a registry a build has already consumed, and `ParamValue`, a marker with no items |
+| the `time-jiff1` feature | `jiff1`, `feature = "time-jiff1"` | `lib.rs`, `schema/impls/temporal/{mod,jiff}.rs` | as `time-jiff02`, through the same macro body for jiff 1's types |
 | the `decimal` feature | `feature = "decimal"` | `lib.rs`, `schema/impls/mod.rs` | as `time`: no types of its own, a `compile_error!` without a backend, and the two sites are the gate and the module it opens |
 | the `decimal-rust1` feature | `rust_decimal1`, `feature = "decimal-rust1"` | `lib.rs`, `schema/impls/decimal/{mod,rust_decimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints, and `ParamValue`, a marker with no items |
 | the `decimal-big04` feature | `bigdecimal04`, `feature = "decimal-big04"` | `lib.rs`, `schema/impls/decimal/{mod,bigdecimal}.rs` | `Schema` implementations for the crate's decimal type, behind the `&mut Registry` only `describe` mints |

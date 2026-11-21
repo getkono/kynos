@@ -6324,12 +6324,19 @@ impl kynos::schema::ParamValue for i32
 impl kynos::schema::ParamValue for i64
 impl kynos::schema::ParamValue for i8
 impl kynos::schema::ParamValue for jiff::civil::date::Date
+impl kynos::schema::ParamValue for jiff::civil::date::Date
+impl kynos::schema::ParamValue for jiff::civil::datetime::DateTime
 impl kynos::schema::ParamValue for jiff::civil::datetime::DateTime
 impl kynos::schema::ParamValue for jiff::civil::time::Time
+impl kynos::schema::ParamValue for jiff::civil::time::Time
+impl kynos::schema::ParamValue for jiff::signed_duration::SignedDuration
 impl kynos::schema::ParamValue for jiff::signed_duration::SignedDuration
 impl kynos::schema::ParamValue for jiff::span::Span
+impl kynos::schema::ParamValue for jiff::span::Span
+impl kynos::schema::ParamValue for jiff::timestamp::Timestamp
 impl kynos::schema::ParamValue for jiff::timestamp::Timestamp
 impl kynos::schema::ParamValue for jiff::zoned::Zoned
+impl kynos::schema::ParamValue for jiff::zoned::ZonedDateTime
 impl kynos::schema::ParamValue for rust_decimal::decimal::Decimal
 impl kynos::schema::ParamValue for u16
 impl kynos::schema::ParamValue for u32
@@ -6437,40 +6444,75 @@ pub fn i8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mu
 pub fn i8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::date::Date
+impl kynos::schema::Schema for jiff::civil::date::Date
+pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::date::Date::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::date::Date::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::civil::datetime::DateTime
 impl kynos::schema::Schema for jiff::civil::datetime::DateTime
 pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::civil::datetime::DateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::time::Time
+impl kynos::schema::Schema for jiff::civil::time::Time
+pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::time::Time::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::time::Time::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
 impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
 pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::signed_duration::SignedDuration::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::span::Span
+impl kynos::schema::Schema for jiff::span::Span
+pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::span::Span::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::span::Span::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::timestamp::Timestamp
 impl kynos::schema::Schema for jiff::timestamp::Timestamp
 pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::zoned::Zoned
 pub const jiff::zoned::Zoned::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::zoned::Zoned::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::zoned::Zoned::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::zoned::Zoned::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::zoned::ZonedDateTime
+pub const jiff::zoned::ZonedDateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::zoned::ZonedDateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::zoned::ZonedDateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::zoned::ZonedDateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::error::problem::PointerError
 pub const kynos::error::problem::PointerError::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn kynos::error::problem::PointerError::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -8946,12 +8988,19 @@ impl kynos::schema::ParamValue for i32
 impl kynos::schema::ParamValue for i64
 impl kynos::schema::ParamValue for i8
 impl kynos::schema::ParamValue for jiff::civil::date::Date
+impl kynos::schema::ParamValue for jiff::civil::date::Date
+impl kynos::schema::ParamValue for jiff::civil::datetime::DateTime
 impl kynos::schema::ParamValue for jiff::civil::datetime::DateTime
 impl kynos::schema::ParamValue for jiff::civil::time::Time
+impl kynos::schema::ParamValue for jiff::civil::time::Time
+impl kynos::schema::ParamValue for jiff::signed_duration::SignedDuration
 impl kynos::schema::ParamValue for jiff::signed_duration::SignedDuration
 impl kynos::schema::ParamValue for jiff::span::Span
+impl kynos::schema::ParamValue for jiff::span::Span
+impl kynos::schema::ParamValue for jiff::timestamp::Timestamp
 impl kynos::schema::ParamValue for jiff::timestamp::Timestamp
 impl kynos::schema::ParamValue for jiff::zoned::Zoned
+impl kynos::schema::ParamValue for jiff::zoned::ZonedDateTime
 impl kynos::schema::ParamValue for rust_decimal::decimal::Decimal
 impl kynos::schema::ParamValue for u16
 impl kynos::schema::ParamValue for u32
@@ -9059,40 +9108,75 @@ pub fn i8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mu
 pub fn i8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::date::Date
+impl kynos::schema::Schema for jiff::civil::date::Date
+pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::date::Date::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::date::Date::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::civil::datetime::DateTime
 impl kynos::schema::Schema for jiff::civil::datetime::DateTime
 pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::civil::datetime::DateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::time::Time
+impl kynos::schema::Schema for jiff::civil::time::Time
+pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::civil::time::Time::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::time::Time::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
 impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
 pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::signed_duration::SignedDuration::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::span::Span
+impl kynos::schema::Schema for jiff::span::Span
+pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::span::Span::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::span::Span::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::timestamp::Timestamp
 impl kynos::schema::Schema for jiff::timestamp::Timestamp
 pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::zoned::Zoned
 pub const jiff::zoned::Zoned::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn jiff::zoned::Zoned::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::zoned::Zoned::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::zoned::Zoned::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for jiff::zoned::ZonedDateTime
+pub const jiff::zoned::ZonedDateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn jiff::zoned::ZonedDateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn jiff::zoned::ZonedDateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn jiff::zoned::ZonedDateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::error::problem::PointerError
 pub const kynos::error::problem::PointerError::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn kynos::error::problem::PointerError::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
