@@ -11,7 +11,7 @@
     deprecated(
         note = "Kynos's `time-chrono04` feature is deprecated and may be removed in any \
                 future 0.x minor: chrono is unmaintained (RUSTSEC-2026-0543). Move to \
-                `time-jiff02`, whose types map onto the same schema shapes"
+                `time-jiff1`, whose types map onto the same schema shapes"
     )
 )]
 #[allow(non_upper_case_globals)]
