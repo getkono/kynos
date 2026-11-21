@@ -111,7 +111,8 @@ jobs:
         run: mise run api:check
 
   # Its own job: the one gate that can turn red with no change here, when a new
-  # advisory names something locked. It blocks; waivers live in `deny.toml`.
+  # advisory names something locked. It is not a required check, so a red one
+  # marks the pull request without blocking its merge; waivers live in `deny.toml`.
   deny:
     name: Dependencies
     runs-on: ubuntu-latest
@@ -123,6 +124,23 @@ jobs:
         uses: ./.github/actions/setup
       - name: Check advisories, licences, bans and sources
         run: mise run deny:check
+
+  # Its own job and cache: the MSRV toolchain's artifacts serve no other job.
+  # Per pull request, so the one that raises a requirement above the MSRV is
+  # the one that fails. Like `deny`, it can turn red with no change here, when
+  # an upstream release misdeclares its `rust-version` (`mise.toml`).
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: msrv
+      - name: Build every feature on the declared MSRV, resolved as a user's crate resolves it
+        run: mise run msrv:check
 
   commits:
     name: Conventional commits

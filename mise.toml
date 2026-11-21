@@ -362,9 +362,17 @@ RUSTFLAGS="-C panic=abort" sh scripts/refuses.sh \
 '''
 
 [tasks."msrv:check"]
-description = "Verify the crate still builds on the declared MSRV"
-# The toolchain is the workspace's `rust-version`, read from `Cargo.toml`.
-# `kynos-profile` is unpublished and declares gungraun's higher floor.
+description = "Build kynos with every feature on the declared MSRV, resolved as a user's crate resolves it"
+# The promise is README's `## MSRV`: the declared Rust builds every feature
+# under MSRV-aware resolution. So this builds a throwaway consumer, not the
+# workspace: `Cargo.lock` is unified with dev-dependencies and `kynos-profile`
+# (gungraun's higher floor), which no application resolves. The consumer is
+# its own `[workspace]` root, `edition = "2024"` (resolver 3) with the
+# workspace's `rust-version`, and resolves afresh, so an upstream release that
+# misdeclares its `rust-version` turns this red with no change here; that
+# breaks users on the MSRV too, so it is reported. Every feature `kynos`
+# declares is named, since `--all-features` reaches only the consumer's own:
+# each key of its `[features]` table, which the crate writes unquoted.
 run = '''
 set -eu
 msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
@@ -373,7 +381,36 @@ if [ -z "$msrv" ]; then
   exit 1
 fi
 rustup toolchain install "$msrv" --profile minimal --no-self-update
-cargo +"$msrv" check --workspace --all-features --exclude kynos-profile
+
+features="$(sed -n '/^\[features\]$/,/^\[/s/^\([A-Za-z0-9_-]*\) = .*/"\1"/p' \
+  crates/kynos/Cargo.toml | paste -sd, -)"
+if [ -z "$features" ]; then
+  echo "crates/kynos/Cargo.toml declares no feature" >&2
+  exit 1
+fi
+
+# Under `target/`, so CI's Cargo cache keeps its build; `generate-lockfile`
+# resolves from scratch whatever lock a run before left.
+consumer="target/msrv-consumer"
+mkdir -p "$consumer/src"
+: >"$consumer/src/lib.rs"
+cat >"$consumer/Cargo.toml" <<EOF
+[package]
+name = "msrv-consumer"
+version = "0.0.0"
+edition = "2024"
+rust-version = "$msrv"
+publish = false
+
+[dependencies]
+kynos = { path = "$PWD/crates/kynos", features = [$features] }
+
+[workspace]
+EOF
+
+cd "$consumer"
+cargo +"$msrv" generate-lockfile
+cargo +"$msrv" check
 '''
 
 [tasks."minimal-versions:check"]
@@ -389,21 +426,29 @@ description = "Build the workspace with every direct dependency at its declared 
 # The library targets only, not `--all-targets`: a dev-dependency's bound
 # reaches no application, and the resolution still holds them to resolving
 # beside the rest, since Cargo resolves dev-dependencies either way.
-# `kynos-profile` is excluded for `msrv:check`'s reason: it is published
-# nowhere, so its bounds are nobody's promise.
+# `kynos-profile` is excluded: it is published nowhere, so its bounds are
+# nobody's promise, and its own `rust-version` is above the MSRV.
 #
-# `-Z` needs nightly, `KYNOS_NIGHTLY`. The resolution rewrites Cargo.lock, so
-# the committed one is put back however the task exits.
+# `-Z` needs nightly, `KYNOS_NIGHTLY`, for the resolution only. The build is on
+# the MSRV, so a lower bound whose release needs a newer Rust fails here. The
+# resolution rewrites Cargo.lock, so the committed one is put back however the
+# task exits.
 run = '''
 set -eu
+msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+if [ -z "$msrv" ]; then
+  echo "Cargo.toml declares no rust-version" >&2
+  exit 1
+fi
 rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update
+rustup toolchain install "$msrv" --profile minimal --no-self-update
 
 lock="$(mktemp)"
 cp Cargo.lock "$lock"
 trap 'cp "$lock" Cargo.lock; rm -f "$lock"' EXIT
 
 cargo +"$KYNOS_NIGHTLY" update -Z direct-minimal-versions
-cargo +"$KYNOS_NIGHTLY" check --workspace --all-features --exclude kynos-profile
+cargo +"$msrv" check --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."deps:outdated"]
@@ -738,8 +783,9 @@ run = [
 
 [tasks.ci]
 description = "Run every check CI runs on master and on pull requests"
-# `check` plus what only `ci.yml`'s `commits` job and `full.yml` run, so one
-# command answers what CI would. `check` comes last, keeping `features:*` last.
+# `check` plus what only `ci.yml`'s `commits` and `msrv` jobs and `full.yml`
+# run, so one command answers what CI would. `check` comes last, keeping
+# `features:*` last.
 # `semver:check` is advisory here as on master and pull requests; only a
 # release branch blocks on it. `cost:features` and `profile:requests` measure
 # only on the Linux x86_64 runner (docs/releasing.md forbids cost numbers from

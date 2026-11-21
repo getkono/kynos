@@ -76,7 +76,8 @@ VERSION = r"v(\S+)"
 # A newer release the move does not reach, and the Rust it needs. `Unchanged`
 # carries `available` when one exists; `Updating` carries it when a compatible
 # step leaves one beyond. `requires Rust` alone is said of the locked version
-# itself, which `msrv:check` holds, so it records nothing here.
+# itself, which only the development graph holds: what a user resolves on the
+# MSRV is `msrv:check`'s, so it records nothing here.
 AVAILABLE = (
     r"\((?:available: v([^,)\s]+)(?:, )?)?(?:requires Rust ([^)\s]+))?\)"
 )

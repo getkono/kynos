@@ -1,8 +1,10 @@
 name: Comprehensive
 
 # Every check too slow for a pull request to wait on: the feature matrix, the
-# other platforms, coverage, the MSRV, packaging, dependency currency, the API
+# other platforms, coverage, packaging, dependency currency, the API
 # comparison, the fuzz corpus and the cost sweeps. `ci.yml` is what an ordinary pull request runs.
+# The MSRV runs in both: per pull request in `ci.yml`, and here so that the
+# required `Comprehensive` check, and with it the release, blocks on it.
 #
 # The tier runs on a release pull request (a `release-plz-` head, per
 # `docs/releasing.md`), on one labelled `ci:full`, on a manual dispatch, and
@@ -144,6 +146,8 @@ jobs:
       - name: Run tests
         run: mise run test
 
+  # Also `ci.yml`'s per-PR `msrv` job; repeated here because `MSRV` there is
+  # not a required check, and `comprehensive` is, so the release still blocks.
   msrv:
     name: MSRV
     needs: gate
@@ -156,7 +160,7 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: msrv
-      - name: Check the declared MSRV
+      - name: Build every feature on the declared MSRV, resolved as a user's crate resolves it
         run: mise run msrv:check
 
   semver:
