@@ -5962,6 +5962,7 @@ fn test_service() -> crate::router::service::Service<()> {
     })
 }
 
+#[cfg(feature = "http1")]
 fn blocking_service() -> (
     crate::router::service::Service<()>,
     std::sync::Arc<tokio::sync::Notify>,
