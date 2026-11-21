@@ -312,7 +312,7 @@ modules, one codec each, over a shared harness gated on their disjunction, and
 [`performance.md`](performance.md#the-taxonomy)'s codec sweep weighs, is
 measured at the same sets. [`mise run lint:codecs`](../mise.toml) lints the six
 `openapi31 + macros + F` sets. No other task builds them: `features:targets`
-adds one flag at a time, so `macros` and a codec never meet, and every other
+lints every target with warnings denied at `openapi31` plus one flag at a time, so `macros` and a codec never meet, and every other
 test build is the default set or every feature. What a gate gets wrong there is
 a dead item or an unused import — a compile-time finding, hence Clippy rather
 than a test run.
