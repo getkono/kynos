@@ -124,6 +124,23 @@ jobs:
       - name: Check advisories, licences, bans and sources
         run: mise run deny:check
 
+  # Its own job and cache: the MSRV toolchain's artifacts serve no other job.
+  # Per pull request, so the one that raises a requirement above the MSRV is
+  # the one that fails. Like `deny`, it can turn red with no change here, when
+  # an upstream release misdeclares its `rust-version` (`mise.toml`).
+  msrv:
+    name: MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: msrv
+      - name: Build every feature on the declared MSRV, resolved as a user's crate resolves it
+        run: mise run msrv:check
+
   commits:
     name: Conventional commits
     if: github.event_name == 'pull_request'

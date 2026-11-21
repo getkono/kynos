@@ -1,7 +1,7 @@
 name: Comprehensive
 
 # Every check too slow for a pull request to wait on: the feature matrix, the
-# other platforms, coverage, the MSRV, packaging, dependency currency, the API
+# other platforms, coverage, packaging, dependency currency, the API
 # comparison, the fuzz corpus and the cost sweeps. `ci.yml` is what an ordinary pull request runs.
 #
 # The tier runs on a release pull request (a `release-plz-` head, per
@@ -143,21 +143,6 @@ jobs:
           cargo-cache-key: portability
       - name: Run tests
         run: mise run test
-
-  msrv:
-    name: MSRV
-    needs: gate
-    if: needs.gate.outputs.full == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7
-      - name: Set up
-        uses: ./.github/actions/setup
-        with:
-          cargo-cache-key: msrv
-      - name: Check the declared MSRV
-        run: mise run msrv:check
 
   semver:
     name: API compatibility
@@ -350,7 +335,6 @@ jobs:
       - features
       - coverage
       - portability
-      - msrv
       - semver
       - package
       - deps

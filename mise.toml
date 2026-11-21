@@ -783,8 +783,9 @@ run = [
 
 [tasks.ci]
 description = "Run every check CI runs on master and on pull requests"
-# `check` plus what only `ci.yml`'s `commits` job and `full.yml` run, so one
-# command answers what CI would. `check` comes last, keeping `features:*` last.
+# `check` plus what only `ci.yml`'s `commits` and `msrv` jobs and `full.yml`
+# run, so one command answers what CI would. `check` comes last, keeping
+# `features:*` last.
 # `semver:check` is advisory here as on master and pull requests; only a
 # release branch blocks on it. `cost:features` and `profile:requests` measure
 # only on the Linux x86_64 runner (docs/releasing.md forbids cost numbers from
