@@ -18,6 +18,8 @@ about a locked package:
 - `msrv`: the newer release needs a Rust above the MSRV.
 - `incompatible`: the newer release is semver-incompatible, so it needs a
   requirement raised. The dependency's tier decides what that is.
+- `held`: the newer release is semver-compatible and within the MSRV, but a
+  requirement in the graph, such as an `=` pin, holds the lock below it.
 - `downgrade`: the lockfile holds a version the MSRV-aware resolver would not
   pick.
 
@@ -58,6 +60,11 @@ KINDS = {
         "The newer release is semver-incompatible",
         "Raising the requirement follows the dependency's tier in "
         "docs/architecture.md: `chore(deps)` or a `!` commit.",
+    ),
+    "held": (
+        "A requirement in the graph holds a compatible release back",
+        "`cargo tree --invert` names the dependent; an `=` pin of ours is "
+        "raised in the manifest, anyone else's waits for its release.",
     ),
     "downgrade": (
         "The lock holds a version the MSRV-aware resolver would not pick",
@@ -117,6 +124,23 @@ def published_graph(metadata, roots):
     }
 
 
+def compatible(current, newer):
+    """Whether `newer` is semver-compatible with `current`, as Cargo's caret.
+
+    The leftmost non-zero of major, minor and patch must match.
+    """
+    def key(version):
+        core = re.split(r"[-+]", version, maxsplit=1)[0].split(".")
+        major, minor, patch = (int(part) for part in core)
+        if major:
+            return (major,)
+        if minor:
+            return (0, minor)
+        return (0, 0, patch)
+
+    return key(current) == key(newer)
+
+
 def parse_update(text):
     """Each package `cargo update --dry-run --verbose` reports as behind.
 
@@ -139,7 +163,12 @@ def parse_update(text):
         else:
             continue
         if beyond is not None:
-            kind = "msrv" if rust else "incompatible"
+            if not compatible(current, beyond):
+                kind = "incompatible"
+            elif rust:
+                kind = "msrv"
+            else:
+                kind = "held"
             records.append(Behind(kind, name, current, beyond, rust))
     return records
 
@@ -191,13 +220,16 @@ def annotations(records):
     return lines
 
 
-def run(args):
-    """`args`'s stdout and stderr together, or `None` if it failed."""
-    done = subprocess.run(
-        args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+def run(args, stderr=subprocess.PIPE):
+    """`args`'s stdout, or `None` if it failed.
+
+    Stderr is left out, since a cold registry fills it with fetches; pass
+    `stderr=subprocess.STDOUT` where it carries the result.
+    """
+    done = subprocess.run(args, stdout=subprocess.PIPE, stderr=stderr, text=True)
     if done.returncode != 0:
         print(done.stdout, end="", file=sys.stderr)
+        print(done.stderr or "", end="", file=sys.stderr)
         print(f"{args[0]} {args[1]} exited {done.returncode}", file=sys.stderr)
         return None
     return done.stdout
@@ -208,8 +240,11 @@ def main():
     metadata = run(
         ["cargo", "metadata", "--all-features", "--format-version", "1"]
     )
-    # Cargo prints to stderr, which `run` merges: the verbs are the result.
-    update = run(["cargo", "update", "--dry-run", "--verbose", "--color", "never"])
+    # Cargo prints the verbs to stderr: they are the result.
+    update = run(
+        ["cargo", "update", "--dry-run", "--verbose", "--color", "never"],
+        stderr=subprocess.STDOUT,
+    )
     if names is None or metadata is None or update is None:
         return 1
     roots = set(publishable(json.loads(names)))

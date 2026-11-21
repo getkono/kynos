@@ -6542,7 +6542,7 @@ mod security_scheme {
             let file: syn::File = syn::parse2(expanded).expect("the expansion parses");
             file.items.into_iter().find_map(|item| match item {
                 syn::Item::Impl(implementation)
-                    if implementation.trait_.as_ref().is_some_and(|(_, path, _)| {
+                    if implementation.trait_.as_ref().is_some_and(|(path, _)| {
                         path.segments
                             .last()
                             .is_some_and(|last| last.ident == "Carries")

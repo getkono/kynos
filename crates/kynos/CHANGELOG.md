@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1](https://github.com/getkono/kynos/compare/kynos-v0.6.0...kynos-v0.6.1) - 2026-11-20
+
+### Added
+
+- *(macros)* warn at a chrono type a derive or route sees under time-chrono04
+
+### Documentation
+
+- *(schema)* mark time-chrono04 deprecated in favour of time-jiff02
+
+### Fixed
+
+- *(server)* let a Shutdown trigger be shared across threads ([#1353](https://github.com/getkono/kynos/pull/1353))
+
 ## [0.6.0](https://github.com/getkono/kynos/compare/kynos-v0.5.0...kynos-v0.6.0) - 2026-11-17
 
 ### Added
