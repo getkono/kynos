@@ -389,8 +389,9 @@ if [ -z "$features" ]; then
   exit 1
 fi
 
+# Under `target/`, so CI's Cargo cache keeps its build; `generate-lockfile`
+# resolves from scratch whatever lock a run before left.
 consumer="target/msrv-consumer"
-rm -rf "$consumer"
 mkdir -p "$consumer/src"
 : >"$consumer/src/lib.rs"
 cat >"$consumer/Cargo.toml" <<EOF
