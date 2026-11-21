@@ -18,6 +18,9 @@ pub(super) enum RequestBody {
     Whole(Bytes),
     /// Chunks as a stream yields them.
     Streamed(Pin<Box<dyn futures_core::Stream<Item = Bytes> + Send>>),
+    /// Never a chunk, nor an end.
+    #[cfg(feature = "server")]
+    Stalled,
 }
 
 impl RequestBody {
@@ -27,6 +30,19 @@ impl RequestBody {
             Self::Whole(bytes) if bytes.is_empty() => Poll::Ready(None),
             Self::Whole(bytes) => Poll::Ready(Some(std::mem::take(bytes))),
             Self::Streamed(chunks) => chunks.as_mut().poll_next(context),
+            #[cfg(feature = "server")]
+            Self::Stalled => Poll::Pending,
+        }
+    }
+
+    /// Whether this is the body [`TestRequest::stalled_body`] sends.
+    ///
+    /// [`TestRequest::stalled_body`]: crate::test::TestRequest::stalled_body
+    pub(super) const fn is_stalled(&self) -> bool {
+        match self {
+            #[cfg(feature = "server")]
+            Self::Stalled => true,
+            _ => false,
         }
     }
 }
@@ -36,6 +52,8 @@ impl fmt::Debug for RequestBody {
         match self {
             Self::Whole(bytes) => formatter.debug_tuple("Whole").field(bytes).finish(),
             Self::Streamed(_) => formatter.debug_tuple("Streamed").finish_non_exhaustive(),
+            #[cfg(feature = "server")]
+            Self::Stalled => formatter.write_str("Stalled"),
         }
     }
 }

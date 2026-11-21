@@ -94,6 +94,66 @@ fn an_undeclared_length_promises_nothing() {
     assert_eq!(next(&mut body), None);
 }
 
+/// `TestRequest::stalled_body`: a framed body owed one octet that never
+/// arrives. `tests/client.rs` holds the 408 it reaches.
+#[cfg(feature = "server")]
+mod stalled_body {
+    use std::{
+        pin::Pin,
+        task::{Context, Waker},
+    };
+
+    use http_body::Body as HttpBody;
+
+    use crate::{
+        Router,
+        http::{HeaderValue, header},
+        test::{
+            TestClient,
+            body::{Framed, RequestBody},
+        },
+    };
+
+    /// The body never yields and never ends, and is framed by the one octet
+    /// it owes, so a reader waits rather than finding an empty body.
+    #[test]
+    fn the_body_owes_one_octet_and_never_sends_it() {
+        let mut body = Framed {
+            body: RequestBody::Stalled,
+            remaining: Some(1),
+            failed: false,
+        };
+        let mut context = Context::from_waker(Waker::noop());
+
+        assert!(Pin::new(&mut body).poll_frame(&mut context).is_pending());
+        assert!(!body.is_end_stream());
+        assert_eq!(body.size_hint().exact(), Some(1));
+    }
+
+    /// The request declares the octet it owes and the media type, and its
+    /// body is the stalled one.
+    #[test]
+    fn the_request_declares_its_length_and_media_type() {
+        let client = TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        );
+        let request = client.post("/").stalled_body("application/json");
+
+        assert!(request.body.is_stalled());
+        assert_eq!(request.content_length, Some(1));
+        assert_eq!(
+            request.headers.get(header::CONTENT_LENGTH),
+            Some(&HeaderValue::from_static("1"))
+        );
+        assert_eq!(
+            request.headers.get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json"))
+        );
+    }
+}
+
 /// What a client sets once seeds every request it begins, and what a request
 /// sets itself replaces it, read off the request `send` would assemble.
 mod defaults {

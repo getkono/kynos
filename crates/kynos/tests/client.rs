@@ -343,6 +343,60 @@ fn a_server_serve_io_refuses_cannot_be_tested_through() {
     let _ = TestClient::through_server(server);
 }
 
+/// `client`'s answer to a stalled `POST /echo` on the real clock, or a panic
+/// once five seconds pass: far past the millisecond the in-process client
+/// waits, and far short of the 30 seconds a server waits by default.
+#[cfg(feature = "server")]
+async fn stalled(client: &TestClient<()>) -> kynos::test::TestResponse {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client
+            .post("/echo")
+            .stalled_body("text/plain; charset=utf-8")
+            .send(),
+    )
+    .await
+    .expect("a stalled body is answered without waiting out the default limit")
+}
+
+/// In process, a stalled body's read fails after a millisecond, so the 408
+/// arrives on the real clock with no pause, closing the connection as a
+/// served one does.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_stalled_body_is_answered_408_at_once() {
+    let reply = stalled(&client()).await;
+
+    reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+    assert_eq!(reply.header("connection"), Some("close"));
+    assert!(
+        reply
+            .text()
+            .contains("the request body sent nothing for 1ms"),
+        "{}",
+        reply.text()
+    );
+}
+
+/// Through a server, a stalled body is the server's to end, at its own limit
+/// rather than the in-process one.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_stalled_body_through_a_server_is_answered_at_its_limit() {
+    let server = kynos::server::Server::new(service())
+        .request_body_idle_timeout(Some(std::time::Duration::from_millis(20)));
+    let reply = stalled(&TestClient::through_server(server)).await;
+
+    reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+    assert!(
+        reply
+            .text()
+            .contains("the request body sent nothing for 20ms"),
+        "{}",
+        reply.text()
+    );
+}
+
 /// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the
 /// service octet for octet.
 #[tokio::test]

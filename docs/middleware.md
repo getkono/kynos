@@ -901,7 +901,11 @@ The server applies the timer rather than an extractor or an interceptor because
 only the server has a peer to wait on, and it wraps the body once, before the
 chain sees it, so no reader can be left out. `TestClient` wraps each request
 body in the same timer at the server's default, so a stalled `body_stream` is
-answered as a served one is and its 408 counts toward coverage. The cases are in
+answered as a served one is and its 408 counts toward coverage.
+`TestRequest::stalled_body` is that stall built in: one declared octet that
+never arrives, held in process to a millisecond rather than the default, so
+each operation's 408 is reached without pausing the clock. Through
+`through_server` it is the served server's own limit that ends it. The cases are in
 [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over a real socket, each
 protocol's 408 on a bare service and a body whose every gap is under the limit
 but whose total is over it, and in
