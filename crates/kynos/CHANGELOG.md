@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2](https://github.com/getkono/kynos/compare/kynos-v0.6.1...kynos-v0.6.2) - 2026-11-21
+
+### Added
+
+- *(test)* send a stalled request body that reaches the 408 at once ([#1364](https://github.com/getkono/kynos/pull/1364))
+- *(schema)* implement the scalar-format traits for jiff 1 under time-jiff1 ([#1362](https://github.com/getkono/kynos/pull/1362))
+
 ## [0.6.1](https://github.com/getkono/kynos/compare/kynos-v0.6.0...kynos-v0.6.1) - 2026-11-20
 
 ### Added
