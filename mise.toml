@@ -153,15 +153,19 @@ sh scripts/refuses.sh \
 '''
 
 [tasks."features:targets"]
-description = "Compile every target, not only the library, at each feature"
+description = "Lint every target, not only the library, at each feature, denying warnings"
 # `features:check` passes `--no-dev-deps`, so this is what compiles tests and
 # examples at a partial feature set: `openapi31` plus one feature at a time.
+# Warnings are denied as in `features:check`: one only a partial set raises is
+# seen nowhere else, since `lint` builds tests at every feature on. Clippy
+# rather than `check`, so its lints hold per combination too.
 # Exclusions and incremental as `features:check`; `kynos-profile` has no features.
 env = { CARGO_INCREMENTAL = "0" }
 run = '''
-cargo hack check --workspace --exclude kynos-profile --each-feature --all-targets \
+cargo hack clippy --workspace --exclude kynos-profile --each-feature --all-targets \
   --features openapi31 \
-  --exclude-features default,server,tls,time,decimal,full
+  --exclude-features default,server,tls,time,decimal,full \
+  -- -D warnings
 '''
 
 [tasks."cost:features"]
