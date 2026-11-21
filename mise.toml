@@ -428,18 +428,26 @@ description = "Build the workspace with every direct dependency at its declared 
 # `kynos-profile` is excluded for `msrv:check`'s reason: it is published
 # nowhere, so its bounds are nobody's promise.
 #
-# `-Z` needs nightly, `KYNOS_NIGHTLY`. The resolution rewrites Cargo.lock, so
-# the committed one is put back however the task exits.
+# `-Z` needs nightly, `KYNOS_NIGHTLY`, for the resolution only. The build is on
+# the MSRV, so a lower bound whose release needs a newer Rust fails here. The
+# resolution rewrites Cargo.lock, so the committed one is put back however the
+# task exits.
 run = '''
 set -eu
+msrv="$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)"
+if [ -z "$msrv" ]; then
+  echo "Cargo.toml declares no rust-version" >&2
+  exit 1
+fi
 rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update
+rustup toolchain install "$msrv" --profile minimal --no-self-update
 
 lock="$(mktemp)"
 cp Cargo.lock "$lock"
 trap 'cp "$lock" Cargo.lock; rm -f "$lock"' EXIT
 
 cargo +"$KYNOS_NIGHTLY" update -Z direct-minimal-versions
-cargo +"$KYNOS_NIGHTLY" check --workspace --all-features --exclude kynos-profile
+cargo +"$msrv" check --workspace --all-features --exclude kynos-profile
 '''
 
 [tasks."deps:outdated"]
