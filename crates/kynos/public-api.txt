@@ -10663,6 +10663,7 @@ pub fn kynos::test::TestRequest<'_, C>::json<T: serde_core::ser::Serialize>(self
 pub fn kynos::test::TestRequest<'_, C>::peer(self, core::net::socket_addr::SocketAddr) -> Self
 pub fn kynos::test::TestRequest<'_, C>::query_string<T: serde_core::ser::Serialize>(self, &T) -> Self
 pub async fn kynos::test::TestRequest<'_, C>::send(self) -> kynos::test::TestResponse
+pub fn kynos::test::TestRequest<'_, C>::stalled_body(self, &str) -> Self
 pub fn kynos::test::TestRequest<'_, C>::text(self, &str) -> Self
 impl<'a, C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestRequest<'a, C>
 pub fn kynos::test::TestRequest<'a, C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result

@@ -94,6 +94,136 @@ fn an_undeclared_length_promises_nothing() {
     assert_eq!(next(&mut body), None);
 }
 
+/// `TestRequest::stalled_body`: a framed body owed one octet that never
+/// arrives, answered with the 408 without waiting out a server's default.
+#[cfg(feature = "server")]
+mod stalled_body {
+    use std::{
+        pin::Pin,
+        task::{Context, Waker},
+        time::Duration,
+    };
+
+    use http_body::Body as HttpBody;
+
+    use crate::{
+        http::{HeaderValue, Request, Response, StatusCode, body::Body, header},
+        response::IntoResponse as _,
+        router::service::Service,
+        test::{
+            TestClient, TestResponse,
+            body::{Framed, RequestBody},
+        },
+    };
+
+    /// Far past the millisecond the in-process client waits, and far short of
+    /// the 30 seconds a server waits by default.
+    const ANSWERED_WITHIN: Duration = Duration::from_secs(5);
+
+    /// Reads the whole body as a buffering codec does, answering a failed
+    /// read with its rejection: the 408 of a stall.
+    async fn read_whole(request: Request) -> Response {
+        use http_body_util::BodyExt as _;
+
+        match request.into_body().collect().await {
+            Ok(_) => Response::new(Body::empty()),
+            Err(error) => {
+                crate::error::rejection::BodyRejection::read_failed(&*error).into_response()
+            }
+        }
+    }
+
+    fn reading_service() -> Service<()> {
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        Service::new(document, read_whole)
+    }
+
+    /// `client`'s answer to a stalled `POST`, on the real clock, or a panic
+    /// once [`ANSWERED_WITHIN`] passes.
+    async fn stalled(client: &TestClient<()>) -> TestResponse {
+        tokio::time::timeout(
+            ANSWERED_WITHIN,
+            client.post("/").stalled_body("application/json").send(),
+        )
+        .await
+        .expect("a stalled body is answered without waiting out the default limit")
+    }
+
+    /// The body never yields and never ends, and is framed by the one octet
+    /// it owes, so a reader waits rather than finding an empty body.
+    #[test]
+    fn the_body_owes_one_octet_and_never_sends_it() {
+        let mut body = Framed {
+            body: RequestBody::Stalled,
+            remaining: Some(1),
+            failed: false,
+        };
+        let mut context = Context::from_waker(Waker::noop());
+
+        assert!(Pin::new(&mut body).poll_frame(&mut context).is_pending());
+        assert!(!body.is_end_stream());
+        assert_eq!(body.size_hint().exact(), Some(1));
+    }
+
+    /// The request declares the octet it owes and the media type, and its
+    /// body is the stalled one.
+    #[test]
+    fn the_request_declares_its_length_and_media_type() {
+        let client = TestClient::new(reading_service());
+        let request = client.post("/").stalled_body("application/json");
+
+        assert!(request.body.is_stalled());
+        assert_eq!(request.content_length, Some(1));
+        assert_eq!(
+            request.headers.get(header::CONTENT_LENGTH),
+            Some(&HeaderValue::from_static("1"))
+        );
+        assert_eq!(
+            request.headers.get(header::CONTENT_TYPE),
+            Some(&HeaderValue::from_static("application/json"))
+        );
+    }
+
+    /// In process, the read fails after a millisecond, so the 408 arrives on
+    /// the real clock with no pause, closing the connection as a served one
+    /// does.
+    #[tokio::test]
+    async fn in_process_it_is_answered_408_at_once() {
+        let response = stalled(&TestClient::new(reading_service())).await;
+
+        response.assert_status(StatusCode::REQUEST_TIMEOUT);
+        assert_eq!(response.header("connection"), Some("close"));
+        assert!(
+            response
+                .text()
+                .contains("the request body sent nothing for 1ms"),
+            "{}",
+            response.text()
+        );
+    }
+
+    /// Through a server, the stall is the server's to end, at its own limit
+    /// rather than the in-process one.
+    #[tokio::test]
+    async fn through_a_server_it_is_answered_at_the_servers_limit() {
+        let server = crate::server::Server::new(reading_service())
+            .request_body_idle_timeout(Some(Duration::from_millis(20)));
+        let response = stalled(&TestClient::through_server(server)).await;
+
+        response.assert_status(StatusCode::REQUEST_TIMEOUT);
+        assert!(
+            response
+                .text()
+                .contains("the request body sent nothing for 20ms"),
+            "{}",
+            response.text()
+        );
+    }
+}
+
 /// What a client sets once seeds every request it begins, and what a request
 /// sets itself replaces it, read off the request `send` would assemble.
 mod defaults {

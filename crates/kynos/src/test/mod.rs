@@ -357,11 +357,13 @@ enum Transport<C> {
 
 impl<C> Transport<C> {
     /// Sends `request` from `peer`, failing only where a connection ended
-    /// without a response.
+    /// without a response. `stalled` says the body is
+    /// [`stalled_body`](TestRequest::stalled_body)'s.
     async fn answer(
         &self,
         mut request: Request,
         peer: Option<std::net::SocketAddr>,
+        stalled: bool,
     ) -> std::io::Result<Response> {
         match self {
             Self::Direct(service) => {
@@ -372,18 +374,28 @@ impl<C> Transport<C> {
                         .insert(Connection::from_peer(peer, IN_PROCESS));
                 }
                 // Held to the idle timeout a server holds it to by default, so
-                // a stalled body is answered as a served one is.
+                // a stalled body is answered as a served one is; a body known
+                // never to arrive is held to a moment, so its 408 costs none.
                 #[cfg(feature = "server")]
                 let (request, stall) = {
+                    let limit = if stalled {
+                        STALLED_BODY_IDLE_TIMEOUT
+                    } else {
+                        crate::server::request_body::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT
+                    };
                     let (parts, body) = request.into_parts();
                     let (body, stall) = crate::server::request_body::bounded(
                         body,
-                        Some(crate::server::request_body::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+                        Some(limit),
                         crate::http::Version::HTTP_11,
                         std::convert::identity,
                     );
                     (Request::from_parts(parts, body), stall)
                 };
+                // Only a server holds a body to a timer, and `stalled_body`
+                // needs one.
+                #[cfg(not(feature = "server"))]
+                let _ = stalled;
                 let method = request.method().clone();
                 let response = service.call(request).await;
                 #[cfg(feature = "server")]
@@ -431,6 +443,12 @@ fn with_content_length(method: &HttpMethod, mut response: Response) -> Response 
     }
     response
 }
+
+/// How long [`Transport::Direct`] waits on a
+/// [`stalled_body`](TestRequest::stalled_body) before failing its read: the
+/// shortest wait a timer measures, since no frame can end it.
+#[cfg(feature = "server")]
+const STALLED_BODY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(1);
 
 /// A response [`Transport::Served`] is answered with.
 #[cfg(feature = "server")]
@@ -714,7 +732,8 @@ impl<C> TestRequest<'_, C> {
     /// never yields again is a stalled one. With the `server` feature, a read
     /// that waits as long as a server's default `request_body_idle_timeout`
     /// fails as a served body's does, so the stall is answered with the
-    /// operation's 408; pause the clock to reach it at once. Without
+    /// operation's 408; [`stalled_body`](Self::stalled_body) reaches it at
+    /// once. Without
     /// [`content_length`](Self::content_length) the body declares no length,
     /// as a chunked one does, and ends when the stream does.
     ///
@@ -728,6 +747,31 @@ impl<C> TestRequest<'_, C> {
     {
         self.body = RequestBody::Streamed(Box::pin(chunks));
         self.content_type(media_type)
+    }
+
+    /// Sets a body that never arrives, declared one octet long, and the media
+    /// type it would be in: a client that sent its head and stalled.
+    ///
+    /// The read fails with [`BodyStalled`](crate::http::body::BodyStalled)
+    /// as a served one does, so an operation reading its body answers with its
+    /// declared 408, carrying `Connection: close`. A client built with
+    /// [`TestClient::new`] fails the read once the service has waited a
+    /// millisecond, on the clock however it runs, so the 408 needs no paused
+    /// clock and no wall-clock wait. One built
+    /// [`through_server`](TestClient::through_server) sends it on the wire,
+    /// where the server's own
+    /// [`request_body_idle_timeout`](crate::server::Server::request_body_idle_timeout)
+    /// ends the wait: give that server a short one, and with `None` the
+    /// request is never answered.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `media_type` is not a header value.
+    #[cfg(feature = "server")]
+    #[must_use]
+    pub fn stalled_body(mut self, media_type: &str) -> Self {
+        self.body = RequestBody::Stalled;
+        self.content_length(1).content_type(media_type)
     }
 
     /// Declares the body's length: sends it as `Content-Length`, and frames
@@ -796,6 +840,7 @@ impl<C> TestRequest<'_, C> {
     /// [`through_server`](TestClient::through_server), when the connection
     /// ends without a response.
     pub async fn send(mut self) -> TestResponse {
+        let stalled = self.body.is_stalled();
         let body = match (self.body, self.content_length) {
             (RequestBody::Whole(bytes), None) => Body::from_bytes(bytes),
             (body, remaining) => Body::from_body(Framed {
@@ -829,7 +874,7 @@ impl<C> TestRequest<'_, C> {
         let response = self
             .client
             .transport
-            .answer(request, self.peer)
+            .answer(request, self.peer, stalled)
             .await
             .unwrap_or_else(|error| {
                 panic!(
