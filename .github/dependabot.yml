@@ -16,8 +16,9 @@ updates:
       interval: weekly
     versioning-strategy: lockfile-only
     open-pull-requests-limit: 5
-    # `ci:full`: a bump is what moves the MSRV or breaks a feature combination,
-    # which only the comprehensive tier checks.
+    # `ci:full`: a bump is what breaks a feature combination, which only the
+    # comprehensive tier checks. The MSRV is not the lock's: `msrv:check`
+    # resolves afresh, on every pull request.
     labels:
       - chore
       - ci:full
