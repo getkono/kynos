@@ -59,7 +59,7 @@ fn flagging_marks_every_operation_slot_a_path_item_has() {
         extensions: _,
     } = &document.paths.items["/things"];
 
-    let mut slots = vec![
+    let slots = [
         ("get", get),
         ("put", put),
         ("post", post),
@@ -68,9 +68,9 @@ fn flagging_marks_every_operation_slot_a_path_item_has() {
         ("head", head),
         ("patch", patch),
         ("trace", trace),
+        #[cfg(feature = "openapi32")]
+        ("query", query),
     ];
-    #[cfg(feature = "openapi32")]
-    slots.push(("query", query));
 
     let expected = Some(Opaque::new(OpaqueReason::UntypedRoute));
     for (slot, operation) in slots {

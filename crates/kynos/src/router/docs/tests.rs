@@ -40,11 +40,12 @@ fn scripts(html: &str) -> Vec<(&str, &str)> {
 /// The digest is `rustls`'s, which the dev-dependency graph already carries
 /// through `ring`, rather than a hashing crate added for one assertion.
 fn hash_source(script: &str) -> String {
-    use rustls::{SupportedCipherSuite, crypto::ring::cipher_suite::TLS13_AES_128_GCM_SHA256};
+    use rustls::crypto::ring::cipher_suite::TLS13_AES_128_GCM_SHA256;
 
-    let SupportedCipherSuite::Tls13(suite) = TLS13_AES_128_GCM_SHA256 else {
-        unreachable!("a TLS 1.3 suite")
-    };
+    // `tls13()` rather than a `let ... else`: whether `Tls12` exists depends on
+    // whether feature unification turned on rustls's `tls12`, and with it off
+    // the pattern is irrefutable and the `else` an unreachable-pattern warning.
+    let suite = TLS13_AES_128_GCM_SHA256.tls13().expect("a TLS 1.3 suite");
     let digest = suite.common.hash_provider.hash(script.as_bytes());
 
     format!("'sha256-{}'", base64(digest.as_ref()))
