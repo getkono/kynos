@@ -69,19 +69,22 @@
 //! | `chrono::NaiveTime` | `string`/`time-local` | `time-chrono04` |
 //! | `chrono::NaiveDateTime` | `string`/`date-time-local` | `time-chrono04` |
 //! | `chrono::DateTime<Utc>`, `<FixedOffset>` | `string`/`date-time` | `time-chrono04` |
-//! | `jiff::civil::Date` | `string`/`date` | `time-jiff02` |
-//! | `jiff::civil::Time` | `string`/`time-local` | `time-jiff02` |
-//! | `jiff::civil::DateTime` | `string`/`date-time-local` | `time-jiff02` |
-//! | `jiff::Timestamp` | `string`/`date-time` | `time-jiff02` |
+//! | `jiff::civil::Date` | `string`/`date` | `time-jiff02`, `time-jiff1` |
+//! | `jiff::civil::Time` | `string`/`time-local` | `time-jiff02`, `time-jiff1` |
+//! | `jiff::civil::DateTime` | `string`/`date-time-local` | `time-jiff02`, `time-jiff1` |
+//! | `jiff::Timestamp` | `string`/`date-time` | `time-jiff02`, `time-jiff1` |
+//! | `jiff::Zoned` (jiff 1's `ZonedDateTime`) | `string`/`date-time-zoned`, with a pattern | `time-jiff02`, `time-jiff1` |
+//! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff02`, `time-jiff1` |
+//! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust1` |
+//! | `bigdecimal::BigDecimal` | `string`/`decimal` | `decimal-big04` |
+//!
+//! `time-jiff02` and `time-jiff1` implement the same types for jiff 0.2 and
+//! jiff 1, onto the same shapes, and may be enabled together.
 //!
 //! `time-chrono04` is deprecated: chrono is unmaintained (RUSTSEC-2026-0543).
 //! Its types keep their implementations, but each one a route attribute or
 //! derive is handed warns, and the feature may be removed in any future 0.x
-//! minor. `time-jiff02` maps onto the same shapes, so moving changes no schema.
-//! | `jiff::Zoned` | `string`/`date-time-zoned`, with a pattern | `time-jiff02` |
-//! | `jiff::Span`, `jiff::SignedDuration` | `string`/`duration` | `time-jiff02` |
-//! | `rust_decimal::Decimal` | `string`/`decimal` | `decimal-rust1` |
-//! | `bigdecimal::BigDecimal` | `string`/`decimal` | `decimal-big04` |
+//! minor. `time-jiff1` maps onto the same shapes, so moving changes no schema.
 //!
 //! `time` is an umbrella carrying the shapes a backend maps onto; it names no
 //! crate and does not compile alone.

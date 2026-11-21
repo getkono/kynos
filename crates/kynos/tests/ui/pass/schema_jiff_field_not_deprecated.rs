@@ -8,6 +8,7 @@ use kynos::Schema;
 #[derive(Schema, serde::Serialize)]
 pub struct Booking {
     pub on: jiff02::civil::Date,
+    pub until: jiff1::civil::Date,
     pub label: String,
 }
 

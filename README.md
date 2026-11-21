@@ -176,8 +176,8 @@ Each of these is something another Rust framework offers and Kynos does not. Mos
 | `form`, `multipart`, `protobuf` | no | Additional request and response codecs |
 | `cookie` | no | Cookie parameters, response cookies and the `SetCookies` interceptor. Kynos owns the RFC 6265 this needs, so it pulls in no dependency |
 | `uuid1` | no | `Uuid` as `format: uuid` |
-| `time-jiff02` | no | Dates and times from jiff, mapping onto shapes `time` defines once |
-| `time-chrono04` | no | **Deprecated**: chrono is unmaintained ([RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543)). The same shapes from chrono; each chrono type a route attribute or derive is handed warns, and the feature may be removed in any future 0.x minor. Move to `time-jiff02` |
+| `time-jiff1`, `time-jiff02` | no | Dates and times from jiff 1 or jiff 0.2, mapping onto shapes `time` defines once |
+| `time-chrono04` | no | **Deprecated**: chrono is unmaintained ([RUSTSEC-2026-0543](https://rustsec.org/advisories/RUSTSEC-2026-0543)). The same shapes from chrono; each chrono type a route attribute or derive is handed warns, and the feature may be removed in any future 0.x minor. Move to `time-jiff1` |
 | `decimal-rust1`, `decimal-big04` | no | Decimals, written as JSON strings so the precision they exist for survives |
 | `compression` | no | Response compression, and decompressing a request body the client compressed |
 | `yaml` | no | YAML document emission |

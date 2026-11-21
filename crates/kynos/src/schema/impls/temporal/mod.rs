@@ -10,7 +10,7 @@ use crate::schema::impls::formatted;
 
 #[cfg(feature = "time-chrono04")]
 mod chrono;
-#[cfg(feature = "time-jiff02")]
+#[cfg(any(feature = "time-jiff02", feature = "time-jiff1"))]
 mod jiff;
 
 /// A calendar date: RFC 3339 `full-date`, which carries no offset and needs
@@ -41,7 +41,7 @@ pub(super) fn local_time() -> OpenApiSchema {
 /// An ISO 8601 duration.
 ///
 /// Only jiff writes one; chrono's `TimeDelta` serializes as an array.
-#[cfg(feature = "time-jiff02")]
+#[cfg(any(feature = "time-jiff02", feature = "time-jiff1"))]
 pub(super) fn duration() -> OpenApiSchema {
     formatted(SchemaType::String, "duration")
 }

@@ -1170,7 +1170,7 @@ member's name, and one ending in `/` is a tree.
 | compatibility | `multer` is named only in `extract/body/multipart.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `prost` is named only in `kynos-macros/derive/protobuf.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `uuid1` is named only in `schema/impls/identifier.rs` | `mise run containment:check` | `enforced` |
-| compatibility | `chrono04` and `jiff02` are named only under `schema/impls/temporal/` | `mise run containment:check` | `enforced` |
+| compatibility | `chrono04`, `jiff02` and `jiff1` are named only under `schema/impls/temporal/` | `mise run containment:check` | `enforced` |
 | compatibility | `rust_decimal1` and `bigdecimal04` are named only under `schema/impls/decimal/` | `mise run containment:check` | `enforced` |
 | compatibility | `percent-encoding` is named only in `__private/uri.rs` | `mise run containment:check` | `enforced` |
 | compatibility | `jsonschema` is named only in `test/conformance.rs` | `mise run containment:check` | `enforced` |

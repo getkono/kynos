@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! cargo run -p kynos --example scalars --features \
-//!   uuid1,time-jiff02,decimal-rust1,decimal-big04
+//!   uuid1,time-jiff1,decimal-rust1,decimal-big04
 //! ```
 //!
 //! An application picks *one* decimal backend. Both appear here because the
@@ -24,8 +24,8 @@
 //!   a date needs a date library, and choosing one for an application would be
 //!   the sort of prescription this framework avoids. What it does prescribe is
 //!   the shape both map onto, so `date-time-local` cannot mean two things.
-//!   Each feature also names the crate's major version, so `jiff`'s next major
-//!   would arrive as a feature beside `time-jiff02` rather than replacing it.
+//!   Each feature also names the crate's major version, so jiff 1 arrived as
+//!   `time-jiff1` beside jiff 0.2's `time-jiff02` rather than replacing it.
 //! * **The offset-less types are not `date-time`.** `civil::DateTime` carries
 //!   no offset, so they are not RFC 3339 timestamps,
 //!   and saying otherwise would document a request body the service rejects.
@@ -41,7 +41,7 @@ use std::net::Ipv4Addr;
 // Kynos's own manifest keys each crate by its major, so this example reaches
 // them through those names; an application names them as its manifest does.
 use bigdecimal04 as bigdecimal;
-use jiff02 as jiff;
+use jiff1 as jiff;
 use rust_decimal1 as rust_decimal;
 use uuid1 as uuid;
 
@@ -69,7 +69,7 @@ struct Booking {
     /// — and that suffix is exactly what stops it being a valid `date-time`. A
     /// consumer that has not heard of the format falls back to `type` and the
     /// pattern, which the specification requires and which loses nothing.
-    starts_at: jiff::Zoned,
+    starts_at: jiff::ZonedDateTime,
 
     /// `string` / `decimal`, carried as a *string*.
     ///
