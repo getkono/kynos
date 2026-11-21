@@ -426,8 +426,8 @@ description = "Build the workspace with every direct dependency at its declared 
 # The library targets only, not `--all-targets`: a dev-dependency's bound
 # reaches no application, and the resolution still holds them to resolving
 # beside the rest, since Cargo resolves dev-dependencies either way.
-# `kynos-profile` is excluded for `msrv:check`'s reason: it is published
-# nowhere, so its bounds are nobody's promise.
+# `kynos-profile` is excluded: it is published nowhere, so its bounds are
+# nobody's promise, and its own `rust-version` is above the MSRV.
 #
 # `-Z` needs nightly, `KYNOS_NIGHTLY`, for the resolution only. The build is on
 # the MSRV, so a lower bound whose release needs a newer Rust fails here. The
