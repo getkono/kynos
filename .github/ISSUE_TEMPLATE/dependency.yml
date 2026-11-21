@@ -89,7 +89,7 @@ body:
         - Semver-compatible; no code change
         - Breaking upstream, but contained under the path the table gives it
         - Breaking upstream and it reaches Kynos's public API
-        - Raises the MSRV above 1.85
+        - Raises the MSRV above 1.85 (every release the requirement allows needs a newer Rust)
         - Not sure
     validations:
       required: true

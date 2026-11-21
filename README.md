@@ -273,9 +273,9 @@ You can, behind the `unchecked` feature, and the emitted document will say it is
 
 ## MSRV
 
-We conservatively bump as new language features come about.
+Rust 1.85, with every feature, when Cargo resolves MSRV-aware: Cargo 1.84 or later with resolver 3, the edition 2024 default, or `incompatible-rust-versions = "fallback"`. Requirements stay open-ended, so under MSRV-unaware resolution the newest releases may need a newer Rust; Kynos never caps a dependency to hold its MSRV there.
 
-Rust 1.85
+We conservatively bump as new language features come about.
 
 ## License
 
