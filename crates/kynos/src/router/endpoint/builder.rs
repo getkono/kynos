@@ -15,10 +15,7 @@ use crate::{
     },
     router::{
         dispatch,
-        endpoint::{
-            Endpoint,
-            set::{Endpoints, IntoEndpoints},
-        },
+        endpoint::Endpoint,
         install,
         operation::{DeclaredTag, OperationCx, Route, Tag},
     },
@@ -228,28 +225,11 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     }
 }
 
-impl<C, H, A, P, I> IntoEndpoints<C> for EndpointBuilder<C, H, A, P, I>
-where
-    C: Send + Sync + 'static,
-    H: Handler<C, A>,
-    // Only `'static`: `A` is a phantom argument shape, never a value.
-    A: 'static,
-    P: PanicPolicy,
-    I: 'static,
-{
-    /// Whatever `intercept` accumulated on this one operation.
-    type Stacks = I;
-
-    fn into_endpoints(self, sink: &mut Endpoints<C>) {
-        sink.push(self);
-    }
-}
-
 impl<C, H, A, P, I: 'static> Endpoint<C> for EndpointBuilder<C, H, A, P, I>
 where
     C: Send + Sync + 'static,
     H: Handler<C, A>,
-    // Only `'static`, as above.
+    // Only `'static`: `A` is a phantom argument shape, never a value.
     A: 'static,
     P: PanicPolicy,
 {

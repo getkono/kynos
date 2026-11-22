@@ -3,8 +3,9 @@
 use std::sync::Arc;
 
 use crate::{
-    middleware::stack::Both,
-    router::endpoint::{DynEndpoint, Endpoint},
+    handler::Handler,
+    middleware::{catch_panic::PanicPolicy, stack::Both},
+    router::endpoint::{DynEndpoint, Endpoint, builder::EndpointBuilder},
 };
 
 /// A set of operations waiting to be mounted.
@@ -99,6 +100,23 @@ impl<C> IntoEndpoints<C> for Endpoints<C> {
 
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
         sink.endpoints.extend(self.endpoints);
+    }
+}
+
+impl<C, H, A, P, I> IntoEndpoints<C> for EndpointBuilder<C, H, A, P, I>
+where
+    C: Send + Sync + 'static,
+    H: Handler<C, A>,
+    // Only `'static`: `A` is a phantom argument shape, never a value.
+    A: 'static,
+    P: PanicPolicy,
+    I: 'static,
+{
+    /// Whatever `intercept` accumulated on this one operation.
+    type Stacks = I;
+
+    fn into_endpoints(self, sink: &mut Endpoints<C>) {
+        sink.push(self);
     }
 }
 
