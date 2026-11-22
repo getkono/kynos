@@ -86,6 +86,18 @@ async fn cacheable() -> Sse<OneEventThenSilence, true, true> {
     Sse::new(one_event_then_silence()).cacheable().buffered()
 }
 
+/// The same stream, left to caches alone.
+#[kynos::get("/only-cacheable")]
+async fn only_cacheable() -> Sse<OneEventThenSilence, true> {
+    Sse::new(one_event_then_silence()).cacheable()
+}
+
+/// The same stream, left to an nginx's own buffering alone.
+#[kynos::get("/only-buffered")]
+async fn only_buffered() -> Sse<OneEventThenSilence, false, true> {
+    Sse::new(one_event_then_silence()).buffered()
+}
+
 /// A `Cache-Control` the application sets itself.
 #[derive(kynos::HeaderParams)]
 struct Stored {
@@ -140,7 +152,14 @@ where
 
     let bound = Server::new(
         Router::<()>::new()
-            .mount(kynos::routes![events, quiet, cacheable, overridden])
+            .mount(kynos::routes![
+                events,
+                quiet,
+                cacheable,
+                only_cacheable,
+                only_buffered,
+                overridden
+            ])
             .build(())
             .expect("a describable router"),
     )
@@ -260,6 +279,34 @@ async fn an_event_stream_opted_out_sends_neither_field() {
     assert!(
         field_values(&lines, "x-accel-buffering").is_empty(),
         "{lines:?}"
+    );
+}
+
+/// Each opt-out leaves out its own field and only that one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn each_opt_out_leaves_out_only_its_own_field() {
+    let cacheable =
+        serving(|address| read_for("/only-cacheable", address, Duration::from_millis(200))).await;
+    assert!(
+        field_values(&cacheable, "cache-control").is_empty(),
+        "{cacheable:?}"
+    );
+    assert_eq!(
+        field_values(&cacheable, "x-accel-buffering"),
+        ["no"],
+        "{cacheable:?}"
+    );
+
+    let buffered =
+        serving(|address| read_for("/only-buffered", address, Duration::from_millis(200))).await;
+    assert_eq!(
+        field_values(&buffered, "cache-control"),
+        ["no-cache"],
+        "{buffered:?}"
+    );
+    assert!(
+        field_values(&buffered, "x-accel-buffering").is_empty(),
+        "{buffered:?}"
     );
 }
 

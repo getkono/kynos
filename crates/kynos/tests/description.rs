@@ -2400,6 +2400,20 @@ async fn cacheable_events() -> kynos::response::stream::sse::Sse<NoEvents, true,
         .buffered()
 }
 
+/// The same stream, opted out of `Cache-Control` alone.
+#[cfg(feature = "openapi32")]
+#[kynos::get("/only-cacheable-events")]
+async fn only_cacheable_events() -> kynos::response::stream::sse::Sse<NoEvents, true> {
+    kynos::response::stream::sse::Sse::new(NoEvents).cacheable()
+}
+
+/// The same stream, opted out of `X-Accel-Buffering` alone.
+#[cfg(feature = "openapi32")]
+#[kynos::get("/only-buffered-events")]
+async fn only_buffered_events() -> kynos::response::stream::sse::Sse<NoEvents, false, true> {
+    kynos::response::stream::sse::Sse::new(NoEvents).buffered()
+}
+
 /// A `Cache-Control` group, spelled as a derive's default lower-cases it.
 #[cfg(feature = "openapi32")]
 #[derive(kynos::HeaderParams)]
@@ -2434,12 +2448,19 @@ fn fixed_value(operation: &kynos::openapi::Operation, name: &str) -> Option<serd
 
 /// An event stream's 200 declares the two fields it sends by default, each
 /// fixed to its one value and required; an opted-out stream declares neither,
-/// and a group naming one replaces it rather than standing beside it.
+/// one opted out of either declares only the other, and a group naming one
+/// replaces it rather than standing beside it.
 #[cfg(feature = "openapi32")]
 #[test]
 fn an_event_streams_default_fields_are_declared_only_where_sent() {
     let document = Router::<()>::new()
-        .mount(kynos::routes![events, cacheable_events, stored_events])
+        .mount(kynos::routes![
+            events,
+            cacheable_events,
+            only_cacheable_events,
+            only_buffered_events,
+            stored_events
+        ])
         .openapi()
         .expect("a describable router");
 
@@ -2463,6 +2484,14 @@ fn an_event_streams_default_fields_are_declared_only_where_sent() {
     assert_eq!(
         declared_headers(&operation(&document, "/cacheable-events"), "200"),
         Some(Vec::new())
+    );
+    assert_eq!(
+        declared_headers(&operation(&document, "/only-cacheable-events"), "200"),
+        Some(vec!["X-Accel-Buffering".to_owned()])
+    );
+    assert_eq!(
+        declared_headers(&operation(&document, "/only-buffered-events"), "200"),
+        Some(vec!["Cache-Control".to_owned()])
     );
 
     let stored = operation(&document, "/stored-events");
