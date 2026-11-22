@@ -97,7 +97,7 @@ impl<T: Schema> RequestContent for Json<T> {
         kynos_openapi::RequestBody::json(registry.resolve::<T>())
     }
 
-    fn constraint_types() -> Vec<&'static str> {
-        super::constraint_type::<T>()
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
+        super::constraint_problem::<T>()
     }
 }

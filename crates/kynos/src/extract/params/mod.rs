@@ -15,16 +15,17 @@ pub mod querystring;
 pub mod cookie;
 
 use crate::{
-    error::rejection::constraint_responses, http::StatusCode, router::operation::OperationCx,
-    schema::registry::Registry,
+    error::rejection::{Input, constraint_responses},
+    router::operation::OperationCx,
+    schema::{constraints::ConstraintProblem, registry::Registry},
 };
 
 /// Adds each Parameter Object a group's `parameters` builds to `operation`,
-/// and the 400 of each problem type `named` for a broken bound.
+/// and the response of each problem in `named` for a broken bound.
 fn describe_parameters(
     operation: &mut OperationCx<'_>,
     parameters: fn(&mut Registry) -> Vec<kynos_openapi::Parameter>,
-    named: &[&'static str],
+    named: &[ConstraintProblem],
 ) {
     for parameter in parameters(operation.registry()) {
         operation.add_parameter(parameter);
@@ -32,9 +33,10 @@ fn describe_parameters(
     describe_constraints(operation, named);
 }
 
-/// Declares the 400 of each problem type in `named`, which joins the
-/// `about:blank` one a parameter rejection declares.
-fn describe_constraints(operation: &mut OperationCx<'_>, named: &[&'static str]) {
-    let named = constraint_responses(operation.registry(), StatusCode::BAD_REQUEST, named, true);
+/// Declares each problem in `named` at the status it answers with: at 400 it
+/// joins the `about:blank` one a parameter rejection declares, and a 422 is
+/// its own.
+fn describe_constraints(operation: &mut OperationCx<'_>, named: &[ConstraintProblem]) {
+    let named = constraint_responses(operation.registry(), Input::Parameter, named, true);
     operation.add_responses(&named);
 }

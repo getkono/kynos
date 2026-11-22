@@ -129,10 +129,10 @@ pub trait HeaderParams: Sized {
             .collect()
     }
 
-    /// The problem types a value breaking a bound answers with, beside
+    /// The problems a value breaking a bound answers with, beside
     /// `about:blank`: the
-    /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
-    /// field type naming one, so the 400 [`Headers`] declares names what
+    /// [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM) of
+    /// each field type naming one, so what [`Headers`] declares names what
     /// [`HeaderRejection::Schema`] sends.
     ///
     /// `#[derive(HeaderParams)]` replaces this; the default names none, which
@@ -140,7 +140,7 @@ pub trait HeaderParams: Sized {
     /// the group reads none of it, since a header a handler sends is not
     /// checked.
     #[must_use]
-    fn constraint_types() -> Vec<&'static str> {
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
         Vec::new()
     }
 }
@@ -244,10 +244,10 @@ impl<C: Sync, T: DecodeHeaders + Send> FromRequestParts<C> for Headers<T> {
 impl<T: HeaderParams> Describe for Headers<T> {
     fn describe(operation: &mut OperationCx<'_>) {
         if !T::DESCRIBED {
-            super::describe_constraints(operation, &T::constraint_types());
+            super::describe_constraints(operation, &T::constraint_problems());
             return;
         }
-        super::describe_parameters(operation, T::parameters, &T::constraint_types());
+        super::describe_parameters(operation, T::parameters, &T::constraint_problems());
     }
 }
 

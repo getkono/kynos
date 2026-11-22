@@ -22,7 +22,7 @@ fn undeclared_refusal(name: &TokenStream2) -> TokenStream2 {
                 ),
             )]),
             // A part no field reads is the form's shape, not a bound.
-            type_uri: ::core::option::Option::None,
+            problem: ::core::option::Option::None,
         }
     }
 }

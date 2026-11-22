@@ -357,7 +357,7 @@ impl<C: BodyCodec<T>, T: Schema> RequestContent for Encoded<C, T> {
         )
     }
 
-    fn constraint_types() -> Vec<&'static str> {
-        super::constraint_type::<T>()
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
+        super::constraint_problem::<T>()
     }
 }

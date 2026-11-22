@@ -931,7 +931,8 @@ it over was reading both sides of a split `rename`, so a member now has the name
 serde writes and the one it reads. One concern, so one file.
 
 `schema/constraints.rs` is `status.rs`'s shape. It declares `Constraints`, the
-`Pointer` and `Violations` a check reports through, and the four kind traits —
+`Pointer` and `Violations` a check reports through, the `ConstraintProblem` and
+`ConstraintDetail` a broken bound answers with, and the four kind traits —
 `Numeric`, `Textual`, `Items`, `UniqueItems` — a bound reaches a value by, so a
 split would turn `constraints::Numeric` into `constraints::kinds::Numeric` and
 likewise for the rest. What pushed it over was enforcing the bounds it used to

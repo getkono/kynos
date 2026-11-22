@@ -276,7 +276,7 @@ impl<M: MediaType, T: Schema> RequestContent for JsonAs<M, T> {
         )
     }
 
-    fn constraint_types() -> Vec<&'static str> {
-        super::constraint_type::<T>()
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
+        super::constraint_problem::<T>()
     }
 }

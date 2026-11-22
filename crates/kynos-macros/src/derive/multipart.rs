@@ -264,7 +264,7 @@ impl<'a> Declared<'a> {
                                 "the part is required",
                             ),
                         )]),
-                        type_uri: ::core::option::Option::None,
+                        problem: ::core::option::Option::None,
                     },
                 )
             },

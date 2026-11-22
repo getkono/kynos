@@ -98,8 +98,8 @@ where
             operation.add_responses(&rejected);
             let named = constraint_responses(
                 operation.registry(),
-                crate::http::StatusCode::BAD_REQUEST,
-                &<I::Reads as HeaderParams>::constraint_types(),
+                crate::error::rejection::Input::Parameter,
+                &<I::Reads as HeaderParams>::constraint_problems(),
                 true,
             );
             operation.add_responses(&named);

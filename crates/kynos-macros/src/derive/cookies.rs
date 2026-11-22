@@ -9,7 +9,9 @@ use crate::derive::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
         wire_names,
     },
-    params::{Param, check_field, constraint_types_body, construct, decode_field, parameters_body},
+    params::{
+        Param, check_field, constraint_problems_body, construct, decode_field, parameters_body,
+    },
 };
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -48,7 +50,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         quote!(#decoded #checked)
     });
     let value = construct(&params);
-    let constraint_types = constraint_types_body(&params);
+    let constraint_problems = constraint_problems_body(&params);
 
     let parameters = parameters_body(
         &params,
@@ -103,8 +105,9 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 #parameters
             }
 
-            fn constraint_types() -> ::std::vec::Vec<&'static str> {
-                #constraint_types
+            fn constraint_problems(
+            ) -> ::std::vec::Vec<::kynos::schema::constraints::ConstraintProblem> {
+                #constraint_problems
             }
         }
     })

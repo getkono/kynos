@@ -400,10 +400,10 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 
 | Type | Statuses | Raised by |
 | --- | --- | --- |
-| `PathRejection` | 400 | `Path<T>` |
-| `QueryRejection` | 400 | `Query<T>`, `QueryString<T, M>` |
-| `HeaderRejection` | 400 | `Headers<T>` |
-| `CookieRejection` | 400 | `Cookies<T>` |
+| `PathRejection` | 400, and 422 where a problem asks for it | `Path<T>` |
+| `QueryRejection` | 400, and 422 where a problem asks for it | `Query<T>`, `QueryString<T, M>` |
+| `HeaderRejection` | 400, and 422 where a problem asks for it | `Headers<T>` |
+| `CookieRejection` | 400, and 422 where a problem asks for it | `Cookies<T>` |
 | `BodyRejection` | 400, 408 with `server`, 413, 415, 422 | every body extractor, and `OneOf<L, R>` |
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
 | `RangeRejection` | 416 | `Range<T>`'s `select`, `apply`, `select_parts` and `apply_parts`, and `Served::deliver` |
@@ -428,36 +428,51 @@ optional on a parameter's 400, which an undecodable value sends without it.
 The entry is `error::problem::PointerError`, public so an application reporting
 violations of its own sends and declares the same shape.
 
-**A broken bound answers with the type its type names.**
-`Schema::CONSTRAINT_TYPE`, set by `#[schema(constraint_type = ...)]` on the
-type, is the problem `type` a value of that type answers with when it breaks a
-bound it declares, so an application publishing its own problem catalogue keeps
-Kynos enforcing what the document declares. It is a `const` on a trait the
-application already implements for the value, the `Scopes::FORBIDDEN_TYPE`
-shape above. The type read is the one the input decodes: a body extractor's
-`T`, a `QueryString`'s `T`, a derived parameter field's type. A member naming a
-type of its own does not override the body holding it, and `Option`, `Box` and
-`Arc` answer as their `T`. The status stays the input's — 422 for a body, 400
-for a parameter, whose value is part of the request's target rather than its
-content (RFC 9110 §15.5.21). The variant does too: the rejection's `Schema`
-variant carries the URI in `type_uri`, as `AuthRejection::Forbidden` does,
-rather than a second variant, since a parameter's `Schema` is already nothing
-but a broken bound. Its `title` is the status's reason phrase, so the URI must
-be a type of its own: one an `ApiError` also publishes under a title of its own
-would reach clients with two, which RFC 9457 §3.1.3 rules out.
+**A broken bound answers with the problem its type names.**
+`Schema::CONSTRAINT_PROBLEM`, set by `#[schema(constraint_problem = ...)]` on
+the type, is the whole problem a value of that type answers with when it breaks
+a bound it declares, so an application publishing its own problem catalogue
+keeps Kynos enforcing what the document declares. A `ConstraintProblem` names
+the `type`, and may name the `title` (the status's reason phrase by default), a
+422 for a parameter as for a body, and a `detail` naming the first failure and
+counting the rest (the rejection's sentence by default); `errors` lists every
+failure either way. It is one `const` value rather than a `const` per part,
+which could disagree, on a trait the application already implements for the
+value, the `Scopes::FORBIDDEN_TYPE` shape above. The type read is the one the
+input decodes: a body extractor's `T`, a `QueryString`'s `T`, a derived
+parameter field's type. A member naming a problem of its own does not override
+the body holding it, and `Option`, `Box` and `Arc` answer as their `T`. The
+rejection's `Schema` variant carries the problem in `problem`, as
+`AuthRejection::Forbidden` carries its URI, rather than a second variant, since
+a parameter's `Schema` is already nothing but a broken bound. A type an
+`ApiError` also publishes takes the title it publishes there, since one type
+reaching clients under two titles is what RFC 9457 §3.1.3 rules out.
 
-A parameter group's own `#[schema(constraint_type = ...)]` is ignored by
+**The status is the input's unless the problem asks otherwise.** A body answers
+422, and a parameter 400, since its value is part of the request's target
+rather than its content (RFC 9110 §15.5.21). `ConstraintProblem::unprocessable`
+answers a parameter with 422 too, for a catalogue defining one validation
+problem at one status. A parameter rejection's `statuses()` therefore names
+422, as `AuthRejection`'s names its opt-in 503, while its own `Responses`
+declares the 400 alone: the extractor whose type names such a problem declares
+the 422, so an operation declares one only where it can be sent.
+
+A parameter group's own `#[schema(constraint_problem = ...)]` is ignored by
 `Query<T>`, `Path<T>`, `Headers<T>` and `Cookies<T>`, which read each field's
 type; it still applies where the group is itself the decoded value, as a
-`QueryString<T>` or a body's `T`. Name the type on the field types to have a
+`QueryString<T>` or a body's `T`. Name the problem on the field types to have a
 parameter answer with it.
 
 What a body that does not decode into `T` sends is unchanged: `about:blank`,
 since no bound was consulted. Each input therefore declares a choice at its
-status — the named type beside the `about:blank` its rejection declares, both
-sending `errors` — read from the type through `RequestContent::constraint_types`
-and each parameter trait's `constraint_types`, which the parameter derives
-write.
+status — the named problem beside the `about:blank` its rejection declares,
+both sending `errors` — or the named problem alone at a parameter's 422, read
+from the type through `RequestContent::constraint_problems` and each parameter
+trait's `constraint_problems`, which the parameter derives write.
+
+An application that takes a value unchecked, to fold its failures into a
+problem of its own beside checks no schema states, holds it to its bounds with
+`Violations::of` rather than restating them.
 
 **A JSON struct body is read only from an object.** `serde`'s derive also reads
 a struct from an array of its members, and from `[]` where every member

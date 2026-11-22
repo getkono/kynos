@@ -2455,17 +2455,20 @@ fn a_cookie_carries_its_fields_bounds_and_refuses_a_value_breaking_one() {
     }
 }
 
-// --- A parameter answers with the problem type its field's type names -----
+// --- A parameter answers with the problem its field's type names ----------
 //
 // The same recorded exception: what the decoder a derive generates carries,
 // and what the group reports for the description to declare.
 
-/// The problem type [`PageNumber`] names for a broken bound.
-const PAGE_OUT_OF_RANGE: &str = "https://errors.example.com/page-out-of-range";
+/// The problem [`PageNumber`] names for a broken bound.
+const PAGE_OUT_OF_RANGE: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/page-out-of-range",
+    );
 
-/// A parameter value naming its own problem type.
+/// A parameter value naming its own problem.
 #[derive(Schema, Debug, PartialEq)]
-#[schema(constraint_type = PAGE_OUT_OF_RANGE)]
+#[schema(constraint_problem = PAGE_OUT_OF_RANGE)]
 struct PageNumber(#[schema(maximum = 100)] u32);
 
 impl std::str::FromStr for PageNumber {
@@ -2509,11 +2512,11 @@ struct NamedCookies {
     page: Option<PageNumber>,
 }
 
-/// A value breaking its field's bound, or its type's, carries the type its
+/// A value breaking its field's bound, or its type's, carries the problem its
 /// field's type names, and a field whose type names none carries none; each
-/// group reports the types its fields name once per field.
+/// group reports the problems its fields name once per field.
 #[test]
-fn a_parameter_carries_the_type_its_field_type_names() {
+fn a_parameter_carries_the_problem_its_field_type_names() {
     use kynos::{
         error::rejection::{HeaderRejection, PathRejection, QueryRejection},
         extract::params::{
@@ -2530,32 +2533,32 @@ fn a_parameter_carries_the_type_its_field_type_names() {
         ("limit=0", None),
     ] {
         match NamedQuery::decode(Some(query)) {
-            Err(QueryRejection::Schema { type_uri, .. }) => assert_eq!(type_uri, named, "{query}"),
+            Err(QueryRejection::Schema { problem, .. }) => assert_eq!(problem, named, "{query}"),
             Err(other) => panic!("{query}: refused for another reason: {other}"),
             Ok(_) => panic!("{query}: accepted"),
         }
     }
-    assert_eq!(NamedQuery::constraint_types(), [PAGE_OUT_OF_RANGE]);
+    assert_eq!(NamedQuery::constraint_problems(), [PAGE_OUT_OF_RANGE]);
 
     assert!(matches!(
         NamedPath::decode(&[("page", "101")]),
         Err(PathRejection::Schema {
-            type_uri: Some(PAGE_OUT_OF_RANGE),
+            problem: Some(PAGE_OUT_OF_RANGE),
             ..
         })
     ));
-    assert_eq!(NamedPath::constraint_types(), [PAGE_OUT_OF_RANGE]);
+    assert_eq!(NamedPath::constraint_problems(), [PAGE_OUT_OF_RANGE]);
 
     let mut headers = HeaderMap::new();
     headers.insert("x-page", HeaderValue::from_static("101"));
     assert!(matches!(
         NamedHeaders::decode(&headers),
         Err(HeaderRejection::Schema {
-            type_uri: Some(PAGE_OUT_OF_RANGE),
+            problem: Some(PAGE_OUT_OF_RANGE),
             ..
         })
     ));
-    assert_eq!(NamedHeaders::constraint_types(), [PAGE_OUT_OF_RANGE]);
+    assert_eq!(NamedHeaders::constraint_problems(), [PAGE_OUT_OF_RANGE]);
 
     #[cfg(feature = "cookie")]
     {
@@ -2566,15 +2569,15 @@ fn a_parameter_carries_the_type_its_field_type_names() {
         assert!(matches!(
             NamedCookies::decode(&jar),
             Err(CookieRejection::Schema {
-                type_uri: Some(PAGE_OUT_OF_RANGE),
+                problem: Some(PAGE_OUT_OF_RANGE),
                 ..
             })
         ));
-        assert_eq!(NamedCookies::constraint_types(), [PAGE_OUT_OF_RANGE]);
+        assert_eq!(NamedCookies::constraint_problems(), [PAGE_OUT_OF_RANGE]);
     }
 
     // A group naming none reports none.
-    assert!(<Bounded as QueryParams>::constraint_types().is_empty());
+    assert!(<Bounded as QueryParams>::constraint_problems().is_empty());
 }
 
 // --- The derived cookie decoder reads only a cookie that is text -----------

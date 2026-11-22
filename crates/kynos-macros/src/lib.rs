@@ -363,22 +363,29 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// struct InfoHashHex(#[schema(as = String, min_length = 40, max_length = 40)] InfoHash);
 /// ```
 ///
-/// A broken bound answers with `about:blank` unless the type names its own
-/// problem type with `#[schema(constraint_type = ...)]` on the type itself,
-/// which sets `Schema::CONSTRAINT_TYPE`: the type a body, a `QueryString` or
-/// a parameter field decodes into answers with it, at that input's own status.
-/// The value is any expression of type `&'static str`, typically a `const`
-/// from the application's problem catalogue. It is the only key a type's
+/// A broken bound answers with an `about:blank` problem unless the type names
+/// its own with `#[schema(constraint_problem = ...)]` on the type itself,
+/// which sets `Schema::CONSTRAINT_PROBLEM`: the type a body, a `QueryString`
+/// or a parameter field decodes into answers with it — its `type`, and the
+/// title, status and detail it names. The value is any expression of type
+/// `kynos::schema::constraints::ConstraintProblem`, typically a `const` from
+/// the application's problem catalogue. It is the only key a type's
 /// `#[schema(...)]` takes, and is taken once; a bound written on the type is
 /// refused, since it goes on the field whose value it holds.
 ///
 /// ```ignore
 /// mod problems {
-///     pub const VALIDATION_FAILED: &str = "https://errors.example.com/validation-failed";
+///     use kynos::schema::constraints::{ConstraintDetail, ConstraintProblem};
+///
+///     pub const VALIDATION_FAILED: ConstraintProblem =
+///         ConstraintProblem::of_type("https://errors.example.com/validation-failed")
+///             .titled("The request is invalid")
+///             .unprocessable()
+///             .with_detail(ConstraintDetail::FirstFailure);
 /// }
 ///
 /// #[derive(kynos::Schema, serde::Deserialize)]
-/// #[schema(constraint_type = problems::VALIDATION_FAILED)]
+/// #[schema(constraint_problem = problems::VALIDATION_FAILED)]
 /// struct NewTorrent {
 ///     #[schema(max_length = 2048)]
 ///     magnet: String,
