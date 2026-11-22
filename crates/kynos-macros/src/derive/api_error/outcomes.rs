@@ -45,6 +45,17 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                     let markers = check_field_markers(&variant.fields)?;
 
                     let mut args = parse_problem(&variant.attrs, Position::Variant)?;
+                    if let Some((wide, span)) = &args.variant_of {
+                        return super::variant_of::variant_of(
+                            variant,
+                            &args,
+                            wide,
+                            *span,
+                            &markers,
+                            &input.generics,
+                        )
+                        .map(Outcome::Transparent);
+                    }
                     if let Some(span) = args.transparent {
                         return transparent(variant, &args, span, &markers, &input.generics)
                             .map(Outcome::Transparent);
@@ -186,14 +197,15 @@ fn transparent(
         ));
     }
 
-    Ok(Transparent {
-        variant: variant.ident.clone(),
-        member: field
-            .ident
-            .clone()
-            .map_or_else(|| Member::Unnamed(Index::from(0)), Member::Named),
-        ty: field.ty.clone(),
-    })
+    let member = field
+        .ident
+        .clone()
+        .map_or_else(|| Member::Unnamed(Index::from(0)), Member::Named);
+    Ok(Transparent::field(
+        variant.ident.clone(),
+        &member,
+        field.ty.clone(),
+    ))
 }
 
 /// Reads a variant `#[error(transparent)]` makes transparent, having declared

@@ -215,6 +215,26 @@ enum ListError {
     Busy { retry: RetryAfter },
 }
 
+/// What resolving a user behind the store fails with: the store's own `Busy`,
+/// and a failure no `StoreError` describes, so it is no subset.
+///
+/// `variant_of` takes that one variant by name and fields, answering and
+/// described as `StoreError` declares it, and the derive generates
+/// `TryFrom<StoreError> for ResolveError`, so a store failure moves across
+/// with `?` where it is one of the variants taken, and is handed back where
+/// it is not.
+#[allow(dead_code)]
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ResolveError {
+    #[error("the store is busy")]
+    #[problem(variant_of = StoreError::Busy)]
+    Busy { retry: RetryAfter },
+
+    #[error("that user was deleted")]
+    #[problem(status = 410)]
+    Deleted,
+}
+
 /// Refuses everything while the store is being migrated.
 ///
 /// The fourth way a status reaches an operation. Because this can answer before

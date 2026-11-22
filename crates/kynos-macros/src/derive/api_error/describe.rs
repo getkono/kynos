@@ -47,15 +47,11 @@ pub(super) fn responses(
     });
 
     let handed_over = delegates.iter().map(|delegate| {
-        let ty = &delegate.ty;
         let kept = kept(Some(&delegate.variant));
-        // As for a headers group: the type's path is spanned, the bindings
-        // are not.
-        let inner =
-            quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::responses);
+        let held = delegate.responses();
         quote! {
             if #kept {
-                ::kynos::__private::problem::union_responses(&mut responses, &#inner(registry));
+                ::kynos::__private::problem::union_responses(&mut responses, &#held);
             }
         }
     });
@@ -81,6 +77,24 @@ pub(super) fn responses(
         #(#entries)*
         #(#handed_over)*
         responses
+    }
+}
+
+impl Transparent {
+    /// The responses it declares, as an expression reading `registry`.
+    fn responses(&self) -> TokenStream2 {
+        let ty = &self.ty;
+        match &self.of {
+            // As for a headers group: the type's path is spanned, the
+            // bindings are not.
+            None => {
+                let inner = quote_spanned! {ty.span()=>
+                    <#ty as ::kynos::__private::problem::HeldError>::responses
+                };
+                quote!(#inner(registry))
+            }
+            Some(of) => super::variant_of::described_as(ty, of),
+        }
     }
 }
 

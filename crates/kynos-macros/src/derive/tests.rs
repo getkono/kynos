@@ -5593,6 +5593,104 @@ mod api_error {
         ]
     }
 
+    /// The refusals of `#[problem(variant_of = ...)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn variant_of_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`variant_of` on the type, when it names one variant",
+                quote::quote!(
+                    #[problem(variant_of = ProfileProblem::Unavailable)]
+                    enum Lookup {
+                        Unavailable,
+                    }
+                ),
+                "belongs on that variant",
+            ),
+            case(
+                "`variant_of` beside a status of its own",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = ProfileProblem::Unavailable, status = 503)]
+                        Unavailable,
+                    }
+                ),
+                "takes no `status`, `title`, `type`, `transparent` or `extension` of its own",
+            ),
+            case(
+                "a `variant_of` variant's field marked as the wider field is",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = ProfileProblem::Unavailable)]
+                        Unavailable {
+                            #[problem(extension)]
+                            profile_status: String,
+                        },
+                    }
+                ),
+                "whose field markers it takes",
+            ),
+            case(
+                "`variant_of` naming no enum",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = Unavailable)]
+                        Unavailable,
+                    }
+                ),
+                "names a variant through its enum",
+            ),
+            case(
+                "`variant_of` naming the type's generic parameter",
+                quote::quote!(
+                    enum Lookup<T> {
+                        #[problem(variant_of = Wide::<T>::Gone)]
+                        Gone(T),
+                    }
+                ),
+                "cannot depend on the type's generic parameter `T`",
+            ),
+            case(
+                "two variants taking one wider variant",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = ProfileProblem::Unavailable)]
+                        Unavailable,
+                        #[problem(variant_of = ProfileProblem::Unavailable)]
+                        Down,
+                    }
+                ),
+                "already is the wider variant `Unavailable`",
+            ),
+        ]
+    }
+
+    /// One diagnostic site refuses every key beside `variant_of`, so the
+    /// ledger's row with a status leaves the others unwitnessed.
+    #[test]
+    fn a_variant_of_variant_refuses_each_key_of_its_own() {
+        for key in [
+            quote::quote!(title = "Down"),
+            quote::quote!(type = "https://errors.example.com/down"),
+            quote::quote!(transparent),
+            quote::quote!(extension(code = "down")),
+        ] {
+            each_case_is_refused(
+                vec![case(
+                    "a `variant_of` variant declaring a key of its own",
+                    quote::quote!(
+                        enum Lookup {
+                            #[problem(variant_of = ProfileProblem::Unavailable, #key)]
+                            Unavailable,
+                        }
+                    ),
+                    "of its own",
+                )],
+                expand_inner,
+            );
+        }
+    }
+
     /// One diagnostic site refuses every list below a subset, so the ledger's
     /// row on a variant leaves a field's marker unwitnessed.
     #[test]
@@ -5620,6 +5718,7 @@ mod api_error {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
         each_case_is_refused(subset_ledger(), expand_inner);
+        each_case_is_refused(variant_of_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
@@ -5673,11 +5772,13 @@ mod api_error {
                 include_str!("api_error/emit.rs"),
                 include_str!("api_error/outcomes.rs"),
                 include_str!("api_error/subset.rs"),
+                include_str!("api_error/variant_of.rs"),
             ]
             .concat(),
             ledger().len()
                 + transparent_ledger().len()
                 + subset_ledger().len()
+                + variant_of_ledger().len()
                 + headers_ledger().len()
                 + keys_ledger().len()
                 + constants_ledger().len()

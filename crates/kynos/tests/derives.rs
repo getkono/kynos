@@ -6346,6 +6346,111 @@ fn a_subset_names_a_generic_or_parenthesized_wider_enum() {
     );
 }
 
+/// Two of `ChunkRejection`'s variants, one under a name of its own, one of
+/// a generic wider enum's named by a turbofish path, and a failure of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ChunkOrQuota {
+    #[error("the chunk is missing")]
+    #[problem(variant_of = ChunkRejection::NotFound)]
+    Missing { id: u64 },
+
+    #[error("the store is busy")]
+    #[problem(variant_of = ChunkRejection::Unavailable)]
+    Busy(RetryAfter),
+
+    #[error("the chunk is gone")]
+    #[problem(variant_of = generic_wide::Wide::<u32>::Gone)]
+    Gone(std::marker::PhantomData<u32>),
+
+    #[error("the store is over quota")]
+    #[problem(status = 507)]
+    OverQuota,
+}
+
+/// A `variant_of` variant answers as the wider variant it builds from its
+/// fields — status, type, title, the wider `Display` as `detail`, extension
+/// members and header group — beside the enum's own failure, and is described
+/// as the wider enum describes that variant alone.
+#[tokio::test]
+async fn a_variant_of_variant_answers_and_is_described_as_the_wider_variant() {
+    use kynos::response::ShortCircuit;
+
+    async fn same(narrow: ChunkOrQuota, wide: ChunkRejection) {
+        let narrow = answered(narrow.into_response()).await;
+        let wide = answered(wide.into_response()).await;
+        assert_eq!(narrow.status, wide.status);
+        assert_eq!(narrow.headers, wide.headers);
+        assert_eq!(narrow.body, wide.body);
+    }
+
+    same(
+        ChunkOrQuota::Missing { id: 7 },
+        ChunkRejection::NotFound { id: 7 },
+    )
+    .await;
+    same(
+        ChunkOrQuota::Busy(RetryAfter { retry_after: 9 }),
+        ChunkRejection::Unavailable(RetryAfter { retry_after: 9 }),
+    )
+    .await;
+
+    assert_eq!(ChunkOrQuota::STATUSES, &[404, 503, 410, 507]);
+    let responses = emitted_responses::<ChunkOrQuota>();
+    assert_eq!(
+        responses["404"],
+        emitted_responses::<MissingChunk>()["404"],
+        "{responses}"
+    );
+    assert_eq!(
+        responses["410"],
+        emitted_responses::<GoneSubset>()["410"],
+        "{responses}"
+    );
+    // `Draining` shares 503 with `Unavailable` and is not taken, so 503 is
+    // described as `Unavailable` declares it alone, as a subset holding only
+    // it would describe it.
+    assert_eq!(
+        responses["503"],
+        emitted_responses::<UnavailableSubset>()["503"],
+        "{responses}"
+    );
+}
+
+/// Only `ChunkRejection`'s `Unavailable`, the reference the 503 above is
+/// described against.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum UnavailableSubset {
+    Unavailable(RetryAfter),
+}
+
+/// Each wider enum a variant is taken from converts back: a wider value of a
+/// taken variant into it, fields moved by name or position, and any other
+/// wider value handed back unchanged as the error.
+#[test]
+fn a_variant_of_variant_converts_back_from_the_wider_enum() {
+    assert!(matches!(
+        ChunkOrQuota::try_from(ChunkRejection::NotFound { id: 3 }),
+        Ok(ChunkOrQuota::Missing { id: 3 })
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(ChunkRejection::Unavailable(RetryAfter { retry_after: 4 })),
+        Ok(ChunkOrQuota::Busy(RetryAfter { retry_after: 4 }))
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(ChunkRejection::RangeConflict(5)),
+        Err(ChunkRejection::RangeConflict(5))
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(generic_wide::Wide::<u32>::Gone(std::marker::PhantomData)),
+        Ok(ChunkOrQuota::Gone(_))
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(generic_wide::Wide::<u32>::Locked),
+        Err(generic_wide::Wide::Locked)
+    ));
+}
+
 /// An interceptor's answer that is one of Kynos' refusals or the
 /// application's own failure. The refusals implement no `Display`, so each
 /// variant names its own message.

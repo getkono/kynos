@@ -760,6 +760,34 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// describes the variants it keeps. The wider enum is a derived `ApiError`
 /// enum, a subset included, and cannot name the subset's generic parameters.
 ///
+/// One variant shared with a wider enum, in an enum that also fails its own
+/// ways, says `#[problem(variant_of = Wide::Variant)]`:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum UnfencedLookup {
+///     #[error(transparent)]
+///     Lookup(#[from] Lookup),
+///
+///     #[error("{detail}")]
+///     #[problem(variant_of = ProfileProblem::ProfileUnavailable)]
+///     ProfileUnavailable { detail: String, profile_status: ProfileStatus },
+/// }
+///
+/// let narrowed = UnfencedLookup::try_from(ProfileProblem::vpn_down())?;
+/// ```
+///
+/// The variant answers as the wider variant does, by building it from its
+/// fields, matched by name or position, so its status, `type`, `title`,
+/// `detail` (the wider `Display`), extension members and headers are that
+/// variant's, and it is described as the wider enum describes it. It declares
+/// nothing of its own, no `#[problem(...)]` sits on its fields, and the wider
+/// enum is a derived `ApiError` enum that cannot name this one's generic
+/// parameters. The derive generates `TryFrom<Wide> for Self`, with
+/// `Error = Wide`, over every variant taken from `Wide` this way, handing any
+/// other wider value back unchanged; two variants taking one wider variant
+/// are refused.
+///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.
 /// It is the only supported way to implement `IntoProblem`.

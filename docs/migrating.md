@@ -25,6 +25,7 @@ the section for the release that ships it.
 | --- | --- | --- |
 | `FromStr`, `Display` and `schema::ParamValue` written by hand for a newtype, each delegating to its field | `#[derive(kynos::ParamValue)]` on the newtype | #1378 |
 | `#[error(transparent)]` and `#[problem(transparent)]` on one `ApiError` variant | `#[error(transparent)]` alone; a `#[problem(status = ...)]` beside it opts out | #1378 |
+| A variant copied from another `ApiError` enum, and a `match` or `let ... else { unreachable!() }` moving a value across | `#[problem(variant_of = Other::Variant)]` on the variant, and `Narrow::try_from(other)` | #1378 |
 
 ## 0.5 to 0.6
 
