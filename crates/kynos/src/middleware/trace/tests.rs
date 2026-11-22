@@ -96,12 +96,12 @@ fn correlating_reads_the_group_and_the_trust_from_the_request_id() {
 fn an_identifier_request_id_replaces_is_not_logged_on_arrival() {
     let inbound = map(&[("x-request-id", "forged")]);
 
-    assert_eq!(Trace::new().inbound(&inbound), "");
+    assert_eq!(Trace::new().inbound(&inbound), None);
     assert_eq!(
         Trace::new()
             .correlating(&RequestId::new().trust_client(false))
             .inbound(&inbound),
-        ""
+        None
     );
 }
 
@@ -114,16 +114,17 @@ fn an_identifier_request_id_echoes_is_logged_on_arrival() {
 
     assert_eq!(
         trusting.inbound(&map(&[("x-trace-id", "second")])),
-        "second"
+        Some("second")
     );
     assert_eq!(
         trusting.inbound(&map(&[
             ("x-trace-id", "second"),
             ("x-correlation-id", "first")
         ])),
-        "first"
+        Some("first")
     );
-    assert_eq!(trusting.inbound(&map(&[])), "");
+    assert_eq!(trusting.inbound(&map(&[])), None);
+    assert_eq!(trusting.inbound(&map(&[("x-correlation-id", "")])), None);
 }
 
 /// The closing event carries what the response does, trusted or not.
