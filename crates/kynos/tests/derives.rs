@@ -4348,6 +4348,42 @@ fn a_newtype_member_publishes_its_prose_and_deprecation() {
     );
 }
 
+/// A stable problem code.
+#[derive(Schema, serde::Serialize)]
+struct ProblemCode(&'static str);
+
+/// A newtype over a static string is a string, described by its own doc
+/// comment.
+#[test]
+fn a_static_str_newtype_is_a_described_string() {
+    assert_eq!(
+        emitted::<ProblemCode>(),
+        serde_json::json!({"type": "string", "description": "A stable problem code."})
+    );
+}
+
+// No doc comment, for the reason `Labels` gives.
+#[derive(Schema, serde::Serialize)]
+struct Borrowed<'a> {
+    name: &'a str,
+    label: std::borrow::Cow<'a, str>,
+    owner: &'a User,
+}
+
+/// A borrow and a `Cow` are what they hold, under its own component name.
+#[test]
+fn a_borrowed_member_is_described_as_what_it_borrows() {
+    let properties = emitted::<Borrowed<'_>>()["properties"].clone();
+    assert_eq!(
+        properties,
+        serde_json::json!({
+            "name": {"type": "string"},
+            "label": {"type": "string"},
+            "owner": {"$ref": "#/components/schemas/User"},
+        })
+    );
+}
+
 // --- A field described as another type --------------------------------------
 //
 // `#[schema(as = T)]` describes a field as `T`, under the field's own bounds,
