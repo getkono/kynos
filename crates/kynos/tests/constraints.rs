@@ -19,7 +19,7 @@ use kynos::{
     error::rejection::BodyRejection,
     extract::{FromRequest, body::json::Json},
     http::{HeaderValue, Request, body::Body, header},
-    schema::Schema as SchemaTrait,
+    schema::{Schema as SchemaTrait, constraints::ConstraintProblem},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -819,12 +819,13 @@ async fn a_map_key_is_held_to_its_property_names_at_the_map() {
     .await;
 }
 
-/// The problem type the types below name for a broken bound.
-const VALIDATION_FAILED: &str = "https://errors.example.com/validation-failed";
+/// The problem the types below name for a broken bound.
+const VALIDATION_FAILED: ConstraintProblem =
+    ConstraintProblem::of_type("https://errors.example.com/validation-failed");
 
-/// A body naming its own problem type, holding a member that names another.
+/// A body naming its own problem, holding a member that names another.
 #[derive(Debug, Schema, Deserialize)]
-#[schema(constraint_type = VALIDATION_FAILED)]
+#[schema(constraint_problem = VALIDATION_FAILED)]
 struct Named {
     #[schema(maximum = 100)]
     limit: u32,
@@ -833,7 +834,7 @@ struct Named {
 
 /// A member naming a type of its own, which the body holding it overrides.
 #[derive(Debug, Schema, Deserialize)]
-#[schema(constraint_type = "https://errors.example.com/inner")]
+#[schema(constraint_problem = ConstraintProblem::of_type("https://errors.example.com/inner"))]
 struct Inner {
     #[schema(minimum = 1)]
     quantity: u32,
@@ -856,13 +857,13 @@ where
         .expect("the document is refused")
 }
 
-/// A broken bound carries the problem type the decoded type names, whichever
+/// A broken bound carries the problem the decoded type names, whichever
 /// member broke it, and through the wrappers that are their `T`; a body that
 /// does not decode into the type at all consulted no bound and carries none.
 #[tokio::test]
-async fn a_broken_bound_carries_the_type_its_body_names() {
+async fn a_broken_bound_carries_the_problem_its_body_names() {
     let carried = |rejection: BodyRejection| match rejection {
-        BodyRejection::Schema { type_uri, .. } => type_uri,
+        BodyRejection::Schema { problem, .. } => problem,
         other => panic!("a well-formed document refused as something else: {other:?}"),
     };
 
@@ -1096,21 +1097,21 @@ mod query_string {
             QueryRejection::Schema {
                 name,
                 failures,
-                type_uri,
+                problem,
                 ..
             } => {
                 assert_eq!(name, "querystring");
                 assert_eq!(failures.into_keys().collect::<Vec<_>>(), ["/quantity"]);
-                assert_eq!(type_uri, None);
+                assert_eq!(problem, None);
             }
             other => panic!("a broken bound was refused as something else: {other:?}"),
         }
     }
 
-    /// A query string whose type names a problem type carries it, at the
+    /// A query string whose type names a problem carries it, at the
     /// parameter's 400.
     #[tokio::test]
-    async fn a_query_string_carries_the_type_its_schema_names() {
+    async fn a_query_string_carries_the_problem_its_schema_names() {
         let mut request = Request::new(Body::empty());
         *request.uri_mut() = Uri::from_static("/search?%7B%22limit%22%3A101%7D");
         let mut parts = request.into_parts().0;
@@ -1124,7 +1125,7 @@ mod query_string {
             matches!(
                 rejection,
                 QueryRejection::Schema {
-                    type_uri: Some(super::VALIDATION_FAILED),
+                    problem: Some(super::VALIDATION_FAILED),
                     ..
                 }
             ),

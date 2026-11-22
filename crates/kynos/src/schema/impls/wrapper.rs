@@ -9,7 +9,7 @@ use kynos_openapi::{
 
 use crate::schema::{
     Schema,
-    constraints::{Pointer, Violations},
+    constraints::{ConstraintProblem, Pointer, Violations},
     flatten::{AdmitsAny, ClosedFlatten, Flatten, OpenMap},
     impls::with_object,
     registry::Registry,
@@ -50,7 +50,7 @@ pub(crate) fn nullable(schema: OpenApiSchema) -> OpenApiSchema {
 /// question, answered by the `required` list the derive builds.
 impl<T: Schema> Schema for Option<T> {
     // `null` breaks no bound, so every failure is `T`'s.
-    const CONSTRAINT_TYPE: Option<&'static str> = T::CONSTRAINT_TYPE;
+    const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = T::CONSTRAINT_PROBLEM;
 
     fn schema(registry: &mut Registry) -> OpenApiSchema {
         nullable(registry.resolve::<T>())
@@ -68,7 +68,7 @@ macro_rules! transparent {
     ($($ty:ident),+ $(,)?) => {
         $(
             impl<T: Schema> Schema for $ty<T> {
-                const CONSTRAINT_TYPE: Option<&'static str> = T::CONSTRAINT_TYPE;
+                const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = T::CONSTRAINT_PROBLEM;
 
                 fn schema(registry: &mut Registry) -> OpenApiSchema {
                     T::schema(registry)
@@ -87,7 +87,7 @@ macro_rules! transparent {
 }
 
 // `name` delegates too, so a `Box<User>` and a `User` are one component; and
-// `CONSTRAINT_TYPE`, so one answers as the other does.
+// `CONSTRAINT_PROBLEM`, so one answers as the other does.
 transparent!(Box, Arc);
 
 // The flatten markers carry across as `T`'s answer. Written out rather than in

@@ -603,9 +603,20 @@ mod schema {
     }
 
     /// The refusals of a type's own `#[schema(...)]`, which takes
-    /// `constraint_type` alone, and once.
+    /// `constraint_problem` alone, and once, and names it for the
+    /// `constraint_type` it replaced.
     fn container_ledger() -> Vec<Case> {
         vec![
+            case(
+                "the `constraint_type` key it replaced",
+                quote::quote!(
+                    #[schema(constraint_type = "a")]
+                    struct Order {
+                        total: u32,
+                    }
+                ),
+                "`constraint_type` is now `constraint_problem`",
+            ),
             case(
                 "a bound written on the type",
                 quote::quote!(
@@ -614,17 +625,17 @@ mod schema {
                         total: u32,
                     }
                 ),
-                "a type's `#[schema(...)]` takes only `constraint_type = ...`",
+                "a type's `#[schema(...)]` takes only `constraint_problem = ...`",
             ),
             case(
-                "`constraint_type` written twice",
+                "`constraint_problem` written twice",
                 quote::quote!(
-                    #[schema(constraint_type = "a", constraint_type = "b")]
+                    #[schema(constraint_problem = A, constraint_problem = B)]
                     struct Order {
                         total: u32,
                     }
                 ),
-                "`constraint_type` is already set",
+                "`constraint_problem` is already set",
             ),
         ]
     }

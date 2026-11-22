@@ -6,7 +6,8 @@ use syn::{DeriveInput, Ident};
 use crate::derive::{
     common::{NameCase, named_fields, reject_duplicate_names, wire_names},
     params::{
-        Param, check_field, constraint_types_body, construct, decode_field, parameters_body, render,
+        Group, Param, check_field, constraint_problems_body, construct, decode_field,
+        parameters_body, render,
     },
 };
 
@@ -18,7 +19,9 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
-    let params = Param::pair(fields, &names);
+    // Through the group's `Schema`, which a hand-written one sets too, so the
+    // group answers as `QueryString` reads it.
+    let params = Param::pair(fields, &names, Group::OfSelf);
     let rejection = quote!(::kynos::error::rejection::QueryRejection);
 
     // The first occurrence of a repeated name wins.
@@ -52,7 +55,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         quote!(#decoded #checked)
     });
     let value = construct(&params);
-    let constraint_types = constraint_types_body(&params);
+    let constraint_problems = constraint_problems_body(&params);
 
     let parameters = parameters_body(
         &params,
@@ -71,8 +74,9 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 #parameters
             }
 
-            fn constraint_types() -> ::std::vec::Vec<&'static str> {
-                #constraint_types
+            fn constraint_problems(
+            ) -> ::std::vec::Vec<::kynos::schema::constraints::ConstraintProblem> {
+                #constraint_problems
             }
         }
 

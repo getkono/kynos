@@ -9,7 +9,10 @@ use crate::derive::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
         wire_names,
     },
-    params::{Param, check_field, constraint_types_body, construct, decode_field, parameters_body},
+    params::{
+        Param, check_field, constraint_problems_body, construct, decode_field, group_problem,
+        parameters_body,
+    },
 };
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -23,7 +26,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let names_item = names_const(&names);
 
-    let params = Param::pair(fields, &names);
+    let group = group_problem(input);
+    let params = Param::pair(fields, &names, group.as_ref());
     let rejection = quote!(::kynos::error::rejection::CookieRejection);
 
     // RFC 6265 jar splitting stays in `http::cookie`. A sent but unreadable
@@ -48,7 +52,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         quote!(#decoded #checked)
     });
     let value = construct(&params);
-    let constraint_types = constraint_types_body(&params);
+    let constraint_problems = constraint_problems_body(&params);
 
     let parameters = parameters_body(
         &params,
@@ -103,8 +107,9 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 #parameters
             }
 
-            fn constraint_types() -> ::std::vec::Vec<&'static str> {
-                #constraint_types
+            fn constraint_problems(
+            ) -> ::std::vec::Vec<::kynos::schema::constraints::ConstraintProblem> {
+                #constraint_problems
             }
         }
     })

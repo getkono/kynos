@@ -27,9 +27,9 @@
 //!   parameter advertise the 401 it can never answer — which a client generator
 //!   turns into dead retry logic. A rejection's `type` is `about:blank` unless
 //!   the type it decodes names its own: `User` answers a broken bound with
-//!   `BOUND_BROKEN`, from the API's own catalogue. It is not `Invalid`'s type,
-//!   since Kynos titles it with the status's reason phrase and one problem
-//!   type has one title.
+//!   `BOUND_BROKEN`, from the API's own catalogue, under its own title and
+//!   detail. It is not `Invalid`'s type, since the two send different members
+//!   and one problem type has one shape.
 //! * **Five of the responses below come from no handler at all.** A fallback
 //!   policy produces the 404, the 405 and the 501, `catch_panics` produces the 500, and
 //!   an interceptor produces the 503. The 500 and the 503 reach the description
@@ -53,22 +53,27 @@ use kynos::{
     middleware::{Continued, Interceptor, Next},
     prelude::*,
     router::policy::FallbackPolicy,
+    schema::constraints::{ConstraintDetail, ConstraintProblem},
     server::Server,
 };
 use serde::{Deserialize, Serialize};
 
-/// The problem type a body breaking a bound it declares answers with, in the
-/// same catalogue as `Invalid`'s but a type of its own: Kynos titles it with
-/// the status's reason phrase, and RFC 9457 gives one type one title, so it
-/// must not be a type `Invalid` already publishes under "Validation failed".
-const BOUND_BROKEN: &str = "https://errors.example.com/bound-broken";
+/// The problem a value breaking a bound it declares answers with, in the same
+/// catalogue as `Invalid`'s but a type of its own, since a broken bound sends
+/// `errors` where `Invalid` sends `field`. Named once, whole: its title, a 422
+/// for a query parameter as for a body, and a detail naming the first failure.
+const BOUND_BROKEN: ConstraintProblem =
+    ConstraintProblem::of_type("https://errors.example.com/bound-broken")
+        .titled("Bound broken")
+        .unprocessable()
+        .with_detail(ConstraintDetail::FirstFailure);
 
 /// A user of the service.
 ///
 /// A name past 64 characters is refused before `create_user` runs, with a 422
 /// of type `BOUND_BROKEN` rather than `about:blank`.
 #[derive(Schema, Serialize, Deserialize)]
-#[schema(constraint_type = BOUND_BROKEN)]
+#[schema(constraint_problem = BOUND_BROKEN)]
 struct User {
     /// The user's identifier.
     id: u64,
@@ -90,9 +95,11 @@ struct UserPath {
 /// A second fallible extractor, and the reason 400 is listed once rather than
 /// twice: `QueryRejection` and `PathRejection` are different types that happen
 /// to agree on a status, and an operation's `responses` is a union rather than a
-/// list.
+/// list. A `limit` past 100 answers as a broken bound on `User` does: the
+/// group names `BOUND_BROKEN` for every field it holds, a plain `u32` too.
 #[allow(dead_code)]
 #[derive(Schema, QueryParams)]
+#[schema(constraint_problem = BOUND_BROKEN)]
 struct Page {
     /// Where to resume from.
     after: Option<u64>,

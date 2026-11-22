@@ -43,16 +43,16 @@ pub trait RequestContent: Describe {
     /// Builds the required OpenAPI Request Body Object for this extractor.
     fn request_body(registry: &mut Registry) -> kynos_openapi::RequestBody;
 
-    /// The problem types this body's 422 carries for a broken bound, beside
+    /// The problems this body's 422 answers a broken bound with, beside
     /// `about:blank`: the
-    /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
-    /// type it holds to its bounds that names one.
+    /// [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM) of
+    /// each type it holds to its bounds that names one.
     ///
     /// None by default, which is right for a body holding nothing to a schema;
     /// one that does reads it from the type it decodes, so the 422 it declares
     /// names what it sends.
     #[must_use]
-    fn constraint_types() -> Vec<&'static str> {
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
         Vec::new()
     }
 }

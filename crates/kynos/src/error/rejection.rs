@@ -14,11 +14,13 @@
 //! Everything a rejection carries reaches the client, so a variant holds only
 //! what the request itself already determined: which parameter, which media
 //! type, the limit it exceeded, where in the body a value went wrong (RFC 9457
-//! §5: a problem is not a debugging channel). The one exception is the problem
+//! §5: a problem is not a debugging channel). The exceptions are the problem
 //! type on [`AuthRejection::Forbidden`], which the application's authorizer
-//! supplies.
+//! supplies, and the problem on each `Schema` variant, which the decoded
+//! value's type names through
+//! [`Schema::CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM).
 
-use std::{collections::BTreeMap, marker::PhantomData, time::Duration};
+use std::{borrow::Cow, collections::BTreeMap, marker::PhantomData, time::Duration};
 
 use kynos_openapi::Schema as OpenApiSchema;
 
@@ -31,7 +33,10 @@ use crate::{
     },
     http::{HeaderValue, Parts, StatusCode, header, retry_after_header, set_retry_after},
     response::{IntoResponse, Responses},
-    schema::registry::Registry,
+    schema::{
+        constraints::{ConstraintDetail, ConstraintProblem},
+        registry::Registry,
+    },
     security::{SecurityScheme, auth::Scopes},
 };
 
@@ -123,9 +128,16 @@ fn served_response(
 ///
 /// `errors: STATUS => SENT` declares the [`pointer_errors`] member under the
 /// status a schema failure answers with, required where `SENT` says every
-/// response at that status carries it.
+/// response at that status carries it. `declares: STATUSES` declares those
+/// rather than every one of `statuses()`, for a status only an extractor whose
+/// type opts in can send and so declares itself.
 macro_rules! rejection_response {
     (@[$errors:expr] $rejection:ty, $origin:expr) => {
+        rejection_response!(
+            @[$errors] $rejection, $origin, <$rejection as IntoProblem>::statuses()
+        );
+    };
+    (@[$errors:expr] $rejection:ty, $origin:expr, $declared:expr) => {
         impl IntoResponse for $rejection {
             fn into_response(self) -> crate::http::Response {
                 IntoProblem::into_problem(self).into_response()
@@ -143,26 +155,21 @@ macro_rules! rejection_response {
 
         impl Responses for $rejection {
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                problem_responses(
-                    registry,
-                    <$rejection as IntoProblem>::statuses(),
-                    $errors,
-                    false,
-                )
+                problem_responses(registry, $declared, $errors, false)
             }
 
             fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                problem_responses(
-                    registry,
-                    <$rejection as IntoProblem>::statuses(),
-                    $errors,
-                    true,
-                )
+                problem_responses(registry, $declared, $errors, true)
             }
         }
     };
-    ($rejection:ty, $origin:expr, errors: $status:expr => $sent:expr) => {
-        rejection_response!(@[Some(($status, $sent))] $rejection, $origin);
+    (
+        $rejection:ty,
+        $origin:expr,
+        declares: $declared:expr,
+        errors: $status:expr => $sent:expr
+    ) => {
+        rejection_response!(@[Some(($status, $sent))] $rejection, $origin, $declared);
     };
     ($rejection:ty, $origin:expr) => {
         rejection_response!(@[None] $rejection, $origin);
@@ -180,35 +187,98 @@ fn pointer_errors_schema(registry: &mut Registry) -> OpenApiSchema {
     registry.resolve::<Vec<PointerError>>()
 }
 
-/// The problem a schema failure answers with at `status`: of the type the
-/// broken value's [`Schema::CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE)
-/// names, else `about:blank`.
+/// The problem a schema failure answers with at `status`: the one `named`
+/// names, else `about:blank`, each sending `failures` as the
+/// [`pointer_errors`] member.
 ///
-/// The title stays the status code's reason phrase either way, as a named
-/// [`AuthRejection::Forbidden`]'s does.
-fn schema_problem(status: StatusCode, type_uri: Option<&'static str>) -> Problem {
-    let problem = Problem::new(status);
-    match type_uri {
-        Some(type_uri) => Problem::of_type(status, type_uri, problem.title),
-        None => problem,
+/// `summary` is the rejection's sentence, and `subject` names the input it is
+/// about, as [`ConstraintDetail::FirstFailure`] opens with it.
+fn schema_problem(
+    status: StatusCode,
+    named: Option<ConstraintProblem>,
+    summary: String,
+    subject: &str,
+    failures: BTreeMap<String, String>,
+) -> Problem {
+    let blank = Problem::new(status);
+    let problem = match named {
+        None => blank.with_detail(summary),
+        Some(named) => {
+            let detail = match named.detail {
+                ConstraintDetail::Summary => summary,
+                ConstraintDetail::FirstFailure => {
+                    first_failure(subject, &failures).unwrap_or(summary)
+                }
+            };
+            let title = named.title.map_or(blank.title, Cow::Borrowed);
+            Problem::of_type(status, named.type_uri, title).with_detail(detail)
+        }
+    };
+    problem.with_extension("errors", pointer_errors(failures))
+}
+
+/// [`ConstraintDetail::FirstFailure`]'s sentence: the failure at the pointer
+/// sorting first, located in `subject`, and a count of the other locations.
+/// `None` where nothing failed, which no extractor reports.
+fn first_failure(subject: &str, failures: &BTreeMap<String, String>) -> Option<String> {
+    let (pointer, detail) = failures.iter().next()?;
+    let at = if pointer.is_empty() {
+        String::new()
+    } else {
+        format!(" at `{pointer}`")
+    };
+    let more = match failures.len() - 1 {
+        0 => String::new(),
+        1 => " (and 1 more failure)".to_owned(),
+        more => format!(" (and {more} more failures)"),
+    };
+    Some(format!("{subject}{at} {detail}{more}"))
+}
+
+/// Where a value holding bounds was read from, which decides the status a
+/// broken one answers with.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Input {
+    /// The request's content: 422 whatever the problem.
+    Content,
+    /// A parameter, part of the request's target: 400 unless the problem is
+    /// [`unprocessable`](ConstraintProblem::unprocessable).
+    Parameter,
+}
+
+impl Input {
+    /// The status a broken bound on a value read from here answers with,
+    /// under the problem its type names, if any.
+    const fn status(self, named: Option<&ConstraintProblem>) -> StatusCode {
+        match (self, named) {
+            (Self::Content, _)
+            | (
+                Self::Parameter,
+                Some(ConstraintProblem {
+                    unprocessable: true,
+                    ..
+                }),
+            ) => StatusCode::UNPROCESSABLE_ENTITY,
+            (Self::Parameter, _) => StatusCode::BAD_REQUEST,
+        }
     }
 }
 
-/// The response `status` declares for a broken bound on a value whose schema
-/// names one of `named` as its
-/// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE): one branch per
-/// type, each sending the [`pointer_errors`] member. Nothing where `named` is
-/// empty.
+/// The responses a broken bound on a value read from `input` declares, for
+/// each problem in `named` a type it decodes names: one branch per problem at
+/// the status it answers with, under its title, each sending the
+/// [`pointer_errors`] member. Nothing where `named` is empty.
 ///
 /// What an extractor adds to its rejection's own declaration, which already
-/// declares `about:blank` at `status` for every failure no schema names a type
-/// for; the two join into a choice. `served` declares the members the router
-/// installs as well, as an extractor's rejection carries them and an
-/// interceptor's does not.
+/// declares `about:blank` at the input's own status for every failure no
+/// schema names a problem for; the two join into a choice there. A
+/// parameter's 422, which only a named problem sends, is declared here alone.
+/// `served` declares the members the router installs as well, as an
+/// extractor's rejection carries them and an interceptor's does not.
 pub(crate) fn constraint_responses(
     registry: &mut Registry,
-    status: StatusCode,
-    named: &[&'static str],
+    input: Input,
+    named: &[ConstraintProblem],
     served: bool,
 ) -> kynos_openapi::Responses {
     if named.is_empty() {
@@ -218,19 +288,30 @@ pub(crate) fn constraint_responses(
     let errors: [Member<'static>; 1] = [("errors", pointer_errors_schema(registry), true)];
     let problem = registry.resolve::<Problem>();
     let members = with_installed(registry, &errors, served);
-    let branches: Vec<Branch<'_>> = named
-        .iter()
-        .map(|uri| (Some(*uri), None, &members[..]))
-        .collect();
 
-    kynos_openapi::Responses::new().with(
-        status.as_u16(),
-        narrowed_response(&problem, status.as_u16(), &branches),
-    )
+    [StatusCode::BAD_REQUEST, StatusCode::UNPROCESSABLE_ENTITY]
+        .into_iter()
+        .fold(kynos_openapi::Responses::new(), |responses, status| {
+            let branches: Vec<Branch<'_>> = named
+                .iter()
+                .filter(|named| input.status(Some(named)) == status)
+                .map(|named| (Some(named.type_uri), named.title, &members[..]))
+                .collect();
+            if branches.is_empty() {
+                return responses;
+            }
+            responses.with(
+                status.as_u16(),
+                narrowed_response(&problem, status.as_u16(), &branches),
+            )
+        })
 }
 
 /// Declares a parameter rejection: an `Invalid` and a `Schema` variant, both
-/// 400, over the `subject` ("parameter", "header", ...) its field docs name.
+/// 400 unless a `Schema`'s problem asks for 422, over the `subject`
+/// ("parameter", "header", ...) its field docs name. `noun` ("query
+/// parameter", ...) names the input in a first-failure detail, as its
+/// `Display` does.
 ///
 /// A leading `#[cfg(...)]` gates the type and every implementation with it.
 /// Each invocation spells its own derive, so a sweep reading declarations from
@@ -242,6 +323,7 @@ macro_rules! parameter_rejection {
     (
         @[$($cfg:meta)?]
         subject: $subject:literal,
+        noun: $noun:literal,
         origin: $origin:expr,
         $(#[$meta:meta])*
         pub enum $name:ident {
@@ -272,11 +354,11 @@ macro_rules! parameter_rejection {
                     "."
                 )]
                 failures: BTreeMap<String, String>,
-                /// The problem `type` this rejection carries, or `about:blank`
-                /// when `None`: the
-                /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE)
+                /// The problem this rejection answers with, or an
+                /// `about:blank` one when `None`: the
+                /// [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM)
                 /// of the type whose bound was broken.
-                type_uri: Option<&'static str>,
+                problem: Option<ConstraintProblem>,
             },
         }
 
@@ -286,7 +368,8 @@ macro_rules! parameter_rejection {
             #[must_use]
             pub fn status(&self) -> StatusCode {
                 match self {
-                    Self::Invalid { .. } | Self::Schema { .. } => StatusCode::BAD_REQUEST,
+                    Self::Invalid { .. } => StatusCode::BAD_REQUEST,
+                    Self::Schema { problem, .. } => Input::Parameter.status(problem.as_ref()),
                 }
             }
         }
@@ -302,19 +385,33 @@ macro_rules! parameter_rejection {
                         Problem::new(status).with_detail(format!("{summary}: {detail}"))
                     }
                     // Pointers are relative to the subject the detail names.
-                    Self::Schema { failures, type_uri, .. } => schema_problem(status, type_uri)
-                        .with_detail(summary)
-                        .with_extension("errors", pointer_errors(failures)),
+                    Self::Schema { name, failures, problem } => schema_problem(
+                        status,
+                        problem,
+                        summary,
+                        &format!(concat!($noun, " `{}`"), name),
+                        failures,
+                    ),
                 }
             }
 
+            /// The 400, and the 422 a `Schema` sends where its problem is
+            /// [`unprocessable`](ConstraintProblem::unprocessable). This type's
+            /// own [`Responses`] declares the 400 alone: the 422 is declared by
+            /// the extractor whose type names such a problem, so an operation
+            /// declares it only where it can be sent.
             fn statuses() -> &'static [StatusCode] {
-                &[StatusCode::BAD_REQUEST]
+                &[StatusCode::BAD_REQUEST, StatusCode::UNPROCESSABLE_ENTITY]
             }
         }
 
         $(#[cfg($cfg)])?
-        rejection_response!($name, $origin, errors: StatusCode::BAD_REQUEST => false);
+        rejection_response!(
+            $name,
+            $origin,
+            declares: &[StatusCode::BAD_REQUEST],
+            errors: StatusCode::BAD_REQUEST => false
+        );
     };
     ($($rest:tt)*) => {
         parameter_rejection!(@[] $($rest)*);
@@ -323,6 +420,7 @@ macro_rules! parameter_rejection {
 
 parameter_rejection! {
     subject: "parameter",
+    noun: "path parameter",
     origin: ProblemOrigin::PathParameter,
     /// A path parameter did not match its declared schema.
     #[derive(Debug, thiserror::Error)]
@@ -333,11 +431,12 @@ parameter_rejection! {
         Invalid,
 
         /// The parameter decoded as a value that breaks a bound its schema
-        /// declares. Produces 400.
+        /// declares. Produces 400, or 422 where its problem is
+        /// [`unprocessable`](ConstraintProblem::unprocessable).
         ///
         /// Raised by a derived `PathParams` for a field's `#[schema(...)]` bound or
-        /// its type's. 400 rather than 422, as for a query parameter: a path is part
-        /// of the request's target, not its content.
+        /// its type's. 400 rather than 422 by default, as for a query parameter: a
+        /// path is part of the request's target, not its content.
         #[error("path parameter `{name}` does not satisfy its schema")]
         Schema,
     }
@@ -345,6 +444,7 @@ parameter_rejection! {
 
 parameter_rejection! {
     subject: "parameter",
+    noun: "query parameter",
     origin: ProblemOrigin::QueryParameter,
     /// A query parameter was missing or malformed.
     #[derive(Debug, thiserror::Error)]
@@ -355,14 +455,15 @@ parameter_rejection! {
         Invalid,
 
         /// The parameter decoded as a value that breaks a bound its schema
-        /// declares. Produces 400.
+        /// declares. Produces 400, or 422 where its problem is
+        /// [`unprocessable`](ConstraintProblem::unprocessable).
         ///
         /// Raised by
         /// [`QueryString`](crate::extract::params::querystring::QueryString), and
         /// by [`Query`](crate::extract::params::query::Query) over a derived
         /// `QueryParams` for a field's `#[schema(...)]` bound or its type's.
-        /// 400 rather than 422, since RFC 9110's 422 is about the request's
-        /// content and a query string is part of its target.
+        /// 400 rather than 422 by default, since RFC 9110's 422 is about the
+        /// request's content and a query string is part of its target.
         #[error("query parameter `{name}` does not satisfy its schema")]
         Schema,
     }
@@ -370,6 +471,7 @@ parameter_rejection! {
 
 parameter_rejection! {
     subject: "header",
+    noun: "header",
     origin: ProblemOrigin::HeaderField,
     /// A header was missing or malformed.
     #[derive(Debug, thiserror::Error)]
@@ -380,11 +482,12 @@ parameter_rejection! {
         Invalid,
 
         /// The header decoded as a value that breaks a bound its schema
-        /// declares. Produces 400.
+        /// declares. Produces 400, or 422 where its problem is
+        /// [`unprocessable`](ConstraintProblem::unprocessable).
         ///
         /// Raised by a derived `HeaderParams` for a field's `#[schema(...)]` bound
-        /// or its type's. 400 rather than 422, since RFC 9110's 422 is about the
-        /// request's content and a header field is not part of it.
+        /// or its type's. 400 rather than 422 by default, since RFC 9110's 422 is
+        /// about the request's content and a header field is not part of it.
         #[error("header `{name}` does not satisfy its schema")]
         Schema,
     }
@@ -393,6 +496,7 @@ parameter_rejection! {
 parameter_rejection! {
     #[cfg(feature = "cookie")]
     subject: "cookie",
+    noun: "cookie",
     origin: ProblemOrigin::CookieValue,
     /// A cookie was missing or malformed.
     #[derive(Debug, thiserror::Error)]
@@ -403,11 +507,12 @@ parameter_rejection! {
         Invalid,
 
         /// The cookie decoded as a value that breaks a bound its schema
-        /// declares. Produces 400.
+        /// declares. Produces 400, or 422 where its problem is
+        /// [`unprocessable`](ConstraintProblem::unprocessable).
         ///
         /// Raised by a derived `CookieParams` for a field's `#[schema(...)]` bound
-        /// or its type's. 400 rather than 422, since a cookie travels in a header
-        /// field rather than the request's content.
+        /// or its type's. 400 rather than 422 by default, since a cookie travels in
+        /// a header field rather than the request's content.
         #[error("cookie `{name}` does not satisfy its schema")]
         Schema,
     }
@@ -433,15 +538,15 @@ pub enum BodyRejection {
         /// The failures, keyed by JSON Pointer into the body.
         failures: BTreeMap<String, String>,
 
-        /// The problem `type` this rejection carries, or `about:blank` when
-        /// `None`.
+        /// The problem this rejection answers with, or an `about:blank` one
+        /// when `None`.
         ///
         /// A bound the body's type declares and the decoded body broke carries
         /// that type's
-        /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE). A body
-        /// that did not decode into the type at all carries `None`: no schema
-        /// was consulted.
-        type_uri: Option<&'static str>,
+        /// [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM). A
+        /// body that did not decode into the type at all carries `None`: no
+        /// schema was consulted.
+        problem: Option<ConstraintProblem>,
     },
 
     /// The `Content-Type` was absent or unsupported. Produces 415.
@@ -513,7 +618,7 @@ impl BodyRejection {
     pub(crate) fn schema_at(pointer: String, detail: String) -> Self {
         Self::Schema {
             failures: BTreeMap::from([(pointer, detail)]),
-            type_uri: None,
+            problem: None,
         }
     }
 
@@ -541,9 +646,10 @@ impl IntoProblem for BodyRejection {
         match self {
             Self::Syntax { detail } => problem.with_detail(format!("{summary}: {detail}")),
 
-            Self::Schema { failures, type_uri } => schema_problem(problem.status, type_uri)
-                .with_detail(summary)
-                .with_extension("errors", pointer_errors(failures)),
+            Self::Schema {
+                failures,
+                problem: named,
+            } => schema_problem(problem.status, named, summary, "the request body", failures),
 
             Self::UnsupportedMediaType { received } => problem.with_detail(received.map_or_else(
                 || format!("{summary}: the request declared no `Content-Type`"),

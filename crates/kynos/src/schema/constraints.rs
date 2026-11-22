@@ -6,7 +6,8 @@
 //! [`Schema::check_constraints`](crate::schema::Schema::check_constraints),
 //! which an extractor runs on the value it decoded, naming each member that
 //! broke its bound: a body extractor refuses with a 422, and `QueryString` and
-//! the parameter derives with a 400. The check is generated code
+//! the parameter derives with a 400 unless the [`ConstraintProblem`] the
+//! value's type names asks for a 422. The check is generated code
 //! over the typed value, and a value inside every bound costs no allocation
 //! once each `pattern` it meets has compiled and warmed its engine's cache.
 //!
@@ -398,7 +399,38 @@ impl Violations {
 
     /// Holds `value`, sitting at `at`, to the bounds its schema declares: the
     /// [failures](Self::into_failures) when it breaks any.
-    pub(crate) fn of<T: crate::schema::Schema + ?Sized>(
+    ///
+    /// The check every extractor runs on the value it decoded, for a value
+    /// taken without one — under
+    /// [`Unchecked`](crate::schema::unchecked::Unchecked), say, to fold its
+    /// failures into an application's own problem beside checks the schema
+    /// cannot state — so no bound is restated by hand.
+    ///
+    /// ```
+    /// use kynos::{
+    ///     Schema,
+    ///     schema::constraints::{Pointer, Violations},
+    /// };
+    ///
+    /// #[derive(Schema)]
+    /// struct UploadLimit {
+    ///     #[schema(minimum = 1)]
+    ///     bytes_per_sec: Option<u32>,
+    /// }
+    ///
+    /// let broken = UploadLimit { bytes_per_sec: Some(0) };
+    /// let failures = Violations::of(&broken, Pointer::root()).unwrap_err();
+    /// assert_eq!(failures["/bytes_per_sec"], "must be at least 1");
+    ///
+    /// let unlimited = UploadLimit { bytes_per_sec: None };
+    /// assert!(Violations::of(&unlimited, Pointer::root()).is_ok());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The failures, keyed by JSON Pointer from `at`, when `value` breaks any
+    /// bound.
+    pub fn of<T: crate::schema::Schema + ?Sized>(
         value: &T,
         at: Pointer<'_>,
     ) -> Result<(), BTreeMap<String, String>> {
@@ -410,6 +442,117 @@ impl Violations {
             Err(violations.into_failures())
         }
     }
+}
+
+/// The RFC 9457 problem a value answers with when it breaks a bound its
+/// schema declares, as
+/// [`Schema::CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM)
+/// names it for a type.
+///
+/// Built from its `type` URI, every other part defaulting to what an
+/// `about:blank` refusal sends: the status's reason phrase as its `title`, the
+/// input's own status (422 for a body, 400 for a parameter), and the
+/// rejection's summary as its `detail`. The `errors` member naming each
+/// failure is sent whatever this says. One value states the whole problem,
+/// so a catalogue's validation problem is named once, as a `const`, and every
+/// type answering with it answers alike.
+///
+/// ```
+/// use kynos::schema::constraints::{ConstraintDetail, ConstraintProblem};
+///
+/// const VALIDATION_FAILED: ConstraintProblem =
+///     ConstraintProblem::of_type("https://errors.example.com/validation-failed")
+///         .titled("The request is invalid")
+///         .unprocessable()
+///         .with_detail(ConstraintDetail::FirstFailure);
+///
+/// assert_eq!(VALIDATION_FAILED.title, Some("The request is invalid"));
+/// assert!(VALIDATION_FAILED.unprocessable);
+///
+/// let plain = ConstraintProblem::of_type("https://errors.example.com/out-of-range");
+/// assert_eq!(plain.title, None);
+/// assert!(!plain.unprocessable);
+/// assert_eq!(plain.detail, ConstraintDetail::Summary);
+/// ```
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ConstraintProblem {
+    /// The problem `type`.
+    ///
+    /// It reaches the client verbatim, so it should name a class of failure
+    /// and be absolute (RFC 9457 section 3.1.1).
+    pub type_uri: &'static str,
+
+    /// The problem's `title`, or `None` for the status's reason phrase.
+    ///
+    /// One type has one title (RFC 9457 section 3.1.3), so a type an
+    /// `ApiError` also publishes takes the title it publishes there.
+    pub title: Option<&'static str>,
+
+    /// Whether a parameter breaking a bound answers 422 Unprocessable Content
+    /// rather than 400 Bad Request.
+    ///
+    /// A body answers 422 either way. A parameter answers 400 by default,
+    /// since its value is part of the request's target rather than its
+    /// content (RFC 9110 section 15.5.21); a catalogue defining one validation
+    /// problem at one status for both sets this.
+    pub unprocessable: bool,
+
+    /// What the problem's `detail` says.
+    pub detail: ConstraintDetail,
+}
+
+impl ConstraintProblem {
+    /// The problem of type `type_uri`, every other part as an `about:blank`
+    /// refusal sends it.
+    #[must_use]
+    pub const fn of_type(type_uri: &'static str) -> Self {
+        Self {
+            type_uri,
+            title: None,
+            unprocessable: false,
+            detail: ConstraintDetail::Summary,
+        }
+    }
+
+    /// Sets the problem's `title`.
+    #[must_use]
+    pub const fn titled(mut self, title: &'static str) -> Self {
+        self.title = Some(title);
+        self
+    }
+
+    /// Answers a parameter's broken bound with 422, as a body's is.
+    #[must_use]
+    pub const fn unprocessable(mut self) -> Self {
+        self.unprocessable = true;
+        self
+    }
+
+    /// Sets what the problem's `detail` says.
+    #[must_use]
+    pub const fn with_detail(mut self, detail: ConstraintDetail) -> Self {
+        self.detail = detail;
+        self
+    }
+}
+
+/// What a [`ConstraintProblem`]'s `detail` says. Either way, the `errors`
+/// member names every failure.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConstraintDetail {
+    /// The rejection's summary, naming the input that broke a bound: "the
+    /// request body does not satisfy its schema", "query parameter `limit`
+    /// does not satisfy its schema".
+    #[default]
+    Summary,
+
+    /// The failure at the location sorting first, naming the input and where
+    /// in it, and how many other locations broke a bound: "the request body at
+    /// `/limit` must be at most 100 (and 1 more failure)", "query parameter
+    /// `limit` must be at least 1".
+    FirstFailure,
 }
 
 /// A value `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and

@@ -144,8 +144,8 @@ impl<T: Schema> RequestContent for JsonLines<Records<T>> {
         )
     }
 
-    fn constraint_types() -> Vec<&'static str> {
-        super::constraint_type::<T>()
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
+        super::constraint_problem::<T>()
     }
 }
 
@@ -180,7 +180,7 @@ impl<T: Schema> RequestContent for JsonSeq<Records<T>> {
         )
     }
 
-    fn constraint_types() -> Vec<&'static str> {
-        super::constraint_type::<T>()
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
+        super::constraint_problem::<T>()
     }
 }
