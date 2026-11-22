@@ -24,7 +24,7 @@ async fn restore_backup() {}
 #[kynos::get("/imports")]
 async fn list_imports() {}
 
-fn imports(max_bytes: usize) -> Group<App> {
+fn imports(max_bytes: u64) -> Group<App> {
     Group::new("/").mount(kynos::routes![
         create_import.intercept(BodySize::new(max_bytes)),
         restore_backup.intercept(BodySize::new(max_bytes)),
