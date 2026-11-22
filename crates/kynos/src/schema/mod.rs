@@ -162,7 +162,8 @@ pub trait Schema {
     /// for an `about:blank` one.
     ///
     /// Read by the extractor that decoded the value — a body extractor's `T`, a
-    /// `QueryString`'s `T`, the type of a field of a derived parameter group —
+    /// `QueryString`'s `T`, a derived parameter group, else the type of its
+    /// field —
     /// into both the rejection it sends and the response its operation
     /// declares, so an application publishing its own problem catalogue keeps
     /// Kynos enforcing what the document declares. The problem names its

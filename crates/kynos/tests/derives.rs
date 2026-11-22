@@ -2580,6 +2580,109 @@ fn a_parameter_carries_the_problem_its_field_type_names() {
     assert!(<Bounded as QueryParams>::constraint_problems().is_empty());
 }
 
+/// The problem the groups below name for every field they hold.
+const GROUP_INVALID: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/group-invalid",
+    )
+    .unprocessable();
+
+#[derive(Schema, QueryParams)]
+#[schema(constraint_problem = GROUP_INVALID)]
+struct GroupedQuery {
+    #[schema(maximum = 10)]
+    limit: Option<u32>,
+    #[schema(minimum = 1)]
+    page: Option<PageNumber>,
+}
+
+#[derive(Schema, PathParams)]
+#[schema(constraint_problem = GROUP_INVALID)]
+struct GroupedPath {
+    #[schema(maximum = 10)]
+    id: u32,
+}
+
+#[derive(Schema, HeaderParams)]
+#[schema(constraint_problem = GROUP_INVALID)]
+struct GroupedHeaders {
+    #[schema(maximum = 10)]
+    #[header(rename = "X-Limit")]
+    limit: Option<u32>,
+}
+
+#[cfg(feature = "cookie")]
+#[derive(Schema, kynos::CookieParams)]
+#[schema(constraint_problem = GROUP_INVALID)]
+struct GroupedCookies {
+    #[schema(maximum = 10)]
+    limit: Option<u32>,
+}
+
+/// A group naming a problem answers every field's broken bound with it, a
+/// plain `u32`'s and one whose type names its own alike, at the status it
+/// asks for; each group reports it once.
+#[test]
+fn a_parameter_group_answers_with_the_problem_it_names() {
+    use kynos::{
+        error::rejection::{HeaderRejection, PathRejection, QueryRejection},
+        extract::params::{
+            header::{DecodeHeaders, HeaderParams},
+            path::{DecodePath, PathParams},
+            query::{DecodeQuery, QueryParams},
+        },
+        http::{HeaderMap, HeaderValue, StatusCode},
+    };
+
+    for query in ["limit=11", "page=0", "page=101"] {
+        match GroupedQuery::decode(Some(query)) {
+            Err(rejection @ QueryRejection::Schema { problem, .. }) => {
+                assert_eq!(problem, Some(GROUP_INVALID), "{query}");
+                assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(_) => panic!("{query}: accepted"),
+        }
+    }
+    assert_eq!(GroupedQuery::constraint_problems(), [GROUP_INVALID]);
+
+    assert!(matches!(
+        GroupedPath::decode(&[("id", "11")]),
+        Err(PathRejection::Schema {
+            problem: Some(GROUP_INVALID),
+            ..
+        })
+    ));
+    assert_eq!(GroupedPath::constraint_problems(), [GROUP_INVALID]);
+
+    let mut headers = HeaderMap::new();
+    headers.insert("x-limit", HeaderValue::from_static("11"));
+    assert!(matches!(
+        GroupedHeaders::decode(&headers),
+        Err(HeaderRejection::Schema {
+            problem: Some(GROUP_INVALID),
+            ..
+        })
+    ));
+    assert_eq!(GroupedHeaders::constraint_problems(), [GROUP_INVALID]);
+
+    #[cfg(feature = "cookie")]
+    {
+        use kynos::{error::rejection::CookieRejection, extract::params::cookie::CookieParams};
+
+        let mut jar = HeaderMap::new();
+        jar.insert("cookie", HeaderValue::from_static("limit=11"));
+        assert!(matches!(
+            GroupedCookies::decode(&jar),
+            Err(CookieRejection::Schema {
+                problem: Some(GROUP_INVALID),
+                ..
+            })
+        ));
+        assert_eq!(GroupedCookies::constraint_problems(), [GROUP_INVALID]);
+    }
+}
+
 // --- The derived cookie decoder reads only a cookie that is text -----------
 //
 // The second runtime property checked here, for the reason the query one is:

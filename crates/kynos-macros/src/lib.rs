@@ -912,7 +912,19 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// derive reads, are written into its parameter's schema, beside a named
 /// type's `$ref`, and checked on the value `FromStr` read, with the bounds its
 /// type declares: one it breaks is refused as `QueryRejection::Schema`, naming
-/// the parameter.
+/// the parameter. The refusal answers with the problem the group's own
+/// `#[schema(constraint_problem = ...)]` names, for every field it holds,
+/// else with the one the field's type names, as the other parameter derives
+/// do:
+///
+/// ```ignore
+/// #[derive(kynos::Schema, kynos::QueryParams)]
+/// #[schema(constraint_problem = problems::VALIDATION_FAILED)]
+/// struct Page {
+///     #[schema(minimum = 1, maximum = 1000)]
+///     limit: Option<u32>,
+/// }
+/// ```
 ///
 /// # Rejected, because a parameter has one name
 ///

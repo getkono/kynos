@@ -10,7 +10,8 @@ use crate::derive::{
         wire_names,
     },
     params::{
-        Param, check_field, constraint_problems_body, construct, decode_field, parameters_body,
+        Param, check_field, constraint_problems_body, construct, decode_field, group_problem,
+        parameters_body,
     },
 };
 
@@ -25,7 +26,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let names_item = names_const(&names);
 
-    let params = Param::pair(fields, &names);
+    let group = group_problem(input);
+    let params = Param::pair(fields, &names, group.as_ref());
     let rejection = quote!(::kynos::error::rejection::CookieRejection);
 
     // RFC 6265 jar splitting stays in `http::cookie`. A sent but unreadable

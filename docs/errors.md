@@ -440,7 +440,7 @@ failure either way. It is one `const` value rather than a `const` per part,
 which could disagree, on a trait the application already implements for the
 value, the `Scopes::FORBIDDEN_TYPE` shape above. The type read is the one the
 input decodes: a body extractor's `T`, a `QueryString`'s `T`, a derived
-parameter field's type. A member naming a problem of its own does not override
+parameter group, else its field's type. A member naming a problem of its own does not override
 the body holding it, and `Option`, `Box` and `Arc` answer as their `T`. The
 rejection's `Schema` variant carries the problem in `problem`, as
 `AuthRejection::Forbidden` carries its URI, rather than a second variant, since
@@ -457,11 +457,13 @@ problem at one status. A parameter rejection's `statuses()` therefore names
 declares the 400 alone: the extractor whose type names such a problem declares
 the 422, so an operation declares one only where it can be sent.
 
-A parameter group's own `#[schema(constraint_problem = ...)]` is ignored by
-`Query<T>`, `Path<T>`, `Headers<T>` and `Cookies<T>`, which read each field's
-type; it still applies where the group is itself the decoded value, as a
-`QueryString<T>` or a body's `T`. Name the problem on the field types to have a
-parameter answer with it.
+A parameter group's own `#[schema(constraint_problem = ...)]` answers every
+field of `Query<T>`, `Path<T>`, `Headers<T>` and `Cookies<T>`, over the problem
+a field's type names, which answers only where the group names none: the value
+holding a bound answers for it, as a body's type does for its members, so one
+group reads alike as a `Query<T>` and as a `QueryString<T>`. A bounded `u32`
+field thus answers with the application's problem without a newtype naming
+it.
 
 What a body that does not decode into `T` sends is unchanged: `about:blank`,
 since no bound was consulted. Each input therefore declares a choice at its

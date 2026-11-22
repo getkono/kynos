@@ -130,7 +130,7 @@ pub trait HeaderParams: Sized {
     }
 
     /// The problems a value breaking a bound answers with, beside
-    /// `about:blank`: the
+    /// `about:blank`: the one the group names, else the
     /// [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM) of
     /// each field type naming one, so what [`Headers`] declares names what
     /// [`HeaderRejection::Schema`] sends.

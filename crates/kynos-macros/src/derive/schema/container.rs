@@ -122,7 +122,7 @@ impl Container {
 /// rather than ignored: a bound written on the type would otherwise read as
 /// enforced and be neither described nor checked. `constraint_type`, which it
 /// replaced, is refused naming it.
-pub(super) fn constraint_problem(input: &DeriveInput) -> syn::Result<Option<syn::Expr>> {
+pub(crate) fn constraint_problem(input: &DeriveInput) -> syn::Result<Option<syn::Expr>> {
     let mut named: Option<syn::Expr> = None;
     for attr in &input.attrs {
         if !attr.path().is_ident("schema") {

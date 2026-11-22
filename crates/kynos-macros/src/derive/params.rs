@@ -9,15 +9,30 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::{Field, FieldsNamed, Ident, Type, spanned::Spanned};
+use syn::{DeriveInput, Expr, Field, FieldsNamed, Ident, Type, spanned::Spanned};
 
 use crate::{
     derive::{
         common::wrapped,
-        schema::{aliases::named_string, attributes::constraints, check::value::value_checks},
+        schema::{
+            aliases::named_string, attributes::constraints, check::value::value_checks,
+            container::constraint_problem,
+        },
     },
     doc::doc_string,
 };
+
+/// The problem a group's own `#[schema(constraint_problem = ...)]` names,
+/// which answers every field's broken bound in place of its type's: the value
+/// holding a bound answers for it, as a body's type does for its members, so
+/// a group reads alike through its parameter extractor and `QueryString`.
+///
+/// Read as the `Schema` derive reads it, a bounded group deriving that too;
+/// a malformed attribute is that derive's to report, once, so it reads as
+/// none here.
+pub(crate) fn group_problem(input: &DeriveInput) -> Option<Expr> {
+    constraint_problem(input).ok().flatten()
+}
 
 /// One field of a parameter group, paired with the wire name it occupies.
 pub(crate) struct Param<'a> {
@@ -25,11 +40,19 @@ pub(crate) struct Param<'a> {
     name: String,
     /// The one value a header's `()` field stands for, as its schema's `const`.
     fixed: Option<String>,
+    /// The problem the group names for every field's broken bound, if any.
+    group: Option<&'a Expr>,
 }
 
 impl<'a> Param<'a> {
-    /// Pairs each field with the wire name already resolved for it.
-    pub(crate) fn pair(fields: &'a FieldsNamed, names: &[String]) -> Vec<Self> {
+    /// Pairs each field with the wire name already resolved for it, under the
+    /// problem `group` names for the whole group, which [`group_problem`]
+    /// reads.
+    pub(crate) fn pair(
+        fields: &'a FieldsNamed,
+        names: &[String],
+        group: Option<&'a Expr>,
+    ) -> Vec<Self> {
         fields
             .named
             .iter()
@@ -38,6 +61,7 @@ impl<'a> Param<'a> {
                 field,
                 name: name.clone(),
                 fixed: None,
+                group,
             })
             .collect()
     }
@@ -155,22 +179,27 @@ pub(crate) fn decode_field(
     }
 }
 
-/// The `ParamValue` the field carries, whose `CONSTRAINT_PROBLEM` a broken
-/// bound on it answers with.
+/// The problem a broken bound on the field answers with: the group's, else
+/// the `CONSTRAINT_PROBLEM` of the `ParamValue` it carries.
 fn carried(param: &Param<'_>) -> TokenStream2 {
+    if let Some(group) = param.group {
+        return quote!(::core::option::Option::Some(#group));
+    }
     let carried = param.optional().unwrap_or(param.ty());
     quote!(<#carried as ::kynos::schema::Schema>::CONSTRAINT_PROBLEM)
 }
 
-/// The `constraint_problems` body: each checked field's type's
+/// The `constraint_problems` body: the group's problem once where it names
+/// one and holds a checked field, else each checked field's type's
 /// `CONSTRAINT_PROBLEM`, in declaration order, those naming none left out. A
 /// fixed field carries no value to check.
 pub(crate) fn constraint_problems_body(params: &[Param<'_>]) -> TokenStream2 {
-    let named: Vec<TokenStream2> = params
-        .iter()
-        .filter(|param| param.fixed.is_none())
-        .map(carried)
-        .collect();
+    let checked = params.iter().filter(|param| param.fixed.is_none());
+    let named: Vec<TokenStream2> = if params.iter().any(|param| param.group.is_some()) {
+        checked.take(1).map(carried).collect()
+    } else {
+        checked.map(carried).collect()
+    };
     let count = named.len();
     quote! {
         // Typed, so a group with no checked field still names its element.
@@ -186,8 +215,8 @@ pub(crate) fn constraint_problems_body(params: &[Param<'_>]) -> TokenStream2 {
 
 /// Refuses a decoded field that breaks one of its `#[schema(...)]` bounds, or
 /// one its type declares, as `Schema`, naming the parameter, each failure at a
-/// pointer into its value, and carrying the problem the field's type names.
-/// Runs after [`decode_field`] has bound the field.
+/// pointer into its value, and carrying the problem the group names, else the
+/// field's type. Runs after [`decode_field`] has bound the field.
 pub(crate) fn check_field(param: &Param<'_>, rejection: &TokenStream2) -> TokenStream2 {
     let ident = param.ident();
     let ty = param.ty();

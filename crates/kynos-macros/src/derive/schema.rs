@@ -40,7 +40,7 @@
 pub(crate) mod aliases;
 pub(crate) mod attributes;
 pub(crate) mod check;
-mod container;
+pub(crate) mod container;
 mod flatten;
 pub(crate) mod instantiation;
 mod kinds;

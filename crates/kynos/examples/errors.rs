@@ -95,9 +95,11 @@ struct UserPath {
 /// A second fallible extractor, and the reason 400 is listed once rather than
 /// twice: `QueryRejection` and `PathRejection` are different types that happen
 /// to agree on a status, and an operation's `responses` is a union rather than a
-/// list.
+/// list. A `limit` past 100 answers as a broken bound on `User` does: the
+/// group names `BOUND_BROKEN` for every field it holds, a plain `u32` too.
 #[allow(dead_code)]
 #[derive(Schema, QueryParams)]
+#[schema(constraint_problem = BOUND_BROKEN)]
 struct Page {
     /// Where to resume from.
     after: Option<u64>,
