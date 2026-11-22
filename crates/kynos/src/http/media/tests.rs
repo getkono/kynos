@@ -1,5 +1,6 @@
 use super::{
-    Html, MediaRanges, Png, admits, admitted, charset, is_media_range, is_text, is_utf8_or_unstated,
+    Html, MediaRanges, Png, admits, admitted, charset, declares_utf8, is_media_range, is_text,
+    is_utf8_or_unstated,
 };
 
 /// A structured syntax suffix is JSON, which is what lets a vendor media
@@ -55,6 +56,21 @@ fn a_declared_charset_is_read_and_held_to_utf_8() {
     assert!(is_utf8_or_unstated("text/csv; charset=Utf-8"));
     assert!(!is_utf8_or_unstated("text/csv; charset=iso-8859-1"));
     assert!(!is_utf8_or_unstated("text/csv; charset=utf8"));
+}
+
+/// Only a stated `charset=utf-8` declares UTF-8: an unstated charset, which
+/// `is_utf8_or_unstated` admits, is no declaration.
+#[test]
+fn utf_8_is_declared_only_by_a_stated_charset() {
+    assert!(declares_utf8(
+        "application/openmetrics-text; version=1.0.0; charset=utf-8"
+    ));
+    assert!(declares_utf8("application/sql; Charset=\"UTF-8\""));
+
+    assert!(!declares_utf8("application/sql"));
+    assert!(!declares_utf8("text/csv"));
+    assert!(!declares_utf8("application/sql; charset=iso-8859-1"));
+    assert!(!declares_utf8("application/sql; profile=\"charset=utf-8\""));
 }
 
 /// A `;` inside a quoted parameter value separates nothing (RFC 9110 sections

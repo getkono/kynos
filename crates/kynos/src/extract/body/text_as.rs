@@ -11,14 +11,14 @@ use crate::{
     http::{
         Parts,
         body::Body,
-        media::{MediaType, WellFormed, is_text, is_utf8_or_unstated},
+        media::{MediaType, WellFormed, declares_utf8, is_text, is_utf8_or_unstated},
     },
     router::operation::OperationCx,
     schema::registry::Registry,
 };
 
-/// A UTF-8 text request or response body carried under the `text/*` media
-/// type `M` names.
+/// A UTF-8 text request or response body carried under the text media type
+/// `M` names.
 ///
 /// What [`Text`](super::text::Text) is for `text/plain`, this is for any other
 /// text format, such as `text/csv`, `text/markdown` or a vendor `text/vnd.*`:
@@ -27,16 +27,34 @@ use crate::{
 /// `text/plain`. Serving bytes without decoding them, such as a pre-rendered
 /// file, stays [`Binary`](super::binary::Binary).
 ///
-/// `M` names a `text` type with a subtype, in any ASCII case, and declares no
-/// `charset` but `utf-8`: Kynos decodes only UTF-8, so a marker such as
-/// `text/csv; charset=iso-8859-1` would mis-decode every body it reads. Either
-/// mistake fails the build wherever the body is extracted, written, described
-/// or offered:
+/// `M` declares no `charset` but `utf-8`: Kynos decodes only UTF-8, so a
+/// marker such as `text/csv; charset=iso-8859-1` would mis-decode every body
+/// it reads. And `M` names a `text` type with a subtype, in any ASCII case,
+/// unless it declares `charset=utf-8` outright: RFC 6657 defaults only
+/// `text/*` to UTF-8, so nothing else about `image/png` or `application/sql`
+/// says its body is text. Either mistake fails the build wherever the body is
+/// extracted, written, described or offered:
 ///
 /// ```compile_fail
 /// use kynos::{extract::{body::text_as::TextAs, describe::RequestContent}, http::media::Png};
 ///
 /// TextAs::<Png>::media_types();
+/// ```
+///
+/// A textual format registered outside `text/*` is carried by stating its
+/// charset, which a response then sends as declared:
+///
+/// ```
+/// use kynos::{extract::body::text_as::TextAs, http::media::MediaType, response::IntoResponse};
+///
+/// struct OpenMetricsText;
+/// impl MediaType for OpenMetricsText {
+///     const MEDIA_TYPE: &'static str =
+///         "application/openmetrics-text; version=1.0.0; charset=utf-8";
+/// }
+///
+/// let written = TextAs::<OpenMetricsText>::new("# EOF\n").into_response();
+/// assert_eq!(written.headers()["content-type"], OpenMetricsText::MEDIA_TYPE);
 /// ```
 ///
 /// ```compile_fail
@@ -130,8 +148,24 @@ use crate::{
 /// OneOf::<TextAs<Html>, Binary<Html>>::media_types();
 /// ```
 ///
-/// and one beside a `JsonAs` whose marker is the same `text/*` type with a
-/// `+json` suffix, which both bodies accept, in either order:
+/// one naming the media type of a body that decodes it, such as `Json`'s,
+///
+/// ```compile_fail
+/// use kynos::{
+///     extract::{body::{OneOf, json::Json, text_as::TextAs}, describe::RequestContent},
+///     http::media::MediaType,
+/// };
+///
+/// struct JsonText;
+/// impl MediaType for JsonText {
+///     const MEDIA_TYPE: &'static str = "application/json; charset=utf-8";
+/// }
+///
+/// OneOf::<Json<u64>, TextAs<JsonText>>::media_types();
+/// ```
+///
+/// and one beside a `JsonAs` whose marker is the same type with a `+json`
+/// suffix, which both bodies accept, in either order:
 ///
 /// ```compile_fail
 /// use kynos::{
@@ -255,13 +289,14 @@ impl<M> std::hash::Hash for TextAs<M> {
 
 impl<M: MediaType> TextAs<M> {
     /// Refuses, in the constant evaluation reading it, a marker that is not
-    /// [`WellFormed`], does not name a `text/*` type, or declares a charset
-    /// other than UTF-8.
+    /// [`WellFormed`], names neither a `text/*` type nor `charset=utf-8`, or
+    /// declares a charset other than UTF-8.
     pub(crate) const TEXT: () = {
         let () = <M as WellFormed>::WELL_FORMED;
         assert!(
-            is_text(M::MEDIA_TYPE),
-            "a `TextAs` marker does not name a `text/*` type, and its body is decoded as text"
+            is_text(M::MEDIA_TYPE) || declares_utf8(M::MEDIA_TYPE),
+            "a `TextAs` marker names neither a `text/*` type nor `charset=utf-8`, and its body \
+             is decoded as UTF-8 text"
         );
         assert!(
             is_utf8_or_unstated(M::MEDIA_TYPE),
