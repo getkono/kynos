@@ -2683,6 +2683,41 @@ fn a_parameter_group_answers_with_the_problem_it_names() {
     }
 }
 
+/// A query group whose `Schema` is written by hand, naming its problem there.
+#[derive(QueryParams)]
+struct HandNamedQuery {
+    page: Option<PageNumber>,
+}
+
+impl kynos::schema::Schema for HandNamedQuery {
+    const CONSTRAINT_PROBLEM: Option<kynos::schema::constraints::ConstraintProblem> =
+        Some(GROUP_INVALID);
+
+    fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
+        kynos::openapi::Schema::any()
+    }
+}
+
+/// A query group answers with the problem its `Schema` names however that
+/// `Schema` was written, as `QueryString` reads it, in place of the one its
+/// field's type names.
+#[test]
+fn a_query_group_answers_with_the_problem_its_hand_written_schema_names() {
+    use kynos::{
+        error::rejection::QueryRejection,
+        extract::params::query::{DecodeQuery, QueryParams},
+    };
+
+    assert!(matches!(
+        HandNamedQuery::decode(Some("page=101")),
+        Err(QueryRejection::Schema {
+            problem: Some(GROUP_INVALID),
+            ..
+        })
+    ));
+    assert_eq!(HandNamedQuery::constraint_problems(), [GROUP_INVALID]);
+}
+
 // --- The derived cookie decoder reads only a cookie that is text -----------
 //
 // The second runtime property checked here, for the reason the query one is:
