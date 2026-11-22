@@ -514,6 +514,9 @@ fn every_standard_type_the_docs_promise_is_describable() {
     // Over unsized `T` too, as serde reads each of them.
     describable::<&str>();
     describable::<Cow<'_, str>>();
+    describable::<Box<str>>();
+    describable::<Arc<str>>();
+    describable::<Box<[u8]>>();
 
     describable::<Vec<String>>();
     describable::<VecDeque<String>>();
@@ -992,6 +995,14 @@ mod checking {
         assert_eq!(located(&&NonZero(0)), ["/v/inner"]);
         assert_eq!(located(&Cow::Borrowed(&NonZero(0))), ["/v/inner"]);
         assert_eq!(located(&Cow::<NonZero>::Owned(NonZero(0))), ["/v/inner"]);
+        assert_eq!(
+            located::<Box<[NonZero]>>(&Box::from([NonZero(0)])),
+            ["/v/0/inner"]
+        );
+        assert_eq!(
+            located::<Arc<[NonZero]>>(&Arc::from([NonZero(1), NonZero(0)])),
+            ["/v/1/inner"]
+        );
         assert_eq!(
             located(&VecDeque::from([NonZero(1), NonZero(0)])),
             ["/v/1/inner"]

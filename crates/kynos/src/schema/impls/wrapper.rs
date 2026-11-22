@@ -67,7 +67,7 @@ impl<T: Schema> Schema for Option<T> {
 macro_rules! transparent {
     ($($ty:ident),+ $(,)?) => {
         $(
-            impl<T: Schema> Schema for $ty<T> {
+            impl<T: Schema + ?Sized> Schema for $ty<T> {
                 const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = T::CONSTRAINT_PROBLEM;
 
                 fn schema(registry: &mut Registry) -> OpenApiSchema {
@@ -87,12 +87,12 @@ macro_rules! transparent {
 }
 
 // `name` delegates too, so a `Box<User>` and a `User` are one component; and
-// `CONSTRAINT_PROBLEM`, so one answers as the other does.
+// `CONSTRAINT_PROBLEM`, so one answers as the other does. Over unsized `T`
+// too, so `Box<str>` and `Arc<[T]>` are `str`'s and `[T]`'s answer.
 transparent!(Box, Arc);
 
-// A borrow is what it points at, as `Box` is, and over unsized `T` too, so
-// `&str` is `str`'s answer. Any lifetime: a schema describes a type, never how
-// long one of its values lives.
+// A borrow is what it points at, as `Box` is, unsized `T` included. Any
+// lifetime: a schema describes a type, never how long one of its values lives.
 impl<T: Schema + ?Sized> Schema for &T {
     const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = T::CONSTRAINT_PROBLEM;
 
