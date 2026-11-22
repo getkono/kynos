@@ -182,6 +182,19 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     })
 }
 
+/// The problem the type's own `#[schema(constraint_problem = ...)]` names,
+/// having refused a malformed `#[schema(...)]` on it or any field as this
+/// derive does.
+///
+/// For the parameter derives, which register the attribute themselves: a
+/// group deriving no `Schema` would otherwise read a misspelled bound as
+/// none. Beside this derive both raise one refusal at one span, which rustc
+/// reports once.
+pub(crate) fn group_attributes(input: &DeriveInput) -> syn::Result<Option<syn::Expr>> {
+    refusals::check_grammar(input, &Container::read(input))?;
+    container::constraint_problem(input)
+}
+
 /// The input's generics, with `Schema` required of each type parameter.
 ///
 /// Parameters rather than field types, as serde does: a field-type bound would

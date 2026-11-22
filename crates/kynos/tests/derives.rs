@@ -21,8 +21,7 @@
 //! derived `Reply` or `ApiError` writes; and a derived carrier's reading of
 //! its `reads` group beside the credential.
 //! Their tests call the derived code directly, with no server. What *is*
-//! checked beyond compiling is the description a derive emits, and what the
-//! default `QueryParams::parameters` makes of a derived schema.
+//! checked beyond compiling is the description a derive emits.
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]
@@ -73,7 +72,7 @@ struct UserPath {
     user_id: u64,
 }
 
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct ListQuery {
     page: u32,
     #[param(rename = "per_page")]
@@ -1923,91 +1922,6 @@ fn an_externally_tagged_branch_admits_only_its_variant_key() {
     }
 }
 
-// --- The default query projection reads the top level alone ----------------
-//
-// A group implementing `QueryParams` by hand over a derived schema gets the
-// default `parameters`, which reads only the object's own `properties` and
-// `required`. These record what that loses rather than endorse it: a bound no
-// Parameter Object can state, and members it does not read. The default's
-// rustdoc names both and their remedies.
-
-impl QueryParamsTrait for Aliased {}
-
-#[derive(Schema, serde::Serialize, serde::Deserialize)]
-struct Located {
-    id: u64,
-    #[serde(flatten)]
-    origin: Origin,
-}
-
-impl QueryParamsTrait for Located {}
-
-/// The parameters `T`'s default projection describes, as JSON.
-fn query_parameters<T: QueryParamsTrait>() -> serde_json::Value {
-    let mut registry = kynos::schema::registry::Registry::new();
-    serde_json::to_value(T::parameters(&mut registry)).expect("parameters serialize")
-}
-
-/// Each name of a required aliased field is an optional parameter, and the
-/// exactly-one bound its schema's `allOf` states is dropped.
-#[test]
-fn a_required_aliased_field_projects_to_one_optional_parameter_per_name() {
-    assert_eq!(
-        query_parameters::<Aliased>(),
-        serde_json::json!([
-            {"name": "b", "in": "query", "schema": emitted::<u64>()},
-            {"name": "bee", "in": "query", "schema": emitted::<u64>()},
-        ])
-    );
-}
-
-/// A flattened struct's members reach the schema through a `$ref` inside an
-/// `allOf`, neither of which the projection reads, so only the parent's own
-/// field is a parameter.
-///
-/// Not implied by the aliased case, whose `allOf` holds bounds and no `$ref`:
-/// a projection that walked `allOf` and resolved what it found would pass that
-/// one and list `host` here.
-#[test]
-fn a_flattened_structs_members_project_to_no_parameter() {
-    assert!(emitted::<Located>()["allOf"][0].get("$ref").is_some());
-
-    assert_eq!(
-        query_parameters::<Located>(),
-        serde_json::json!([
-            {"name": "id", "in": "query", "required": true, "schema": emitted::<u64>()},
-        ])
-    );
-}
-
-#[derive(Schema, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind")]
-enum Audience {
-    Team { team: u64 },
-    User { user: u64 },
-}
-
-impl QueryParamsTrait for Audience {}
-
-#[derive(Schema, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-struct WrappedOrigin {
-    origin: Origin,
-}
-
-impl QueryParamsTrait for WrappedOrigin {}
-
-/// An enum's variants sit under a `oneOf` and a `transparent` type's inner
-/// fields behind a `$ref`, and neither has a top-level property to project.
-#[test]
-fn a_oneof_or_ref_schema_projects_to_no_parameter() {
-    assert!(emitted::<Audience>().get("oneOf").is_some());
-    assert!(emitted::<WrappedOrigin>().get("$ref").is_some());
-
-    assert_eq!(query_parameters::<Audience>(), serde_json::json!([]));
-    assert_eq!(query_parameters::<WrappedOrigin>(), serde_json::json!([]));
-}
-
 // --- The derived query decoder reads only octets that are text -------------
 //
 // The recorded runtime exception checked here, because no other target
@@ -2117,7 +2031,7 @@ fn a_group_without_parameters_decodes_from_any_query() {
 #[derive(Schema, ParamValue, Debug, PartialEq)]
 struct Score(#[schema(maximum = 100)] u32);
 
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct Bounded {
     #[schema(min_length = 2)]
     #[param(rename = "q")]
@@ -2126,6 +2040,12 @@ struct Bounded {
     limit: Option<u32>,
     #[schema(minimum = 1)]
     score: Option<Score>,
+}
+
+/// The parameters `T` describes, as JSON.
+fn query_parameters<T: QueryParamsTrait>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::new();
+    serde_json::to_value(T::parameters(&mut registry)).expect("parameters serialize")
 }
 
 /// `T`'s schema as a field or parameter of type `T` refers to it.
@@ -2253,8 +2173,10 @@ fn a_nan_query_value_is_refused_under_its_numeric_bounds() {
 // The same recorded exception as the query parameter's: each other parameter
 // derive writes a field's `#[schema(...)]` bounds into its description and
 // refuses a decoded value that breaks one, or one its type declares.
+// None derives `Schema`: each parameter derive reads the attribute itself,
+// as the query group above does.
 
-#[derive(Schema, PathParams)]
+#[derive(PathParams)]
 struct BoundedPath {
     #[schema(minimum = 1)]
     #[param(rename = "id")]
@@ -2263,7 +2185,7 @@ struct BoundedPath {
     score: Score,
 }
 
-#[derive(Schema, HeaderParams)]
+#[derive(HeaderParams)]
 struct BoundedHeaders {
     #[schema(max_length = 8)]
     #[header(rename = "X-Request-Id")]
@@ -2274,7 +2196,7 @@ struct BoundedHeaders {
 }
 
 #[cfg(feature = "cookie")]
-#[derive(Schema, kynos::CookieParams)]
+#[derive(kynos::CookieParams)]
 struct BoundedCookies {
     #[schema(min_length = 4)]
     session: String,
@@ -2495,7 +2417,7 @@ const PAGE_OUT_OF_RANGE: kynos::schema::constraints::ConstraintProblem =
 #[schema(constraint_problem = PAGE_OUT_OF_RANGE)]
 struct PageNumber(#[schema(maximum = 100)] u32);
 
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct NamedQuery {
     #[schema(minimum = 1)]
     page: Option<PageNumber>,
@@ -2595,7 +2517,7 @@ const GROUP_INVALID: kynos::schema::constraints::ConstraintProblem =
     )
     .unprocessable();
 
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedQuery {
     #[schema(maximum = 10)]
@@ -2604,14 +2526,14 @@ struct GroupedQuery {
     page: Option<PageNumber>,
 }
 
-#[derive(Schema, PathParams)]
+#[derive(PathParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedPath {
     #[schema(maximum = 10)]
     id: u32,
 }
 
-#[derive(Schema, HeaderParams)]
+#[derive(HeaderParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedHeaders {
     #[schema(maximum = 10)]
@@ -2620,7 +2542,7 @@ struct GroupedHeaders {
 }
 
 #[cfg(feature = "cookie")]
-#[derive(Schema, kynos::CookieParams)]
+#[derive(kynos::CookieParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedCookies {
     #[schema(maximum = 10)]
@@ -2689,41 +2611,6 @@ fn a_parameter_group_answers_with_the_problem_it_names() {
         ));
         assert_eq!(GroupedCookies::constraint_problems(), [GROUP_INVALID]);
     }
-}
-
-/// A query group whose `Schema` is written by hand, naming its problem there.
-#[derive(QueryParams)]
-struct HandNamedQuery {
-    page: Option<PageNumber>,
-}
-
-impl kynos::schema::Schema for HandNamedQuery {
-    const CONSTRAINT_PROBLEM: Option<kynos::schema::constraints::ConstraintProblem> =
-        Some(GROUP_INVALID);
-
-    fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
-        kynos::openapi::Schema::any()
-    }
-}
-
-/// A query group answers with the problem its `Schema` names however that
-/// `Schema` was written, as `QueryString` reads it, in place of the one its
-/// field's type names.
-#[test]
-fn a_query_group_answers_with_the_problem_its_hand_written_schema_names() {
-    use kynos::{
-        error::rejection::QueryRejection,
-        extract::params::query::{DecodeQuery, QueryParams},
-    };
-
-    assert!(matches!(
-        HandNamedQuery::decode(Some("page=101")),
-        Err(QueryRejection::Schema {
-            problem: Some(GROUP_INVALID),
-            ..
-        })
-    ));
-    assert_eq!(HandNamedQuery::constraint_problems(), [GROUP_INVALID]);
 }
 
 // --- The derived cookie decoder reads only a cookie that is text -----------

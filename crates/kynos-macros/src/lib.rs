@@ -932,7 +932,7 @@ pub fn derive_param_value(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(PathParams, attributes(param))]
+#[proc_macro_derive(PathParams, attributes(param, schema))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::path_params::expand_inner)
 }
@@ -963,18 +963,23 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
 ///
-/// A field's `#[schema(...)]` bounds, which the [`Schema`](macro@Schema)
-/// derive reads, are written into its parameter's schema, beside a named
-/// type's `$ref`, and checked on the value `FromStr` read, with the bounds its
-/// type declares: one it breaks is refused as `QueryRejection::Schema`, naming
-/// the parameter. The refusal answers with the problem the group's own
-/// `Schema::CONSTRAINT_PROBLEM` names, for every field it holds, else with
-/// the one the field's type names. The group's is read through its `Schema`,
-/// so a hand-written one counts as `#[schema(constraint_problem = ...)]`
-/// does, and the group answers through `Query` as through `QueryString`:
+/// The parameter derives read `#[schema(...)]` as the [`Schema`](macro@Schema)
+/// derive does, and register it themselves, so a group carries bounds with
+/// no `Schema` derive beside it; a malformed one is refused as that derive
+/// refuses it.
+///
+/// A field's `#[schema(...)]` bounds are written into its parameter's schema,
+/// beside a named type's `$ref`, and checked on the value `FromStr` read, with
+/// the bounds its type declares: one it breaks is refused as
+/// `QueryRejection::Schema`, naming the parameter. The refusal answers with
+/// the problem the group's own `#[schema(constraint_problem = ...)]` names,
+/// for every field it holds, else with the one the field's type names. The
+/// `Schema` derive reads the same attribute, so a group deriving both answers
+/// through `Query` as through `QueryString`. A group needs no `Schema` of its
+/// own, as no other parameter group does:
 ///
 /// ```ignore
-/// #[derive(kynos::Schema, kynos::QueryParams)]
+/// #[derive(kynos::QueryParams)]
 /// #[schema(constraint_problem = problems::VALIDATION_FAILED)]
 /// struct Page {
 ///     #[schema(minimum = 1, maximum = 1000)]
@@ -989,7 +994,7 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(QueryParams, attributes(param))]
+#[proc_macro_derive(QueryParams, attributes(param, schema))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::query_params::expand_inner)
 }
@@ -1066,7 +1071,7 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(HeaderParams, attributes(header))]
+#[proc_macro_derive(HeaderParams, attributes(header, schema))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::headers::expand_inner)
 }
@@ -1107,7 +1112,7 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(CookieParams, attributes(cookie))]
+#[proc_macro_derive(CookieParams, attributes(cookie, schema))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::cookies::expand_inner)
 }

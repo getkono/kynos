@@ -98,7 +98,7 @@ struct UserPath {
 /// list. A `limit` past 100 answers as a broken bound on `User` does: the
 /// group names `BOUND_BROKEN` for every field it holds, a plain `u32` too.
 #[allow(dead_code)]
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 #[schema(constraint_problem = BOUND_BROKEN)]
 struct Page {
     /// Where to resume from.

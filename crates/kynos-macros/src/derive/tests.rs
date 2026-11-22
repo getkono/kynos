@@ -7357,6 +7357,51 @@ mod cookies {
     }
 }
 
+/// Every parameter derive registers `#[schema(...)]`, so each refuses a
+/// malformed one as the `Schema` derive does, on the group and on a field,
+/// where no `Schema` derive stands beside it to.
+mod parameter_groups {
+    use super::{Case, DeriveInput, TokenStream2, case, each_case_is_refused};
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a misspelled field bound",
+                quote::quote!(
+                    struct Group {
+                        #[schema(maxium = 3)]
+                        limit: u32,
+                    }
+                ),
+                "`maxium` is not part of the `#[schema(...)]` grammar",
+            ),
+            case(
+                "a bound written on the group",
+                quote::quote!(
+                    #[schema(minimum = 1)]
+                    struct Group {
+                        limit: u32,
+                    }
+                ),
+                "a type's `#[schema(...)]` takes only `constraint_problem = ...`",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_parameter_derive_refuses_a_malformed_schema_attribute() {
+        let derives: [fn(&DeriveInput) -> syn::Result<TokenStream2>; 4] = [
+            crate::derive::path_params::expand_inner,
+            crate::derive::query_params::expand_inner,
+            crate::derive::headers::expand_inner,
+            crate::derive::cookies::expand_inner,
+        ];
+        for expand in derives {
+            each_case_is_refused(ledger(), expand);
+        }
+    }
+}
+
 mod path_params {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::path_params::expand_inner;

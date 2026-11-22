@@ -97,7 +97,7 @@ enum Order {
 
 /// How a list is paged.
 #[allow(dead_code)]
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct Page {
     /// Optional, because the type is.
     after: Option<u64>,

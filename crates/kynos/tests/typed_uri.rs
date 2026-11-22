@@ -41,7 +41,7 @@ struct ReportPath;
 
 impl Schema for ReportPath {
     /// The one variable the template names, described by hand for the reason
-    /// [`ReportQuery::schema`] gives.
+    /// [`ReportQuery::parameters`] gives.
     fn schema(registry: &mut Registry) -> openapi::Schema {
         object(registry.resolve::<String>(), "name")
     }
@@ -71,18 +71,6 @@ impl DecodePath for ReportPath {
 
 struct ReportQuery;
 
-impl Schema for ReportQuery {
-    /// The one member `encode` renders, described by hand.
-    ///
-    /// Hand-written rather than derived: what is under test is the route
-    /// attribute's rendering, so both parameter types have to be ones whose
-    /// `encode` this file controls — and a `Schema` describing something other
-    /// than what `encode` writes is a fixture that disagrees with itself.
-    fn schema(registry: &mut Registry) -> openapi::Schema {
-        object(registry.resolve::<bool>(), "download")
-    }
-}
-
 /// A single-member object schema, which is all either fixture needs.
 fn object(member: openapi::Schema, name: &str) -> openapi::Schema {
     openapi::Schema::Object(Box::new(openapi::SchemaObject {
@@ -93,7 +81,17 @@ fn object(member: openapi::Schema, name: &str) -> openapi::Schema {
     }))
 }
 
-impl QueryParams for ReportQuery {}
+impl QueryParams for ReportQuery {
+    /// The one parameter `encode` renders, described by hand.
+    ///
+    /// Hand-written rather than derived: what is under test is the route
+    /// attribute's rendering, so both parameter types have to be ones whose
+    /// `encode` this file controls — and a description of something other
+    /// than what `encode` writes is a fixture that disagrees with itself.
+    fn parameters(registry: &mut Registry) -> Vec<openapi::Parameter> {
+        vec![openapi::Parameter::query("download", registry.resolve::<bool>()).required(true)]
+    }
+}
 
 impl EncodeQuery for ReportQuery {
     fn encode(&self) -> String {
@@ -259,9 +257,10 @@ async fn a_relative_uri_routes_back_to_the_value_it_was_rendered_from() {
     assert_eq!(String::from_utf8_lossy(&body), value);
 }
 
-/// The fixture describes, so `ReportQuery::schema` is a body something runs.
+/// The fixture describes, so `ReportQuery::parameters` is a body something
+/// runs.
 ///
-/// Without this the schema above would be written and never called, which is
+/// Without this the description above would be written and never called, which is
 /// the same unexercised state the `todo!()` it replaced was in. It asserts
 /// about the fixture rather than about `relative_uri`, which is why the module
 /// documentation above states it as the second half of this file's reason
@@ -276,7 +275,7 @@ fn the_fixture_describes_the_query_it_encodes() {
     let document = serde_json::to_value(&document).expect("a serializable document");
 
     // Exactly the two parameters `encode` writes. `download` is typed by the
-    // query group's own schema, as `true` is; `name` by `PathParams`'s
+    // query group's own `parameters`, as `true` is; `name` by `PathParams`'s
     // default, which describes each declared name with an unconstrained
     // schema whatever the group's `Schema` says.
     assert_eq!(
