@@ -1808,6 +1808,79 @@ fn a_shared_status_declares_the_headers_either_contributor_sends() {
     }
 }
 
+/// What `/drafts` reads: any body, so the extractor's rejection is reached.
+#[derive(serde::Deserialize, Schema)]
+struct Draft {
+    #[allow(dead_code)]
+    text: String,
+}
+
+/// A failure answering 408 for a reason of the handler's own, after a 409.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[allow(dead_code)]
+enum DraftRefused {
+    #[error("the draft was edited elsewhere")]
+    #[problem(status = 409, title = "Draft edited elsewhere")]
+    Conflict,
+
+    #[error("the draft's upstream store timed out")]
+    #[problem(
+        status = 408,
+        type = "https://errors.example.com/draft-store",
+        title = "Draft store timed out"
+    )]
+    StoreTimedOut,
+}
+
+/// One operation reading a body, whose own error type declares a 408.
+#[kynos::post("/drafts")]
+async fn draft(
+    kynos::extract::body::json::Json(draft): kynos::extract::body::json::Json<Draft>,
+) -> Result<NoContent, DraftRefused> {
+    let _ = draft;
+    Err(DraftRefused::Conflict)
+}
+
+/// A 408 the operation declares itself is published as it wrote it: the
+/// stalled body's 408 joins its schema, never its description or its place.
+///
+/// Every operation reading a body answers a stalled one 408, so the stall is
+/// a contributor to a status the application already describes, and the
+/// application's words and order are what its document should read.
+#[cfg(feature = "server")]
+#[test]
+fn a_408_the_operation_declares_keeps_its_description_and_place_beside_the_stall() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![draft])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/drafts");
+
+    let response = declared_problem(&operation, "408");
+    assert_eq!(
+        response["description"],
+        serde_json::json!("Draft store timed out"),
+        "{response}"
+    );
+    // The stall's `about:blank` beside the handler's own type.
+    let mut types = published(&response["content"]["application/problem+json"]["schema"]);
+    types.sort();
+    assert_eq!(
+        types,
+        ["about:blank", "https://errors.example.com/draft-store"],
+        "{response}"
+    );
+
+    let statuses: Vec<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let at = |status: &str| statuses.iter().position(|key| *key == status);
+    assert!(at("409") < at("408"), "{statuses:?}");
+}
+
 // --- Scope in what a 403 publishes ------------------------------------------
 //
 // `AuthRejection::forbidden_as` puts an application's own problem type on a 403
