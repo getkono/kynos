@@ -274,6 +274,38 @@ fn a_described_group_joins_every_inline_response_and_no_reference() {
     );
 }
 
+/// A group replaces a field the body already declares under another spelling,
+/// rather than declaring it a second time beside it: field names compare
+/// case-insensitively (RFC 9110 section 5.1), and the group's is the value
+/// `WithHeaders` sends.
+#[test]
+fn a_described_group_replaces_a_field_the_body_declares_in_another_case() {
+    use crate::response::Responses as _;
+
+    struct Encoded;
+
+    impl crate::response::Responses for Encoded {
+        fn responses(_: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
+            let mut ok = kynos_openapi::Response::new("the thing");
+            ok.headers.insert(
+                "Content-Encoding".to_owned(),
+                RefOr::Item(Header::new(kynos_openapi::Schema::of_type(
+                    kynos_openapi::model::schema::types::SchemaType::String,
+                ))),
+            );
+            kynos_openapi::Responses::new().with(200, ok)
+        }
+    }
+
+    let mut registry = crate::schema::registry::Registry::new();
+    let described = WithHeaders::<Encoded, OneEncoding>::responses(&mut registry);
+
+    assert_eq!(
+        declared_on(described.responses.get("200")),
+        Some(vec![&"content-encoding".to_owned()])
+    );
+}
+
 /// A group whose `DESCRIBED` is `false` leaves the body's responses exactly as
 /// the body described them.
 #[test]
