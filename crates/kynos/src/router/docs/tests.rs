@@ -6,8 +6,11 @@
 //! page a reader happened to think of is a sample. A page added to the table
 //! without a rule holding for it fails these.
 
-use super::{Docs, page};
-use crate::{Router, router::operation::Tag};
+use super::{Docs, DocsOperation, page};
+use crate::{
+    Router,
+    router::{error::RouterError, operation::Tag},
+};
 
 /// Every page, rendered with the values a caller would set.
 fn rendered(description_url: &str, title: &str) -> Vec<(&'static str, String)> {
@@ -334,6 +337,107 @@ fn the_default_texts_name_nothing_a_client_cannot_see() {
             );
         }
     }
+}
+
+/// The `operationId`, `summary` and `description` of the `GET` at `path`.
+fn described_at<'d>(document: &'d kynos_openapi::Document, path: &str) -> [Option<&'d str>; 3] {
+    let operation = get_at(document, path);
+    [
+        operation.operation_id.as_deref(),
+        operation.summary.as_deref(),
+        operation.description.as_deref(),
+    ]
+}
+
+#[test]
+fn an_override_replaces_the_fields_it_sets_on_its_own_half_alone() {
+    let defaults = Router::<()>::new()
+        .docs(Docs::scalar())
+        .openapi()
+        .expect("a describable router");
+    let document = Router::<()>::new()
+        .docs(
+            Docs::scalar()
+                .operation_id_prefix("reference")
+                .describe_description(
+                    DocsOperation::default()
+                        .operation_id("get_openapi")
+                        .summary("Fetch the document"),
+                )
+                .describe_page(DocsOperation::default().description("Read it in a browser")),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    let [_, _, default_description] = described_at(&defaults, "/openapi.json");
+    // The identifier is used as written, without the prefix; the unset
+    // description keeps the default.
+    assert_eq!(
+        described_at(&document, "/openapi.json"),
+        [
+            Some("get_openapi"),
+            Some("Fetch the document"),
+            default_description
+        ],
+    );
+
+    let [_, default_summary, _] = described_at(&defaults, "/docs");
+    // The page's unset identifier is still derived, under the prefix.
+    assert_eq!(
+        described_at(&document, "/docs"),
+        [
+            Some("reference_docs"),
+            default_summary,
+            Some("Read it in a browser")
+        ],
+    );
+}
+
+#[test]
+fn a_second_override_replaces_the_first_rather_than_merging_with_it() {
+    let document = Router::<()>::new()
+        .docs(
+            Docs::description_only()
+                .describe_description(DocsOperation::default().summary("first"))
+                .describe_description(DocsOperation::default().operation_id("second")),
+        )
+        .openapi()
+        .expect("a describable router");
+    let defaults = Router::<()>::new()
+        .docs(Docs::description_only())
+        .openapi()
+        .expect("a describable router");
+
+    let [_, summary, _] = described_at(&defaults, "/openapi.json");
+    assert_eq!(
+        described_at(&document, "/openapi.json")[..2],
+        [Some("second"), summary]
+    );
+}
+
+#[test]
+fn an_overridden_operation_id_is_held_unique_like_any_other() {
+    let colliding = |page_id: &'static str| {
+        Router::<()>::new()
+            .docs(
+                Docs::scalar()
+                    .describe_description(DocsOperation::default().operation_id("spec"))
+                    .describe_page(DocsOperation::default().operation_id(page_id)),
+            )
+            .openapi()
+    };
+
+    let Err(crate::Error::Invalid { violations }) = colliding("spec") else {
+        panic!("two operations sharing an operationId were described");
+    };
+    assert!(
+        violations.iter().any(|violation| matches!(
+            violation.error,
+            RouterError::Spec(kynos_openapi::SpecError::DuplicateOperationId { .. })
+        )),
+        "{violations:?}"
+    );
+    colliding("reference").expect("two distinct identifiers");
 }
 
 struct Operations;

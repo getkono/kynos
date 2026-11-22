@@ -1,7 +1,7 @@
 //! The two operations a reference mounts, each an ordinary [`Endpoint`] with
 //! one status, one media type and a payload rendered from the finished document.
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use kynos_openapi::{Method, PathTemplate, model::body::mime_names};
 
@@ -36,12 +36,45 @@ pub(super) enum Half {
     Description,
 }
 
+impl Half {
+    /// The `summary` this half is described with where none is given.
+    pub(super) const fn default_summary(self) -> &'static str {
+        match self {
+            Self::Page => "Serves the API reference",
+            Self::Description => "Serves this API's own description",
+        }
+    }
+
+    /// The `description` this half is described with where none is given.
+    /// Written for the API's clients, so it names nothing they cannot see.
+    pub(super) const fn default_description(self) -> &'static str {
+        match self {
+            Self::Page => {
+                "The page a human opens. It fetches this API's own description and renders it \
+                 in the browser, so this operation sends the page and nothing else."
+            }
+            Self::Description => {
+                "This document, byte for byte. It describes every operation this API serves, \
+                 this one included."
+            }
+        }
+    }
+}
+
+/// What a half is described with, every default already resolved.
+#[derive(Debug)]
+pub(super) struct Described {
+    pub(super) operation_id: String,
+    pub(super) summary: Cow<'static, str>,
+    pub(super) description: Cow<'static, str>,
+}
+
 /// One of the two operations a reference mounts.
 #[derive(Debug)]
 pub(super) struct DocsEndpoint {
     half: Half,
     template: PathTemplate,
-    operation_id: String,
+    described: Described,
     /// What [`Docs::tag`](super::Docs::tag) named, in call order.
     tags: Arc<[DeclaredTag]>,
     state: Arc<State>,
@@ -51,14 +84,14 @@ impl DocsEndpoint {
     pub(super) fn new(
         half: Half,
         template: PathTemplate,
-        operation_id: String,
+        described: Described,
         tags: Arc<[DeclaredTag]>,
         state: Arc<State>,
     ) -> Self {
         Self {
             half,
             template,
-            operation_id,
+            described,
             tags,
             state,
         }
@@ -75,7 +108,14 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsEndpoint {
     }
 
     fn describe(&self, operation: &mut OperationCx<'_>) {
-        operation.set_operation_id(&self.operation_id);
+        let Described {
+            operation_id,
+            summary,
+            description,
+        } = &self.described;
+        operation.set_operation_id(operation_id);
+        operation.set_summary(&**summary);
+        operation.set_description(&**description);
 
         // The operation's own tags, as a route attribute's are: each carries
         // its metadata into the document's `tags`.
@@ -88,26 +128,13 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsEndpoint {
         // deliberately not modelled.
         let response = match self.half {
             Half::Page => {
-                operation.set_summary("Serves the API reference");
-                operation.set_description(
-                    "The page a human opens. It fetches this API's own description and renders \
-                     it in the browser, so this operation sends the page and nothing else.",
-                );
                 kynos_openapi::Response::with_content("the reference page", HTML, unconstrained())
             }
-            Half::Description => {
-                operation.set_summary("Serves this API's own description");
-                operation.set_description(
-                    "The document `Router::openapi` produces, byte for byte. It includes this \
-                     operation, which is why it is serialized once the router is built rather \
-                     than on the way past.",
-                );
-                kynos_openapi::Response::with_content(
-                    "the OpenAPI description",
-                    JSON,
-                    unconstrained(),
-                )
-            }
+            Half::Description => kynos_openapi::Response::with_content(
+                "the OpenAPI description",
+                JSON,
+                unconstrained(),
+            ),
         };
 
         operation.add_responses(&kynos_openapi::Responses::new().with(200, response));

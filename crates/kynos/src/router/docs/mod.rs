@@ -59,7 +59,7 @@ use kynos_openapi::{PathTemplate, validate::violation::Violation};
 
 use crate::router::{
     docs::{
-        endpoint::{DocsEndpoint, Half},
+        endpoint::{Described, DocsEndpoint, Half},
         state::{Role, State},
     },
     endpoint::{DynEndpoint, operation_id},
@@ -85,6 +85,7 @@ pub struct Docs<M = WithPage> {
     page: Option<PageMount>,
     description_at: PathTemplate,
     operation_id_prefix: Cow<'static, str>,
+    description_operation: DocsOperation,
     tags: Vec<DeclaredTag>,
     violations: Vec<Violation<RouterError>>,
     mode: PhantomData<fn() -> M>,
@@ -103,6 +104,63 @@ pub enum DescriptionOnly {}
 struct PageMount {
     at: PathTemplate,
     template: PageTemplate,
+    operation: DocsOperation,
+}
+
+/// How one operation a reference mounts is described, in place of Kynos'
+/// defaults.
+///
+/// Each field left unset keeps its default: the default `summary` and
+/// `description`, and the `operationId` derived from
+/// [`Docs::operation_id_prefix`] and the path. Handed to
+/// [`Docs::describe_description`] or [`Docs::describe_page`].
+#[derive(Clone, Debug, Default)]
+pub struct DocsOperation {
+    summary: Option<Cow<'static, str>>,
+    description: Option<Cow<'static, str>>,
+    operation_id: Option<Cow<'static, str>>,
+}
+
+impl DocsOperation {
+    /// The operation's `summary`.
+    #[must_use]
+    pub fn summary(mut self, text: impl Into<Cow<'static, str>>) -> Self {
+        self.summary = Some(text.into());
+        self
+    }
+
+    /// The operation's `description`.
+    #[must_use]
+    pub fn description(mut self, text: impl Into<Cow<'static, str>>) -> Self {
+        self.description = Some(text.into());
+        self
+    }
+
+    /// The operation's `operationId`, used as written:
+    /// [`Docs::operation_id_prefix`] is not applied to it.
+    ///
+    /// It is held unique across the document like any other, so one another
+    /// operation also uses fails [`Router::validate`](crate::Router::validate).
+    #[must_use]
+    pub fn operation_id(mut self, id: impl Into<Cow<'static, str>>) -> Self {
+        self.operation_id = Some(id.into());
+        self
+    }
+
+    /// Fills every unset field from `half`'s defaults.
+    fn resolve(self, half: Half, prefix: &str, path: &PathTemplate) -> Described {
+        Described {
+            operation_id: self
+                .operation_id
+                .map_or_else(|| operation_id(prefix, path.as_str()), Cow::into_owned),
+            summary: self
+                .summary
+                .unwrap_or(Cow::Borrowed(half.default_summary())),
+            description: self
+                .description
+                .unwrap_or(Cow::Borrowed(half.default_description())),
+        }
+    }
 }
 
 /// What a page is rendered from: everything but its own path.
@@ -173,6 +231,7 @@ impl Docs {
                     policy: None,
                     title: None,
                 },
+                operation: DocsOperation::default(),
             }),
             violations,
         )
@@ -193,6 +252,24 @@ impl Docs {
     #[must_use]
     pub fn title(mut self, title: impl Into<String>) -> Self {
         self.page_mut().template.title = Some(title.into());
+        self
+    }
+
+    /// The page's `summary`, `description` and `operationId`, in place of
+    /// Kynos' defaults. Each field `operation` leaves unset keeps its default,
+    /// and a second call replaces the first.
+    ///
+    /// The description half is described by
+    /// [`describe_description`](Self::describe_description). There is no page
+    /// on a [`Docs::description_only`], so this does not compile there:
+    ///
+    /// ```compile_fail
+    /// # use kynos::router::docs::{Docs, DocsOperation};
+    /// let _ = Docs::description_only().describe_page(DocsOperation::default());
+    /// ```
+    #[must_use]
+    pub fn describe_page(mut self, operation: DocsOperation) -> Self {
+        self.page_mut().operation = operation;
         self
     }
 
@@ -242,6 +319,7 @@ impl<M> Docs<M> {
             page,
             description_at,
             operation_id_prefix: Cow::Borrowed("docs"),
+            description_operation: DocsOperation::default(),
             tags: Vec::new(),
             violations,
             mode: PhantomData,
@@ -271,9 +349,42 @@ impl<M> Docs<M> {
     ///
     /// Each identifier is derived from the unprefixed path it serves, so two
     /// references nested under different prefixes need different prefixes here.
+    /// An identifier set with [`DocsOperation::operation_id`] is used as
+    /// written instead.
     #[must_use]
     pub fn operation_id_prefix(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
         self.operation_id_prefix = prefix.into();
+        self
+    }
+
+    /// The description's `summary`, `description` and `operationId`, in place
+    /// of Kynos' defaults. Each field `operation` leaves unset keeps its
+    /// default, and a second call replaces the first.
+    ///
+    /// For an API that writes every operation's text for its clients, or
+    /// whose clients already call the description under an `operationId` of
+    /// their own:
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     Router,
+    ///     router::docs::{Docs, DocsOperation},
+    /// };
+    ///
+    /// let docs = Docs::description_only()
+    ///     .description_at("/v1/openapi.json")
+    ///     .describe_description(
+    ///         DocsOperation::default()
+    ///             .operation_id("get_openapi")
+    ///             .summary("Fetch this API's OpenAPI document")
+    ///             .description("Derived from the handlers and types this service runs."),
+    ///     );
+    /// let router = Router::<()>::new().docs(docs);
+    /// # let _ = router;
+    /// ```
+    #[must_use]
+    pub fn describe_description(mut self, operation: DocsOperation) -> Self {
+        self.description_operation = operation;
         self
     }
 
@@ -318,10 +429,22 @@ impl<M> Docs<M> {
     pub(super) fn into_halves<C: Send + Sync + 'static>(
         self,
     ) -> Vec<(Arc<dyn DynEndpoint<C>>, Role)> {
-        let description_id = operation_id(&self.operation_id_prefix, self.description_at.as_str());
+        let prefix = &*self.operation_id_prefix;
+        let described =
+            self.description_operation
+                .resolve(Half::Description, prefix, &self.description_at);
         let (at, page) = self
             .page
-            .map(|PageMount { at, template }| (at, template))
+            .map(
+                |PageMount {
+                     at,
+                     template,
+                     operation,
+                 }| {
+                    let described = operation.resolve(Half::Page, prefix, &at);
+                    ((at, described), template)
+                },
+            )
             .unzip();
 
         let tags: Arc<[DeclaredTag]> = self.tags.into();
@@ -332,17 +455,16 @@ impl<M> Docs<M> {
             Arc::new(DocsEndpoint::new(
                 Half::Description,
                 self.description_at,
-                description_id,
+                described,
                 Arc::clone(&tags),
                 Arc::clone(&state),
             )),
             Role::Description(Arc::clone(&state)),
         )];
 
-        if let Some(at) = at {
-            let page_id = operation_id(&self.operation_id_prefix, at.as_str());
+        if let Some((at, described)) = at {
             halves.push((
-                Arc::new(DocsEndpoint::new(Half::Page, at, page_id, tags, state)),
+                Arc::new(DocsEndpoint::new(Half::Page, at, described, tags, state)),
                 Role::Page,
             ));
         }

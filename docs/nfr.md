@@ -1100,6 +1100,14 @@ the check reads to skip two interceptors that cover no operation in common. A
 stack element and the check that reads it are one concern: which interceptors
 a type says cover an operation, and whether two of them collide.
 
+`router/docs/mod.rs` is `status.rs`'s shape. It declares `Docs`, `WithPage`,
+`DescriptionOnly` and `DocsOperation`, so a split would turn
+`docs::DocsOperation` into `docs::operation::DocsOperation`. What pushed it
+over was issue #1381's `describe_description` and `describe_page`, whose
+`DocsOperation` replaces the defaults of one half, field by field. The type is
+one concern with the `Docs` it configures: how a reference's operations are
+mounted and described, and a setting added to either half changes both.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1129,6 +1137,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`
 - `crates/kynos/src/router/dispatch.rs`
+- `crates/kynos/src/router/docs/mod.rs`
 - `crates/kynos/src/router/group.rs`
 - `crates/kynos/src/router/mod.rs`
 - `crates/kynos/src/router/operation.rs`
