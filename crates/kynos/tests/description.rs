@@ -2476,6 +2476,29 @@ fn an_event_streams_default_fields_are_declared_only_where_sent() {
     assert_eq!(fixed_value(&stored, "cache-control"), None);
 }
 
+/// `SecurityHeaders` inserts its `Cache-Control: no-store` over the stream's
+/// `no-cache` on the wire, so its declaration, not the stream's, is the one
+/// the 200 carries: the `const` documented is the value sent.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_interceptors_required_field_replaces_the_operations_declaration() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![events])
+        .intercept(kynos::middleware::security_headers::SecurityHeaders::new())
+        .openapi()
+        .expect("a describable router");
+
+    let events = operation(&document, "/events");
+    assert_eq!(
+        fixed_value(&events, "Cache-Control"),
+        Some(serde_json::json!("no-store"))
+    );
+    assert_eq!(
+        fixed_value(&events, "X-Accel-Buffering"),
+        Some(serde_json::json!("no"))
+    );
+}
+
 #[cfg(feature = "openapi32")]
 #[test]
 fn a_query_operation_raises_the_description_to_3_2() {
