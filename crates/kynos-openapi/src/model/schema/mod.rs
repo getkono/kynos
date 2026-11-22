@@ -95,6 +95,51 @@ impl Schema {
             Self::Bool(_) => None,
         }
     }
+
+    /// Returns the keyword-carrying form mutably, if this is not a boolean
+    /// schema.
+    ///
+    /// A boolean schema is left alone rather than promoted, so a caller editing
+    /// in place never changes what `true` or `false` accepts by accident.
+    #[must_use]
+    pub fn as_object_mut(&mut self) -> Option<&mut SchemaObject> {
+        match self {
+            Self::Object(object) => Some(object),
+            Self::Bool(_) => None,
+        }
+    }
+
+    /// Sets `description`.
+    ///
+    /// A boolean schema has nowhere to put one, so it is first promoted to the
+    /// object accepting the same instances: `true` to `{}` and `false` to
+    /// `{"not": true}`.
+    ///
+    /// ```
+    /// use kynos_openapi::{Schema, model::schema::types::SchemaType};
+    ///
+    /// let schema = Schema::of_type(SchemaType::Object).with_description("A report.");
+    /// let object = schema.as_object().expect("keywords");
+    /// assert_eq!(object.description.as_deref(), Some("A report."));
+    /// ```
+    #[must_use]
+    pub fn with_description(self, description: impl Into<String>) -> Self {
+        let mut object = self.into_object();
+        object.description = Some(description.into());
+        Self::Object(object)
+    }
+
+    /// The keyword-carrying form accepting the same instances.
+    fn into_object(self) -> Box<SchemaObject> {
+        match self {
+            Self::Object(object) => object,
+            Self::Bool(true) => Box::default(),
+            Self::Bool(false) => Box::new(SchemaObject {
+                not: Some(Box::new(Self::Bool(true))),
+                ..SchemaObject::default()
+            }),
+        }
+    }
 }
 
 #[cfg(test)]
