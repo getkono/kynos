@@ -1086,3 +1086,33 @@ fn only_a_routed_request_has_a_resolved_origin() {
         });
     assert_eq!(Forwarded::of(&request), Some(&resolved));
 }
+
+/// A request head answers `of_parts` with what its request answers `of`,
+/// before routing and after.
+#[test]
+fn a_request_head_reads_the_resolution_its_request_does() {
+    let mut request = Request::new(Body::empty());
+    request.extensions_mut().insert(Forwarded {
+        client: Some(ip("203.0.113.8")),
+        proto: None,
+    });
+    let (parts, body) = request.into_parts();
+    assert_eq!(Forwarded::of_parts(&parts), None);
+
+    let resolved = Forwarded {
+        client: Some(ip("10.0.0.1")),
+        proto: Some("https".to_owned()),
+    };
+    let mut request = Request::from_parts(parts, body);
+    request
+        .extensions_mut()
+        .insert(crate::router::dispatch::Routed {
+            matched: None,
+            captures: None,
+            forwarded: resolved.clone(),
+            secured: false,
+            links: None,
+        });
+    let (parts, _) = request.into_parts();
+    assert_eq!(Forwarded::of_parts(&parts), Some(&resolved));
+}

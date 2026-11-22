@@ -3114,6 +3114,7 @@ impl kynos::http::forwarded::Forwarded
 pub fn kynos::http::forwarded::Forwarded::client(&self) -> core::option::Option<core::net::ip_addr::IpAddr>
 pub fn kynos::http::forwarded::Forwarded::client_is_secure(&self) -> core::option::Option<bool>
 pub fn kynos::http::forwarded::Forwarded::of(&kynos::http::Request) -> core::option::Option<&Self>
+pub fn kynos::http::forwarded::Forwarded::of_parts(&kynos::http::Parts) -> core::option::Option<&Self>
 pub fn kynos::http::forwarded::Forwarded::proto(&self) -> core::option::Option<&str>
 pub fn kynos::http::forwarded::Forwarded::resolve(&http::header::map::HeaderMap, core::option::Option<core::net::socket_addr::SocketAddr>, &kynos::http::forwarded::TrustedProxies) -> Self
 impl core::clone::Clone for kynos::http::forwarded::Forwarded
