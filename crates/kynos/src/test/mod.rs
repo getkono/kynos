@@ -924,7 +924,60 @@ impl<C> TestRequest<'_, C> {
             body: bytes,
         }
     }
+
+    /// Sends the request on a paused clock, and returns the response with
+    /// how long it took on that clock.
+    ///
+    /// The clock is paused for the exchange and resumed after it, so a
+    /// timeout of any length answers at once in real time and on its
+    /// deadline on the paused clock: a test asserts the 408 came at its own
+    /// deadline, and a refusal from the head at none. A timer fires on
+    /// tokio's millisecond tick, so a deadline reads as up to a millisecond
+    /// past it. That needs tokio's `test-util` feature, which this crate's
+    /// `test-util` enables.
+    ///
+    /// No answer for ten seconds of wall time fails the test rather than
+    /// hanging it: a body nothing bounds, or a handler waiting on something
+    /// other than a timer. The guard is a thread on the real clock, since
+    /// the paused clock would jump to any tokio timer.
+    ///
+    /// ```
+    /// use kynos::{Router, test::TestClient};
+    ///
+    /// #[tokio::main(flavor = "current_thread")]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let client = TestClient::new(Router::<()>::new().build(())?);
+    ///     let (reply, waited) = client.get("/").send_timed().await;
+    ///     reply.assert_status(501);
+    ///     assert!(waited.is_zero());
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`send`](Self::send) does; outside a current-thread tokio
+    /// runtime, and where the clock is already paused, as under
+    /// `#[tokio::test(start_paused = true)]`, both of which
+    /// `tokio::time::pause` refuses; and when no response arrives within the
+    /// guard.
+    #[cfg(feature = "server")]
+    pub async fn send_timed(self) -> (TestResponse, std::time::Duration) {
+        let exchange = format!("{} {}", self.method, self.path);
+        crate::server::request_body::on_paused_clock(self.send(), SEND_TIMED_GUARD)
+            .await
+            .unwrap_or_else(|| {
+                panic!(
+                    "{exchange}: no response arrived within {SEND_TIMED_GUARD:?} of wall time; \
+                     nothing bounds the wait on the paused clock"
+                )
+            })
+    }
 }
+
+/// How much wall time [`TestRequest::send_timed`] gives an exchange.
+#[cfg(feature = "server")]
+const SEND_TIMED_GUARD: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// A response received by a [`TestClient`], with the request it answers.
 ///

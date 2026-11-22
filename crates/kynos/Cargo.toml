@@ -353,8 +353,9 @@ yaml = ["kynos-openapi/yaml"]
 
 # --- Testing ---------------------------------------------------------------
 # With `server`, hyper's client half and tokio's `duplex` let
-# `TestClient::through_server` drive `Server::serve_io` in-process.
-test-util = ["dep:jsonschema", "hyper/client", "tokio/io-util"]
+# `TestClient::through_server` drive `Server::serve_io` in-process, and
+# tokio's paused clock lets `TestRequest::send_timed` time a deadline.
+test-util = ["dep:jsonschema", "hyper/client", "tokio/io-util", "tokio/test-util"]
 
 # --- Response cache --------------------------------------------------------
 # `Cache` and `Conditional`; the store is the application's.
