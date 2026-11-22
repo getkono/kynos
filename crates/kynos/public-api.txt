@@ -6341,6 +6341,7 @@ pub struct kynos::prelude::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: core::time::Duration
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
@@ -10672,6 +10673,7 @@ pub struct kynos::server::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: core::time::Duration
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
@@ -10739,6 +10741,7 @@ pub fn kynos::test::TestClient<C>::trace(&self, &str) -> kynos::test::TestReques
 pub fn kynos::test::TestClient<C>::with_coverage(self, &kynos::test::Coverage) -> Self
 pub fn kynos::test::TestClient<C>::with_default_header(self, &str, &str) -> Self
 pub fn kynos::test::TestClient<C>::with_peer(self, core::net::socket_addr::SocketAddr) -> Self
+pub fn kynos::test::TestClient<C>::with_request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestClient<C>
 pub fn kynos::test::TestClient<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<C> !core::marker::Freeze for kynos::test::TestClient<C>
@@ -10808,6 +10811,8 @@ pub fn kynos::test::TestRequest<'_, C>::json<T: serde_core::ser::Serialize>(self
 pub fn kynos::test::TestRequest<'_, C>::peer(self, core::net::socket_addr::SocketAddr) -> Self
 pub fn kynos::test::TestRequest<'_, C>::query_string<T: serde_core::ser::Serialize>(self, &T) -> Self
 pub async fn kynos::test::TestRequest<'_, C>::send(self) -> kynos::test::TestResponse
+pub async fn kynos::test::TestRequest<'_, C>::send_timed(self) -> (kynos::test::TestResponse, core::time::Duration)
+pub fn kynos::test::TestRequest<'_, C>::stalled_after(self, &str, impl core::convert::Into<bytes::bytes::Bytes>) -> Self
 pub fn kynos::test::TestRequest<'_, C>::stalled_body(self, &str) -> Self
 pub fn kynos::test::TestRequest<'_, C>::text(self, &str) -> Self
 impl<'a, C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestRequest<'a, C>

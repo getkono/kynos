@@ -130,6 +130,27 @@ mod stalled_body {
         assert_eq!(body.size_hint().exact(), Some(1));
     }
 
+    /// `stalled_after`'s body yields its first octets, then never yields nor
+    /// ends again, and declares no length of its own.
+    #[test]
+    fn a_body_stalled_after_its_first_octets_sends_them_then_waits() {
+        let mut body = Framed {
+            body: RequestBody::StalledAfter(bytes::Bytes::from_static(b"hel")),
+            remaining: None,
+            failed: false,
+        };
+        let mut context = Context::from_waker(Waker::noop());
+
+        let first = Pin::new(&mut body).poll_frame(&mut context);
+        assert!(matches!(
+            first,
+            std::task::Poll::Ready(Some(Ok(ref frame))) if frame.data_ref().is_some_and(|data| data == "hel")
+        ));
+        assert!(Pin::new(&mut body).poll_frame(&mut context).is_pending());
+        assert!(!body.is_end_stream());
+        assert_eq!(body.size_hint().exact(), None);
+    }
+
     /// The request declares the octet it owes and the media type, and its
     /// body is the stalled one.
     #[test]

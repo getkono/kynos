@@ -397,6 +397,210 @@ async fn a_stalled_body_through_a_server_is_answered_at_its_limit() {
     );
 }
 
+/// Until told otherwise, a body that sent its first octets and stalled is
+/// held to a server's default idle timeout, and answered exactly then.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_stalled_body_is_held_to_the_server_default() {
+    let (reply, waited) = client()
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .send_timed()
+        .await;
+
+    reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+    assert_answered_at(
+        waited,
+        kynos::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT,
+    );
+}
+
+/// A stalled body meets the bound a server would answer it with: under a
+/// server's default idle timeout, the transport's 408 comes before an
+/// operation's own longer deadline; with none, that deadline answers, at its
+/// own moment.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_stalled_body_is_answered_by_the_bound_a_server_would_meet_first() {
+    const DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
+    let deadlined = || {
+        TestClient::new(
+            Router::<()>::new()
+                .group(
+                    kynos::router::group::Group::<()>::new("/")
+                        .intercept(kynos::middleware::limits::timeout::Timeout::new(DEADLINE))
+                        .mount(kynos::routes![echo]),
+                )
+                .build(())
+                .expect("a describable router"),
+        )
+    };
+
+    let (reply, waited) = deadlined()
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .send_timed()
+        .await;
+    reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+    assert!(
+        reply
+            .text()
+            .contains("the request body sent nothing for 30s")
+    );
+    assert_answered_at(
+        waited,
+        kynos::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT,
+    );
+
+    let (reply, waited) = deadlined()
+        .with_request_body_idle_timeout(None)
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .send_timed()
+        .await;
+    reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+    assert!(
+        reply
+            .text()
+            .contains("the handler did not finish within 60s")
+    );
+    assert_answered_at(waited, DEADLINE);
+}
+
+/// Through a server, a body that sent its first octets and stalled meets that
+/// server's own idle timeout, and `send_timed` reads it answered at that
+/// moment rather than at the default.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_stalled_body_through_a_server_is_answered_at_its_own_idle_timeout() {
+    const IDLE: std::time::Duration = std::time::Duration::from_secs(45);
+    let server = kynos::server::Server::new(service()).request_body_idle_timeout(Some(IDLE));
+
+    let (reply, waited) = TestClient::through_server(server)
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .content_length(10)
+        .send_timed()
+        .await;
+
+    reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+    assert!(
+        reply
+            .text()
+            .contains("the request body sent nothing for 45s"),
+        "{}",
+        reply.text()
+    );
+    assert_answered_at(waited, IDLE);
+}
+
+/// That `waited` is `deadline`, as tokio's millisecond timer reaches it.
+#[cfg(feature = "server")]
+fn assert_answered_at(waited: std::time::Duration, deadline: std::time::Duration) {
+    let resolution = std::time::Duration::from_millis(1);
+    assert!(
+        (deadline..=deadline + resolution).contains(&waited),
+        "answered after {waited:?}, not at {deadline:?}"
+    );
+}
+
+/// The idle timeout a client is given holds every body, a declared one, a
+/// chunked one and a `stalled_body`, as a server given it would.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_client_holds_every_body_to_the_idle_timeout_it_was_given() {
+    const IDLE: std::time::Duration = std::time::Duration::from_millis(20);
+    let client = client().with_request_body_idle_timeout(Some(IDLE));
+
+    let declared = client
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .content_length(10);
+    let chunked = client
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "");
+    let stalled = client
+        .post("/echo")
+        .stalled_body("text/plain; charset=utf-8");
+    for request in [declared, chunked, stalled] {
+        let (reply, waited) = request.send_timed().await;
+        reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+        assert!(
+            reply
+                .text()
+                .contains("the request body sent nothing for 20ms"),
+            "{}",
+            reply.text()
+        );
+        assert_answered_at(waited, IDLE);
+    }
+}
+
+/// With no idle timeout, nothing in the transport answers a stalled body, so
+/// only the operation's own bounds could: `/echo` has none, and an hour
+/// passes unanswered.
+#[cfg(feature = "server")]
+#[tokio::test(start_paused = true)]
+async fn without_an_idle_timeout_the_transport_never_answers_a_stall() {
+    let client = client().with_request_body_idle_timeout(None);
+    let sent = client
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .send();
+
+    tokio::time::timeout(std::time::Duration::from_secs(60 * 60), sent)
+        .await
+        .expect_err("no bound answers the stall");
+}
+
+/// A declared length past the operation's limit is refused from the head,
+/// with no time spent waiting on the body.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_stalled_body_declared_past_the_limit_is_refused_at_once() {
+    let (reply, waited) = client()
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "")
+        .content_length(kynos::extract::body::limit::DEFAULT_LIMIT + 1)
+        .send_timed()
+        .await;
+
+    reply.assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+    assert!(waited.is_zero(), "{waited:?}");
+}
+
+/// First octets that fill the declared length are a whole body, not a
+/// stalled one, so the request is refused rather than sent.
+#[cfg(feature = "server")]
+#[tokio::test]
+#[should_panic(expected = "POST /echo: `stalled_after` sends 3 octet(s) of a body declared 3 long")]
+async fn a_stalled_body_its_first_octets_fill_is_refused() {
+    let _ = client()
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .content_length(3)
+        .send()
+        .await;
+}
+
+/// A zero idle timeout is refused, as a server refuses it.
+#[cfg(feature = "server")]
+#[test]
+#[should_panic(expected = "request_body_idle_timeout must be non-zero when enabled")]
+fn a_zero_idle_timeout_is_refused() {
+    let _ = client().with_request_body_idle_timeout(Some(std::time::Duration::ZERO));
+}
+
+/// A client sent through a server holds bodies to that server's setting, so
+/// setting another on the client is refused rather than ignored.
+#[cfg(feature = "server")]
+#[test]
+#[should_panic(expected = "a client built `through_server` holds a body to its server's")]
+fn a_served_client_refuses_an_idle_timeout_of_its_own() {
+    let _ = TestClient::through_server(kynos::server::Server::new(service()))
+        .with_request_body_idle_timeout(None);
+}
+
 /// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the
 /// service octet for octet.
 #[tokio::test]
