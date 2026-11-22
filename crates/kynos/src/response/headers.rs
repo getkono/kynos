@@ -77,8 +77,8 @@ where
 }
 
 /// Declares `declared` on every response `responses` describes, the default
-/// included; a name a response already declares is replaced only where
-/// `overwrite`.
+/// included; a name a response already declares, in any case (RFC 9110
+/// section 5.1), is replaced only where `overwrite`.
 pub(crate) fn declare_on_each(
     responses: &mut kynos_openapi::Responses,
     declared: &Map<RefOr<Header>>,
@@ -94,13 +94,22 @@ pub(crate) fn declare_on_each(
         // declaring a field on it would declare it on every other use.
         if let RefOr::Item(response) = response {
             for (name, header) in declared {
-                if overwrite {
-                    response.headers.insert(name.clone(), header.clone());
-                } else {
-                    response
-                        .headers
-                        .entry(name.clone())
-                        .or_insert_with(|| header.clone());
+                let held = response
+                    .headers
+                    .keys()
+                    .position(|held| held.eq_ignore_ascii_case(name));
+                match held {
+                    Some(_) if !overwrite => {}
+                    Some(index) => {
+                        // Under the declared spelling, at the held position.
+                        response.headers.shift_remove_index(index);
+                        response
+                            .headers
+                            .shift_insert(index, name.clone(), header.clone());
+                    }
+                    None => {
+                        response.headers.insert(name.clone(), header.clone());
+                    }
                 }
             }
         }
