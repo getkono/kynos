@@ -125,6 +125,22 @@ pub(crate) fn text_header(schema: kynos_openapi::Schema) -> Header {
     )
 }
 
+/// A required [`text_header`] that only ever carries `value`, for a field sent
+/// with the same value on every response it is declared on.
+pub(crate) fn fixed_header(value: &str, description: &str) -> Header {
+    let schema = kynos_openapi::SchemaObject {
+        ty: Some(kynos_openapi::model::schema::types::TypeSet::One(
+            kynos_openapi::model::schema::types::SchemaType::String,
+        )),
+        const_value: Some(serde_json::Value::String(value.to_owned())),
+        ..kynos_openapi::SchemaObject::default()
+    };
+
+    text_header(kynos_openapi::Schema::Object(Box::new(schema)))
+        .with_description(description)
+        .required(true)
+}
+
 /// The 500 a writer answers with in place of a response whose header group
 /// refused to encode.
 pub(crate) fn refused() -> Response {

@@ -10,14 +10,7 @@
 
 use std::{convert::Infallible, time::Duration};
 
-use kynos_openapi::{
-    Header, Map, MediaType, RefOr, Schema, SchemaObject,
-    model::{
-        body::mime_names,
-        schema::types::{SchemaType, TypeSet},
-    },
-};
-use serde_json::Value;
+use kynos_openapi::{Header, Map, RefOr, Schema, model::schema::types::SchemaType};
 
 use crate::{
     extract::{
@@ -26,6 +19,7 @@ use crate::{
     },
     http::{self, HeaderName, HeaderValue, forwarded::Forwarded, header},
     middleware::{Continued, Interceptor, Next},
+    response::headers::{fixed_header, text_header},
     schema::registry::Registry,
 };
 
@@ -189,11 +183,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> HeaderParams
         let mut fixed = |name: &str, value: &str, description: &str| {
             headers.insert(
                 name.to_owned(),
-                RefOr::Item(
-                    text(constant(value))
-                        .with_description(description)
-                        .required(true),
-                ),
+                RefOr::Item(fixed_header(value, description)),
             );
         };
 
@@ -221,13 +211,17 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> HeaderParams
             );
         }
 
+        // As text, since an HSTS value's `;` and `=` would be percent-encoded
+        // under a `schema`'s `simple` style (OpenAPI 3.2 Appendix D).
         if HSTS {
             headers.insert(
                 "Strict-Transport-Security".to_owned(),
-                RefOr::Item(text(Schema::of_type(SchemaType::String)).with_description(
-                    "The host is to be reached over HTTPS only, per RFC 6797. Sent only on a \
+                RefOr::Item(
+                    text_header(Schema::of_type(SchemaType::String)).with_description(
+                        "The host is to be reached over HTTPS only, per RFC 6797. Sent only on a \
                          response to a request conveyed over a secure transport",
-                )),
+                    ),
+                ),
             );
         }
 
@@ -261,21 +255,6 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> EncodeHeaders
 
         Ok(fields)
     }
-}
-
-/// A header described as text, since an HSTS value's `;` and `=` would be
-/// percent-encoded under a `schema`'s `simple` style (OpenAPI 3.2 Appendix D).
-fn text(schema: Schema) -> Header {
-    Header::with_content(mime_names::TEXT_PLAIN, MediaType::new(schema))
-}
-
-/// The schema of a string field that only ever carries `value`.
-fn constant(value: &str) -> Schema {
-    Schema::Object(Box::new(SchemaObject {
-        ty: Some(TypeSet::One(SchemaType::String)),
-        const_value: Some(Value::String(value.to_owned())),
-        ..SchemaObject::default()
-    }))
 }
 
 /// Whether the client's own connection was secure, as RFC 6797 section 7.2

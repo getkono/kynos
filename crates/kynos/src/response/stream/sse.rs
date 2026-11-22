@@ -24,7 +24,7 @@ use crate::{
     response::{
         IntoResponse, Responses,
         codec::{ok, with_content_type},
-        headers::text_header,
+        headers::fixed_header,
         stream::records::RecordBuffer,
     },
     schema::{Schema, registry::Registry},
@@ -568,22 +568,6 @@ where
     }
 }
 
-/// A field described as `text/plain` that only ever carries `value`, sent on
-/// every response it is declared on.
-fn fixed(value: &str, description: &str) -> kynos_openapi::RefOr<kynos_openapi::Header> {
-    let schema = SchemaObject {
-        ty: Some(TypeSet::One(SchemaType::String)),
-        const_value: Some(serde_json::Value::String(value.to_owned())),
-        ..SchemaObject::default()
-    };
-
-    kynos_openapi::RefOr::Item(
-        text_header(kynos_openapi::Schema::Object(Box::new(schema)))
-            .with_description(description)
-            .required(true),
-    )
-}
-
 impl<S, T, E, const CACHEABLE: bool, const BUFFERED: bool> Responses for Sse<S, CACHEABLE, BUFFERED>
 where
     S: futures_core::Stream<Item = Result<Event<T>, E>>,
@@ -641,20 +625,20 @@ where
             if !CACHEABLE {
                 response.headers.insert(
                     "Cache-Control".to_owned(),
-                    fixed(
+                    kynos_openapi::RefOr::Item(fixed_header(
                         NO_CACHE,
                         "No cache may answer with this stream without revalidating it, per RFC \
                          9111 section 5.2.2.4",
-                    ),
+                    )),
                 );
             }
             if !BUFFERED {
                 response.headers.insert(
                     "X-Accel-Buffering".to_owned(),
-                    fixed(
+                    kynos_openapi::RefOr::Item(fixed_header(
                         UNBUFFERED,
                         "A proxying nginx is to pass each event on unbuffered",
-                    ),
+                    )),
                 );
             }
         }
