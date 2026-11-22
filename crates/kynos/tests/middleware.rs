@@ -1574,8 +1574,6 @@ mod streamed_failure {
     struct Disconnects(Arc<AtomicUsize>, Arc<Mutex<Vec<u64>>>);
 
     impl Observer<()> for Disconnects {
-        fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {}
-
         fn on_response(
             &self,
             _: &kynos::http::Response,
