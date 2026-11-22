@@ -31,7 +31,10 @@ use crate::{
     http::Parts,
     router::operation::OperationCx,
     schema::registry::Registry,
-    security::{Authenticates, Authenticator, Authorizer, Scope, SecurityScheme, carrier::Carries},
+    security::{
+        Authenticates, Authenticator, Authorizer, Head, Scope, SecurityScheme,
+        carrier::{Carries, presented::Presented},
+    },
 };
 
 /// What closes the set of requirements.
@@ -496,21 +499,23 @@ macro_rules! all_of {
                 parts: &Parts,
                 context: &C,
             ) -> Result<Option<Self::Credential>, AuthRejection> {
-                // Every carrier before any verifier, so a malformed or missing
-                // credential costs no verification of the others.
-                $( let $scheme = <$scheme as Carries>::present(parts)?; )+
-                if [$($scheme.is_none()),+].into_iter().all(std::convert::identity) {
+                // Every carrier before any verifier, so a missing credential
+                // costs no verification of the others.
+                $( let $scheme = <$scheme as Carries>::present(parts); )+
+                let absent = [$(is_absent::<$scheme, _>(&$scheme)),+];
+                if absent.iter().all(|absent| *absent) {
                     return Ok(None);
                 }
-                $(
-                    let Some($scheme) = $scheme else {
-                        return Err(AuthRejection::unauthenticated());
-                    };
-                )+
+                if absent.iter().any(|absent| *absent) {
+                    return Err(AuthRejection::unauthenticated());
+                }
                 // Every authentication before any authorization, so a request
                 // one scheme cannot authenticate is a 401, never a 403, and is
                 // never authorized.
-                $( let $scheme = authenticate::<$scheme, C>($scheme, context).await?; )+
+                $(
+                    let $scheme =
+                        authenticate::<$scheme, C>($scheme, parts, context).await?;
+                )+
                 $(
                     let $scheme =
                         authorize::<$scheme, C>($scheme, owed_defaults::<$scheme>(), context)
@@ -530,8 +535,8 @@ all_of!(A, B);
 all_of!(A, B, D);
 all_of!(A, B, D, E);
 
-/// Reads scheme `S`'s credential and, only where one was presented, verifies
-/// it for the `scopes` that are then computed.
+/// Reads scheme `S`'s credential and, unless it is absence the guard answers,
+/// verifies it for the `scopes` that are then computed.
 async fn present_and_verify<S, C>(
     parts: &Parts,
     context: &C,
@@ -541,12 +546,20 @@ where
     S: Carries,
     C: Authenticates<S>,
 {
-    let Some(presented) = S::present(parts)? else {
+    let presented = S::present(parts);
+    if is_absent::<S, _>(&presented) {
         return Ok(None);
-    };
-    verify::<S, C>(presented, scopes().as_deref(), context)
+    }
+    verify::<S, C>(presented, parts, scopes().as_deref(), context)
         .await
         .map(Some)
+}
+
+/// Whether `presented` is absence the guard answers: an
+/// [`Absent`](Presented::Absent) credential of a scheme that does not hand
+/// absence to its authenticator.
+fn is_absent<S: Carries, T>(presented: &Presented<T>) -> bool {
+    !S::OPTIONAL && matches!(presented, Presented::Absent)
 }
 
 /// Authenticates `presented` as scheme `S`, then authorizes it for `scopes`
@@ -556,7 +569,8 @@ where
 /// with no default scopes ([`owed_defaults`]); `Some` calls it even with an
 /// empty slice, as [`Scoped`](crate::security::auth::Scoped) does.
 async fn verify<S, C>(
-    presented: S::Presented,
+    presented: Presented<S::Presented>,
+    parts: &Parts,
     scopes: Option<&[S::Scope]>,
     context: &C,
 ) -> Result<S::Credential, AuthRejection>
@@ -564,16 +578,18 @@ where
     S: Carries,
     C: Authenticates<S>,
 {
-    let credential = authenticate::<S, C>(presented, context).await?;
+    let credential = authenticate::<S, C>(presented, parts, context).await?;
     authorize::<S, C>(credential, scopes, context).await
 }
 
-/// Authenticates `presented` as scheme `S`.
+/// Authenticates `presented` as scheme `S`, beside the head of the request it
+/// arrived on.
 ///
 /// A 403 here declines a credential rather than a scope, so it sends no
 /// challenge, whatever the authenticator set.
 async fn authenticate<S, C>(
-    presented: S::Presented,
+    presented: Presented<S::Presented>,
+    parts: &Parts,
     context: &C,
 ) -> Result<S::Credential, AuthRejection>
 where
@@ -582,7 +598,7 @@ where
 {
     context
         .authenticator()
-        .authenticate(presented, context)
+        .authenticate(presented, Head::new(parts), context)
         .await
         .map_err(|rejection| rejection.with_scope_challenge(None))
 }

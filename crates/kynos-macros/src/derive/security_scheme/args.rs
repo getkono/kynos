@@ -77,7 +77,7 @@ pub(super) enum KeyLocation {
 pub(super) enum Carrier {
     /// None at all: the application implements it.
     Manual,
-    /// The kind's reader, presenting `Option<_>` so absence is the
+    /// The kind's reader, setting `Carries::OPTIONAL` so absence is the
     /// authenticator's to decide.
     Optional,
 }

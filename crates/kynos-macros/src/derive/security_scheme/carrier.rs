@@ -27,11 +27,12 @@ pub(super) fn carrier(
     if let Some(reads) = &args.reads {
         (presented, read) = alongside(&presented, &read, reads);
     }
-    // A malformed credential stays an `Err`; only absence becomes a value.
-    if args.carrier == Some(Carrier::Optional) {
-        presented = quote!(::core::option::Option<#presented>);
-        read = quote!(#read.map(::core::option::Option::Some));
-    }
+    // The credential is read alike; only who answers its absence differs.
+    let optional = (args.carrier == Some(Carrier::Optional)).then(|| {
+        quote!(
+            const OPTIONAL: bool = true;
+        )
+    });
 
     Some(quote! {
         impl #impl_generics ::kynos::security::carrier::Carries
@@ -39,12 +40,11 @@ pub(super) fn carrier(
         {
             type Presented = #presented;
 
+            #optional
+
             fn present(
                 parts: &::kynos::http::Parts,
-            ) -> ::core::result::Result<
-                ::core::option::Option<Self::Presented>,
-                ::kynos::error::rejection::AuthRejection,
-            > {
+            ) -> ::kynos::security::carrier::presented::Presented<Self::Presented> {
                 #read
             }
         }
@@ -115,26 +115,25 @@ pub(super) fn declare_reads(reads: &Type) -> proc_macro2::TokenStream {
 /// The kind's carrier with `reads` decoded beside its credential: the pair
 /// `(credential, reads)`.
 ///
-/// Only a presented credential reads the group, so an anonymous request is
+/// Only a well-formed credential reads the group, so an anonymous request is
 /// never refused for lacking a header that accompanies one. A group that does
-/// not decode is a malformed credential, a 401 like any other.
+/// not decode makes the credential malformed, for the authenticator to judge
+/// like any other.
 fn alongside(
     presented: &proc_macro2::TokenStream,
     read: &proc_macro2::TokenStream,
     reads: &Type,
 ) -> (proc_macro2::TokenStream, proc_macro2::TokenStream) {
     let decode = quote!(<#reads as ::kynos::extract::params::header::DecodeHeaders>::decode);
+    let found = quote!(::kynos::security::carrier::presented);
     (
         quote!((#presented, #reads)),
-        // Parenthesized, so `carrier = optional` can chain onto it.
         quote! {
-            (match #read? {
-                ::core::option::Option::None => ::core::result::Result::Ok(
-                    ::core::option::Option::None,
+            #read.and_then(|credential| match #decode(&parts.headers) {
+                ::core::result::Result::Ok(reads) => #found::Presented::Present((credential, reads)),
+                ::core::result::Result::Err(_) => #found::Presented::Malformed(
+                    #found::Malformed::new(#found::MalformedReason::AccompanyingHeaders),
                 ),
-                ::core::option::Option::Some(credential) => #decode(&parts.headers)
-                    .map(|reads| ::core::option::Option::Some((credential, reads)))
-                    .map_err(|_| ::kynos::error::rejection::AuthRejection::unauthenticated()),
             })
         },
     )

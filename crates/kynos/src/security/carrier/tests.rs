@@ -2,19 +2,25 @@ use std::net::{Ipv4Addr, SocketAddr};
 
 use bytes::Bytes;
 
+use super::presented::{MalformedReason, Presented};
 use super::{KeyLocation, api_key, basic, bearer, http_scheme, peer_certificates};
 use crate::error::rejection::AuthRejection;
 use crate::extract::connection::{Connection, TlsIdentity};
 use crate::http::{HeaderName, HeaderValue, Parts, Request, header::AUTHORIZATION};
 
-/// Asserts a reader refused `case` with the 401 every reader answers: one whose
-/// challenge is left for the guard to fill in, never a 403.
+/// Asserts a reader found `case` malformed for `reason`, and that its default
+/// refusal is the 401 every reader's is: one whose challenge is left for the
+/// guard to fill in, never a 403.
 #[track_caller]
-pub(super) fn assert_refused<T>(read: Result<Option<T>, AuthRejection>, case: &str) {
+pub(super) fn assert_malformed<T>(read: Presented<T>, reason: MalformedReason, case: &str) {
+    let Presented::Malformed(malformed) = read else {
+        panic!("{case} must be malformed");
+    };
+    assert_eq!(malformed.reason(), reason, "{case}");
     assert!(
         matches!(
-            read.err(),
-            Some(AuthRejection::Unauthenticated { challenge: None })
+            malformed.into_rejection(),
+            AuthRejection::Unauthenticated { challenge: None }
         ),
         "{case} must be refused with an unchallenged 401"
     );
@@ -42,7 +48,7 @@ fn bare() -> Parts {
 #[test]
 fn a_bearer_token_is_everything_after_the_scheme() {
     let head = authorized("Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig");
-    let token = bearer(&head).expect("a credential").expect("present");
+    let token = bearer(&head).require().expect("present");
 
     assert_eq!(token.as_str(), "eyJhbGciOiJIUzI1NiJ9.e30.sig");
 }
@@ -56,10 +62,7 @@ fn a_bearer_token_is_read_whatever_case_the_scheme_was_written_in() {
     for spelling in ["Bearer", "bearer", "BEARER", "BeArEr"] {
         let head = authorized(&format!("{spelling} abc"));
         assert_eq!(
-            bearer(&head)
-                .expect("a credential")
-                .expect("present")
-                .as_str(),
+            bearer(&head).require().expect("present").as_str(),
             "abc",
             "{spelling}"
         );
@@ -68,33 +71,40 @@ fn a_bearer_token_is_read_whatever_case_the_scheme_was_written_in() {
 
 #[test]
 fn no_authorization_field_is_absence_rather_than_failure() {
-    assert!(bearer(&bare()).expect("absence is not a failure").is_none());
+    assert!(matches!(bearer(&bare()), Presented::Absent));
 }
 
-/// A credential for another scheme is a refusal, not absence.
+/// A credential for another scheme is malformed, not absent.
 ///
 /// Reporting absence would let `MaybeAuth` wave through a request that
 /// presented something nobody checked.
 #[test]
-fn a_credential_for_another_scheme_is_refused_rather_than_ignored() {
-    assert_refused(bearer(&authorized("Basic dXNlcjpwYXNz")), "Basic to bearer");
-    assert_refused(basic(&authorized("Bearer abc")), "Bearer to basic");
-    assert_refused(
+fn a_credential_for_another_scheme_is_malformed_rather_than_ignored() {
+    let other = MalformedReason::OtherScheme;
+    assert_malformed(
+        bearer(&authorized("Basic dXNlcjpwYXNz")),
+        other,
+        "Basic to bearer",
+    );
+    assert_malformed(basic(&authorized("Bearer abc")), other, "Bearer to basic");
+    assert_malformed(
         http_scheme(&authorized("Bearer abc"), "negotiate"),
+        other,
         "Bearer to negotiate",
     );
 }
 
 #[test]
 fn a_bearer_scheme_with_no_token_is_not_a_credential() {
-    assert_refused(bearer(&authorized("Bearer ")), "a scheme and a space");
-    assert_refused(bearer(&authorized("Bearer")), "a scheme alone");
+    let bad = MalformedReason::BadCredentials;
+    assert_malformed(bearer(&authorized("Bearer ")), bad, "a scheme and a space");
+    assert_malformed(bearer(&authorized("Bearer")), bad, "a scheme alone");
 }
 
 /// RFC 6750 section 2.1: the token is a `b64token`, so a value outside that
 /// grammar is a malformed credential rather than one for the authenticator.
 #[test]
-fn a_bearer_token_outside_the_b64token_grammar_is_refused() {
+fn a_bearer_token_outside_the_b64token_grammar_is_malformed() {
     for value in [
         "Bearer a b",
         "Bearer a,b",
@@ -103,7 +113,11 @@ fn a_bearer_token_outside_the_b64token_grammar_is_refused() {
         "Bearer ab=c",
         "Bearer a\tb",
     ] {
-        assert_refused(bearer(&authorized(value)), value);
+        assert_malformed(
+            bearer(&authorized(value)),
+            MalformedReason::BadCredentials,
+            value,
+        );
     }
 }
 
@@ -114,13 +128,7 @@ fn every_b64token_character_is_read() {
     let token = "AZaz09-._~+/==";
     let head = authorized(&format!("Bearer {token}"));
 
-    assert_eq!(
-        bearer(&head)
-            .expect("a credential")
-            .expect("present")
-            .as_str(),
-        token
-    );
+    assert_eq!(bearer(&head).require().expect("present").as_str(), token);
 }
 
 // --- Basic, RFC 7617 -------------------------------------------------------
@@ -129,7 +137,7 @@ fn every_b64token_character_is_read() {
 fn basic_credentials_split_at_the_first_colon() {
     // `dXNlcjpwYTpzcw==` is `user:pa:ss`.
     let head = authorized("Basic dXNlcjpwYTpzcw==");
-    let credentials = basic(&head).expect("a credential").expect("present");
+    let credentials = basic(&head).require().expect("present");
 
     assert_eq!(credentials.username(), "user");
     assert_eq!(
@@ -143,43 +151,49 @@ fn basic_credentials_split_at_the_first_colon() {
 fn an_empty_password_is_a_password() {
     // `dXNlcjo=` is `user:`.
     let credentials = basic(&authorized("Basic dXNlcjo="))
-        .expect("a credential")
+        .require()
         .expect("present");
 
     assert_eq!(credentials.into_parts(), ("user".to_owned(), String::new()));
 }
 
-/// One case per way `basic` refuses what is not a basic credential, counted
-/// against its refusals; the field-level ones are `parse`'s to count.
+/// One case per way `basic` finds what is not a basic credential malformed,
+/// counted against its source; the field-level ones are `parse`'s to count.
 #[test]
-fn every_malformed_basic_credential_is_refused() {
+fn every_malformed_basic_credential_is_classified() {
     const SOURCE: &str = include_str!("mod.rs");
 
+    let bad = MalformedReason::BadCredentials;
     let cases = [
-        ("a different scheme", "Bearer abc"),
-        ("base64 that does not decode", "Basic !!!!"),
+        (
+            "a different scheme",
+            "Bearer abc",
+            MalformedReason::OtherScheme,
+        ),
+        ("base64 that does not decode", "Basic !!!!", bad),
         // `/w==` is the byte 0xff, which is not UTF-8.
-        ("bytes that are not UTF-8", "Basic /w=="),
+        ("bytes that are not UTF-8", "Basic /w==", bad),
         // `dXNlcm5hbWU=` is `username`, with no colon.
-        ("no colon at all", "Basic dXNlcm5hbWU="),
+        ("no colon at all", "Basic dXNlcm5hbWU=", bad),
     ];
 
-    for (description, field) in cases {
-        assert_refused(
+    for (description, field, reason) in cases {
+        assert_malformed(
             basic(&authorized(field)),
+            reason,
             &format!("{description}: {field:?}"),
         );
     }
 
     // Empty credentials decode to an empty user-pass, which has no colon.
-    assert_refused(basic(&authorized("Basic")), "a scheme alone");
+    assert_malformed(basic(&authorized("Basic")), bad, "a scheme alone");
 
     let start = SOURCE.find("pub fn basic(").expect("`basic` is defined");
     let end = SOURCE
         .find("pub fn http_scheme(")
         .expect("`http_scheme` follows it");
     let refusals = SOURCE[start..end]
-        .matches("AuthRejection::unauthenticated")
+        .matches("malformed(MalformedReason::")
         .count();
     assert_eq!(
         refusals,
@@ -194,9 +208,7 @@ fn every_malformed_basic_credential_is_refused() {
 #[test]
 fn an_arbitrary_scheme_yields_both_halves() {
     let head = authorized("Negotiate YIIB...");
-    let read = http_scheme(&head, "negotiate")
-        .expect("a credential")
-        .expect("present");
+    let read = http_scheme(&head, "negotiate").require().expect("present");
 
     assert_eq!(read.scheme(), "Negotiate", "the spelling the client used");
     assert_eq!(read.credentials(), "YIIB...");
@@ -208,7 +220,7 @@ fn an_arbitrary_scheme_yields_both_halves() {
 #[test]
 fn a_scheme_alone_reaches_the_authenticator_with_empty_credentials() {
     let read = http_scheme(&authorized("Negotiate"), "negotiate")
-        .expect("a credential")
+        .require()
         .expect("present");
 
     assert_eq!(read.scheme(), "Negotiate");
@@ -227,7 +239,7 @@ fn a_header_api_key_is_read_from_the_field_the_scheme_named() {
     let head = request.into_parts().0;
 
     let key = api_key(&head, KeyLocation::Header, "x-api-key")
-        .expect("a credential")
+        .require()
         .expect("present");
     assert_eq!(key.as_str(), "k-123");
 }
@@ -236,8 +248,9 @@ fn a_header_api_key_is_read_from_the_field_the_scheme_named() {
 fn a_header_api_key_named_authorization_is_refused_in_every_build() {
     for name in ["Authorization", "authorization", "AUTHORIZATION"] {
         for head in [authorized("Bearer k-123"), bare()] {
-            assert_refused(
+            assert_malformed(
                 api_key(&head, KeyLocation::Header, name),
+                MalformedReason::ReservedField,
                 &format!("{name} as an API key field"),
             );
         }
@@ -255,8 +268,9 @@ fn a_header_api_key_that_is_not_ascii_is_refused() {
     );
     let head = request.into_parts().0;
 
-    assert_refused(
+    assert_malformed(
         api_key(&head, KeyLocation::Header, "x-api-key"),
+        MalformedReason::NotText,
         "an obs-text header key",
     );
 }
@@ -274,8 +288,9 @@ fn a_header_api_key_sent_twice_is_refused() {
     }
     let head = request.into_parts().0;
 
-    assert_refused(
+    assert_malformed(
         api_key(&head, KeyLocation::Header, "x-api-key"),
+        MalformedReason::Repeated,
         "a header key sent in two fields",
     );
 }
@@ -301,9 +316,7 @@ fn a_header_or_cookie_api_key_the_request_does_not_carry_is_absent() {
     ] {
         for head in [&head, &bare()] {
             assert!(
-                api_key(head, location, name)
-                    .expect("absence is not a failure")
-                    .is_none(),
+                matches!(api_key(head, location, name), Presented::Absent),
                 "{location:?}"
             );
         }
@@ -319,7 +332,7 @@ fn a_query_api_key_is_percent_decoded() {
     let head = request.into_parts().0;
 
     let key = api_key(&head, KeyLocation::Query, "api_key")
-        .expect("a credential")
+        .require()
         .expect("present");
     assert_eq!(
         key.as_str(),
@@ -343,7 +356,7 @@ fn a_query_api_key_reads_plus_as_a_space() {
     for (raw, expected) in [("a+b", "a b"), ("a%2Bb", "a+b"), ("a%20b", "a b")] {
         let head = targeting(&format!("/reports?api_key={raw}"));
         let key = api_key(&head, KeyLocation::Query, "api_key")
-            .expect("a credential")
+            .require()
             .expect("present");
         assert_eq!(key.as_str(), expected, "{raw}");
     }
@@ -355,13 +368,14 @@ fn a_query_api_key_reads_plus_as_a_space() {
 fn a_query_api_key_is_the_first_pair_named_the_key() {
     let head = targeting("/reports?api_key&api_key=second");
     let key = api_key(&head, KeyLocation::Query, "api_key")
-        .expect("a credential")
+        .require()
         .expect("present");
     assert_eq!(key.as_str(), "", "a pair with no `=` has an empty value");
 
     let head = targeting("/reports?api_key=%FF&api_key=second");
-    assert_refused(
+    assert_malformed(
         api_key(&head, KeyLocation::Query, "api_key"),
+        MalformedReason::NotText,
         "a first value that is not UTF-8",
     );
 }
@@ -372,11 +386,10 @@ fn a_query_api_key_the_target_does_not_carry_is_absent() {
     *request.uri_mut() = "/reports?other=1".parse().expect("a legal target");
     let head = request.into_parts().0;
 
-    assert!(
-        api_key(&head, KeyLocation::Query, "api_key")
-            .expect("absence is not a failure")
-            .is_none()
-    );
+    assert!(matches!(
+        api_key(&head, KeyLocation::Query, "api_key"),
+        Presented::Absent
+    ));
 }
 
 #[test]
@@ -389,7 +402,7 @@ fn a_cookie_api_key_reads_the_same_jar_a_parameter_does() {
     let head = request.into_parts().0;
 
     let key = api_key(&head, KeyLocation::Cookie, "session")
-        .expect("a credential")
+        .require()
         .expect("present");
     assert_eq!(key.as_str(), "s-42");
 }
@@ -420,8 +433,9 @@ fn a_cookie_api_key_that_is_not_ascii_is_refused() {
             .iter()
             .map(|field| field.escape_ascii().to_string())
             .collect();
-        assert_refused(
+        assert_malformed(
             api_key(&with_cookies(fields), KeyLocation::Cookie, "session"),
+            MalformedReason::NotText,
             &format!("{shown:?}"),
         );
     }
@@ -434,7 +448,7 @@ fn an_unreadable_cookie_of_another_name_does_not_hide_the_key() {
     let head = with_cookies(&[b"other=\xff; session=s-42"]);
 
     let key = api_key(&head, KeyLocation::Cookie, "session")
-        .expect("a credential")
+        .require()
         .expect("present");
     assert_eq!(key.as_str(), "s-42");
 }
@@ -469,7 +483,7 @@ fn an_owned_key_survives_being_taken_from_the_request() {
     let head = request.into_parts().0;
 
     let key = api_key(&head, KeyLocation::Header, "x-api-key")
-        .expect("a credential")
+        .require()
         .expect("present");
     assert_eq!(key.into_inner(), "k-123");
 }
@@ -507,7 +521,7 @@ fn an_embedded_handshake_presents_the_chain_it_recorded() {
     let head = arrived_on(connection);
 
     let presented = peer_certificates(&head)
-        .expect("never refused")
+        .require()
         .expect("a recorded chain is presented");
 
     assert_eq!(presented.chain(), [leaf.clone(), issuer]);
@@ -523,7 +537,7 @@ fn an_embedded_handshake_with_no_chain_presents_nothing() {
     let identity = TlsIdentity::default().with_server_name("api.example.com");
     let head = arrived_on(Connection::from_tls_peer(peer, local, identity));
 
-    assert!(peer_certificates(&head).expect("never refused").is_none());
+    assert!(matches!(peer_certificates(&head), Presented::Absent));
 }
 
 #[test]
@@ -531,7 +545,7 @@ fn a_plaintext_connection_presents_nothing() {
     let (peer, local) = sockets();
     let head = arrived_on(Connection::from_peer(peer, local));
 
-    assert!(peer_certificates(&head).expect("never refused").is_none());
+    assert!(matches!(peer_certificates(&head), Presented::Absent));
 }
 
 // --- Debug output ----------------------------------------------------------
@@ -545,7 +559,7 @@ fn assert_redacted(rendered: &str, expected: &str, secret: &str) {
 #[test]
 fn a_bearer_token_is_redacted_from_debug_output() {
     let token = bearer(&authorized("Bearer s3cret"))
-        .expect("a credential")
+        .require()
         .expect("present");
 
     assert_redacted(&format!("{token:?}"), "BearerToken(<redacted>)", "s3cret");
@@ -555,7 +569,7 @@ fn a_bearer_token_is_redacted_from_debug_output() {
 #[test]
 fn basic_credentials_show_the_user_id_and_redact_the_password() {
     let credentials = basic(&authorized("Basic YWxpY2U6czNjcmV0"))
-        .expect("a credential")
+        .require()
         .expect("present");
 
     assert_redacted(
@@ -568,7 +582,7 @@ fn basic_credentials_show_the_user_id_and_redact_the_password() {
 #[test]
 fn scheme_credentials_show_the_scheme_and_redact_the_credentials() {
     let credentials = http_scheme(&authorized("Negotiate s3cret"), "Negotiate")
-        .expect("a credential")
+        .require()
         .expect("present");
 
     assert_redacted(
@@ -587,7 +601,7 @@ fn an_api_key_is_redacted_from_debug_output() {
     );
     let head = request.into_parts().0;
     let key = api_key(&head, KeyLocation::Header, "x-api-key")
-        .expect("a credential")
+        .require()
         .expect("present");
 
     assert_redacted(&format!("{key:?}"), "ApiKey(<redacted>)", "s3cret");

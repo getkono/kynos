@@ -81,9 +81,9 @@ use kynos::{
     error::rejection::AuthRejection,
     prelude::*,
     security::{
-        Authenticates, Authenticator, Authorizer, Scope,
+        Authenticates, Authenticator, Authorizer, Head, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
-        carrier::{ApiKey, BearerToken, Carries, Credentials},
+        carrier::{ApiKey, BearerToken, Carries, Credentials, presented::Presented},
         requirement::{AllOf, AnyOf, Either2},
     },
     server::Server,
@@ -248,7 +248,8 @@ impl Tokens {
 impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
     async fn authenticate(
         &self,
-        presented: BearerToken,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
         context: &C,
     ) -> Result<Claims, AuthRejection> {
         let _ = context;
@@ -258,8 +259,21 @@ impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
         // `Authorization` field, the case-insensitive scheme name, the space --
         // is read by the carrier the same attribute wrote. All that is left
         // here is what the token means.
+        let token = match presented {
+            Presented::Present(token) => token,
+            // A field that is no bearer credential is this method's to refuse,
+            // so it can be counted by the rule it broke first:
+            // `reason().as_str()` is a stable metric label.
+            Presented::Malformed(malformed) => {
+                let _label = malformed.reason().as_str();
+                return Err(malformed.into_rejection());
+            }
+            // `AccessToken`'s carrier is not optional: the guard answers
+            // absence, and this arm is never reached.
+            Presented::Absent => return Err(AuthRejection::unauthenticated()),
+        };
         self.issued
-            .get(presented.as_str())
+            .get(token.as_str())
             .cloned()
             .ok_or_else(AuthRejection::unauthenticated)
     }
@@ -302,8 +316,13 @@ impl<C: Sync> Authorizer<AccessToken, C, Grant> for Tokens {
 struct Sessions;
 
 impl<C: Sync> Authenticator<SessionCookie, C> for Sessions {
-    async fn authenticate(&self, presented: ApiKey, context: &C) -> Result<String, AuthRejection> {
-        let _ = (presented, context);
+    async fn authenticate(
+        &self,
+        presented: Presented<ApiKey>,
+        head: Head<'_>,
+        context: &C,
+    ) -> Result<String, AuthRejection> {
+        let _ = (presented, head, context);
         Err(AuthRejection::unavailable::<SessionCookie>().with_retry_after(Duration::from_secs(5)))
     }
 }
@@ -335,20 +354,24 @@ struct RequestSignature {
 
 /// A stand-in for a peer's signature check.
 ///
-/// A real one verifies the signature with the peer's key. One computed over
-/// the method and path needs the request line as well, which the derived
-/// carrier does not present: such a scheme writes `carrier = manual` and keeps
-/// `reads` for the declaration.
+/// A real one verifies the signature with the peer's key, over the request
+/// line it signed. The carrier presents the token and the signature; the line
+/// is the request's own, read off the [`Head`] the authenticator receives
+/// beside them.
 struct Peers;
 
 impl<C: Sync> Authenticator<PeerToken, C> for Peers {
     async fn authenticate(
         &self,
-        (token, signed): (BearerToken, RequestSignature),
+        presented: Presented<(BearerToken, RequestSignature)>,
+        head: Head<'_>,
         context: &C,
     ) -> Result<String, AuthRejection> {
         let _ = context;
-        if signed.signature.is_empty() {
+        // A token with no `Signature` beside it is malformed, and refused.
+        let (token, signed) = presented.require()?;
+        let signed_line = format!("{} {}", head.method(), head.uri().path());
+        if signed.signature.is_empty() || signed_line.is_empty() {
             return Err(AuthRejection::unauthenticated());
         }
         Ok(token.into_inner())
@@ -376,10 +399,11 @@ struct Rejects;
 impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects {
     async fn authenticate(
         &self,
-        presented: S::Presented,
+        presented: Presented<S::Presented>,
+        head: Head<'_>,
         context: &C,
     ) -> Result<S::Credential, AuthRejection> {
-        let _ = (presented, context);
+        let _ = (presented, head, context);
         Err(AuthRejection::unauthenticated())
     }
 }

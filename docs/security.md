@@ -97,10 +97,20 @@ replaces, checks twice and has to restate the guard's challenges to keep them
 cannot sit next to a verifier reading `X-API-Token`.
 
 This is why [`Authenticator::authenticate`](../crates/kynos/src/security/mod.rs)
-receives `S::Presented` and not a `&Parts`. An authenticator is not given the
-request, so it *cannot* reach for a field the scheme did not declare. The
-constraint is the feature: every framework that configures a credential finder
-beside its documentation has two statements that agree until someone edits one.
+receives its credential as `Presented<S::Presented>`, already read by the
+scheme's carrier, rather than finding it. The constraint is the feature: every
+framework that configures a credential finder beside its documentation has two
+statements that agree until someone edits one.
+
+Beside the credential it receives the request's `Head`: the method, the
+target, the headers, the `Connection` and the `Forwarded` the router resolved.
+What a credential is worth often depends on the request it arrived on — a
+signature over the request line, a cross-site check in an open deployment, the
+client a refused token's log line names — and the head is where those are. It
+is context, not a second source: a credential read out of `head.headers()` is
+one no description advertises, which is exactly what the carrier exists to
+make unnecessary. [Why the authenticator sees the head](#why-the-authenticator-sees-the-head)
+records what this replaced.
 
 ### A carrier may read headers beside its credential
 
@@ -117,10 +127,11 @@ argument it never reads to put the header in the description.
 | `Auth<S>`, `Scoped<S, R>`, `AllOf` | as the group declares them |
 | `MaybeAuth<S>`, an `AnyOf` alternative | none required: a request may present no credential, or another scheme's |
 
-The group is read only where the credential was presented, so an anonymous
-request is never refused for lacking it; one that does not decode is a 401,
-as a malformed credential is. A hand-written `Carries` that reads more than its
-credential overrides `SecurityScheme::reads` to say so; under
+The group is read only beside a well-formed credential, so an anonymous
+request is never refused for lacking it; one that does not decode makes the
+credential `Malformed`, with `MalformedReason::AccompanyingHeaders`, for the
+authenticator to refuse as it refuses any. A hand-written `Carries` that reads
+more than its credential overrides `SecurityScheme::reads` to say so; under
 `carrier = manual`, `reads = T` writes that override alone.
 
 `reads` is a provided method on `SecurityScheme` rather than a defaulted
@@ -188,20 +199,31 @@ missing scope earns. So a scheme has a second challenge,
 
 ### The three states of a presented credential
 
-`Carries::present` returns `Result<Option<T>, AuthRejection>`, and all three
-mean different things:
+`Carries::present` returns a `Presented<T>`, which classifies and never
+refuses, and all three answers mean different things:
 
 | Answer | Meaning | `Auth<S>` | `MaybeAuth<S>` |
 | --- | --- | --- | --- |
-| `Ok(None)` | no credential was presented | 401 | anonymous |
-| `Err` | one was presented and is not a credential of this scheme | 401 | **401** |
-| `Ok(Some)` | one was presented | the authenticator decides | the authenticator decides |
+| `Absent` | no credential was presented | 401 | anonymous |
+| `Malformed` | one was presented and is not a credential of this scheme | the authenticator decides | **the authenticator decides** |
+| `Present` | one was presented | the authenticator decides | the authenticator decides |
 
 The second row is the one worth stating. A request carrying a malformed token,
 or a credential for a *different* scheme, is not an anonymous request. Treating
 it as one would let `MaybeAuth` wave through exactly the traffic worth refusing,
-so a carrier refuses rather than reporting absence when the request presented
-something it cannot read.
+so a carrier reports it as `Malformed`, never as absence, and the guard hands it
+to the authenticator as it would a credential. `Malformed::reason` names the
+rule it broke, `MalformedReason::as_str` is a stable label for a counter, and
+`Malformed::into_rejection` is the 401 a refusal of it sends;
+`presented.require()?` refuses it, and absence, in one expression.
+
+The authenticator decides, rather than the carrier refusing, because a refusal
+the carrier answered is one the application never sees: it cannot count it by
+reason, log it beside the client that sent it, or refuse it differently in a
+deployment that admits nothing. `Presented` is a plain enum, not
+`#[non_exhaustive]`, so a `match` over it is exhaustive and a fourth state
+would be a compile error at every authenticator rather than a wildcard arm
+silently admitting it.
 
 ### Optional authentication is a description
 
@@ -227,13 +249,14 @@ the configuration:
 struct Token;
 ```
 
-`carrier = optional` reads with the kind's own reader and presents
-`Option<BearerToken>`. Absence arrives at `Authenticator::authenticate` as
-`None` instead of being answered by the guard, so the authenticator admits it
-when the deployment has no credentials and refuses it with
-`AuthRejection::unauthenticated()` — which carries the scheme's challenge as any
-refusal does — when it has. A malformed credential is still refused before the
-authenticator is asked, exactly as in the table above.
+`carrier = optional` reads with the kind's own reader, presenting
+`BearerToken` as ever, and sets `Carries::OPTIONAL`. `Presented::Absent` then
+arrives at `Authenticator::authenticate` instead of being answered by the
+guard, so the authenticator admits it when the deployment has no credentials
+and refuses it with `AuthRejection::unauthenticated()` — which carries the
+scheme's challenge as any refusal does — when it has. A malformed credential
+reaches it as under every carrier, and `presented.into_result()?` refuses it
+while keeping absence a value.
 
 The description stays `[{S}]` in both deployments. It is assembled from types,
 before any authenticator exists, and it remains sound: a client that presents
@@ -252,12 +275,11 @@ missing partner as a partial set.
 An open deployment is the one whose credential is ambient: a browser reaching
 it spends whatever grants access, so a cross-site or rebound request is the
 attack, and only the authenticator knows the deployment is open. That is where
-the refusal goes. A hand-written `Carries` presents the request head beside the
-credential — `Parts` is `Clone`, and the fields the checks read are routing and
-browser-set fields the interceptors declare nowhere either, so `reads` stays
-empty — and the authenticator runs
+the refusal goes. The authenticator runs
 [`Csrf::check`](middleware.md#what-the-cookie-interceptor-is-not) and
-[`TrustedHosts::check`](middleware.md#trusted-hosts) over it, refusing with
+[`TrustedHosts::check`](middleware.md#trusted-hosts) over `head.parts()` —
+the fields they read are routing and browser-set fields the interceptors
+declare nowhere either, so `reads` stays empty — refusing with
 `AuthRejection::forbidden()`. Each check names its reason, and
 `CrossSiteReason::as_str` and `UntrustedHostReason::as_str` are the stable
 labels for a counter. Mounting the two interceptors with `when` instead decides
@@ -653,6 +675,31 @@ token, two for a generic HTTP scheme's name and credentials, three for Basic's
 decoded text, user-id and password — against a verifier that is about to check a
 signature or read a session store.
 
+`Head<'_>` borrows, and costs no lifetime on the trait: the elided lifetime is
+the method's own, so an `impl Authenticator` still names none and an `async fn`
+in it still unifies with the trait's signature.
+
+### Why the authenticator sees the head
+
+`authenticate` once received the credential alone, so that an authenticator
+could not reach a field the scheme did not declare, and a carrier refused a
+malformed credential before the authenticator was asked. Both held a line the
+applications using them crossed anyway: one that needed the request line, the
+client, or a count of malformed credentials wrote `carrier = manual` and a
+`Presented` that cloned the head, and smuggled the carrier's refusal through it
+as a value, built on every request for a log line written only on refusal.
+
+| Considered | Declined because |
+| --- | --- |
+| Keep both signatures, and add `carrier = optional(malformed = pass)` | It hands the authenticator a malformed credential and still not the head, so the manual carrier copying it stays |
+| A carrier presenting a clone of `Parts` | The workaround this replaces: a copy per request, and a `Presented` that is no longer the credential |
+| `authenticate` taking `&Parts` | A borrowed `Head` names what an authenticator reads — `connection()` and `forwarded()` rather than extension lookups — and still offers `parts()` to a check that reads a whole head |
+
+What survived the change is the half of the old guarantee worth having: the
+credential has one reader, emitted from the attribute that describes it. What
+was given up is a promise the type system kept only for derived carriers
+anyway, since a hand-written one could always present what it liked.
+
 ### Why base64 is not a dependency
 
 `base64` would be a fine dependency and is not taken, for the reason
@@ -681,7 +728,7 @@ not only that one crate is absent from the graph.
 | `jsonwebtoken` is in every user's dependency graph | Named by one example and nothing under `src/` | JWT policy stays the application's |
 | Basic auth is a separate feature with its own validator | One `Carries` seam covers basic, bearer, arbitrary HTTP schemes, API keys and mTLS | One concept, five carriers |
 | Peer certificates are not surfaced | `Carries for MutualTls` yields `PeerCertificates` | mTLS is an authenticable scheme rather than a transport detail |
-| The verifier reads the whole request | `authenticate` receives `S::Presented` only | An authenticator cannot read what the scheme did not declare |
+| The verifier reads the whole request | `authenticate` receives the credential the carrier read, beside the request head | The credential has one reader, the one the description was written from |
 
 The row that matters most is the first. Everything else follows from it: once
 the carrier and the description are the same text, there is no drift left for

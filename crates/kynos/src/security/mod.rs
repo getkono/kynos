@@ -109,11 +109,14 @@ mod sealed {
 /// # use kynos::{
 /// #     error::rejection::AuthRejection,
 /// #     extract::params::path::Path,
-/// #     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+/// #     security::{Authenticates, Authenticator, Head, auth::Auth, schemes::Bearer},
+/// #     security::carrier::{BearerToken, presented::Presented},
 /// # };
 /// # struct Tokens;
 /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
-/// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+/// #     async fn authenticate(
+/// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
+/// #     ) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
 /// # }
@@ -136,11 +139,14 @@ mod sealed {
 /// # use kynos::{
 /// #     error::rejection::AuthRejection,
 /// #     extract::params::path::Path,
-/// #     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+/// #     security::{Authenticates, Authenticator, Head, auth::Auth, schemes::Bearer},
+/// #     security::carrier::{BearerToken, presented::Presented},
 /// # };
 /// # struct Tokens;
 /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
-/// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+/// #     async fn authenticate(
+/// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
+/// #     ) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
 /// # }
@@ -163,11 +169,14 @@ mod sealed {
 /// ```compile_fail
 /// # use kynos::{
 /// #     error::rejection::AuthRejection,
-/// #     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+/// #     security::{Authenticates, Authenticator, Head, auth::Auth, schemes::Bearer},
+/// #     security::carrier::{BearerToken, presented::Presented},
 /// # };
 /// # struct Tokens;
 /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
-/// #     async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+/// #     async fn authenticate(
+/// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
+/// #     ) -> Result<String, AuthRejection> {
 /// #         Err(AuthRejection::unauthenticated())
 /// #     }
 /// # }
@@ -457,6 +466,78 @@ impl Scope for Unscoped {
     }
 }
 
+/// The head of the request a credential arrived on, borrowed.
+///
+/// What an [`Authenticator`] reads beside the credential: the request line, the
+/// connection, the client the router resolved, a header a check over the
+/// request depends on. The credential itself arrives as
+/// [`Presented`](carrier::presented::Presented), read by the scheme's own
+/// carrier from the field its description advertises; reading it again from
+/// [`headers`](Self::headers) would be reading a field no description names.
+///
+/// `Copy`, and borrowed for as long as the authentication runs.
+#[derive(Clone, Copy, Debug)]
+pub struct Head<'a> {
+    /// The request head.
+    parts: &'a Parts,
+}
+
+impl<'a> Head<'a> {
+    /// The head of the request `parts` holds.
+    ///
+    /// The guard builds one for each authentication; this is for calling an
+    /// [`Authenticator`] directly, from a test.
+    #[must_use]
+    pub const fn new(parts: &'a Parts) -> Self {
+        Self { parts }
+    }
+
+    /// The request method.
+    #[must_use]
+    pub fn method(&self) -> &'a crate::http::Method {
+        &self.parts.method
+    }
+
+    /// The request target.
+    #[must_use]
+    pub fn uri(&self) -> &'a crate::http::Uri {
+        &self.parts.uri
+    }
+
+    /// Every request header field, the credential's own included.
+    #[must_use]
+    pub fn headers(&self) -> &'a crate::http::HeaderMap {
+        &self.parts.headers
+    }
+
+    /// The connection the request arrived on, where the server recorded one.
+    #[must_use]
+    pub fn connection(&self) -> Option<&'a crate::extract::connection::Connection> {
+        self.parts.extensions.get()
+    }
+
+    /// The client and scheme the router resolved from the forwarding fields,
+    /// under [`Router::trusted_proxies`](crate::Router::trusted_proxies).
+    ///
+    /// As [`Forwarded::of_parts`](crate::http::forwarded::Forwarded::of_parts)
+    /// answers: `None` for a request the router did not route, which a guard
+    /// the router runs never sees.
+    #[must_use]
+    pub fn forwarded(&self) -> Option<&'a crate::http::forwarded::Forwarded> {
+        crate::http::forwarded::Forwarded::of_parts(self.parts)
+    }
+
+    /// The whole request head.
+    ///
+    /// For a check that reads one, such as
+    /// [`Csrf::check`](crate::middleware::csrf::Csrf::check) or
+    /// [`TrustedHosts::check`](crate::middleware::trusted_hosts::TrustedHosts::check).
+    #[must_use]
+    pub const fn parts(&self) -> &'a Parts {
+        self.parts
+    }
+}
+
 /// Verifies a credential.
 ///
 /// The scheme says how a credential is *carried*; this says how it is
@@ -464,8 +545,38 @@ impl Scope for Unscoped {
 /// application policy.
 ///
 /// [`authenticate`](Authenticator::authenticate) receives the credential the
-/// scheme's own carrier already extracted, not a `&Parts`, so an authenticator
-/// cannot read a field the scheme did not declare.
+/// scheme's own carrier already read, as
+/// [`Presented`](carrier::presented::Presented), so it never finds the
+/// credential itself, and the request's [`Head`] beside it, for what a
+/// decision about the credential depends on.
+///
+/// ```
+/// use kynos::{
+///     error::rejection::AuthRejection,
+///     security::{Authenticator, Head, carrier::{BearerToken, presented::Presented}, schemes::Bearer},
+/// };
+///
+/// struct Tokens;
+///
+/// impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+///     async fn authenticate(
+///         &self,
+///         presented: Presented<BearerToken>,
+///         head: Head<'_>,
+///         _: &C,
+///     ) -> Result<String, AuthRejection> {
+///         let token = match presented {
+///             Presented::Present(token) => token,
+///             // Counted, or logged with `head`, before it is refused.
+///             Presented::Malformed(malformed) => return Err(malformed.into_rejection()),
+///             // Only an optional carrier hands absence on.
+///             Presented::Absent => return Err(AuthRejection::unauthenticated()),
+///         };
+///         let _ = head.method();
+///         Ok(token.into_inner())
+///     }
+/// }
+/// ```
 pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// Checks the credential this request presented.
     ///
@@ -482,14 +593,21 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     ///
     /// A store that cannot be reached is neither: [`AuthRejection::unavailable`].
     ///
-    /// A credential that was *absent* never reaches here — that is
-    /// [`Auth`](auth::Auth)'s 401 and [`MaybeAuth`](auth::MaybeAuth)'s
-    /// anonymity — unless the scheme was derived with `carrier = optional`.
-    /// Its `Presented` is then an `Option`, and `None` is this method's to
-    /// admit, for a deployment configured with no credentials, or to refuse.
+    /// A [`Malformed`](carrier::presented::Presented::Malformed) credential
+    /// always reaches here, so its refusal is this method's to name, count
+    /// and log; [`Presented::require`](carrier::presented::Presented::require)
+    /// refuses it, and absence, with the 401 the guard would answer.
+    ///
+    /// An [`Absent`](carrier::presented::Presented::Absent) credential never
+    /// reaches here — that is [`Auth`](auth::Auth)'s 401 and
+    /// [`MaybeAuth`](auth::MaybeAuth)'s anonymity — unless the scheme sets
+    /// [`Carries::OPTIONAL`](carrier::Carries::OPTIONAL), which
+    /// `carrier = optional` does. Absence is then this method's to admit, for
+    /// a deployment configured with no credentials, or to refuse.
     fn authenticate(
         &self,
-        presented: S::Presented,
+        presented: carrier::presented::Presented<S::Presented>,
+        head: Head<'_>,
         context: &C,
     ) -> impl Future<Output = Result<S::Credential, AuthRejection>> + Send;
 }
@@ -513,7 +631,8 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
 /// ```
 /// use kynos::{
 ///     error::rejection::AuthRejection,
-///     security::{Authenticator, Authorizer, Scope, carrier::BearerToken, schemes::Bearer},
+///     security::{Authenticator, Authorizer, Head, Scope, schemes::Bearer},
+///     security::carrier::{BearerToken, presented::Presented},
 /// };
 ///
 /// #[derive(Clone, Copy)]
@@ -530,8 +649,13 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
 /// struct Tokens;
 ///
 /// impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Tokens {
-///     async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
-///         Ok(token.as_str().to_owned())
+///     async fn authenticate(
+///         &self,
+///         presented: Presented<BearerToken>,
+///         _: Head<'_>,
+///         _: &C,
+///     ) -> Result<String, AuthRejection> {
+///         Ok(presented.require()?.into_inner())
 ///     }
 /// }
 ///
@@ -551,14 +675,20 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
 /// ```compile_fail
 /// use kynos::{
 ///     error::rejection::AuthRejection,
-///     security::{Authenticator, Authorizer, Unscoped, carrier::BearerToken, schemes::Bearer},
+///     security::{Authenticator, Authorizer, Head, Unscoped, schemes::Bearer},
+///     security::carrier::{BearerToken, presented::Presented},
 /// };
 ///
 /// struct Tokens;
 ///
 /// impl<C: Sync> Authenticator<Bearer, C> for Tokens {
-///     async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
-///         Ok(token.as_str().to_owned())
+///     async fn authenticate(
+///         &self,
+///         presented: Presented<BearerToken>,
+///         _: Head<'_>,
+///         _: &C,
+///     ) -> Result<String, AuthRejection> {
+///         Ok(presented.require()?.into_inner())
 ///     }
 /// }
 ///

@@ -1,6 +1,7 @@
 use super::{authorization, scheme_is};
 use crate::http::{HeaderValue, Request, header::AUTHORIZATION};
-use crate::security::carrier::tests::assert_refused;
+use crate::security::carrier::presented::{MalformedReason, Presented};
+use crate::security::carrier::tests::assert_malformed;
 
 /// A request head carrying each of `fields` as an `Authorization`.
 fn parts(fields: &[&str]) -> crate::http::Parts {
@@ -16,18 +17,13 @@ fn parts(fields: &[&str]) -> crate::http::Parts {
 
 #[test]
 fn a_request_carrying_no_credential_is_anonymous_rather_than_malformed() {
-    assert_eq!(
-        authorization(&parts(&[])).expect("no field is not a failure"),
-        None
-    );
+    assert_eq!(authorization(&parts(&[])), Presented::Absent);
 }
 
 #[test]
 fn a_well_formed_field_splits_at_the_scheme() {
     let head = parts(&["Bearer abc.def"]);
-    let read = authorization(&head)
-        .expect("a credential")
-        .expect("present");
+    let read = authorization(&head).require().expect("present");
 
     assert_eq!(read.scheme, "Bearer");
     assert_eq!(read.credentials, "abc.def");
@@ -37,9 +33,7 @@ fn a_well_formed_field_splits_at_the_scheme() {
 #[test]
 fn extra_space_after_the_scheme_is_not_part_of_the_credential() {
     let head = parts(&["Basic    dXNlcjpwYXNz"]);
-    let read = authorization(&head)
-        .expect("a credential")
-        .expect("present");
+    let read = authorization(&head).require().expect("present");
 
     assert_eq!(read.credentials, "dXNlcjpwYXNz");
 }
@@ -48,9 +42,7 @@ fn extra_space_after_the_scheme_is_not_part_of_the_credential() {
 #[test]
 fn a_scheme_alone_reads_as_empty_credentials() {
     let head = parts(&["justatoken"]);
-    let read = authorization(&head)
-        .expect("a credential")
-        .expect("present");
+    let read = authorization(&head).require().expect("present");
 
     assert_eq!(read.scheme, "justatoken");
     assert_eq!(read.credentials, "");
@@ -58,19 +50,27 @@ fn a_scheme_alone_reads_as_empty_credentials() {
 
 /// One case per way `authorization` refuses, counted against the refusals.
 #[test]
-fn every_refusal_has_a_case() {
+fn every_malformation_has_a_case() {
     const SOURCE: &str = include_str!("../parse.rs");
-    const NEEDLE: &str = "AuthRejection::unauthenticated";
+    const NEEDLE: &str = "Malformed::new(MalformedReason::";
 
-    let cases: &[(&str, &[&str])] = &[
+    let cases: &[(&str, &[&str], MalformedReason)] = &[
         // Two fields: choosing either would let a proxy that appended one
         // decide which credential the service honours.
-        ("two Authorization fields", &["Bearer a", "Bearer b"]),
-        ("bytes no `&str` can hold", &[]),
-        ("an empty scheme", &[" credentials"]),
+        (
+            "two Authorization fields",
+            &["Bearer a", "Bearer b"],
+            MalformedReason::Repeated,
+        ),
+        ("bytes no `&str` can hold", &[], MalformedReason::NotText),
+        (
+            "an empty scheme",
+            &[" credentials"],
+            MalformedReason::NoScheme,
+        ),
     ];
 
-    for (description, fields) in cases {
+    for &(description, fields, reason) in cases {
         let head = if fields.is_empty() {
             let mut request = Request::new(crate::http::body::Body::empty());
             request.headers_mut().append(
@@ -82,7 +82,7 @@ fn every_refusal_has_a_case() {
             parts(fields)
         };
 
-        assert_refused(authorization(&head), description);
+        assert_malformed(authorization(&head), reason, description);
     }
 
     let refusals = SOURCE.matches(NEEDLE).count();

@@ -36,13 +36,13 @@
 //!
 //! The kind writes both `describe` and `Carries`, so the documented and the
 //! enforced carrier agree; `carrier = manual` suppresses `Carries`, and
-//! `carrier = optional` presents `Option<_>`, so an absent credential reaches
-//! the authenticator rather than answering `Ok(None)`.
+//! `carrier = optional` sets `Carries::OPTIONAL`, so an absent credential
+//! reaches the authenticator rather than being answered by the guard.
 //!
 //! `reads = T` names a header group the carrier reads beside the credential:
 //! it writes `SecurityScheme::reads` from `T`, and the derived carrier
-//! presents `(credential, T)`, decoding `T` only where a credential was
-//! presented. Under `carrier = manual` it writes the declaration alone, for
+//! presents `(credential, T)`, decoding `T` only beside a well-formed
+//! credential. Under `carrier = manual` it writes the declaration alone, for
 //! the hand-written carrier to honour.
 //!
 //! A flow's `scopes` takes `"a"` or `"a" = "Read a"`, the strings an

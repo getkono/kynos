@@ -1834,10 +1834,13 @@ impl<C: Sync, P: kynos::security::Scope>
 {
     async fn authenticate(
         &self,
-        presented: kynos::security::carrier::BearerToken,
+        presented: kynos::security::carrier::presented::Presented<
+            kynos::security::carrier::BearerToken,
+        >,
+        head: kynos::security::Head<'_>,
         context: &C,
     ) -> Result<Claims, kynos::error::rejection::AuthRejection> {
-        let _ = (presented, context);
+        let _ = (presented, head, context);
         Err(kynos::error::rejection::AuthRejection::unauthenticated())
     }
 }
@@ -2126,10 +2129,11 @@ struct Sessions;
 impl<C: Sync> kynos::security::Authenticator<Session, C> for Sessions {
     async fn authenticate(
         &self,
-        presented: kynos::security::carrier::ApiKey,
+        presented: kynos::security::carrier::presented::Presented<kynos::security::carrier::ApiKey>,
+        head: kynos::security::Head<'_>,
         context: &C,
     ) -> Result<String, kynos::error::rejection::AuthRejection> {
-        let _ = (presented, context);
+        let _ = (presented, head, context);
         Err(kynos::error::rejection::AuthRejection::unavailable::<Session>())
     }
 }

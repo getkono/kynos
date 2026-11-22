@@ -32,9 +32,9 @@ use kynos::{
     prelude::*,
     response::{headers::WithHeaders, status::NoContent},
     security::{
-        Authenticates, Authenticator,
+        Authenticates, Authenticator, Head,
         auth::{Auth, MaybeAuth},
-        carrier::ApiKey,
+        carrier::{ApiKey, presented::Presented},
     },
 };
 use serde::{Deserialize, Serialize};
@@ -956,8 +956,13 @@ struct ReportKey;
 struct Keys;
 
 impl<C: Sync> Authenticator<ReportKey, C> for Keys {
-    async fn authenticate(&self, presented: ApiKey, _: &C) -> Result<Holder, AuthRejection> {
-        if presented.as_str() == "k_ok" {
+    async fn authenticate(
+        &self,
+        presented: Presented<ApiKey>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<Holder, AuthRejection> {
+        if presented.require()?.as_str() == "k_ok" {
             Ok(Holder)
         } else {
             Err(AuthRejection::unauthenticated())

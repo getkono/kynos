@@ -14,11 +14,12 @@
 use std::marker::PhantomData;
 
 use crate::{
-    error::rejection::AuthRejection,
     http::Parts,
     security::{
         Scope, SecurityScheme, Unscoped,
-        carrier::{self, BearerToken, Carries, Credentials, PeerCertificates},
+        carrier::{
+            self, BearerToken, Carries, Credentials, PeerCertificates, presented::Presented,
+        },
     },
 };
 
@@ -225,7 +226,7 @@ impl<T: Send + 'static, P: Scope> SecurityScheme for MutualTls<T, P> {
 impl<T: Send + 'static, P: Scope> Carries for Bearer<T, P> {
     type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<BearerToken> {
         carrier::bearer(parts)
     }
 }
@@ -233,7 +234,7 @@ impl<T: Send + 'static, P: Scope> Carries for Bearer<T, P> {
 impl<T: Send + 'static, P: Scope, R: Realm> Carries for Basic<T, P, R> {
     type Presented = Credentials;
 
-    fn present(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<Credentials> {
         carrier::basic(parts)
     }
 }
@@ -241,7 +242,7 @@ impl<T: Send + 'static, P: Scope, R: Realm> Carries for Basic<T, P, R> {
 impl<T: Send + 'static, P: Scope> Carries for MutualTls<T, P> {
     type Presented = PeerCertificates;
 
-    fn present(parts: &Parts) -> Result<Option<PeerCertificates>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<PeerCertificates> {
         carrier::peer_certificates(parts)
     }
 }

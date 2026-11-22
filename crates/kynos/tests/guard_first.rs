@@ -25,9 +25,9 @@ use kynos::{
     response::status::NoContent,
     router::{group::Group, operation::Route},
     security::{
-        Authenticates, Authenticator,
+        Authenticates, Authenticator, Head,
         auth::{Auth, MaybeAuth},
-        carrier::ApiKey,
+        carrier::{ApiKey, presented::Presented},
     },
 };
 
@@ -71,9 +71,14 @@ struct UploadKey;
 struct Keys;
 
 impl Authenticator<UploadKey, Gate> for Keys {
-    async fn authenticate(&self, presented: ApiKey, gate: &Gate) -> Result<Holder, AuthRejection> {
+    async fn authenticate(
+        &self,
+        presented: Presented<ApiKey>,
+        _: Head<'_>,
+        gate: &Gate,
+    ) -> Result<Holder, AuthRejection> {
         gate.checks.fetch_add(1, Ordering::SeqCst);
-        match presented.as_str() {
+        match presented.require()?.as_str() {
             "k_ok" => Ok(Holder),
             "k_panic" => panic!("the credential store failed"),
             _ => Err(AuthRejection::unauthenticated()),
@@ -233,6 +238,32 @@ async fn the_guard_runs_between_the_interceptors_either_side_of_the_call() {
     assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     assert_eq!(gate.passed(), ["outer"]);
     assert_eq!(gate.checks(), 0, "an absent key is refused unasked");
+}
+
+/// A malformed key is not absence: ahead of the interceptors too, the
+/// authenticator is asked, once, and its refusal is the 401 the request gets.
+#[tokio::test]
+async fn a_malformed_key_is_the_authenticators_to_refuse() {
+    let gate = Gate::default();
+    let group = Group::new("/api")
+        .intercept(Witness("outer"))
+        .guard_first()
+        .intercept(Witness("inner"));
+    let service = served!(group, gate);
+
+    let refused = post(&service, "/api/uploads")
+        .header("x-api-key", "k_ok")
+        .header("x-api-key", "k_proxy")
+        .call()
+        .await;
+
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        refused.field(header::WWW_AUTHENTICATE.as_str()).as_deref(),
+        Some("ApiKey")
+    );
+    assert_eq!(gate.passed(), ["outer"]);
+    assert_eq!(gate.checks(), 1, "a key sent twice is asked about, once");
 }
 
 /// An admitted request is checked once, ahead of the interceptors, and the

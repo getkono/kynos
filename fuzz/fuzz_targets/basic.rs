@@ -27,8 +27,8 @@ fuzz_target!(|data: &[u8]| {
     let (parts, _) = request.into_parts();
 
     let read = carrier::basic(&parts)
+        .require()
         .ok()
-        .flatten()
         .map(|read| (read.username().to_owned(), read.password().to_owned()));
 
     // The field reader drops the spaces between the scheme and the token.

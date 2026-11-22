@@ -56,9 +56,9 @@ use kynos::{
     },
     router::operation::Route,
     security::{
-        Authenticates, Authenticator, Authorizer, Scope,
+        Authenticates, Authenticator, Authorizer, Head, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
-        carrier::{ApiKey, BearerToken},
+        carrier::{ApiKey, BearerToken, presented::Presented},
         requirement::{AllOf, AnyOf, Either2},
         schemes::Bearer,
     },
@@ -185,11 +185,16 @@ impl Scope for Grant {
 }
 
 impl<C: Sync, P: Scope> Authenticator<Bearer<Caller, P>, C> for Tokens {
-    async fn authenticate(&self, presented: BearerToken, _: &C) -> Result<Caller, AuthRejection> {
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<Caller, AuthRejection> {
         // No `strip_prefix("Bearer ")` here, and that is the point: the scheme
         // said where its credential travels, so this only says what the token
         // means.
-        match presented.as_str() {
+        match presented.require()?.as_str() {
             "tok_ok" => Ok(Caller {
                 subject: "user-1".to_owned(),
             }),
@@ -261,7 +266,13 @@ struct ServiceKey;
 struct Keys;
 
 impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
-    async fn authenticate(&self, presented: ApiKey, _: &C) -> Result<Caller, AuthRejection> {
+    async fn authenticate(
+        &self,
+        presented: Presented<ApiKey>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<Caller, AuthRejection> {
+        let presented = presented.require()?;
         // Constant time, because this is a shared secret compared against a
         // stored one — the case `constant_time_eq` exists for.
         let matches = |issued: &[u8]| {

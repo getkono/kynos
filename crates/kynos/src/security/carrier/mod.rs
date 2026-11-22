@@ -4,9 +4,9 @@
 //! puts it in `Authorization`, `api_key(in = "cookie", name = "session")` names
 //! a cookie. [`Carries`] is that same statement made executable, so the field an
 //! authenticator reads and the field the description advertises are one string.
-//! An [`Authenticator`](crate::security::Authenticator) receives
-//! [`Presented`](Carries::Presented), never the request, so it cannot read
-//! anything the scheme did not declare.
+//! An [`Authenticator`](crate::security::Authenticator) receives the credential
+//! as [`Presented`], read by the scheme's own carrier, so it never finds the
+//! credential itself.
 //!
 //! # What is deliberately not read
 //!
@@ -17,14 +17,15 @@
 
 mod base64;
 mod parse;
+pub mod presented;
 mod query;
 mod redact;
 
 use crate::{
-    error::rejection::AuthRejection,
     http::{Parts, header::AUTHORIZATION},
     security::SecurityScheme,
 };
+use presented::{Malformed, MalformedReason, Presented};
 
 /// A security scheme that says where its credential travels.
 ///
@@ -51,20 +52,25 @@ pub trait Carries: SecurityScheme {
     /// `impl Authenticator` carries no lifetime parameter.
     type Presented: Send;
 
+    /// Whether an [`Absent`](Presented::Absent) credential reaches the
+    /// [`Authenticator`](crate::security::Authenticator) rather than being
+    /// answered by the guard.
+    ///
+    /// `false` by default: absence is [`Auth`](crate::security::auth::Auth)'s
+    /// 401 and [`MaybeAuth`](crate::security::auth::MaybeAuth)'s anonymity.
+    /// `#[security(..., carrier = optional)]` sets it, for a deployment that
+    /// may run with no credentials configured, which only the authenticator
+    /// knows. Nothing then reports absence to the guard, so `MaybeAuth` never
+    /// sees anonymity and an [`AnyOf`](crate::security::requirement::AnyOf)
+    /// never skips the scheme.
+    const OPTIONAL: bool = false;
+
     /// Reads the presented credential out of the request head.
     ///
-    /// Three answers, not two. `Ok(None)` is *absent*, which is anonymity and
-    /// which [`MaybeAuth`](crate::security::auth::MaybeAuth) treats as such.
-    /// `Err` is *present and malformed*, which is a 401 even there.
-    ///
-    /// A scheme derived with `carrier = optional` presents `Option<T>` and
-    /// never answers `Ok(None)`: absence arrives as `Ok(Some(None))`, so it
-    /// reaches the [`Authenticator`](crate::security::Authenticator) instead
-    /// of being decided by the guard. A malformed credential is still `Err`.
-    ///
-    /// The challenge is left unset. [`Auth`](crate::security::auth::Auth)
-    /// attaches the scheme's own on the way out.
-    fn present(parts: &Parts) -> Result<Option<Self::Presented>, AuthRejection>;
+    /// Classifies, never refuses: what [`Presented`] says is the
+    /// authenticator's to judge, but for absence, which the guard answers
+    /// unless [`OPTIONAL`](Self::OPTIONAL) is set.
+    fn present(parts: &Parts) -> Presented<Self::Presented>;
 }
 
 /// A bearer token, as RFC 6750 section 2.1 presented it.
@@ -192,27 +198,27 @@ impl ApiKey {
 ///
 /// The scheme token is matched case-insensitively, per RFC 9110 section 11.1.
 ///
-/// # Errors
-///
-/// When an `Authorization` field is present and is not a bearer credential:
-/// two such fields, a value that is not visible ASCII, an empty scheme, a
-/// different scheme, no token, or a token outside the `b64token` grammar.
-pub fn bearer(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
-    let Some(authorization) = parse::authorization(parts)? else {
-        return Ok(None);
-    };
+/// [`Malformed`](Presented::Malformed) when an `Authorization` field is present
+/// and is not a bearer credential: two such fields, a value that is not
+/// visible ASCII, an empty scheme, a different scheme, no token, or a token
+/// outside the `b64token` grammar.
+pub fn bearer(parts: &Parts) -> Presented<BearerToken> {
+    parse::authorization(parts).and_then(|authorization| {
+        // Another scheme's credential is malformed, not absent, so `MaybeAuth`
+        // does not wave through a credential nobody checked.
+        if !parse::scheme_is(authorization.scheme, "bearer") {
+            return malformed(MalformedReason::OtherScheme);
+        }
+        if !is_b64token(authorization.credentials) {
+            return malformed(MalformedReason::BadCredentials);
+        }
+        Presented::Present(BearerToken(authorization.credentials.to_owned()))
+    })
+}
 
-    // Another scheme's credential is refused, not absent, so `MaybeAuth` does
-    // not wave through a credential nobody checked.
-    if !parse::scheme_is(authorization.scheme, "bearer") {
-        return Err(AuthRejection::unauthenticated());
-    }
-
-    if !is_b64token(authorization.credentials) {
-        return Err(AuthRejection::unauthenticated());
-    }
-
-    Ok(Some(BearerToken(authorization.credentials.to_owned())))
+/// A malformed credential, for `reason`.
+fn malformed<T>(reason: MalformedReason) -> Presented<T> {
+    Presented::Malformed(Malformed::new(reason))
 }
 
 /// Whether `token` is an RFC 6750 section 2.1 `b64token`:
@@ -230,108 +236,93 @@ fn is_b64token(token: &str) -> bool {
 /// The credentials are base64, and the user-id is everything before the *first*
 /// colon — a password may hold one, a user-id may not.
 ///
-/// # Errors
-///
-/// When an `Authorization` field is present and is not a well-formed basic
-/// credential: two such fields, a value that is not visible ASCII, an empty
-/// scheme, a different scheme, base64 that does not decode, bytes that are not
-/// UTF-8, or no colon at all.
-pub fn basic(parts: &Parts) -> Result<Option<Credentials>, AuthRejection> {
-    let Some(authorization) = parse::authorization(parts)? else {
-        return Ok(None);
-    };
-
-    if !parse::scheme_is(authorization.scheme, "basic") {
-        return Err(AuthRejection::unauthenticated());
-    }
-
-    let decoded =
-        base64::decode(authorization.credentials).ok_or_else(AuthRejection::unauthenticated)?;
-
-    // RFC 7617 section 2.1: `charset="UTF-8"` is the only charset defined.
-    let text = String::from_utf8(decoded).map_err(|_| AuthRejection::unauthenticated())?;
-
-    let (username, password) = text
-        .split_once(':')
-        .ok_or_else(AuthRejection::unauthenticated)?;
-
-    Ok(Some(Credentials {
-        username: username.to_owned(),
-        password: password.to_owned(),
-    }))
+/// [`Malformed`](Presented::Malformed) when an `Authorization` field is present
+/// and is not a well-formed basic credential: two such fields, a value that is
+/// not visible ASCII, an empty scheme, a different scheme, base64 that does not
+/// decode, bytes that are not UTF-8, or no colon at all.
+pub fn basic(parts: &Parts) -> Presented<Credentials> {
+    parse::authorization(parts).and_then(|authorization| {
+        if !parse::scheme_is(authorization.scheme, "basic") {
+            return malformed(MalformedReason::OtherScheme);
+        }
+        let Some(decoded) = base64::decode(authorization.credentials) else {
+            return malformed(MalformedReason::BadCredentials);
+        };
+        // RFC 7617 section 2.1: `charset="UTF-8"` is the only charset defined.
+        let Ok(text) = String::from_utf8(decoded) else {
+            return malformed(MalformedReason::BadCredentials);
+        };
+        let Some((username, password)) = text.split_once(':') else {
+            return malformed(MalformedReason::BadCredentials);
+        };
+        Presented::Present(Credentials {
+            username: username.to_owned(),
+            password: password.to_owned(),
+        })
+    })
 }
 
 /// Reads the credentials of an arbitrary RFC 9110 authentication scheme.
 ///
-/// # Errors
-///
-/// When an `Authorization` field is present and is not a credential of
-/// `scheme`: two such fields, a value that is not visible ASCII, an empty
-/// scheme, or a different scheme.
-pub fn http_scheme(
-    parts: &Parts,
-    scheme: &str,
-) -> Result<Option<SchemeCredentials>, AuthRejection> {
-    let Some(authorization) = parse::authorization(parts)? else {
-        return Ok(None);
-    };
-
-    if !parse::scheme_is(authorization.scheme, scheme) {
-        return Err(AuthRejection::unauthenticated());
-    }
-
-    Ok(Some(SchemeCredentials {
-        scheme: authorization.scheme.to_owned(),
-        credentials: authorization.credentials.to_owned(),
-    }))
+/// [`Malformed`](Presented::Malformed) when an `Authorization` field is present
+/// and is not a credential of `scheme`: two such fields, a value that is not
+/// visible ASCII, an empty scheme, or a different scheme.
+pub fn http_scheme(parts: &Parts, scheme: &str) -> Presented<SchemeCredentials> {
+    parse::authorization(parts).and_then(|authorization| {
+        if !parse::scheme_is(authorization.scheme, scheme) {
+            return malformed(MalformedReason::OtherScheme);
+        }
+        Presented::Present(SchemeCredentials {
+            scheme: authorization.scheme.to_owned(),
+            credentials: authorization.credentials.to_owned(),
+        })
+    })
 }
 
 /// Reads an API key from the field its scheme declared.
 ///
-/// # Errors
+/// [`Malformed`](Presented::Malformed) when `location` is
+/// [`KeyLocation::Header`] and `name` is `Authorization` in any case, whether
+/// or not the request carries it: that field belongs to the HTTP
+/// authentication schemes above, so it is never an API key.
 ///
-/// When `location` is [`KeyLocation::Header`] and `name` is `Authorization`
-/// in any case, whether or not the request carries it: that field belongs to
-/// the HTTP authentication schemes above, so it is never an API key.
-///
-/// When the key is present and cannot be read: a header field sent twice, a
-/// header field or the first cookie of that name whose value is not ASCII, or
-/// a first query pair of that name whose percent-decoded value is not UTF-8. A later pair or cookie never
-/// stands in for the first.
-pub fn api_key(
-    parts: &Parts,
-    location: KeyLocation,
-    name: &str,
-) -> Result<Option<ApiKey>, AuthRejection> {
+/// [`Malformed`](Presented::Malformed) too when the key is present and cannot
+/// be read: a header field sent twice, a header field or the first cookie of
+/// that name whose value is not ASCII, or a first query pair of that name whose
+/// percent-decoded value is not UTF-8. A later pair or cookie never stands in
+/// for the first.
+pub fn api_key(parts: &Parts, location: KeyLocation, name: &str) -> Presented<ApiKey> {
     match location {
         KeyLocation::Header => {
             // `#[derive(SecurityScheme)]` refuses this at compile time; a
             // hand-written `Carries` reaches it here, in every build.
             if name.eq_ignore_ascii_case(AUTHORIZATION.as_str()) {
-                return Err(AuthRejection::unauthenticated());
+                return malformed(MalformedReason::ReservedField);
             }
 
             let mut fields = parts.headers.get_all(name).into_iter();
             let Some(field) = fields.next() else {
-                return Ok(None);
+                return Presented::Absent;
             };
             // A key is one value, so two fields are refused as two
             // `Authorization` fields are: choosing either would let an
             // appending proxy pick the credential.
             if fields.next().is_some() {
-                return Err(AuthRejection::unauthenticated());
+                return malformed(MalformedReason::Repeated);
             }
-            let value = field
-                .to_str()
-                .map_err(|_| AuthRejection::unauthenticated())?;
-            Ok(Some(ApiKey(value.to_owned())))
+            let Ok(value) = field.to_str() else {
+                return malformed(MalformedReason::NotText);
+            };
+            Presented::Present(ApiKey(value.to_owned()))
         }
 
-        KeyLocation::Query => Ok(query::value(parts, name)?.map(ApiKey)),
+        KeyLocation::Query => query::value(parts, name).map(ApiKey),
 
-        KeyLocation::Cookie => Ok(crate::http::cookie::value_of(&parts.headers, name)
-            .map_err(|_| AuthRejection::unauthenticated())?
-            .map(|value| ApiKey(value.to_owned()))),
+        KeyLocation::Cookie => match crate::http::cookie::value_of(&parts.headers, name) {
+            Ok(Some(value)) => Presented::Present(ApiKey(value.to_owned())),
+            Ok(None) => Presented::Absent,
+            Err(_) => malformed(MalformedReason::NotText),
+        },
     }
 }
 
@@ -366,29 +357,27 @@ impl PeerCertificates {
 
 /// Reads the peer's certificate chain.
 ///
-/// `Ok(None)` for every way of not having presented one: the connection is not
-/// TLS, the listener does not verify client certificates, the peer sent none,
-/// or this build has no `tls` feature and no embedding recorded a chain through
+/// [`Absent`](Presented::Absent) for every way of not having presented one: the
+/// connection is not TLS, the listener does not verify client certificates,
+/// the peer sent none, or this build has no `tls` feature and no embedding
+/// recorded a chain through
 /// [`Connection::from_tls_peer`](crate::extract::connection::Connection::from_tls_peer).
+/// Never [`Malformed`](Presented::Malformed): the handshake already refused a
+/// chain it could not read.
 ///
 /// Not gated on `tls`: a service behind a TLS-terminating proxy sees no
 /// certificates even with it on, so the deployment, not the feature, decides.
-///
-/// # Errors
-///
-/// Never. The signature matches every other reader here so that a derived
-/// [`Carries`] needs no special case for this one.
-pub fn peer_certificates(parts: &Parts) -> Result<Option<PeerCertificates>, AuthRejection> {
+pub fn peer_certificates(parts: &Parts) -> Presented<PeerCertificates> {
     let Some(connection) = parts
         .extensions
         .get::<crate::extract::connection::Connection>()
     else {
-        return Ok(None);
+        return Presented::Absent;
     };
     if connection.peer_certificates().is_empty() {
-        return Ok(None);
+        return Presented::Absent;
     }
-    Ok(Some(PeerCertificates(connection.clone())))
+    Presented::Present(PeerCertificates(connection.clone()))
 }
 
 #[cfg(test)]

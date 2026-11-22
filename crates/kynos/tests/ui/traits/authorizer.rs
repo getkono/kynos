@@ -2,7 +2,10 @@
 //! never says how it authorizes them.
 use kynos::{
     error::rejection::AuthRejection,
-    security::{Authenticates, Authenticator, Scope, carrier::BearerToken, schemes::Bearer},
+    security::{
+        Authenticates, Authenticator, Head, Scope, carrier::BearerToken,
+        carrier::presented::Presented, schemes::Bearer,
+    },
 };
 
 #[derive(Clone, Copy)]
@@ -21,7 +24,12 @@ impl Scope for Grant {
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Tokens {
-    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        _: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
         Err(AuthRejection::unauthenticated())
     }
 }
