@@ -212,8 +212,10 @@ impl OperationCx<'_> {
     }
 
     /// Declares the 408 a stalled body is answered with, where a Kynos body
-    /// extractor reads the body. Called once every other contributor is
-    /// described, so the order they were described in decides nothing.
+    /// extractor reads the body and `router_declares` it, as
+    /// [`Router::declare_body_stall`](crate::Router::declare_body_stall)
+    /// sets. Called once every other contributor is described, so the order
+    /// they were described in decides nothing.
     ///
     /// A 408 the operation already declares is the application's account of
     /// that status, so it keeps its description and its place, and only its
@@ -221,13 +223,13 @@ impl OperationCx<'_> {
     /// [`add_responses`](Self::add_responses) unions them. Otherwise the 408
     /// is added after every other status.
     #[cfg(feature = "server")]
-    pub(crate) fn declare_body_stall(&mut self) {
-        if !self.reads_body {
+    pub(crate) fn declare_body_stall(&mut self, router_declares: bool) {
+        if !(router_declares && self.reads_body) {
             return;
         }
         let stalled = crate::error::rejection::BodyRejection::stalled_responses(self.registry);
         let key = StatusPattern::Code(408).to_string();
-        let declared = match self.operation.responses.responses.get(&key) {
+        let written = match self.operation.responses.responses.get(&key) {
             Some(RefOr::Item(response)) => Some(response.description.clone()),
             _ => None,
         };
@@ -235,7 +237,7 @@ impl OperationCx<'_> {
         self.add_responses(&stalled);
 
         if let (Some(description), Some(RefOr::Item(response))) =
-            (declared, self.operation.responses.responses.get_mut(&key))
+            (written, self.operation.responses.responses.get_mut(&key))
         {
             response.description = description;
         }

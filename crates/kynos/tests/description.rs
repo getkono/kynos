@@ -1884,6 +1884,41 @@ fn a_408_the_operation_declares_keeps_its_description_and_place_beside_the_stall
     assert!(at("409") < at("408"), "{statuses:?}");
 }
 
+/// A router built for a server with no idle timer declares no stall: the
+/// operation's own 408 publishes its type alone, and an operation with none
+/// declares no 408 at all.
+#[cfg(feature = "server")]
+#[test]
+fn a_router_declaring_no_stall_leaves_every_408_to_the_application() {
+    #[kynos::post("/notes")]
+    async fn note(
+        kynos::extract::body::text::Text(note): kynos::extract::body::text::Text,
+    ) -> NoContent {
+        let _ = note;
+        NoContent
+    }
+
+    let document = Router::<()>::new()
+        .declare_body_stall(false)
+        .mount(kynos::routes![draft, note])
+        .openapi()
+        .expect("a describable router");
+
+    let response = declared_problem(&operation(&document, "/drafts"), "408");
+    assert_eq!(
+        published(&response["content"]["application/problem+json"]["schema"]),
+        ["https://errors.example.com/draft-store"],
+        "{response}"
+    );
+    assert!(
+        !operation(&document, "/notes")
+            .responses
+            .responses
+            .contains_key("408"),
+        "an operation with no 408 of its own declares none"
+    );
+}
+
 // --- Scope in what a 403 publishes ------------------------------------------
 //
 // `AuthRejection::forbidden_as` puts an application's own problem type on a 403
@@ -2642,7 +2677,7 @@ fn a_nested_routers_external_docs_are_used_only_when_the_outer_declares_none() {
     );
 }
 
-/// The four application-wide policies are the root router's alone, so an
+/// The application-wide policies are the root router's alone, so an
 /// absorbed router that sets one is refused rather than silently overridden,
 /// through `nest` and `merge` alike. Setting one to its default counts too:
 /// the root's own value would replace it just the same.
@@ -2655,7 +2690,7 @@ fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
     };
 
     type Set = fn(Router<()>) -> Router<()>;
-    let policies: [(&str, Set); 4] = [
+    let policies: Vec<(&str, Set)> = vec![
         ("not_found", |router| {
             router.not_found(FallbackPolicy::Empty)
         }),
@@ -2667,6 +2702,10 @@ fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
         }),
         ("trusted_proxies", |router| {
             router.trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
+        }),
+        #[cfg(feature = "server")]
+        ("declare_body_stall", |router| {
+            router.declare_body_stall(true)
         }),
     ];
     let refused = |policy| Violation {

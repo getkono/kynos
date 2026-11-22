@@ -270,7 +270,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 dispatch::recovery::describe(&mut cx);
             }
             #[cfg(feature = "server")]
-            cx.declare_body_stall();
+            cx.declare_body_stall(self.body_stall != Some(false));
 
             // The one place that sees every scope's tags, the endpoint's own
             // included.

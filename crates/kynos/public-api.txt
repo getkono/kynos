@@ -6266,6 +6266,7 @@ impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Rou
 pub fn kynos::router::Router<C, P, I, S>::build(self, C) -> kynos::error::Result<kynos::router::service::Service<C>> where C: core::marker::Send + core::marker::Sync + 'static
 impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
 pub fn kynos::router::Router<C, P, I, S>::catch_panics(self) -> kynos::router::Router<C, kynos::middleware::catch_panic::Catch, I, S>
+pub fn kynos::router::Router<C, P, I, S>::declare_body_stall(self, bool) -> Self
 pub fn kynos::router::Router<C, P, I, S>::deny_unchecked_schemas(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::docs<M>(self, kynos::router::docs::Docs<M>) -> Self where C: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::router::Router<C, P, I, S>::external_docs(self, kynos_openapi::model::external_docs::ExternalDocumentation) -> Self
@@ -8681,6 +8682,7 @@ impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Rou
 pub fn kynos::router::Router<C, P, I, S>::build(self, C) -> kynos::error::Result<kynos::router::service::Service<C>> where C: core::marker::Send + core::marker::Sync + 'static
 impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
 pub fn kynos::router::Router<C, P, I, S>::catch_panics(self) -> kynos::router::Router<C, kynos::middleware::catch_panic::Catch, I, S>
+pub fn kynos::router::Router<C, P, I, S>::declare_body_stall(self, bool) -> Self
 pub fn kynos::router::Router<C, P, I, S>::deny_unchecked_schemas(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::docs<M>(self, kynos::router::docs::Docs<M>) -> Self where C: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::router::Router<C, P, I, S>::external_docs(self, kynos_openapi::model::external_docs::ExternalDocumentation) -> Self
@@ -11029,6 +11031,7 @@ impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Rou
 pub fn kynos::router::Router<C, P, I, S>::build(self, C) -> kynos::error::Result<kynos::router::service::Service<C>> where C: core::marker::Send + core::marker::Sync + 'static
 impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
 pub fn kynos::router::Router<C, P, I, S>::catch_panics(self) -> kynos::router::Router<C, kynos::middleware::catch_panic::Catch, I, S>
+pub fn kynos::router::Router<C, P, I, S>::declare_body_stall(self, bool) -> Self
 pub fn kynos::router::Router<C, P, I, S>::deny_unchecked_schemas(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::docs<M>(self, kynos::router::docs::Docs<M>) -> Self where C: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::router::Router<C, P, I, S>::external_docs(self, kynos_openapi::model::external_docs::ExternalDocumentation) -> Self

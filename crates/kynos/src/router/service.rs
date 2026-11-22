@@ -12,6 +12,10 @@ pub struct Service<C> {
     #[cfg(feature = "docs")]
     published: crate::router::docs::render::Published,
     handler: Arc<dyn ErasedService>,
+    /// Whether the router declared the 408 a stalled body is answered with,
+    /// which the server holds its idle timer to.
+    #[cfg(feature = "server")]
+    body_stall: bool,
     _context: std::marker::PhantomData<fn() -> C>,
 }
 
@@ -155,8 +159,23 @@ impl<C> Service<C> {
             #[cfg(feature = "docs")]
             published: crate::router::docs::render::Published::default(),
             handler: Arc::new(Dispatch(handler)),
+            #[cfg(feature = "server")]
+            body_stall: true,
             _context: std::marker::PhantomData,
         }
+    }
+
+    /// Records what `Router::declare_body_stall` set.
+    #[cfg(feature = "server")]
+    pub(crate) fn with_body_stall(mut self, declared: bool) -> Self {
+        self.body_stall = declared;
+        self
+    }
+
+    /// Whether the router declared the 408 a stalled body is answered with.
+    #[cfg(feature = "server")]
+    pub(crate) fn declares_body_stall(&self) -> bool {
+        self.body_stall
     }
 
     /// Keeps the references `Router::build` rendered, so an edit to the

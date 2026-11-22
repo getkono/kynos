@@ -588,7 +588,8 @@ pub enum BodyRejection {
     /// over HTTP/1 (RFC 9110 §15.5.9). Exists only with the `server` feature,
     /// the one thing that makes a body stall. The router, not this type's
     /// [`Responses`], declares the 408, on each operation a body extractor
-    /// reads.
+    /// reads, as [`Router::declare_body_stall`](crate::Router::declare_body_stall)
+    /// says.
     #[cfg(feature = "server")]
     #[error("the request body stalled")]
     Stalled {
@@ -739,8 +740,8 @@ impl BodyRejection {
 }
 
 /// Every status [`IntoProblem::statuses`] lists but the 408: whether a body
-/// can stall is the server's setting, so the router declares it, after every
-/// other contributor to the operation.
+/// can stall is the server's setting, so the router declares it, as
+/// `Router::declare_body_stall` (with `server`) says.
 impl Responses for BodyRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         problem_responses(
