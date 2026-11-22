@@ -114,5 +114,5 @@ stream.binary_stream_16	3777	9	1740
 stream.compressed_stream_gzip	364053	73	335379
 stream.json_seq_16	26762	44	6388
 stream.ndjson_16	26755	44	6388
-stream.sse_16	41100	49	6708
-stream.sse_keepalive	44320	52	6836
+stream.sse_16	41566	49	6708
+stream.sse_keepalive	44786	52	6836
