@@ -2,8 +2,8 @@
 //!
 //! A marker lets [`Binary`](crate::extract::body::binary::Binary) state what
 //! its bytes are, `JsonAs` name the JSON media type its document is carried
-//! under, and [`TextAs`](crate::extract::body::text_as::TextAs) the `text/*`
-//! type its string is; a vendor type needs only a unit struct implementing
+//! under, and [`TextAs`](crate::extract::body::text_as::TextAs) the UTF-8
+//! text type its string is; a vendor type needs only a unit struct implementing
 //! [`MediaType`]. Markers type request and response bodies alike, including a
 //! ranged [`Served`](crate::response::range::served::Served) response, which
 //! may instead name a set of them with [`MediaRanges`] and choose one per
@@ -40,8 +40,9 @@ use kynos_openapi::model::body::mime_names;
 /// declares. So does a `QueryString` marker naming neither `application/json`
 /// nor an RFC 6839 `+json` type, since JSON is the only media type a query
 /// string is decoded as, and a `JsonAs` marker naming neither, since its body
-/// is decoded as JSON. A `TextAs` marker must name a `text/*` type and declare
-/// no `charset` but `utf-8`, since UTF-8 is the only text Kynos decodes.
+/// is decoded as JSON. A `TextAs` marker declares no `charset` but `utf-8`,
+/// since UTF-8 is the only text Kynos decodes, and names a `text/*` type
+/// unless it declares `charset=utf-8` outright.
 pub trait MediaType {
     /// The media type, as it appears in a `Content-Type` header.
     const MEDIA_TYPE: &'static str;
@@ -85,10 +86,14 @@ pub(crate) const fn is_text(media_type: &str) -> bool {
 /// Whether a media type declares no `charset` parameter, or declares `utf-8`
 /// in any ASCII case, quoted or not; usable in a constant.
 pub(crate) const fn is_utf8_or_unstated(media_type: &str) -> bool {
-    match charset(media_type) {
-        Some(charset) => super::eq_ignore_ascii_case(charset, b"utf-8"),
-        None => true,
-    }
+    charset(media_type).is_none() || declares_utf8(media_type)
+}
+
+/// Whether a media type states `charset=utf-8`, as [`is_utf8_or_unstated`]
+/// reads it: outside `text/*`, which RFC 6657 defaults to UTF-8, the only
+/// evidence a body is text.
+pub(crate) const fn declares_utf8(media_type: &str) -> bool {
+    matches!(charset(media_type), Some(charset) if super::eq_ignore_ascii_case(charset, b"utf-8"))
 }
 
 /// The value of the first `charset` parameter a media type declares, trimmed
