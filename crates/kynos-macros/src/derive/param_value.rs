@@ -127,6 +127,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
 /// The impls for a newtype, each delegating to its one field: a tuple
 /// struct's, or a named one's that `#[serde(transparent)]` writes as itself.
+/// That attribute makes serde read and write the struct through its field,
+/// exactly as a tuple newtype; any other named struct is an object.
 fn newtype(input: &DeriveInput, data: &DataStruct) -> syn::Result<proc_macro2::TokenStream> {
     let field = match &data.fields {
         Fields::Unnamed(fields) if fields.unnamed.len() == 1 => &fields.unnamed[0],
