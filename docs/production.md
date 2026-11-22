@@ -104,6 +104,14 @@ results, so none of that advice is here, and nothing below tunes a cost.
   `header_read_timeout` and `idle_timeout` above the proxy's instead also
   lengthens what a slow client may hold, so do that only where the proxy alone
   reaches the service.
+- Change `Http1Config::header_read_timeout` and `Http2Config::idle_timeout`
+  together, to one value. They are one bound, on how long a connection may
+  wait for its next request, split across the two protocols' configs, and a
+  connection's first head is held to whichever passes first. Raising only one
+  therefore leaves every connection's first head closing at 30 seconds, and
+  the other protocol's idle connections too. No `Server` setter sets
+  both: `Server::http1` and `Server::http2` each replace their whole config,
+  so a server-wide value would hold or vanish by call order.
 - Size the proxy's upstream pool, summed across every proxy instance, below
   `max_connections`: each pooled connection holds a permit and a descriptor
   while idle, and connections past the cap wait in the listen queue.

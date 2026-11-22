@@ -103,6 +103,13 @@ pub struct Http2Config {
     /// connection's first request head, so it also bounds that wait, counted
     /// from accept under either protocol, together with HTTP/1's
     /// `header_read_timeout`: whichever passes first closes the connection.
+    ///
+    /// So this and `Http1Config::header_read_timeout` share one job: how long
+    /// a connection may wait for its next request. To change that bound for
+    /// every client, set both to the same value. No `Server` setter does it
+    /// for you, because `Server::http1` and `Server::http2` each replace their
+    /// whole config, so a server-wide value would hold or vanish depending on
+    /// call order.
     pub idle_timeout: Option<Duration>,
     /// Maximum decoded request header-list size.
     pub max_header_list_size: u32,
