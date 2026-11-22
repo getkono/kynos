@@ -15,11 +15,11 @@ help: the trait `ParamValue` is not implemented for `Point`
              IpAddr
              Ipv4Addr
              Ipv6Addr
-             bool
-             char
-             chrono::naive::date::NaiveDate
-             chrono::naive::time::NaiveTime
-             f32
+             NonZero<i16>
+             NonZero<i32>
+             NonZero<i64>
+             NonZero<i8>
+             NonZero<u16>
            and $N others
 note: required by a bound in `carried_by_one_parameter`
   --> tests/ui/macros/query_params_object_field.rs:33:9
