@@ -1,4 +1,6 @@
-//! Writing `text/plain`, or the `text/*` type a `TextAs` names, as a response.
+//! Writing `text/plain`, or the type a `TextAs` names, as a response: a
+//! `text/*` type, or a type outside it that states `charset=utf-8`, which is
+//! sent as-is.
 
 use kynos_openapi::model::body::mime_names;
 
