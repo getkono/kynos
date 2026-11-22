@@ -275,8 +275,13 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
 ///
 /// Each placement files the header on the declared responses it reaches, under
 /// whatever key each is already declared at, and never mints an entry, a range
-/// included. It leaves a response held as a `$ref` and a header that response
-/// already declares alone.
+/// included. It leaves a response held as a `$ref` alone, and a header that
+/// response already declares under the same name, in any case, keeps its
+/// entry, unless the group's field is `required` and the group not
+/// [`REPEATABLE`]: [`Continued::with_headers`] inserts such a field over the
+/// chain's, so its declaration replaces the response's.
+///
+/// [`REPEATABLE`]: crate::extract::params::header::HeaderParams::REPEATABLE
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Placement {

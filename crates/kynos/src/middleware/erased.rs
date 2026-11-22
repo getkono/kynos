@@ -113,7 +113,12 @@ where
             for (name, header) in headers {
                 // A `$ref` is already reachable through `components`.
                 if let RefOr::Item(header) = header {
-                    operation.place_response_header(I::ADDS_ON, name, &header);
+                    // A required field of a group that does not repeat is
+                    // inserted over the chain's on every response it covers,
+                    // so the document carries the value sent.
+                    let replaces =
+                        !<I::Adds as HeaderParams>::REPEATABLE && header.required == Some(true);
+                    operation.place_response_header(I::ADDS_ON, name, &header, replaces);
                 }
             }
         }

@@ -169,7 +169,11 @@ author knows, so the author declares it:
 the interceptor is described is still reached. `Success` is filed on the spot,
 as it always was, so a default interceptor's document is unchanged. None of the
 three mints a response or reaches into a `$ref`, and a header the response
-already declares under that name keeps its entry.
+already declares under that name, in any case, keeps its entry — unless the
+interceptor's field is `required` and its group not `REPEATABLE`. Such a field
+is inserted over the chain's on every response, so its declaration replaces the
+operation's, and the `const` `SecurityHeaders` documents on an `Sse` 200 is the
+`no-store` it sends rather than the stream's `no-cache`.
 
 `Every` and `Problems` are claims, and the framework does not narrow them to
 what passes through the interceptor. They overstate by any response its

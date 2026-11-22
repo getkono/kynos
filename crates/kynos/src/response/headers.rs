@@ -94,24 +94,35 @@ pub(crate) fn declare_on_each(
         // declaring a field on it would declare it on every other use.
         if let RefOr::Item(response) = response {
             for (name, header) in declared {
-                let held = response
-                    .headers
-                    .keys()
-                    .position(|held| held.eq_ignore_ascii_case(name));
-                match held {
-                    Some(_) if !overwrite => {}
-                    Some(index) => {
-                        // Under the declared spelling, at the held position.
-                        response.headers.shift_remove_index(index);
-                        response
-                            .headers
-                            .shift_insert(index, name.clone(), header.clone());
-                    }
-                    None => {
-                        response.headers.insert(name.clone(), header.clone());
-                    }
-                }
+                declare_on(response, name, header, overwrite);
             }
+        }
+    }
+}
+
+/// Declares `header` under `name` on `response`; a name it already declares,
+/// in any case (RFC 9110 section 5.1), is replaced only where `overwrite`.
+pub(crate) fn declare_on(
+    response: &mut kynos_openapi::Response,
+    name: &str,
+    header: &RefOr<Header>,
+    overwrite: bool,
+) {
+    let held = response
+        .headers
+        .keys()
+        .position(|held| held.eq_ignore_ascii_case(name));
+    match held {
+        Some(_) if !overwrite => {}
+        Some(index) => {
+            // Under the declared spelling, at the held position.
+            response.headers.shift_remove_index(index);
+            response
+                .headers
+                .shift_insert(index, name.to_owned(), header.clone());
+        }
+        None => {
+            response.headers.insert(name.to_owned(), header.clone());
         }
     }
 }

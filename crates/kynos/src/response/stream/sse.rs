@@ -101,12 +101,10 @@ use crate::{
 ///
 /// A [`WithHeaders`](crate::response::headers::WithHeaders) group naming
 /// either field replaces it, on the wire and in the description, so one set
-/// there is the only value sent. An interceptor setting one, as
-/// [`SecurityHeaders`](crate::middleware::security_headers::SecurityHeaders)
-/// sets `Cache-Control: no-store`, replaces it on the wire but not in the
-/// description, where a field the operation declares keeps its entry: call
-/// `cacheable` (or `buffered`) beneath it, and the interceptor's own
-/// declaration is the one the document carries.
+/// there is the only value sent. So does an interceptor that always sends one,
+/// as [`SecurityHeaders`](crate::middleware::security_headers::SecurityHeaders)
+/// sends `Cache-Control: no-store`: its required field replaces the stream's,
+/// and `no-store` stops the replay too.
 #[derive(Debug)]
 pub struct Sse<S, const CACHEABLE: bool = false, const BUFFERED: bool = false> {
     /// The stream of events.

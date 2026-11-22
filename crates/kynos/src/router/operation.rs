@@ -73,7 +73,7 @@ pub struct OperationCx<'a> {
     links: Vec<crate::extract::link::Target>,
     /// Response headers whose placement reads the finished set of responses,
     /// filed by [`finish`](Self::finish) in the order they were placed.
-    placed: Vec<(Deferred, String, kynos_openapi::Header)>,
+    placed: Vec<(Deferred, String, kynos_openapi::Header, bool)>,
 }
 
 impl<'a> OperationCx<'a> {
@@ -93,14 +93,14 @@ impl<'a> OperationCx<'a> {
     #[must_use]
     pub fn finish(mut self) -> kynos_openapi::Operation {
         let responses = &mut self.operation.responses.responses;
-        for (placement, name, header) in &self.placed {
+        for (placement, name, header, replaces) in &self.placed {
             let keys: Vec<String> = responses
                 .iter()
                 .filter(|(_, response)| reached_by(*placement, response))
                 .map(|(key, _)| key.clone())
                 .collect();
             for key in keys {
-                declare_header(responses, &key, name, header);
+                declare_header(responses, &key, name, header, *replaces);
             }
         }
         self.operation
@@ -201,8 +201,8 @@ impl OperationCx<'_> {
     ///
     /// The response filed under `status` gains the header, and is created with
     /// a generic description if the operation does not declare one yet. A
-    /// header already declared under that name is left alone, and a response
-    /// held as a `$ref` is not reached into.
+    /// header already declared under that name, in any case, is left alone,
+    /// and a response held as a `$ref` is not reached into.
     ///
     /// A *range* pattern never mints its own entry. It reaches the responses
     /// the operation already declares within it, and contributes nothing when
@@ -214,8 +214,18 @@ impl OperationCx<'_> {
         name: impl Into<String>,
         header: &kynos_openapi::Header,
     ) {
-        let name = name.into();
+        self.file_response_header(status, &name.into(), header, false);
+    }
 
+    /// [`add_response_header`](Self::add_response_header), replacing a header
+    /// already declared under that name where `replaces`.
+    fn file_response_header(
+        &mut self,
+        status: StatusPattern,
+        name: &str,
+        header: &kynos_openapi::Header,
+        replaces: bool,
+    ) {
         let StatusPattern::Code(code) = status else {
             let covered: Vec<String> = self
                 .operation
@@ -230,7 +240,13 @@ impl OperationCx<'_> {
                 .collect();
 
             for key in covered {
-                declare_header(&mut self.operation.responses.responses, &key, &name, header);
+                declare_header(
+                    &mut self.operation.responses.responses,
+                    &key,
+                    name,
+                    header,
+                    replaces,
+                );
             }
 
             return;
@@ -242,7 +258,13 @@ impl OperationCx<'_> {
             .responses
             .entry(key.clone())
             .or_insert_with(|| RefOr::Item(Response::new(describe_code(code))));
-        declare_header(&mut self.operation.responses.responses, &key, &name, header);
+        declare_header(
+            &mut self.operation.responses.responses,
+            &key,
+            name,
+            header,
+            replaces,
+        );
     }
 
     /// Declares an interceptor's response header on the responses `placement`
@@ -251,20 +273,25 @@ impl OperationCx<'_> {
     /// [`Placement::Success`] files it now, on the successes declared so far.
     /// The others read every response the operation ends up declaring, so
     /// they are filed by [`finish`](Self::finish), after the last contributor.
+    ///
+    /// A header already declared under that name, in any case, keeps its
+    /// entry unless `replaces`: the interceptor sends its own value over the
+    /// chain's on every response it covers.
     pub(crate) fn place_response_header(
         &mut self,
         placement: Placement,
         name: String,
         header: &kynos_openapi::Header,
+        replaces: bool,
     ) {
         let deferred = match placement {
             Placement::Success => {
-                return self.add_response_header(StatusPattern::Success, name, header);
+                return self.file_response_header(StatusPattern::Success, &name, header, replaces);
             }
             Placement::Every => Deferred::Every,
             Placement::Problems => Deferred::Problems,
         };
-        self.placed.push((deferred, name, header.clone()));
+        self.placed.push((deferred, name, header.clone(), replaces));
     }
 
     /// Sets the operation identifier.
@@ -365,19 +392,23 @@ fn reached_by(placement: Deferred, response: &RefOr<Response>) -> bool {
     }
 }
 
-/// Files `header` under `name` on the response at `key`, leaving a name already
-/// declared alone and never reaching into a `$ref`.
+/// Files `header` under `name` on the response at `key`, never reaching into a
+/// `$ref`; a name already declared, in any case, is replaced only where
+/// `replaces`.
 fn declare_header(
     responses: &mut kynos_openapi::Map<RefOr<kynos_openapi::Response>>,
     key: &str,
     name: &str,
     header: &kynos_openapi::Header,
+    replaces: bool,
 ) {
     if let Some(RefOr::Item(response)) = responses.get_mut(key) {
-        response
-            .headers
-            .entry(name.to_owned())
-            .or_insert_with(|| RefOr::Item(header.clone()));
+        crate::response::headers::declare_on(
+            response,
+            name,
+            &RefOr::Item(header.clone()),
+            replaces,
+        );
     }
 }
 
