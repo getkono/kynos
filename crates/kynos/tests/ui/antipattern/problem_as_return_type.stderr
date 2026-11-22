@@ -8,7 +8,7 @@ error[E0277]: `kynos::Problem` does not declare which responses it can produce
    = note: a handler's return type has to say what a consumer might receive; derive it with `#[derive(kynos::Reply)]`, or `#[derive(kynos::ApiError)]` for an error type
    = help: the following other types implement trait `kynos::response::Responses`:
              ()
-             Accepted<T>
+             Accepted<T, L>
              AtCapacity<T>
              AuthRejection
              BinaryStream<S, M>

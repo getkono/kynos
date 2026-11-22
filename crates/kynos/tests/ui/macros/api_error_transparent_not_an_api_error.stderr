@@ -46,7 +46,7 @@ error[E0277]: `std::io::Error` cannot be turned into a response
    = note: a bare `StatusCode` is deliberately not one: a status the description does not list is a status it is wrong about. Use `#[derive(Reply)]` when an operation has several
    = help: the following other types implement trait `IntoResponse`:
              ()
-             Accepted<T>
+             Accepted<T, L>
              AtCapacity<T>
              AuthRejection
              BinaryStream<S, M>
@@ -65,7 +65,7 @@ error[E0277]: `std::io::Error` does not declare which responses it can produce
    = note: a handler's return type has to say what a consumer might receive; derive it with `#[derive(kynos::Reply)]`, or `#[derive(kynos::ApiError)]` for an error type
    = help: the following other types implement trait `kynos::response::Responses`:
              ()
-             Accepted<T>
+             Accepted<T, L>
              AtCapacity<T>
              AuthRejection
              BinaryStream<S, M>

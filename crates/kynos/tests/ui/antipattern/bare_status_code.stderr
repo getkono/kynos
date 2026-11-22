@@ -9,7 +9,7 @@ error[E0277]: `StatusCode` cannot be turned into a response
   = note: a bare `StatusCode` is deliberately not one: a status the description does not list is a status it is wrong about. Use `#[derive(Reply)]` when an operation has several
   = help: the following other types implement trait `IntoResponse`:
             ()
-            Accepted<T>
+            Accepted<T, L>
             AtCapacity<T>
             AuthRejection
             BinaryStream<S, M>

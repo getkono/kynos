@@ -157,13 +157,45 @@ async fn upsert_user(Json(user): Json<User>) -> CreateReply {
     }
 }
 
+/// A bulk import, as its status monitor reports it.
+#[derive(Schema, Serialize)]
+struct Import {
+    id: u64,
+    done: bool,
+}
+
+/// What `/users/imports/{id}` captures.
+#[allow(dead_code)]
+#[derive(Schema, PathParams)]
+struct ImportPath {
+    id: u64,
+}
+
+/// Reports how far an import has got: the status monitor a 202 points at.
+#[kynos::get("/users/imports/{id}")]
+async fn get_import(Path(path): Path<ImportPath>) -> Json<Import> {
+    Json(Import {
+        id: path.id,
+        done: false,
+    })
+}
+
 /// Queues a bulk import.
 ///
-/// 202 says the work is accepted and not done. The body describes where to
-/// watch it, which is the only thing a client can act on.
+/// 202 says the work is accepted and not done, and `Location` says where to
+/// watch it, which is the only thing a client can act on. `Accepted::at` puts
+/// the monitor in the type, so the description declares `Location` required;
+/// a 202 with nothing to watch is `Accepted::new`, and declares no header.
 #[kynos::post("/users/imports")]
-async fn queue_import(Json(user): Json<User>) -> Accepted<Json<User>> {
-    Accepted::new(Json(user))
+async fn queue_import(Json(user): Json<User>) -> Accepted<Json<Import>, Location> {
+    let import = Import {
+        id: user.id,
+        done: false,
+    };
+    Accepted::at(
+        get_import::relative_uri(ImportPath { id: import.id }),
+        Json(import),
+    )
 }
 
 /// Lists users, with quota headers.
@@ -240,6 +272,7 @@ async fn main() -> kynos::Result<()> {
         create_user,
         upsert_user,
         queue_import,
+        get_import,
         list_users,
         download_invoice,
         download_recording,

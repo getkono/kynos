@@ -5801,31 +5801,34 @@ impl core::marker::Unpin for kynos::error::Error
 impl core::marker::UnsafeUnpin for kynos::error::Error
 impl !core::panic::unwind_safe::RefUnwindSafe for kynos::error::Error
 impl !core::panic::unwind_safe::UnwindSafe for kynos::error::Error
-pub struct kynos::prelude::Accepted<T>
+pub struct kynos::prelude::Accepted<T, L: kynos::response::status::AcceptedLocation>
 pub kynos::prelude::Accepted::body: T
+pub kynos::prelude::Accepted::location: L
+impl<T> kynos::response::status::Accepted<T, kynos::response::status::Location>
+pub fn kynos::response::status::Accepted<T, kynos::response::status::Location>::at(impl core::convert::Into<kynos::response::status::Location>, T) -> Self
 impl<T> kynos::response::status::Accepted<T>
 pub fn kynos::response::status::Accepted<T>::new(T) -> Self
-impl<T: core::clone::Clone> core::clone::Clone for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::clone(&self) -> kynos::response::status::Accepted<T>
-impl<T: core::cmp::Eq> core::cmp::Eq for kynos::response::status::Accepted<T>
-impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::eq(&self, &kynos::response::status::Accepted<T>) -> bool
+impl<T, L: kynos::response::status::AcceptedLocation> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T, L>
+impl<T: core::clone::Clone, L: core::clone::Clone + kynos::response::status::AcceptedLocation> core::clone::Clone for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::clone(&self) -> kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::Eq, L: core::cmp::Eq + kynos::response::status::AcceptedLocation> core::cmp::Eq for kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::PartialEq, L: core::cmp::PartialEq + kynos::response::status::AcceptedLocation> core::cmp::PartialEq for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::eq(&self, &kynos::response::status::Accepted<T, L>) -> bool
 impl<T: core::default::Default> core::default::Default for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::default() -> kynos::response::status::Accepted<T>
-impl<T: core::fmt::Debug> core::fmt::Debug for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::into_response(self) -> kynos::http::Response
-impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<T> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T>
-impl<T> core::marker::Freeze for kynos::response::status::Accepted<T> where T: core::marker::Freeze
-impl<T> core::marker::Send for kynos::response::status::Accepted<T> where T: core::marker::Send
-impl<T> core::marker::Sync for kynos::response::status::Accepted<T> where T: core::marker::Sync
-impl<T> core::marker::Unpin for kynos::response::status::Accepted<T> where T: core::marker::Unpin
-impl<T> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T> where T: core::marker::UnsafeUnpin
-impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::RefUnwindSafe
-impl<T> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::UnwindSafe
+pub fn kynos::response::status::Accepted<T>::default() -> Self
+impl<T: core::fmt::Debug, L: core::fmt::Debug + kynos::response::status::AcceptedLocation> core::fmt::Debug for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: kynos::response::IntoResponse, L: kynos::response::status::AcceptedLocation> kynos::response::IntoResponse for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::into_response(self) -> kynos::http::Response
+impl<T: kynos::response::Responses, L: kynos::response::status::AcceptedLocation> kynos::response::Responses for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
+impl<T, L> core::marker::Freeze for kynos::response::status::Accepted<T, L> where T: core::marker::Freeze, L: core::marker::Freeze
+impl<T, L> core::marker::Send for kynos::response::status::Accepted<T, L> where T: core::marker::Send, L: core::marker::Send
+impl<T, L> core::marker::Sync for kynos::response::status::Accepted<T, L> where T: core::marker::Sync, L: core::marker::Sync
+impl<T, L> core::marker::Unpin for kynos::response::status::Accepted<T, L> where T: core::marker::Unpin, L: core::marker::Unpin
+impl<T, L> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T, L> where T: core::marker::UnsafeUnpin, L: core::marker::UnsafeUnpin
+impl<T, L> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::RefUnwindSafe, L: core::panic::unwind_safe::RefUnwindSafe
+impl<T, L> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::UnwindSafe, L: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::prelude::Auth<S: kynos::security::requirement::Requirement>(pub <S as kynos::security::requirement::Requirement>::Credential)
 impl<S: kynos::security::requirement::Requirement> kynos::security::auth::Auth<S>
 pub fn kynos::security::auth::Auth<S>::into_inner(self) -> <S as kynos::security::requirement::Requirement>::Credential
@@ -6101,6 +6104,7 @@ impl core::marker::StructuralPartialEq for kynos::response::status::Location
 impl core::str::traits::FromStr for kynos::response::status::Location
 pub type kynos::response::status::Location::Err = kynos::response::status::InvalidLocation
 pub fn kynos::response::status::Location::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl kynos::response::status::AcceptedLocation for kynos::response::status::Location
 impl core::marker::Freeze for kynos::response::status::Location
 impl core::marker::Send for kynos::response::status::Location
 impl core::marker::Sync for kynos::response::status::Location
@@ -7588,31 +7592,34 @@ impl core::marker::Unpin for kynos::response::status::InvalidLocation
 impl core::marker::UnsafeUnpin for kynos::response::status::InvalidLocation
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::InvalidLocation
 impl core::panic::unwind_safe::UnwindSafe for kynos::response::status::InvalidLocation
-pub struct kynos::response::status::Accepted<T>
+pub struct kynos::response::status::Accepted<T, L: kynos::response::status::AcceptedLocation>
 pub kynos::response::status::Accepted::body: T
+pub kynos::response::status::Accepted::location: L
+impl<T> kynos::response::status::Accepted<T, kynos::response::status::Location>
+pub fn kynos::response::status::Accepted<T, kynos::response::status::Location>::at(impl core::convert::Into<kynos::response::status::Location>, T) -> Self
 impl<T> kynos::response::status::Accepted<T>
 pub fn kynos::response::status::Accepted<T>::new(T) -> Self
-impl<T: core::clone::Clone> core::clone::Clone for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::clone(&self) -> kynos::response::status::Accepted<T>
-impl<T: core::cmp::Eq> core::cmp::Eq for kynos::response::status::Accepted<T>
-impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::eq(&self, &kynos::response::status::Accepted<T>) -> bool
+impl<T, L: kynos::response::status::AcceptedLocation> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T, L>
+impl<T: core::clone::Clone, L: core::clone::Clone + kynos::response::status::AcceptedLocation> core::clone::Clone for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::clone(&self) -> kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::Eq, L: core::cmp::Eq + kynos::response::status::AcceptedLocation> core::cmp::Eq for kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::PartialEq, L: core::cmp::PartialEq + kynos::response::status::AcceptedLocation> core::cmp::PartialEq for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::eq(&self, &kynos::response::status::Accepted<T, L>) -> bool
 impl<T: core::default::Default> core::default::Default for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::default() -> kynos::response::status::Accepted<T>
-impl<T: core::fmt::Debug> core::fmt::Debug for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::into_response(self) -> kynos::http::Response
-impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<T> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T>
-impl<T> core::marker::Freeze for kynos::response::status::Accepted<T> where T: core::marker::Freeze
-impl<T> core::marker::Send for kynos::response::status::Accepted<T> where T: core::marker::Send
-impl<T> core::marker::Sync for kynos::response::status::Accepted<T> where T: core::marker::Sync
-impl<T> core::marker::Unpin for kynos::response::status::Accepted<T> where T: core::marker::Unpin
-impl<T> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T> where T: core::marker::UnsafeUnpin
-impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::RefUnwindSafe
-impl<T> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::UnwindSafe
+pub fn kynos::response::status::Accepted<T>::default() -> Self
+impl<T: core::fmt::Debug, L: core::fmt::Debug + kynos::response::status::AcceptedLocation> core::fmt::Debug for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: kynos::response::IntoResponse, L: kynos::response::status::AcceptedLocation> kynos::response::IntoResponse for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::into_response(self) -> kynos::http::Response
+impl<T: kynos::response::Responses, L: kynos::response::status::AcceptedLocation> kynos::response::Responses for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
+impl<T, L> core::marker::Freeze for kynos::response::status::Accepted<T, L> where T: core::marker::Freeze, L: core::marker::Freeze
+impl<T, L> core::marker::Send for kynos::response::status::Accepted<T, L> where T: core::marker::Send, L: core::marker::Send
+impl<T, L> core::marker::Sync for kynos::response::status::Accepted<T, L> where T: core::marker::Sync, L: core::marker::Sync
+impl<T, L> core::marker::Unpin for kynos::response::status::Accepted<T, L> where T: core::marker::Unpin, L: core::marker::Unpin
+impl<T, L> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T, L> where T: core::marker::UnsafeUnpin, L: core::marker::UnsafeUnpin
+impl<T, L> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::RefUnwindSafe, L: core::panic::unwind_safe::RefUnwindSafe
+impl<T, L> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::UnwindSafe, L: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::response::status::Created<T>
 pub kynos::response::status::Created::body: T
 pub kynos::response::status::Created::location: kynos::response::status::Location
@@ -7671,6 +7678,7 @@ impl core::marker::StructuralPartialEq for kynos::response::status::Location
 impl core::str::traits::FromStr for kynos::response::status::Location
 pub type kynos::response::status::Location::Err = kynos::response::status::InvalidLocation
 pub fn kynos::response::status::Location::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl kynos::response::status::AcceptedLocation for kynos::response::status::Location
 impl core::marker::Freeze for kynos::response::status::Location
 impl core::marker::Send for kynos::response::status::Location
 impl core::marker::Sync for kynos::response::status::Location
@@ -7730,6 +7738,9 @@ impl<const CODE: u16> core::marker::Unpin for kynos::response::status::Redirect<
 impl<const CODE: u16> core::marker::UnsafeUnpin for kynos::response::status::Redirect<CODE>
 impl<const CODE: u16> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Redirect<CODE>
 impl<const CODE: u16> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Redirect<CODE>
+pub trait kynos::response::status::AcceptedLocation: kynos::response::status::sealed::Sealed
+impl kynos::response::status::AcceptedLocation for ()
+impl kynos::response::status::AcceptedLocation for kynos::response::status::Location
 pub trait kynos::response::status::ValidRedirectCode<const CODE: u16>
 impl kynos::response::status::ValidRedirectCode<301> for ()
 impl kynos::response::status::ValidRedirectCode<302> for ()
@@ -7905,10 +7916,10 @@ impl<T: kynos::extract::body::protobuf::Message> kynos::response::IntoResponse f
 pub fn kynos::extract::body::protobuf::Protobuf<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse, L: kynos::response::language::offer::Languages> kynos::response::IntoResponse for kynos::response::language::Localized<T, L>
 pub fn kynos::response::language::Localized<T, L>::into_response(self) -> kynos::http::Response
+impl<T: kynos::response::IntoResponse, L: kynos::response::status::AcceptedLocation> kynos::response::IntoResponse for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::middleware::compression::policy::WithEncoding<T>
 pub fn kynos::middleware::compression::policy::WithEncoding<T>::into_response(self) -> kynos::http::Response
-impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Created<T>
 pub fn kynos::response::status::Created<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::codec::multipart::IntoMultipart> kynos::response::IntoResponse for kynos::extract::body::multipart::MultipartForm<T>
@@ -8003,10 +8014,10 @@ impl<T: kynos::error::problem::ProblemType> kynos::response::Responses for kynos
 pub fn kynos::middleware::trusted_hosts::UntrustedHost<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::Responses, L: kynos::response::language::offer::Languages> kynos::response::Responses for kynos::response::language::Localized<T, L>
 pub fn kynos::response::language::Localized<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
+impl<T: kynos::response::Responses, L: kynos::response::status::AcceptedLocation> kynos::response::Responses for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::Responses> kynos::response::Responses for kynos::middleware::compression::policy::WithEncoding<T>
 pub fn kynos::middleware::compression::policy::WithEncoding<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Created<T>
 pub fn kynos::response::status::Created<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::negotiate::representation::Representations> kynos::response::Responses for kynos::response::negotiate::Negotiated<T>
