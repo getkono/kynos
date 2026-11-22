@@ -43,10 +43,10 @@ connection_h2.second	32348	14	2613
 connection_tls.full	69607	183	71740
 connection_tls.resumed	74738	197	71500
 connection_tls.second	19208	17	2131
-extract.auth_401	5207	12	2191
-extract.auth_apikey	2978	10	2074
-extract.auth_basic	4123	12	2152
-extract.auth_bearer	3350	10	2076
+extract.auth_401	5209	12	2239
+extract.auth_apikey	2972	10	2122
+extract.auth_basic	4106	12	2224
+extract.auth_bearer	3344	10	2124
 extract.bounds	5768	9	1838
 extract.cookies	3112	10	1823
 extract.inject	2310	9	1809
@@ -71,7 +71,7 @@ interceptors.set_cookies	5360	18	2426
 interceptors.timeout	4425	12	2330
 interceptors.unchecked_layer	4238	14	2546
 rate_limit.rate_limit	9215	27	3702
-realistic.stack_typical	18552	28	6564
+realistic.stack_typical	18546	28	6612
 request_id_random.request_id_random	5741	16	2730
 respond.binary_full	5054	13	2704
 respond.conditional_304	5053	12	2806
