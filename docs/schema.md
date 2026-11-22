@@ -67,6 +67,14 @@ is left to the format, which is the only honest thing the vocabulary can say.
 The unsigned widths are registered, so a `u32` is `uint32` and not a widened
 `int64`.
 
+A `NonZero` integer is its base integer's schema with zero excluded, since serde
+writes it as that integer and refuses `0`. An unsigned one raises `minimum` to
+1, which is exact at every width, so `NonZeroU64` still states no maximum. A
+signed one keeps its base's range and adds `not: {const: 0}`: zero sits inside
+the range, where no bound can remove it, and leaving it admitted would make the
+schema accept a value the type refuses. The 128-bit and pointer-sized `NonZero`
+forms have no implementation, for the reasons their bases have none.
+
 ## Behind a feature flag
 
 A scalar type from outside `std` gets an implementation only when its crate is a
@@ -160,6 +168,7 @@ one `FromStr` never reads that.
 | Implements `ParamValue` | Feature |
 | --- | --- |
 | `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |
+| `NonZeroI8`–`NonZeroI64`, `NonZeroU8`–`NonZeroU64` | — |
 | `Ipv4Addr`, `Ipv6Addr`, `IpAddr` | — |
 | `uuid::Uuid` | `uuid1` |
 | `chrono::NaiveDate`, `chrono::NaiveTime` | `time-chrono04` |

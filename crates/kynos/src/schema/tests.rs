@@ -1,6 +1,10 @@
 use std::{
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
+    num::{
+        NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroU8, NonZeroU16, NonZeroU32,
+        NonZeroU64,
+    },
     sync::Arc,
 };
 
@@ -101,6 +105,67 @@ fn the_wide_integers_state_no_bound_they_cannot_state_exactly() {
     assert_eq!(object_of::<i64>().maximum, None);
     assert_eq!(object_of::<u64>().minimum, Some(0.0));
     assert_eq!(object_of::<u64>().maximum, None);
+}
+
+/// An unsigned `NonZero` raises its base's `minimum` to one and keeps the rest,
+/// so `NonZeroU64` still states no maximum.
+#[test]
+fn an_unsigned_nonzero_is_its_base_from_one() {
+    fn from_one<T: Schema, Base: Schema>() {
+        let mut expected = object_of::<Base>();
+        expected.minimum = Some(1.0);
+        assert_eq!(object_of::<T>(), expected);
+    }
+
+    from_one::<NonZeroU8, u8>();
+    from_one::<NonZeroU16, u16>();
+    from_one::<NonZeroU32, u32>();
+    from_one::<NonZeroU64, u64>();
+    assert_eq!(object_of::<NonZeroU64>().maximum, None);
+}
+
+/// A signed `NonZero` keeps its base's range, which zero sits inside, and cuts
+/// zero out with `not`.
+#[test]
+fn a_signed_nonzero_is_its_base_without_zero() {
+    fn without_zero<T: Schema, Base: Schema>() {
+        let mut expected = object_of::<Base>();
+        let zero = SchemaObject {
+            const_value: Some(serde_json::Value::from(0)),
+            ..SchemaObject::default()
+        };
+        expected.not = Some(Box::new(OpenApiSchema::Object(Box::new(zero))));
+        assert_eq!(object_of::<T>(), expected);
+    }
+
+    without_zero::<NonZeroI8, i8>();
+    without_zero::<NonZeroI16, i16>();
+    without_zero::<NonZeroI32, i32>();
+    without_zero::<NonZeroI64, i64>();
+
+    let emitted = serde_json::to_value(schema_of::<NonZeroI8>()).expect("a schema serializes");
+    let wire = serde_json::json!({
+        "type": "integer",
+        "format": "int8",
+        "minimum": -128.0,
+        "maximum": 127.0,
+        "not": { "const": 0 },
+    });
+    assert_eq!(emitted, wire);
+}
+
+/// The zero each `NonZero` schema excludes is the one value serde and `FromStr`
+/// refuse, so the schema and the decoder agree on it.
+#[test]
+fn a_nonzero_refuses_the_zero_its_schema_excludes() {
+    assert!(serde_json::from_str::<NonZeroU32>("0").is_err());
+    assert!(serde_json::from_str::<NonZeroI64>("0").is_err());
+    assert!("0".parse::<NonZeroU8>().is_err());
+    assert!("0".parse::<NonZeroI16>().is_err());
+    assert_eq!(
+        serde_json::to_value(NonZeroU32::MIN).ok(),
+        Some(serde_json::Value::from(1))
+    );
 }
 
 #[test]
@@ -501,6 +566,14 @@ fn every_standard_type_the_docs_promise_is_describable() {
     describable::<u16>();
     describable::<u32>();
     describable::<u64>();
+    describable::<NonZeroI8>();
+    describable::<NonZeroI16>();
+    describable::<NonZeroI32>();
+    describable::<NonZeroI64>();
+    describable::<NonZeroU8>();
+    describable::<NonZeroU16>();
+    describable::<NonZeroU32>();
+    describable::<NonZeroU64>();
     describable::<f32>();
     describable::<f64>();
     describable::<()>();
@@ -604,6 +677,14 @@ fn every_shipped_scalar_is_a_parameter_value() {
     param_value::<u16>();
     param_value::<u32>();
     param_value::<u64>();
+    param_value::<NonZeroI8>();
+    param_value::<NonZeroI16>();
+    param_value::<NonZeroI32>();
+    param_value::<NonZeroI64>();
+    param_value::<NonZeroU8>();
+    param_value::<NonZeroU16>();
+    param_value::<NonZeroU32>();
+    param_value::<NonZeroU64>();
     param_value::<f32>();
     param_value::<f64>();
 
@@ -659,6 +740,14 @@ fn each_standard_scalar_writes_its_format_and_reads_it_back() {
     carries_as(&u16::MAX, "65535", Some("uint16"));
     carries_as(&u32::MAX, "4294967295", Some("uint32"));
     carries_as(&u64::MAX, "18446744073709551615", Some("uint64"));
+    carries_as(&NonZeroI8::MIN, "-128", Some("int8"));
+    carries_as(&NonZeroI16::MIN, "-32768", Some("int16"));
+    carries_as(&NonZeroI32::MIN, "-2147483648", Some("int32"));
+    carries_as(&NonZeroI64::MIN, "-9223372036854775808", Some("int64"));
+    carries_as(&NonZeroU8::MAX, "255", Some("uint8"));
+    carries_as(&NonZeroU16::MAX, "65535", Some("uint16"));
+    carries_as(&NonZeroU32::MAX, "4294967295", Some("uint32"));
+    carries_as(&NonZeroU64::MAX, "18446744073709551615", Some("uint64"));
     // No exponent even far from one, which a JSON number would also admit.
     carries_as(
         &1.0e30_f32,

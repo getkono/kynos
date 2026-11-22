@@ -6317,6 +6317,14 @@ impl kynos::schema::ParamValue for chrono::naive::time::NaiveTime
 impl kynos::schema::ParamValue for core::net::ip_addr::IpAddr
 impl kynos::schema::ParamValue for core::net::ip_addr::Ipv4Addr
 impl kynos::schema::ParamValue for core::net::ip_addr::Ipv6Addr
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI16
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI32
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI64
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI8
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU16
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU32
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU64
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU8
 impl kynos::schema::ParamValue for f32
 impl kynos::schema::ParamValue for f64
 impl kynos::schema::ParamValue for i16
@@ -6413,6 +6421,46 @@ pub const core::net::ip_addr::Ipv6Addr::CONSTRAINT_TYPE: core::option::Option<&'
 pub fn core::net::ip_addr::Ipv6Addr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::Ipv6Addr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::Ipv6Addr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI16
+pub const core::num::nonzero::NonZeroI16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI32
+pub const core::num::nonzero::NonZeroI32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI64
+pub const core::num::nonzero::NonZeroI64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI8
+pub const core::num::nonzero::NonZeroI8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU16
+pub const core::num::nonzero::NonZeroU16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU32
+pub const core::num::nonzero::NonZeroU32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU64
+pub const core::num::nonzero::NonZeroU64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU8
+pub const core::num::nonzero::NonZeroU8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for f32
 pub const f32::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn f32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -8981,6 +9029,14 @@ impl kynos::schema::ParamValue for chrono::naive::time::NaiveTime
 impl kynos::schema::ParamValue for core::net::ip_addr::IpAddr
 impl kynos::schema::ParamValue for core::net::ip_addr::Ipv4Addr
 impl kynos::schema::ParamValue for core::net::ip_addr::Ipv6Addr
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI16
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI32
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI64
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroI8
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU16
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU32
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU64
+impl kynos::schema::ParamValue for core::num::nonzero::NonZeroU8
 impl kynos::schema::ParamValue for f32
 impl kynos::schema::ParamValue for f64
 impl kynos::schema::ParamValue for i16
@@ -9077,6 +9133,46 @@ pub const core::net::ip_addr::Ipv6Addr::CONSTRAINT_TYPE: core::option::Option<&'
 pub fn core::net::ip_addr::Ipv6Addr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::Ipv6Addr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::Ipv6Addr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI16
+pub const core::num::nonzero::NonZeroI16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI32
+pub const core::num::nonzero::NonZeroI32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI64
+pub const core::num::nonzero::NonZeroI64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroI8
+pub const core::num::nonzero::NonZeroI8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroI8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroI8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroI8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU16
+pub const core::num::nonzero::NonZeroU16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU32
+pub const core::num::nonzero::NonZeroU32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU64
+pub const core::num::nonzero::NonZeroU64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for core::num::nonzero::NonZeroU8
+pub const core::num::nonzero::NonZeroU8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub fn core::num::nonzero::NonZeroU8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn core::num::nonzero::NonZeroU8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn core::num::nonzero::NonZeroU8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for f32
 pub const f32::CONSTRAINT_TYPE: core::option::Option<&'static str>
 pub fn f32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)

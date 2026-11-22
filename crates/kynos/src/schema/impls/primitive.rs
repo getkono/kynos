@@ -1,6 +1,10 @@
 //! Booleans, numbers, and strings.
 
-use kynos_openapi::{Schema as OpenApiSchema, model::schema::types::SchemaType};
+use std::num::{
+    NonZeroI8, NonZeroI16, NonZeroI32, NonZeroI64, NonZeroU8, NonZeroU16, NonZeroU32, NonZeroU64,
+};
+
+use kynos_openapi::{Schema as OpenApiSchema, SchemaObject, model::schema::types::SchemaType};
 
 use crate::schema::{
     ParamValue, Schema,
@@ -81,6 +85,61 @@ impl Schema for u64 {
     }
 }
 
+/// Emits the unsigned `NonZero` widths: the base width, raised to `minimum: 1`.
+macro_rules! nonzero_unsigned {
+    ($($ty:ty => $base:ty),+ $(,)?) => {
+        $(
+            impl Schema for $ty {
+                fn schema(registry: &mut Registry) -> OpenApiSchema {
+                    with_object(<$base>::schema(registry), |object| {
+                        object.minimum = Some(1.0);
+                    })
+                }
+            }
+        )+
+    };
+}
+
+/// Emits the signed `NonZero` widths: the base width, with zero cut out of its
+/// range by `not: {const: 0}`, since no bound removes an interior value.
+macro_rules! nonzero_signed {
+    ($($ty:ty => $base:ty),+ $(,)?) => {
+        $(
+            impl Schema for $ty {
+                fn schema(registry: &mut Registry) -> OpenApiSchema {
+                    with_object(<$base>::schema(registry), |object| {
+                        object.not = Some(Box::new(zero()));
+                    })
+                }
+            }
+        )+
+    };
+}
+
+/// The schema admitting only `0`.
+fn zero() -> OpenApiSchema {
+    OpenApiSchema::Object(Box::new(SchemaObject {
+        const_value: Some(serde_json::Value::from(0)),
+        ..SchemaObject::default()
+    }))
+}
+
+// serde reads and writes a `NonZero` as its base integer and refuses `0`, so
+// each takes its base's type, format and bounds. The 128-bit and pointer-sized
+// widths stay out, as their bases do.
+nonzero_unsigned!(
+    NonZeroU8 => u8,
+    NonZeroU16 => u16,
+    NonZeroU32 => u32,
+    NonZeroU64 => u64,
+);
+nonzero_signed!(
+    NonZeroI8 => i8,
+    NonZeroI16 => i16,
+    NonZeroI32 => i32,
+    NonZeroI64 => i64,
+);
+
 impl Schema for f32 {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {
         formatted(SchemaType::Number, "float")
@@ -106,5 +165,13 @@ impl ParamValue for u8 {}
 impl ParamValue for u16 {}
 impl ParamValue for u32 {}
 impl ParamValue for u64 {}
+impl ParamValue for NonZeroI8 {}
+impl ParamValue for NonZeroI16 {}
+impl ParamValue for NonZeroI32 {}
+impl ParamValue for NonZeroI64 {}
+impl ParamValue for NonZeroU8 {}
+impl ParamValue for NonZeroU16 {}
+impl ParamValue for NonZeroU32 {}
+impl ParamValue for NonZeroU64 {}
 impl ParamValue for f32 {}
 impl ParamValue for f64 {}
