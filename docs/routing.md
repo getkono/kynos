@@ -173,6 +173,15 @@ and the CDN it loads from — is then never mounted, described or rendered, and
 `at` and `title` do not exist on that `Docs`, so a page setting cannot be
 written where there is no page.
 
+Nor is describing the route in the API's own words a reason for a handler of
+its own. `Docs::describe_description` and, where there is a page,
+`Docs::describe_page` take a `DocsOperation` whose `summary`, `description`
+and `operationId` replace the defaults field by field. An `operationId` set
+there is used as written, without `operation_id_prefix`, and is held unique
+like any other, so the identifier a client already calls survives moving onto
+`Docs`. The defaults name nothing a client cannot see, since the document is
+the client's to read.
+
 The routes are not hidden from `paths`, though that widens the published
 contract. A described route missing from the document is what the conformance
 harness catches, and hiding one through `unchecked` would stamp the whole
