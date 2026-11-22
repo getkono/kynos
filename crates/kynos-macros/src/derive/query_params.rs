@@ -19,6 +19,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
+    // No `Schema` is emitted: beside a `Schema` derive it would conflict, and
+    // a group is described by its parameters, never as a body schema.
     // The attribute the `Schema` derive reads too, so a group deriving both
     // answers as `QueryString` reads it.
     let group = group_problem(input)?;
