@@ -305,6 +305,37 @@ fn the_defaults_are_the_documented_ones() {
     assert!(alone.tags.is_empty());
 }
 
+/// The `GET` at `path`.
+fn get_at<'d>(document: &'d kynos_openapi::Document, path: &str) -> &'d kynos_openapi::Operation {
+    document.paths.items[path]
+        .get
+        .as_ref()
+        .unwrap_or_else(|| panic!("a GET at {path}"))
+}
+
+#[test]
+fn the_default_texts_name_nothing_a_client_cannot_see() {
+    // The document is the API's clients' to read, so a default naming a Rust
+    // item leaks the server's implementation into every client generated from it.
+    let document = Router::<()>::new()
+        .docs(Docs::scalar())
+        .openapi()
+        .expect("a describable router");
+
+    for path in ["/docs", "/openapi.json"] {
+        let operation = get_at(&document, path);
+        for text in [&operation.summary, &operation.description] {
+            let text = text
+                .as_deref()
+                .unwrap_or_else(|| panic!("{path} is described"));
+            assert!(
+                !text.contains('`') && !text.contains("::"),
+                "{path} names code: {text}",
+            );
+        }
+    }
+}
+
 struct Operations;
 
 impl Tag for Operations {
