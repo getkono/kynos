@@ -467,6 +467,33 @@ async fn a_stalled_body_is_answered_by_the_bound_a_server_would_meet_first() {
     assert_answered_at(waited, DEADLINE);
 }
 
+/// Through a server, a body that sent its first octets and stalled meets that
+/// server's own idle timeout, and `send_timed` reads it answered at that
+/// moment rather than at the default.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_stalled_body_through_a_server_is_answered_at_its_own_idle_timeout() {
+    const IDLE: std::time::Duration = std::time::Duration::from_secs(45);
+    let server = kynos::server::Server::new(service()).request_body_idle_timeout(Some(IDLE));
+
+    let (reply, waited) = TestClient::through_server(server)
+        .post("/echo")
+        .stalled_after("text/plain; charset=utf-8", "hel")
+        .content_length(10)
+        .send_timed()
+        .await;
+
+    reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+    assert!(
+        reply
+            .text()
+            .contains("the request body sent nothing for 45s"),
+        "{}",
+        reply.text()
+    );
+    assert_answered_at(waited, IDLE);
+}
+
 /// That `waited` is `deadline`, as tokio's millisecond timer reaches it.
 #[cfg(feature = "server")]
 fn assert_answered_at(waited: std::time::Duration, deadline: std::time::Duration) {
