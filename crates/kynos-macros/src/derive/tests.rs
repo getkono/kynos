@@ -5504,6 +5504,14 @@ mod api_error {
                     ),
                     "does not say what status it produces",
                 ),
+                case(
+                    "a struct's `#[error(transparent)]`, which has no variant to hand over",
+                    quote::quote!(
+                        #[error(transparent)]
+                        struct StoreError(LookupError);
+                    ),
+                    "this error does not say what status it produces",
+                ),
             ],
             expand_inner,
         );

@@ -61,7 +61,10 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                             .map(Outcome::Transparent);
                     }
                     // `#[error(transparent)]` already says the variant is
-                    // what it holds; a status of its own is the opt-out.
+                    // what it holds; a status of its own is the opt-out. Only
+                    // a variant: a struct has no variant to hand over, so a
+                    // struct-level one implies nothing and the struct still
+                    // declares its status.
                     if let (None, Some(span)) = (args.status, error_transparent(&variant.attrs)) {
                         return implied_transparent(
                             variant,
