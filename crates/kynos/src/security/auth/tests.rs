@@ -681,7 +681,7 @@ async fn all_of_authenticates_every_scheme_before_authorizing_any() {
 }
 
 /// A scheme whose carrier is optional, as `carrier = optional` writes one:
-/// absence reaches the authenticator as `Some(None)`.
+/// absence reaches the authenticator as `Presented::Absent`.
 struct OptionalBearer;
 
 impl SecurityScheme for OptionalBearer {
@@ -1689,4 +1689,183 @@ async fn absence_reaches_the_authenticator_only_from_an_optional_carrier() {
         maybe.ok().and_then(|maybe| maybe.0).as_deref(),
         Some(expected)
     );
+}
+
+/// An API-key scheme reading `x-key`, beside which `Witnessed` reads the
+/// bearer token, so one request can present each in a different state.
+struct Keyed;
+
+impl SecurityScheme for Keyed {
+    const NAME: &'static str = "Keyed";
+    type Credential = String;
+    type Scope = crate::security::Unscoped;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::api_key_header("x-key")
+    }
+}
+
+impl Carries for Keyed {
+    type Presented = carrier::ApiKey;
+
+    fn present(parts: &Parts) -> Presented<carrier::ApiKey> {
+        carrier::api_key(parts, carrier::KeyLocation::Header, "x-key")
+    }
+}
+
+/// Keeps what reached each authenticator, in call order, and admits it, but
+/// for a key reading `refused`.
+#[derive(Default)]
+struct Ledger(Mutex<Vec<String>>);
+
+impl Ledger {
+    /// What reached the authenticators so far.
+    fn seen(&self) -> Vec<String> {
+        self.0.lock().expect("an unpoisoned lock").clone()
+    }
+
+    /// Records that `presented`, shown by `show`, reached scheme `S`.
+    fn record<S: SecurityScheme, T>(
+        &self,
+        presented: &Presented<T>,
+        show: impl Fn(&T) -> &str,
+    ) -> String {
+        let found = match presented {
+            Presented::Absent => "absent".to_owned(),
+            Presented::Malformed(malformed) => format!("malformed {}", malformed.reason().as_str()),
+            Presented::Present(credential) => format!("present {}", show(credential)),
+        };
+        let seen = format!("{} {found}", S::NAME);
+        self.0
+            .lock()
+            .expect("an unpoisoned lock")
+            .push(seen.clone());
+        seen
+    }
+}
+
+impl Authenticator<Witnessed<false>, Ledger> for Ledger {
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Ledger,
+    ) -> Result<String, AuthRejection> {
+        Ok(self.record::<Witnessed<false>, _>(&presented, BearerToken::as_str))
+    }
+}
+
+impl Authenticator<Keyed, Ledger> for Ledger {
+    async fn authenticate(
+        &self,
+        presented: Presented<carrier::ApiKey>,
+        _: Head<'_>,
+        _: &Ledger,
+    ) -> Result<String, AuthRejection> {
+        let seen = self.record::<Keyed, _>(&presented, carrier::ApiKey::as_str);
+        match presented {
+            Presented::Present(key) if key.as_str() == "refused" => {
+                Err(AuthRejection::unauthenticated())
+            }
+            _ => Ok(seen),
+        }
+    }
+}
+
+impl Authenticates<Witnessed<false>> for Ledger {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+impl Authenticates<Keyed> for Ledger {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+/// A head presenting `authorization`, if any, and each of `keys` as an `x-key`
+/// field.
+fn presenting(authorization: Option<&'static str>, keys: &[&'static str]) -> Parts {
+    let mut request = Request::new(Body::empty());
+    if let Some(authorization) = authorization {
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, HeaderValue::from_static(authorization));
+    }
+    for key in keys {
+        request
+            .headers_mut()
+            .append("x-key", HeaderValue::from_static(key));
+    }
+    request.into_parts().0
+}
+
+/// With every credential of an `AllOf` presented, a malformed one reaches its
+/// authenticator in tuple order, wherever it stands, and none after a refusal
+/// is asked.
+#[tokio::test]
+async fn all_of_hands_a_malformed_credential_to_its_authenticator_in_tuple_order() {
+    let malformed_token = presenting(Some("Basic dTpw"), &["k"]);
+
+    let ledger = Ledger::default();
+    let first =
+        <Auth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(&malformed_token, &ledger)
+            .await;
+    assert!(first.is_ok());
+    assert_eq!(
+        ledger.seen(),
+        ["Witnessed malformed other_scheme", "Keyed present k"]
+    );
+
+    let ledger = Ledger::default();
+    let second =
+        <Auth<AllOf<(Keyed, Witnessed<false>)>> as Guard<_>>::guard(&malformed_token, &ledger)
+            .await;
+    assert!(second.is_ok());
+    assert_eq!(
+        ledger.seen(),
+        ["Keyed present k", "Witnessed malformed other_scheme"]
+    );
+
+    let ledger = Ledger::default();
+    let refused = <Auth<AllOf<(Keyed, Witnessed<false>)>> as Guard<_>>::guard(
+        &presenting(Some("Basic dTpw"), &["refused"]),
+        &ledger,
+    )
+    .await;
+    assert_eq!(
+        refused.err().map(|rejection| rejection.status()),
+        Some(StatusCode::UNAUTHORIZED)
+    );
+    assert_eq!(ledger.seen(), ["Keyed present refused"]);
+}
+
+/// A malformed credential beside an absent one is a partial set, so the 401
+/// comes before any authenticator runs, under `MaybeAuth` too.
+#[tokio::test]
+async fn all_of_refuses_a_malformed_credential_beside_an_absent_one_unasked() {
+    let malformed_key = presenting(None, &["a", "b"]);
+    let malformed_token = presenting(Some("Basic dTpw"), &[]);
+
+    for parts in [&malformed_key, &malformed_token] {
+        let ledger = Ledger::default();
+        let auth =
+            <Auth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(parts, &ledger).await;
+        assert_eq!(
+            auth.err().map(|rejection| rejection.status()),
+            Some(StatusCode::UNAUTHORIZED)
+        );
+        let maybe =
+            <MaybeAuth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(parts, &ledger).await;
+        assert_eq!(
+            maybe.err().map(|rejection| rejection.status()),
+            Some(StatusCode::UNAUTHORIZED)
+        );
+        assert!(ledger.seen().is_empty());
+    }
 }
