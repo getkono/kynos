@@ -96,12 +96,12 @@ fn correlating_reads_the_group_and_the_trust_from_the_request_id() {
 fn an_identifier_request_id_replaces_is_not_logged_on_arrival() {
     let inbound = map(&[("x-request-id", "forged")]);
 
-    assert_eq!(Trace::new().inbound(&inbound), "");
+    assert_eq!(Trace::new().inbound(&inbound), None);
     assert_eq!(
         Trace::new()
             .correlating(&RequestId::new().trust_client(false))
             .inbound(&inbound),
-        ""
+        None
     );
 }
 
@@ -114,16 +114,17 @@ fn an_identifier_request_id_echoes_is_logged_on_arrival() {
 
     assert_eq!(
         trusting.inbound(&map(&[("x-trace-id", "second")])),
-        "second"
+        Some("second")
     );
     assert_eq!(
         trusting.inbound(&map(&[
             ("x-trace-id", "second"),
             ("x-correlation-id", "first")
         ])),
-        "first"
+        Some("first")
     );
-    assert_eq!(trusting.inbound(&map(&[])), "");
+    assert_eq!(trusting.inbound(&map(&[])), None);
+    assert_eq!(trusting.inbound(&map(&[("x-correlation-id", "")])), None);
 }
 
 /// The closing event carries what the response does, trusted or not.
@@ -189,6 +190,24 @@ fn the_opening_event_carries_the_echoed_identifier() {
     assert!(lines.contains("DEBUG"), "{lines}");
     assert!(lines.contains("request received"), "{lines}");
     assert!(lines.contains("request_id=\"echoed\""), "{lines}");
+}
+
+/// The opening event leaves `request_id` out when it has no identifier,
+/// rather than logging an empty one: neither for a `RequestId` that replaces
+/// what the client sent, nor for a trusting one the client sent nothing to.
+#[test]
+fn the_opening_event_omits_an_identifier_it_has_none_of() {
+    let mut forged = crate::http::Request::new(crate::http::body::Body::empty());
+    *forged.headers_mut() = map(&[("x-request-id", "forged")]);
+    let bare = crate::http::Request::new(crate::http::body::Body::empty());
+    let trusting = Trace::new().correlating(&RequestId::new().trust_client(true));
+
+    for (trace, request) in [(Trace::new(), &forged), (trusting, &bare)] {
+        let lines = captured(|| Observer::<()>::on_request(&trace, request, None, &()));
+
+        assert!(lines.contains("request received"), "{lines}");
+        assert!(!lines.contains("request_id"), "{lines}");
+    }
 }
 
 /// Each `Level` is emitted as the `tracing` level of the same name, on both
