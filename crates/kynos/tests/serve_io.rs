@@ -702,3 +702,43 @@ async fn the_http2_settings_reach_the_connection() {
         Some(http::StatusCode::OK)
     );
 }
+
+/// How far tokio's clock moved while the handler waited on a real-clock
+/// signal, in milliseconds. No tokio timer is armed by the wait, so a paused
+/// clock auto-advances only to a timer something else left registered.
+#[cfg(feature = "http1")]
+#[kynos::get("/clock")]
+async fn clock() -> Text {
+    let started = tokio::time::Instant::now();
+    let (signal, signalled) = tokio::sync::oneshot::channel::<()>();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(20));
+        let _ = signal.send(());
+    });
+    signalled.await.expect("the thread signals");
+    Text(started.elapsed().as_millis().to_string())
+}
+
+/// Once the first head has arrived, the first-head deadline is no longer a
+/// registered timer: a paused clock that goes idle mid-request does not jump
+/// to it, under the default header-read timeout a listener runs with.
+#[cfg(feature = "http1")]
+#[tokio::test(start_paused = true)]
+async fn a_paused_clock_does_not_advance_to_the_first_head_deadline_once_the_head_arrived() {
+    let (client, io) = tokio::io::duplex(64 * 1024);
+    let service = Router::<()>::new()
+        .mount(kynos::routes![clock])
+        .build(())
+        .expect("a describable router");
+    let (status, moved) = http1_send(
+        client,
+        io,
+        service,
+        ip_connection(),
+        get("/clock", hyper::Version::HTTP_11),
+    )
+    .await;
+
+    assert_eq!(status, http::StatusCode::OK);
+    assert_eq!(moved, "0", "the paused clock moved {moved} ms mid-request");
+}
