@@ -191,6 +191,24 @@ fn the_opening_event_carries_the_echoed_identifier() {
     assert!(lines.contains("request_id=\"echoed\""), "{lines}");
 }
 
+/// The opening event leaves `request_id` out when it has no identifier,
+/// rather than logging an empty one: neither for a `RequestId` that replaces
+/// what the client sent, nor for a trusting one the client sent nothing to.
+#[test]
+fn the_opening_event_omits_an_identifier_it_has_none_of() {
+    let mut forged = crate::http::Request::new(crate::http::body::Body::empty());
+    *forged.headers_mut() = map(&[("x-request-id", "forged")]);
+    let bare = crate::http::Request::new(crate::http::body::Body::empty());
+    let trusting = Trace::new().correlating(&RequestId::new().trust_client(true));
+
+    for (trace, request) in [(Trace::new(), &forged), (trusting, &bare)] {
+        let lines = captured(|| Observer::<()>::on_request(&trace, request, None, &()));
+
+        assert!(lines.contains("request received"), "{lines}");
+        assert!(!lines.contains("request_id"), "{lines}");
+    }
+}
+
 /// Each `Level` is emitted as the `tracing` level of the same name, on both
 /// events.
 #[test]
