@@ -1286,10 +1286,14 @@ from its configuration, after the router is built. `Csrf::when(fn(&C) -> bool)`
 decides only where the context says so, and still declares the 403: the
 document describes what an operation *may* answer in any deployment, and a
 description that changed with configuration would be one no client could be
-generated against. `Csrf::permits(&Parts)` is the same decision, public, for an
+generated against. `Csrf::check(&Parts)` is the same decision, public, for an
 application that has to make it where no interceptor reaches — inside an
 authenticator, say, which alone knows whether the credential it was handed was
-ambient.
+ambient. It answers `Result<(), CrossSiteReason>`, naming the rule that refused
+so a metric or a log line can be labelled by it (`CrossSiteReason::as_str` is
+the stable label); `permits` is `check(..).is_ok()`. The reason stays off the
+wire: the interceptor's 403 is one refusal whatever the rule, since telling a
+forger which rule caught it helps nobody else.
 
 ## Trusted hosts
 

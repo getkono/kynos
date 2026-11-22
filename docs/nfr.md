@@ -1100,6 +1100,14 @@ the check reads to skip two interceptors that cover no operation in common. A
 stack element and the check that reads it are one concern: which interceptors
 a type says cover an operation, and whether two of them collide.
 
+`middleware/csrf.rs` is `status.rs`'s shape. It declares `Csrf`, `CsrfWhen`,
+`CrossSite` and `CrossSiteReason`, so a split would turn
+`csrf::CrossSiteReason`, the type an authenticator matches a refusal on, into a
+longer path. What pushed it over was issue #1370's `Csrf::check`, which names
+the rule that refused so an application refusing inside its authenticator can
+label a metric by it. The reason is the decision's own output, so the two are
+one concern: whether a request came from another site, and why not.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1120,6 +1128,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/cache/mod.rs`
 - `crates/kynos/src/middleware/compression/mod.rs`
 - `crates/kynos/src/middleware/cors/mod.rs`
+- `crates/kynos/src/middleware/csrf.rs`
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`

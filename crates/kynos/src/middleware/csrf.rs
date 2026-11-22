@@ -153,8 +153,37 @@ impl<T> Csrf<T> {
     /// The decision the interceptor makes, for an application that must make
     /// it somewhere an interceptor does not reach, such as inside an
     /// authenticator that alone knows whether the credential was ambient.
+    /// [`check`](Csrf::check) makes the same decision and names the rule that
+    /// refused.
     #[must_use]
     pub fn permits(&self, parts: &http::Parts) -> bool {
+        self.check(parts).is_ok()
+    }
+
+    /// The decision [`permits`](Csrf::permits) makes, naming the rule that
+    /// refused the request whose head is `parts`.
+    ///
+    /// ```
+    /// use kynos::{
+    ///     http::{HeaderValue, Method, Request, body::Body},
+    ///     middleware::csrf::{CrossSiteReason, Csrf},
+    /// };
+    ///
+    /// let (mut parts, _) = Request::new(Body::empty()).into_parts();
+    /// parts.method = Method::POST;
+    /// parts
+    ///     .headers
+    ///     .insert("sec-fetch-site", HeaderValue::from_static("cross-site"));
+    ///
+    /// let refused = Csrf::new().check(&parts).expect_err("a cross-site write");
+    /// assert_eq!(refused, CrossSiteReason::FetchSite);
+    /// assert_eq!(refused.as_str(), "fetch_site");
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The [`CrossSiteReason`] naming the rule that refused the request.
+    pub fn check(&self, parts: &http::Parts) -> Result<(), CrossSiteReason> {
         self.decides(
             &parts.method,
             &parts.headers,
@@ -162,9 +191,9 @@ impl<T> Csrf<T> {
         )
     }
 
-    /// [`permits`](Csrf::permits) over a whole request, which an interceptor
-    /// holds without its head apart.
-    fn permits_request(&self, request: &http::Request) -> bool {
+    /// [`check`](Csrf::check) over a whole request, which an interceptor holds
+    /// without its head apart.
+    fn check_request(&self, request: &http::Request) -> Result<(), CrossSiteReason> {
         self.decides(
             request.method(),
             request.headers(),
@@ -175,13 +204,19 @@ impl<T> Csrf<T> {
         )
     }
 
-    /// Whether `headers` describe a request this configuration permits.
+    /// Whether `headers` describe a request this configuration permits, and
+    /// the rule that refused it where they do not.
     ///
     /// `authority` is the request target's own, which is where HTTP/2 and
     /// HTTP/3 put what HTTP/1.1 puts in `Host`.
-    fn decides(&self, method: &http::Method, headers: &HeaderMap, authority: Option<&str>) -> bool {
+    fn decides(
+        &self,
+        method: &http::Method,
+        headers: &HeaderMap,
+        authority: Option<&str>,
+    ) -> Result<(), CrossSiteReason> {
         if is_safe(method) {
-            return true;
+            return Ok(());
         }
 
         let site = headers
@@ -194,20 +229,27 @@ impl<T> Csrf<T> {
         // A trusted origin first: a front end served from elsewhere is
         // `cross-site`, so it would never pass the check below.
         if origin.is_some_and(|origin| self.trusts(origin)) {
-            return true;
+            return Ok(());
         }
 
         // `none` means no page caused the request (a bookmark, the address bar).
         if let Some(site) = site {
-            return matches!(site.trim(), "same-origin" | "none");
+            return if matches!(site.trim(), "same-origin" | "none") {
+                Ok(())
+            } else {
+                Err(CrossSiteReason::FetchSite)
+            };
         }
 
         // An older browser still sends `Origin` on an unsafe request.
-        match origin {
-            Some(origin) => http::own_authority(headers, authority)
-                .is_some_and(|host| host == authority_of(origin)),
+        let Some(origin) = origin else {
             // Neither field: not a browser, so not subject to CSRF.
-            None => true,
+            return Ok(());
+        };
+        match http::own_authority(headers, authority) {
+            Some(host) if host == authority_of(origin) => Ok(()),
+            Some(_) => Err(CrossSiteReason::Origin),
+            None => Err(CrossSiteReason::OriginWithoutAuthority),
         }
     }
 
@@ -240,6 +282,50 @@ fn authority_of(origin: &str) -> String {
         .map_or(origin.trim(), |(_, authority)| authority)
         .to_ascii_lowercase()
 }
+
+/// The rule that refused a cross-site request, which [`Csrf::check`] names.
+///
+/// For a log line or a metric label. The refusal on the wire is one 403
+/// whatever the reason: telling a forger which rule caught it helps nobody
+/// else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum CrossSiteReason {
+    /// `Sec-Fetch-Site` named neither `same-origin` nor `none`: the browser
+    /// said another site caused the request.
+    FetchSite,
+    /// With no `Sec-Fetch-Site`, `Origin` named neither a trusted origin nor
+    /// the request's own authority.
+    Origin,
+    /// With no `Sec-Fetch-Site`, `Origin` was present but the request stated
+    /// no authority, on its target or in `Host`, to hold it to.
+    OriginWithoutAuthority,
+}
+
+impl CrossSiteReason {
+    /// A stable `snake_case` name, for a metric label or a structured log.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::FetchSite => "fetch_site",
+            Self::Origin => "origin",
+            Self::OriginWithoutAuthority => "origin_without_authority",
+        }
+    }
+}
+
+impl std::fmt::Display for CrossSiteReason {
+    /// A sentence naming the rule, for a human reading a log.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::FetchSite => "`Sec-Fetch-Site` named another site",
+            Self::Origin => "`Origin` named another authority",
+            Self::OriginWithoutAuthority => "`Origin` had no request authority to match",
+        })
+    }
+}
+
+impl std::error::Error for CrossSiteReason {}
 
 /// What a refused request is answered with.
 ///
@@ -299,7 +385,7 @@ where
     ) -> Result<Continued<()>, CrossSite<T>> {
         let _ = (reads, context);
 
-        if self.permits_request(&request) {
+        if self.check_request(&request).is_ok() {
             Ok(next.run(request).await)
         } else {
             Err(CrossSite::new())
@@ -332,7 +418,7 @@ where
         context: &C,
         next: Next<'_, C>,
     ) -> Result<Continued<()>, CrossSite<T>> {
-        if !(self.enabled)(context) || self.csrf.permits_request(&request) {
+        if !(self.enabled)(context) || self.csrf.check_request(&request).is_ok() {
             Ok(next.run(request).await)
         } else {
             Err(CrossSite::new())

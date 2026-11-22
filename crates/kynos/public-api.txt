@@ -4078,6 +4078,33 @@ impl kynos::middleware::cors::CorsDocumentation for kynos::middleware::cors::Und
 pub type kynos::middleware::cors::Undocumented::Headers = kynos::middleware::cors::CorsHeaders<false>
 pub fn kynos::middleware::cors::Undocumented::label(kynos::middleware::cors::CorsHeaders<true>) -> Self::Headers
 pub mod kynos::middleware::csrf
+#[non_exhaustive] pub enum kynos::middleware::csrf::CrossSiteReason
+pub kynos::middleware::csrf::CrossSiteReason::FetchSite
+pub kynos::middleware::csrf::CrossSiteReason::Origin
+pub kynos::middleware::csrf::CrossSiteReason::OriginWithoutAuthority
+impl kynos::middleware::csrf::CrossSiteReason
+pub const fn kynos::middleware::csrf::CrossSiteReason::as_str(self) -> &'static str
+impl core::clone::Clone for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::clone(&self) -> kynos::middleware::csrf::CrossSiteReason
+impl core::cmp::Eq for kynos::middleware::csrf::CrossSiteReason
+impl core::cmp::PartialEq for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::eq(&self, &kynos::middleware::csrf::CrossSiteReason) -> bool
+impl core::error::Error for kynos::middleware::csrf::CrossSiteReason
+impl core::fmt::Debug for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::StructuralPartialEq for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Freeze for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Send for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Sync for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Unpin for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::UnsafeUnpin for kynos::middleware::csrf::CrossSiteReason
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::csrf::CrossSiteReason
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::csrf::CrossSiteReason
 pub struct kynos::middleware::csrf::CrossSite<T>
 impl<T> kynos::middleware::csrf::CrossSite<T>
 pub fn kynos::middleware::csrf::CrossSite<T>::new() -> Self
@@ -4112,6 +4139,7 @@ impl kynos::middleware::csrf::Csrf<()>
 pub fn kynos::middleware::csrf::Csrf<()>::new() -> Self
 pub fn kynos::middleware::csrf::Csrf<()>::problem_type<T: kynos::error::problem::ProblemType>(self) -> kynos::middleware::csrf::Csrf<T>
 impl<T> kynos::middleware::csrf::Csrf<T>
+pub fn kynos::middleware::csrf::Csrf<T>::check(&self, &kynos::http::Parts) -> core::result::Result<(), kynos::middleware::csrf::CrossSiteReason>
 pub fn kynos::middleware::csrf::Csrf<T>::permits(&self, &kynos::http::Parts) -> bool
 pub fn kynos::middleware::csrf::Csrf<T>::trusting_origin(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
 pub fn kynos::middleware::csrf::Csrf<T>::when<C>(self, fn(&C) -> bool) -> kynos::middleware::csrf::CsrfWhen<C, T>

@@ -1,4 +1,4 @@
-use super::{Csrf, authority_of, is_safe};
+use super::{CrossSiteReason, Csrf, authority_of, is_safe};
 use crate::http::{HeaderMap, HeaderValue, Method};
 
 /// A header map from pairs.
@@ -13,17 +13,23 @@ fn map(fields: &[(&str, &str)]) -> HeaderMap {
     headers
 }
 
-/// One decision the scheme makes: a description, a request, and the verdict.
+/// One decision the scheme makes: a description, a request, and the verdict,
+/// naming the rule that refused.
 type Case = (
     &'static str,
     Method,
     &'static [(&'static str, &'static str)],
-    bool,
+    Result<(), CrossSiteReason>,
 );
 
 /// `decides` over a request that states its authority in `Host` alone.
-fn permits(csrf: &Csrf, method: &Method, fields: &[(&str, &str)]) -> bool {
+fn decision(csrf: &Csrf, method: &Method, fields: &[(&str, &str)]) -> Result<(), CrossSiteReason> {
     csrf.decides(method, &map(fields), None)
+}
+
+/// Whether [`decision`] permits the request.
+fn permits(csrf: &Csrf, method: &Method, fields: &[(&str, &str)]) -> bool {
+    decision(csrf, method, fields).is_ok()
 }
 
 /// The cases where `Sec-Fetch-Site` decides, or the method does.
@@ -34,45 +40,45 @@ fn browser_cases() -> Vec<Case> {
             "a GET from another site",
             Method::GET,
             &[("sec-fetch-site", "cross-site")],
-            true,
+            Ok(()),
         ),
         (
             "a HEAD from another site",
             Method::HEAD,
             &[("sec-fetch-site", "cross-site")],
-            true,
+            Ok(()),
         ),
         // A preflight carries no credentials and reaches no operation.
         (
             "an OPTIONS preflight",
             Method::OPTIONS,
             &[("sec-fetch-site", "cross-site")],
-            true,
+            Ok(()),
         ),
         // The browser's own statement, which script cannot forge.
         (
             "same-origin",
             Method::POST,
             &[("sec-fetch-site", "same-origin")],
-            true,
+            Ok(()),
         ),
         (
             "none, so no page caused it",
             Method::POST,
             &[("sec-fetch-site", "none")],
-            true,
+            Ok(()),
         ),
         (
             "cross-site",
             Method::POST,
             &[("sec-fetch-site", "cross-site")],
-            false,
+            Err(CrossSiteReason::FetchSite),
         ),
         (
             "same-site, which is not same-origin",
             Method::POST,
             &[("sec-fetch-site", "same-site")],
-            false,
+            Err(CrossSiteReason::FetchSite),
         ),
         // A trusted `Origin` is tried before `Sec-Fetch-Site`, because every
         // current browser says `cross-site` from a front end served elsewhere,
@@ -84,7 +90,7 @@ fn browser_cases() -> Vec<Case> {
                 ("sec-fetch-site", "cross-site"),
                 ("origin", "https://admin.example.com"),
             ],
-            true,
+            Ok(()),
         ),
         (
             "same-site from a trusted origin",
@@ -93,7 +99,7 @@ fn browser_cases() -> Vec<Case> {
                 ("sec-fetch-site", "same-site"),
                 ("origin", "https://admin.example.com"),
             ],
-            true,
+            Ok(()),
         ),
         (
             "cross-site from an untrusted origin",
@@ -102,7 +108,7 @@ fn browser_cases() -> Vec<Case> {
                 ("sec-fetch-site", "cross-site"),
                 ("origin", "https://evil.example.com"),
             ],
-            false,
+            Err(CrossSiteReason::FetchSite),
         ),
         // The own-host match is the fallback for a browser without fetch
         // metadata; one that sent it has already said where the request came
@@ -115,7 +121,7 @@ fn browser_cases() -> Vec<Case> {
                 ("origin", "https://api.example.com"),
                 ("host", "api.example.com"),
             ],
-            false,
+            Err(CrossSiteReason::FetchSite),
         ),
         // An older browser sends `Origin` and no `Sec-Fetch-Site`.
     ]
@@ -128,7 +134,7 @@ fn legacy_cases() -> Vec<Case> {
             "a trusted origin, no fetch metadata",
             Method::POST,
             &[("origin", "https://admin.example.com")],
-            true,
+            Ok(()),
         ),
         (
             "an untrusted origin, no fetch metadata",
@@ -137,7 +143,7 @@ fn legacy_cases() -> Vec<Case> {
                 ("origin", "https://evil.example.com"),
                 ("host", "api.example.com"),
             ],
-            false,
+            Err(CrossSiteReason::Origin),
         ),
         (
             "an origin matching the request's own host",
@@ -146,7 +152,7 @@ fn legacy_cases() -> Vec<Case> {
                 ("origin", "https://api.example.com"),
                 ("host", "api.example.com"),
             ],
-            true,
+            Ok(()),
         ),
         (
             "an origin whose host differs only in case",
@@ -155,26 +161,26 @@ fn legacy_cases() -> Vec<Case> {
                 ("origin", "https://API.example.com"),
                 ("host", "api.example.com"),
             ],
-            true,
+            Ok(()),
         ),
         (
             "an origin with no authority to match it against",
             Method::POST,
             &[("origin", "https://api.example.com")],
-            false,
+            Err(CrossSiteReason::OriginWithoutAuthority),
         ),
         // Neither field: not a browser, so not subject to CSRF.
-        ("no fetch metadata and no origin", Method::POST, &[], true),
+        ("no fetch metadata and no origin", Method::POST, &[], Ok(())),
         (
             "a DELETE from nothing browser-like",
             Method::DELETE,
             &[("host", "api.example.com")],
-            true,
+            Ok(()),
         ),
     ]
 }
 
-/// Every case the scheme decides, and what it decides.
+/// Every case the scheme decides, what it decides, and which rule refuses.
 ///
 /// One table rather than a case apiece: the rules are an ordered list where the
 /// first match wins, and a table is the only shape that shows an earlier rule
@@ -185,7 +191,29 @@ fn every_rule_the_scheme_states_is_applied_in_order() {
 
     for (description, method, fields, expected) in browser_cases().into_iter().chain(legacy_cases())
     {
-        assert_eq!(permits(&csrf, &method, fields), expected, "{description}");
+        assert_eq!(decision(&csrf, &method, fields), expected, "{description}");
+    }
+}
+
+/// Every reason's label, closed over the variants: a reason added without one
+/// fails to compile here.
+///
+/// The labels are a metric's values, so they are fixed text rather than
+/// whatever `Debug` happens to print.
+#[test]
+fn every_reason_has_a_stable_snake_case_label() {
+    let label = |reason: CrossSiteReason| match reason {
+        CrossSiteReason::FetchSite => "fetch_site",
+        CrossSiteReason::Origin => "origin",
+        CrossSiteReason::OriginWithoutAuthority => "origin_without_authority",
+    };
+
+    for reason in [
+        CrossSiteReason::FetchSite,
+        CrossSiteReason::Origin,
+        CrossSiteReason::OriginWithoutAuthority,
+    ] {
+        assert_eq!(reason.as_str(), label(reason), "{reason:?}");
     }
 }
 
@@ -223,7 +251,8 @@ fn a_request_stating_its_authority_on_the_target_matches_its_own_origin() {
             &Method::POST,
             &map(&[("origin", "https://api.example.com")]),
             Some("api.example.com"),
-        ),
+        )
+        .is_ok(),
         "a same-origin request was refused because its authority was not in `Host`"
     );
 }
@@ -235,11 +264,14 @@ fn a_request_stating_its_authority_on_the_target_matches_its_own_origin() {
 fn a_target_authority_does_not_admit_another_origin() {
     let csrf = Csrf::new();
 
-    assert!(!csrf.decides(
-        &Method::POST,
-        &map(&[("origin", "https://evil.example.com")]),
-        Some("api.example.com"),
-    ));
+    assert_eq!(
+        csrf.decides(
+            &Method::POST,
+            &map(&[("origin", "https://evil.example.com")]),
+            Some("api.example.com"),
+        ),
+        Err(CrossSiteReason::Origin)
+    );
 }
 
 /// The target's authority decides where both are present.
@@ -253,23 +285,27 @@ fn a_target_authority_does_not_admit_another_origin() {
 fn the_target_authority_decides_where_a_request_states_both() {
     let csrf = Csrf::new();
 
-    assert!(csrf.decides(
-        &Method::POST,
-        &map(&[
-            ("origin", "https://api.example.com"),
-            ("host", "other.example.com"),
-        ]),
-        Some("api.example.com"),
-    ));
     assert!(
-        !csrf.decides(
+        csrf.decides(
+            &Method::POST,
+            &map(&[
+                ("origin", "https://api.example.com"),
+                ("host", "other.example.com"),
+            ]),
+            Some("api.example.com"),
+        )
+        .is_ok()
+    );
+    assert!(
+        csrf.decides(
             &Method::POST,
             &map(&[
                 ("origin", "https://other.example.com"),
                 ("host", "other.example.com"),
             ]),
             Some("api.example.com"),
-        ),
+        )
+        .is_err(),
         "an origin matching only the ignored `Host` was admitted"
     );
 }
@@ -352,10 +388,11 @@ fn a_trusted_origin_is_matched_whatever_its_case() {
     ));
 }
 
-/// `permits` reads the method, the fields and the target's authority off a
-/// request head, as the interceptor reads them off the request.
+/// `check` and `permits` read the method, the fields and the target's
+/// authority off a request head, as the interceptor reads them off the
+/// request.
 #[test]
-fn permits_decides_over_a_request_head() {
+fn check_decides_over_a_request_head() {
     let csrf = Csrf::new();
     let head = |method: &str, origin: &str, site: Option<&str>| {
         let mut request = http::Request::builder()
@@ -374,12 +411,27 @@ fn permits_decides_over_a_request_head() {
     };
 
     // The target's authority, not `Host`, is what `Origin` is held to.
+    assert_eq!(
+        csrf.check(&head("POST", "http://api.example.com", None)),
+        Ok(())
+    );
+    assert_eq!(
+        csrf.check(&head("POST", "http://other.example.com", None)),
+        Err(CrossSiteReason::Origin)
+    );
+    // `Sec-Fetch-Site` is read from the head's fields.
+    assert_eq!(
+        csrf.check(&head("POST", "http://api.example.com", Some("cross-site"))),
+        Err(CrossSiteReason::FetchSite)
+    );
+    // And the method from its method.
+    assert_eq!(
+        csrf.check(&head("GET", "http://evil.example", Some("cross-site"))),
+        Ok(())
+    );
+    // `permits` is the same decision.
     assert!(csrf.permits(&head("POST", "http://api.example.com", None)));
     assert!(!csrf.permits(&head("POST", "http://other.example.com", None)));
-    // `Sec-Fetch-Site` is read from the head's fields.
-    assert!(!csrf.permits(&head("POST", "http://api.example.com", Some("cross-site"))));
-    // And the method from its method.
-    assert!(csrf.permits(&head("GET", "http://evil.example", Some("cross-site"))));
 }
 
 /// What `CsrfWhen` prints: the `Csrf` it applies, and not the predicate.
