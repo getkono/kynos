@@ -4,8 +4,9 @@ use crate::{http, middleware::Observer, router::operation::Route};
 
 /// Emits a `tracing` event for each end of an operation.
 ///
-/// Both carry `method`, `matched_path`, `operation_id` and `request_id`; the
-/// closing one adds `status` and `latency`. The opening event's `method` is the
+/// Both carry `method`, `matched_path` and `operation_id`; the closing one
+/// adds `status`, `latency` and `request_id`, which the opening one carries
+/// only when it has an identifier to name. The opening event's `method` is the
 /// request's; the closing one's is the matched operation's, so it joins with
 /// `operation_id` on its own line: `GET` for a `HEAD` that a `GET` answers, and
 /// the same placeholder as `matched_path` where nothing matched.
