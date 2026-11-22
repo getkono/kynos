@@ -1,6 +1,10 @@
 //! Request tracing: the one standard way to log at the operation level.
 
-use crate::{http, middleware::Observer, router::operation::Route};
+use crate::{
+    http,
+    middleware::{Observer, request_id::AssignedId},
+    router::operation::Route,
+};
 
 /// Emits a `tracing` event for each end of an operation.
 ///
@@ -21,8 +25,10 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// `request_id` is the one the client sent where
 /// [`correlating`](Trace::correlating) names a `RequestId` that echoes it, and
 /// the field is left out otherwise, since an identifier `RequestId` replaces
-/// is not the request's. The closing event carries the identifier the
-/// response does.
+/// is not the request's. The closing event carries the
+/// [`AssignedId`] the response does, whatever header group `RequestId` was
+/// given, and an empty one where no `RequestId` reached it, even if a header
+/// of the same name is present.
 ///
 /// The two agree only on operations that `RequestId` covers and reaches. The
 /// opening event cannot know whether it will: where a trusting `RequestId` is
@@ -118,7 +124,10 @@ impl Trace {
     ///
     /// Pass the [`RequestId`](super::request_id::RequestId) the router mounts:
     /// the header names and whether an inbound identifier is echoed are read
-    /// from it, so the two cannot disagree on either setting. Which operations
+    /// from it, so the two cannot disagree on either setting. Only what
+    /// precedes the assignment reads them, the opening event and a span
+    /// mounted outside `RequestId`; whatever follows it reads the
+    /// [`AssignedId`] instead. Which operations
     /// it covers is not read: `Trace` observes every one, so see [`Trace`] for
     /// where the two events can still differ. Without this, `Trace` assumes
     /// [`RequestId::new`](super::request_id::RequestId::new).
@@ -168,16 +177,6 @@ impl Trace {
             .unwrap_or_default()
     }
 
-    /// The identifier the closing event carries: the one the response does,
-    /// which `RequestId` writes under every declared name.
-    fn assigned<'a>(&self, headers: &'a http::HeaderMap) -> &'a str {
-        self.correlation
-            .first()
-            .and_then(|name| headers.get(*name))
-            .and_then(|value| value.to_str().ok())
-            .unwrap_or_default()
-    }
-
     /// Sets the level events are emitted at.
     ///
     /// A panic is always reported at `ERROR`, whatever this says.
@@ -216,9 +215,9 @@ impl Trace {
     /// It is an [`Interceptor`](super::Interceptor), so it covers what is
     /// mounted inside it and nothing outside; mount it first to cover the
     /// whole chain. `request_id` is the identifier the request carries when
-    /// the span opens, so mount it after the [`RequestId`] that
-    /// [`correlating`](Trace::correlating) names: the identifier is then the
-    /// one `RequestId` assigned, and before it, whatever the client sent.
+    /// the span opens, so mount it after the [`RequestId`]: the identifier is
+    /// then the [`AssignedId`], and before it, whatever the client sent under
+    /// the names [`correlating`](Trace::correlating) read.
     /// A request the client abandons before the chain answers closes the span
     /// without `status` or `latency_ms`.
     ///
@@ -316,7 +315,9 @@ impl<C> Observer<C> for Trace {
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
             status = response.status().as_u16(),
             latency = ?elapsed,
-            request_id = self.assigned(response.headers()),
+            request_id = AssignedId::of_response(response)
+                .and_then(AssignedId::as_str)
+                .unwrap_or_default(),
             "response sent",
         );
     }
@@ -510,6 +511,16 @@ impl Level {
 }
 
 impl TraceSpan {
+    /// The identifier the span opens with: the one a `RequestId` outside it
+    /// assigned, or, with none, whatever the client sent under the names
+    /// [`correlating`](Trace::correlating) read.
+    fn request_id<'a>(&self, request: &'a http::Request) -> &'a str {
+        match AssignedId::of(request) {
+            Some(assigned) => assigned.as_str().unwrap_or_default(),
+            None => self.trace.present(request.headers()),
+        }
+    }
+
     /// The span for `request`, or a disabled one where nothing listens.
     fn open(&self, request: &http::Request, route: Option<Route<'_>>) -> tracing::Span {
         use tracing::field::Value;
@@ -544,10 +555,7 @@ impl TraceSpan {
                     &operation_id,
                     Some(&route.map_or(UNMATCHED, |route| route.operation_id()) as &dyn Value),
                 ),
-                (
-                    &request_id,
-                    Some(&self.trace.present(request.headers()) as &dyn Value),
-                ),
+                (&request_id, Some(&self.request_id(request) as &dyn Value)),
                 (
                     &headers,
                     recorded.as_ref().map(|recorded| recorded as &dyn Value),
