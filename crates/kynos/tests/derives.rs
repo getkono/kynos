@@ -1062,6 +1062,46 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
     assert_eq!(format!("{:.3}", Phase::Checking), "che");
 }
 
+/// A newtype over one parameter value, written by serde as itself.
+#[derive(Debug, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Cursor {
+    token: String,
+}
+
+/// A derived newtype `ParamValue` reads and writes through its field: the
+/// field's text, the field's refusal, and the caller's formatting flags, as
+/// serde writes the newtype as the field. The same recorded exception as the
+/// enum's, since the delegation is the decoder.
+#[test]
+fn a_derived_newtype_param_value_reads_and_writes_through_its_field() {
+    assert_eq!("42".parse::<Score>(), Ok(Score(42)));
+    assert_eq!("-1".parse::<Score>(), "-1".parse::<u32>().map(Score));
+    assert_eq!(Score(42).to_string(), "42");
+    assert_eq!(format!("{:>4}", Score(42)), "  42");
+    assert_eq!(
+        serde_json::to_value(Cursor {
+            token: "abc".to_owned()
+        })
+        .expect("a string serializes"),
+        serde_json::Value::from("abc"),
+    );
+    assert_eq!(
+        "abc".parse::<Cursor>(),
+        Ok(Cursor {
+            token: "abc".to_owned()
+        })
+    );
+    assert_eq!(
+        Cursor {
+            token: "abc".to_owned()
+        }
+        .to_string(),
+        "abc"
+    );
+    implements_param_value::<Cursor>();
+}
+
 /// A deprecated type says so, and says nothing about the note.
 #[test]
 #[allow(deprecated)]
@@ -2074,24 +2114,8 @@ fn a_group_without_parameters_decodes_from_any_query() {
 
 /// A named number with a bound of its own, so a field's bound lands beside a
 /// `$ref` and the type's is checked as well.
-#[derive(Schema, Debug, PartialEq)]
+#[derive(Schema, ParamValue, Debug, PartialEq)]
 struct Score(#[schema(maximum = 100)] u32);
-
-impl std::str::FromStr for Score {
-    type Err = std::num::ParseIntError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        raw.parse().map(Self)
-    }
-}
-
-impl std::fmt::Display for Score {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl kynos::schema::ParamValue for Score {}
 
 #[derive(Schema, QueryParams)]
 struct Bounded {
@@ -2467,25 +2491,9 @@ const PAGE_OUT_OF_RANGE: kynos::schema::constraints::ConstraintProblem =
     );
 
 /// A parameter value naming its own problem.
-#[derive(Schema, Debug, PartialEq)]
+#[derive(Schema, ParamValue, Debug, PartialEq)]
 #[schema(constraint_problem = PAGE_OUT_OF_RANGE)]
 struct PageNumber(#[schema(maximum = 100)] u32);
-
-impl std::str::FromStr for PageNumber {
-    type Err = std::num::ParseIntError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        raw.parse().map(Self)
-    }
-}
-
-impl std::fmt::Display for PageNumber {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl kynos::schema::ParamValue for PageNumber {}
 
 #[derive(Schema, QueryParams)]
 struct NamedQuery {

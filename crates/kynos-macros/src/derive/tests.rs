@@ -7532,11 +7532,37 @@ mod param_value {
     fn ledger() -> Vec<Case> {
         vec![
             case(
-                "a struct, which has no variant names",
+                "a union, which is neither an enum nor a newtype",
                 quote::quote!(
-                    struct UserId(u64);
+                    union Bits {
+                        int: u32,
+                        float: f32,
+                    }
                 ),
-                "derived for a field-less enum",
+                "a union is neither",
+            ),
+            case(
+                "a struct with named fields, which serde writes as an object",
+                quote::quote!(
+                    struct Page {
+                        limit: u32,
+                    }
+                ),
+                "named fields as an object",
+            ),
+            case(
+                "a tuple struct holding two fields",
+                quote::quote!(
+                    struct Range(u32, u32);
+                ),
+                "holds several or none",
+            ),
+            case(
+                "a unit struct",
+                quote::quote!(
+                    struct Nothing;
+                ),
+                "a unit struct holds no value",
             ),
             case(
                 "a variant carrying data",

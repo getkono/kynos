@@ -184,7 +184,9 @@ otherwise. A newtype whose
 `FromStr` refuses those values is the remedy.
 
 Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
-schema describes the one value its `Display` writes. A structured query, such
+schema describes the one value its `Display` writes, or with
+`#[derive(ParamValue)]`, which reads and writes a newtype through its field
+and a field-less enum by its variant names. A structured query, such
 as a search filter, is a whole `QueryString` under `openapi32` instead.
 
 ## Binary content

@@ -19,6 +19,12 @@ A feature request's optional **Replaces** field names the downstream code the
 feature makes unnecessary. When that issue ships, its answer becomes a row in
 the section for the release that ships it.
 
+## 0.6 to 0.7
+
+| If you wrote | Write instead | Issue |
+| --- | --- | --- |
+| `FromStr`, `Display` and `schema::ParamValue` written by hand for a newtype, each delegating to its field | `#[derive(kynos::ParamValue)]` on the newtype | #1378 |
+
 ## 0.5 to 0.6
 
 | If you wrote | Write instead | Issue |

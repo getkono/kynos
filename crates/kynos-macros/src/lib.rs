@@ -813,9 +813,9 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::reply::expand_inner)
 }
 
-/// Makes a field-less enum a `kynos::schema::ParamValue`, emitting its
-/// `Display` and `FromStr` from the variant names the [`Schema`](macro@Schema)
-/// derive publishes.
+/// Makes a field-less enum or a newtype a `kynos::schema::ParamValue`,
+/// emitting its `Display` and `FromStr`: an enum's from the variant names the
+/// [`Schema`](macro@Schema) derive publishes, a newtype's through its field.
 ///
 /// ```ignore
 /// #[derive(Serialize, Deserialize, Schema, ParamValue)]
@@ -838,9 +838,28 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// Every serde attribute the `Schema` derive refuses is refused here too, so
 /// the names a decoder reads are never ones that derive would not publish.
 ///
+/// A newtype's text form is its field's, as serde writes it: on a one-field
+/// tuple struct, or a one-field struct under `#[serde(transparent)]`,
+/// `Display` and `FromStr` delegate to the field, whose type must itself be a
+/// `kynos::schema::ParamValue`, and `FromStr::Err` is the field's. Its
+/// `Schema` stays yours to derive or write, so a bound it declares on the
+/// field is described and checked as any other:
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Schema, ParamValue)]
+/// struct PageLimit(#[schema(maximum = 1000)] u32);
+/// ```
+///
+/// # Rejected, because a parameter is one value
+///
+/// - a struct with named fields, which serde writes as an object, unless it
+///   holds one under `#[serde(transparent)]`;
+/// - a tuple struct holding several fields or none, a unit struct and a union;
+/// - a newtype whose field's type is not a `ParamValue` itself.
+///
 /// # Rejected, because a parameter is one bare name
 ///
-/// - a struct or a union, and an enum with no variant;
+/// - an enum with no variant;
 /// - a variant carrying data, `A {}` and `A()` included, which serde writes as
 ///   an object;
 /// - `#[serde(tag = "...")]`, which writes each variant as an object;

@@ -492,6 +492,18 @@ impl MapKey for String {
 /// }
 /// ```
 ///
+/// `#[derive(kynos::ParamValue)]` writes the two delegating impls and the
+/// marker for a newtype, bounding its field by `ParamValue`; its `Schema` is
+/// still yours:
+///
+/// ```
+/// #[derive(kynos::Schema, kynos::ParamValue)]
+/// struct PageLimit(#[schema(maximum = 1000)] u32);
+///
+/// assert_eq!(PageLimit(50).to_string(), "50");
+/// assert!(matches!("50".parse(), Ok(PageLimit(50))));
+/// ```
+///
 /// A field-less enum derives all three from the names its `Schema` derive
 /// publishes, so the parameter's `enum` and its decoder cannot disagree, and
 /// other text is refused with [`UnknownVariant`]:
@@ -515,7 +527,8 @@ impl MapKey for String {
     label = "not one parameter value",
     note = "a parameter field is read with `FromStr`, written with `Display` and described by \
             its `Schema`, so that schema must describe one value, not an object or an array; \
-            implement `kynos::schema::ParamValue` for a newtype or enum whose schema does",
+            derive or implement `kynos::schema::ParamValue` for a newtype or enum whose schema \
+            does",
     note = "for a structured query such as a search filter, take the whole query string as \
             `kynos::extract::params::querystring::QueryString` under `openapi32`"
 )]
