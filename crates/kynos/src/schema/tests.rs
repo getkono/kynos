@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
     net::{IpAddr, Ipv4Addr, Ipv6Addr},
     sync::Arc,
@@ -508,6 +509,11 @@ fn every_standard_type_the_docs_promise_is_describable() {
     describable::<Option<String>>();
     describable::<Box<u32>>();
     describable::<Arc<u32>>();
+    describable::<&u32>();
+    describable::<Cow<'_, u32>>();
+    // Over unsized `T` too, as serde reads each of them.
+    describable::<&str>();
+    describable::<Cow<'_, str>>();
 
     describable::<Vec<String>>();
     describable::<VecDeque<String>>();
@@ -929,6 +935,7 @@ mod unchecked_is_transparent {
 /// of two reports at one location.
 mod checking {
     use std::{
+        borrow::Cow,
         collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
         sync::Arc,
     };
@@ -943,7 +950,7 @@ mod checking {
     };
 
     /// A value whose only bound is that it is never `0`, reported at `at`.
-    #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+    #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
     struct NonZero(u8);
 
     impl Schema for NonZero {
@@ -982,6 +989,9 @@ mod checking {
     #[test]
     fn every_container_descends_into_what_it_holds() {
         assert_eq!(located(&Some(NonZero(0))), ["/v/inner"]);
+        assert_eq!(located(&&NonZero(0)), ["/v/inner"]);
+        assert_eq!(located(&Cow::Borrowed(&NonZero(0))), ["/v/inner"]);
+        assert_eq!(located(&Cow::<NonZero>::Owned(NonZero(0))), ["/v/inner"]);
         assert_eq!(
             located(&VecDeque::from([NonZero(1), NonZero(0)])),
             ["/v/1/inner"]
