@@ -193,8 +193,11 @@ A body's media type is its type's. `Json<T>` is `application/json`;
 under the `application/json` or `+json` type its marker names, so two versions
 of a document are two distinct types in one `OneOf` or `Negotiated` rather than
 a branch on a header. [`TextAs<M>`](../crates/kynos/src/extract/body/text_as.rs)
-is `Text` under the `text/*` type its marker names; it decodes only UTF-8, so a
-marker stating another charset fails the build.
+is `Text` under the type its marker names; it decodes only UTF-8, so a marker
+stating another charset fails the build. That type is `text/*` unless the marker
+states `charset=utf-8`, which is how a text format registered elsewhere, such
+as `application/openmetrics-text`, is carried: RFC 6657's UTF-8 default reaches
+only `text/*`, so elsewhere the charset is the only evidence the body is text.
 
 Putting a body under a media type is a ladder of three rungs, each taken only
 when the one before cannot carry the body:
