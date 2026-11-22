@@ -5382,6 +5382,7 @@ pub struct kynos::middleware::trace::Trace
 impl kynos::middleware::trace::Trace
 pub fn kynos::middleware::trace::Trace::correlating<S, G: kynos::middleware::request_id::CorrelationHeaders>(self, &kynos::middleware::request_id::RequestId<S, G>) -> Self
 pub fn kynos::middleware::trace::Trace::level(self, kynos::middleware::trace::Level) -> Self
+pub fn kynos::middleware::trace::Trace::level_for(self, fn(http::status::StatusCode) -> kynos::middleware::trace::Level) -> Self
 pub fn kynos::middleware::trace::Trace::new() -> Self
 pub fn kynos::middleware::trace::Trace::record_headers(self, &'static [&'static str]) -> Self
 pub fn kynos::middleware::trace::Trace::span(self, &'static [&'static str]) -> kynos::middleware::trace::TraceSpan

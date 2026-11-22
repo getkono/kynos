@@ -48,6 +48,8 @@ use crate::{
 #[derive(Clone, Debug)]
 pub struct Trace {
     level: Level,
+    /// The closing event's level by status; `level` where unset.
+    closing: Option<fn(http::StatusCode) -> Level>,
     recorded: &'static [&'static str],
     correlation: &'static [&'static str],
     trust_client: bool,
@@ -114,6 +116,7 @@ impl Trace {
     pub fn new() -> Self {
         Self {
             level: Level::Info,
+            closing: None,
             recorded: &[],
             correlation: DEFAULT_CORRELATION,
             trust_client: false,
@@ -179,11 +182,47 @@ impl Trace {
 
     /// Sets the level events are emitted at.
     ///
-    /// A panic is always reported at `ERROR`, whatever this says.
+    /// The opening event and a [`span`](Trace::span) are emitted at it, and
+    /// so is the closing one unless [`level_for`](Trace::level_for) chooses
+    /// its level instead, whichever of the two is called first. A panic is
+    /// always reported at `ERROR`, whatever this says.
     #[must_use]
     pub fn level(mut self, level: Level) -> Self {
         self.level = level;
         self
+    }
+
+    /// Chooses the closing `response sent` event's level from the status
+    /// being sent, so a server failure can be logged louder than a success.
+    ///
+    /// Only the closing event reads it: the opening event and a
+    /// [`span`](Trace::span) open before any status exists, and stay at
+    /// [`level`](Trace::level). Called again, the last rule wins.
+    ///
+    /// A function rather than a closure, so `Trace` stays one cloneable type;
+    /// a closure that captures nothing is one.
+    ///
+    /// ```
+    /// use kynos::middleware::trace::{Level, Trace};
+    ///
+    /// let trace = Trace::new().level_for(|status| {
+    ///     if status.is_server_error() {
+    ///         Level::Error
+    ///     } else {
+    ///         Level::Info
+    ///     }
+    /// });
+    /// # let _ = trace;
+    /// ```
+    #[must_use]
+    pub fn level_for(mut self, level: fn(http::StatusCode) -> Level) -> Self {
+        self.closing = Some(level);
+        self
+    }
+
+    /// The level the closing event for `status` is emitted at.
+    fn closing(&self, status: http::StatusCode) -> Level {
+        self.closing.map_or(self.level, |level| level(status))
     }
 
     /// Records request headers matching these names on the `request received`
@@ -309,7 +348,7 @@ impl<C> Observer<C> for Trace {
         elapsed: std::time::Duration,
     ) {
         emit!(
-            self.level,
+            self.closing(response.status()),
             method = %route.map_or(UNMATCHED, |route| route.method().as_wire_str()),
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),

@@ -243,9 +243,18 @@ async fn main() -> kynos::Result<()> {
         // carrying a credential cannot reach a log by being forgotten -- which
         // is why only the correlation identifier this file mounts appears here,
         // and not every header a request might carry.
+        // `level_for` logs a 5xx's closing line at `ERROR`, where a filter for
+        // errors finds it; every other line stays at `level`'s `DEBUG`.
         .observe(
             Trace::new()
                 .level(Level::Debug)
+                .level_for(|status| {
+                    if status.is_server_error() {
+                        Level::Error
+                    } else {
+                        Level::Debug
+                    }
+                })
                 .record_headers(&["x-request-id"]),
         )
         // What this application adds. Observers compose: both run, and neither

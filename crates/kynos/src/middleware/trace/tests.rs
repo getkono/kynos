@@ -231,6 +231,70 @@ fn each_level_is_emitted_as_the_tracing_level_of_its_name() {
     }
 }
 
+/// A rule that raises 429 and a 5xx apart from the rest.
+fn by_status(status: StatusCode) -> Level {
+    match status.as_u16() {
+        500.. => Level::Error,
+        429 => Level::Warn,
+        _ => Level::Debug,
+    }
+}
+
+/// The level each event of one exchange answered with `status` is emitted at.
+fn levels_of(trace: &Trace, status: StatusCode) -> Vec<String> {
+    let request = Request::new(Body::empty());
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = status;
+
+    let lines = captured(|| {
+        Observer::<()>::on_request(trace, &request, None, &());
+        Observer::<()>::on_response(trace, &response, None, std::time::Duration::ZERO);
+    });
+
+    lines
+        .lines()
+        .map(|line| {
+            line.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// `level_for` picks the closing event's level from the status sent, and
+/// leaves the opening event, and a span, at `level`.
+#[test]
+fn the_closing_level_is_chosen_by_status_and_the_opening_one_is_not() {
+    let trace = Trace::new().level(Level::Trace).level_for(by_status);
+
+    assert_eq!(levels_of(&trace, StatusCode::OK), ["TRACE", "DEBUG"]);
+    assert_eq!(levels_of(&trace, StatusCode::NOT_FOUND), ["TRACE", "DEBUG"]);
+    assert_eq!(
+        levels_of(&trace, StatusCode::TOO_MANY_REQUESTS),
+        ["TRACE", "WARN"]
+    );
+    assert_eq!(
+        levels_of(&trace, StatusCode::INTERNAL_SERVER_ERROR),
+        ["TRACE", "ERROR"]
+    );
+    assert_eq!(trace.span(&[]).callsite.level, Level::Trace);
+}
+
+/// `level` set after `level_for` moves the opening event and leaves the
+/// rule in charge of the closing one, so the two read the same in either
+/// order.
+#[test]
+fn level_after_level_for_does_not_replace_the_rule() {
+    let trace = Trace::new().level_for(by_status).level(Level::Info);
+
+    assert_eq!(
+        levels_of(&trace, StatusCode::SERVICE_UNAVAILABLE),
+        ["INFO", "ERROR"]
+    );
+    assert_eq!(levels_of(&trace, StatusCode::OK), ["INFO", "DEBUG"]);
+}
+
 /// The closing event carries the identifier `RequestId` assigned, and its
 /// status, under whichever group it writes: this `Trace` names no group, and
 /// assumes the default's, which the response does not carry.
