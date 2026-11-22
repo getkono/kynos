@@ -38,6 +38,7 @@ use kynos::{
     middleware::{Continued, Interceptor, Next},
     response::status::NoContent,
     router::{error::RouterError, group::Group, service::Service},
+    schema::constraints::{ConstraintDetail, ConstraintProblem},
     security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
     test::TestClient,
 };
@@ -442,12 +443,15 @@ async fn an_untyped_query_s_400_carries_the_members() {
     client.assert_conformance();
 }
 
-/// The problem type the constraint types below name.
+/// The problem type the constraint problems below name.
 const TOO_LONG: &str = "https://errors.example.com/too-long";
+
+/// The problem of type [`TOO_LONG`], every other part defaulted.
+const TOO_LONG_PROBLEM: ConstraintProblem = ConstraintProblem::of_type(TOO_LONG);
 
 /// A body whose broken bound answers with [`TOO_LONG`].
 #[derive(Deserialize, Schema)]
-#[schema(constraint_type = TOO_LONG)]
+#[schema(constraint_problem = TOO_LONG_PROBLEM)]
 struct Tag {
     #[schema(max_length = 4)]
     label: String,
@@ -461,7 +465,7 @@ async fn tag(Json(tag): Json<Tag>) -> NoContent {
 
 /// A header value whose broken bound answers with [`TOO_LONG`].
 #[derive(Schema, Debug)]
-#[schema(constraint_type = TOO_LONG)]
+#[schema(constraint_problem = TOO_LONG_PROBLEM)]
 struct Short(#[schema(max_length = 4)] String);
 
 impl std::str::FromStr for Short {
@@ -527,12 +531,12 @@ fn branch_required(document: &Value, path: &str, method: &str, status: &str) -> 
         .clone()
 }
 
-/// A named constraint type's branch requires the members where an extractor
-/// refuses and where an interceptor's `Reads` refuses, since both refusals are
-/// rendered with the request in hand; each refusal on the wire conforms to its
-/// branch.
+/// A named constraint problem's branch requires the members where an
+/// extractor refuses and where an interceptor's `Reads` refuses, since both
+/// refusals are rendered with the request in hand; each refusal on the wire
+/// conforms to its branch.
 #[tokio::test]
-async fn a_named_constraint_type_requires_the_members_where_they_are_sent() {
+async fn a_named_constraint_problem_requires_the_members_where_they_are_sent() {
     let router = || {
         Router::<App>::new()
             .mount(kynos::routes![tag])
@@ -578,6 +582,98 @@ async fn a_named_constraint_type_requires_the_members_where_they_are_sent() {
     assert_eq!(problem["code"], "HeaderField-400", "{problem}");
     assert_eq!(problem["request_id"], "req-r", "{problem}");
 
+    client.assert_conformance();
+}
+
+/// One validation problem, whole: its own title, a 422 for a parameter as for
+/// a body, and a detail naming the first failure.
+const INVALID: ConstraintProblem = ConstraintProblem::of_type("https://errors.example.com/invalid")
+    .titled("The request is invalid")
+    .unprocessable()
+    .with_detail(ConstraintDetail::FirstFailure);
+
+/// A page size answering a broken bound with [`INVALID`].
+#[derive(Schema, Debug)]
+#[schema(constraint_problem = INVALID)]
+struct PageSize(#[schema(minimum = 1, maximum = 100)] u32);
+
+impl std::str::FromStr for PageSize {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        raw.parse().map(Self)
+    }
+}
+
+impl std::fmt::Display for PageSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl kynos::schema::ParamValue for PageSize {}
+
+#[derive(Schema, QueryParams)]
+struct Sizing {
+    size: Option<PageSize>,
+}
+
+/// A body answering a broken bound with [`INVALID`].
+#[derive(Deserialize, Schema)]
+#[schema(constraint_problem = INVALID)]
+struct Note {
+    #[schema(max_length = 4)]
+    text: String,
+    #[schema(maximum = 10)]
+    stars: u32,
+}
+
+#[kynos::post("/notes")]
+async fn note(_: Query<Sizing>, Json(note): Json<Note>) -> NoContent {
+    let _ = (note.text, note.stars);
+    NoContent
+}
+
+/// A query parameter and a body naming one whole problem answer alike, with
+/// its type, title and 422, each detail naming its first failure; each
+/// refusal conforms to the 422 its operation declares.
+#[tokio::test]
+async fn a_whole_constraint_problem_answers_a_parameter_as_a_body() {
+    let client = TestClient::new(
+        Router::<App>::new()
+            .mount(kynos::routes![note])
+            .problem_members::<Coded>()
+            .build(App)
+            .expect("a describable router"),
+    );
+    let within = json!({ "text": "ok", "stars": 3 });
+
+    for (path, body, detail) in [
+        (
+            "/notes?size=0",
+            within.clone(),
+            "query parameter `size` must be at least 1",
+        ),
+        (
+            "/notes",
+            json!({ "text": "too long", "stars": 11 }),
+            "the request body at `/stars` must be at most 10 (and 1 more failure)",
+        ),
+    ] {
+        let refused = client.post(path).json(&body).send().await;
+        refused.assert_status(422);
+        let problem: Value = refused.json();
+        assert_eq!(problem["type"], INVALID.type_uri, "{problem}");
+        assert_eq!(problem["title"], "The request is invalid", "{problem}");
+        assert_eq!(problem["detail"], detail, "{problem}");
+    }
+
+    client
+        .post("/notes?size=100")
+        .json(&within)
+        .send()
+        .await
+        .assert_status(204);
     client.assert_conformance();
 }
 

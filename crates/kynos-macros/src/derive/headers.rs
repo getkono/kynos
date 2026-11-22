@@ -12,8 +12,8 @@ use crate::derive::{
         wire_names,
     },
     params::{
-        Param, check_field, constraint_types_body, construct, decode_field, parameters_body,
-        render, response_headers_body,
+        Param, check_field, constraint_problems_body, construct, decode_field, group_problem,
+        parameters_body, render, response_headers_body,
     },
 };
 
@@ -234,7 +234,8 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let names_item = names_const(&names);
 
-    let params = Param::pair(fields, &names)
+    let group = group_problem(input);
+    let params = Param::pair(fields, &names, group.as_ref())
         .into_iter()
         .zip(&fields.named)
         .map(|(param, field)| {
@@ -251,7 +252,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     );
     let response_headers = response_headers_body(&params);
     let encode = encode_body(&params);
-    let constraint_types = constraint_types_body(&params);
+    let constraint_problems = constraint_problems_body(&params);
 
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
@@ -295,8 +296,9 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 #response_headers
             }
 
-            fn constraint_types() -> ::std::vec::Vec<&'static str> {
-                #constraint_types
+            fn constraint_problems(
+            ) -> ::std::vec::Vec<::kynos::schema::constraints::ConstraintProblem> {
+                #constraint_problems
             }
         }
     })

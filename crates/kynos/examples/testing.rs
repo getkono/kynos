@@ -84,22 +84,6 @@ async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, Stor
     ))
 }
 
-/// A request body that never sends a byte.
-#[cfg(feature = "server")]
-struct Silent;
-
-#[cfg(feature = "server")]
-impl futures_core::Stream for Silent {
-    type Item = bytes::Bytes;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        _: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<bytes::Bytes>> {
-        std::task::Poll::Pending
-    }
-}
-
 /// Builds the service under test.
 ///
 /// A function rather than inline setup, because the example and
@@ -113,9 +97,8 @@ fn service() -> kynos::Result<kynos::router::service::Service<()>> {
 // `pub(crate)` so `tests/examples.rs`, which includes this file as a module,
 // can run it.
 //
-// The clock is paused, so the stalled body below waits out its idle timeout at
-// once rather than in real time.
-#[tokio::main(flavor = "current_thread", start_paused = true)]
+// The clock runs: `send_timed` below pauses it for its own exchange alone.
+#[tokio::main(flavor = "current_thread")]
 pub(crate) async fn main() -> kynos::Result<()> {
     let client = TestClient::new(service()?);
 
@@ -215,16 +198,22 @@ async fn exercise_the_rejections(client: &TestClient<()>) {
         .await
         .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
 
-    // A client that never sends the body it promised. The test client holds a
-    // body to the idle timeout a server does, so the read fails and the
-    // extractor answers with the 408 `BodyRejection` declares.
+    // A client that sends the start of its body and goes quiet. The test
+    // client holds a body to the idle timeout a server does, so the read
+    // fails and the extractor answers with the 408 `BodyRejection` declares.
+    // `send_timed` runs the exchange on a paused clock, so the 30 seconds pass
+    // at once, and says when the answer came: at the server's idle timeout.
     #[cfg(feature = "server")]
-    client
-        .post("/users")
-        .body_stream(mime_names::APPLICATION_JSON, Silent)
-        .send()
-        .await
-        .assert_status(StatusCode::REQUEST_TIMEOUT);
+    {
+        let (reply, waited) = client
+            .post("/users")
+            .stalled_after(mime_names::APPLICATION_JSON, r#"{"id": 3, "#)
+            .send_timed()
+            .await;
+        reply.assert_status(StatusCode::REQUEST_TIMEOUT);
+        assert!(waited >= kynos::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT);
+        println!("a stalled body was refused after {waited:?}");
+    }
 
     // The successful creation, which is the response a suite is most likely to
     // have and least likely to notice missing.

@@ -33,7 +33,7 @@ pub mod protobuf;
 use bytes::Bytes;
 
 use crate::{
-    error::rejection::{BodyRejection, constraint_responses},
+    error::rejection::{BodyRejection, Input, constraint_responses},
     extract::{
         FromRequest,
         body::alternative::Alternative,
@@ -42,7 +42,7 @@ use crate::{
     http::{HeaderMap, Parts, body::Body, header, unquoted_split},
     router::operation::OperationCx,
     schema::{
-        constraints::{Pointer, Violations},
+        constraints::{ConstraintProblem, Pointer, Violations},
         registry::Registry,
     },
 };
@@ -181,29 +181,29 @@ fn admit(headers: &HeaderMap, media_type: &str) -> Result<(), BodyRejection> {
 }
 
 /// Writes a body extractor's Request Body Object into `operation`, and the
-/// 422 of each problem type it names for a broken bound.
+/// 422 of each problem it names for a broken bound.
 fn describe_body<T: RequestContent>(operation: &mut OperationCx<'_>) {
     let body = T::request_body(operation.registry());
     operation.set_request_body(body);
     describe_constraints::<T>(operation);
 }
 
-/// Declares the 422 of each problem type `T` names for a broken bound, which
+/// Declares the 422 of each problem `T` names for a broken bound, which
 /// joins the `about:blank` one its rejection declares.
 fn describe_constraints<T: RequestContent>(operation: &mut OperationCx<'_>) {
     let named = constraint_responses(
         operation.registry(),
-        crate::http::StatusCode::UNPROCESSABLE_ENTITY,
-        &T::constraint_types(),
+        Input::Content,
+        &T::constraint_problems(),
         true,
     );
     operation.add_responses(&named);
 }
 
-/// `T`'s [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE), as the
-/// list [`RequestContent::constraint_types`] returns.
-fn constraint_type<T: crate::schema::Schema>() -> Vec<&'static str> {
-    T::CONSTRAINT_TYPE.into_iter().collect()
+/// `T`'s [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM),
+/// as the list [`RequestContent::constraint_problems`] returns.
+fn constraint_problem<T: crate::schema::Schema>() -> Vec<ConstraintProblem> {
+    T::CONSTRAINT_PROBLEM.into_iter().collect()
 }
 
 /// Enforces `media_type` and refuses an undecoded coding, then reads the whole
@@ -221,13 +221,13 @@ async fn read_body(parts: &Parts, body: Body, media_type: &str) -> Result<Bytes,
 
 /// Holds a decoded body, or the record of one sitting at `at`, to the bounds
 /// its schema declares: a broken bound is a 422 keyed by where it broke, of
-/// the problem type `T` names.
+/// the problem `T` names.
 fn checked<T: crate::schema::Schema>(value: T, at: Pointer<'_>) -> Result<T, BodyRejection> {
     match Violations::of(&value, at) {
         Ok(()) => Ok(value),
         Err(failures) => Err(BodyRejection::Schema {
             failures,
-            type_uri: T::CONSTRAINT_TYPE,
+            problem: T::CONSTRAINT_PROBLEM,
         }),
     }
 }
@@ -391,9 +391,9 @@ where
         body
     }
 
-    fn constraint_types() -> Vec<&'static str> {
-        let mut named = L::constraint_types();
-        named.extend(R::constraint_types());
+    fn constraint_problems() -> Vec<ConstraintProblem> {
+        let mut named = L::constraint_problems();
+        named.extend(R::constraint_problems());
         named
     }
 }

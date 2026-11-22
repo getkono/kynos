@@ -21,6 +21,9 @@ pub(super) enum RequestBody {
     /// Never a chunk, nor an end.
     #[cfg(feature = "server")]
     Stalled,
+    /// These octets, unless empty, then never a chunk nor an end.
+    #[cfg(feature = "server")]
+    StalledAfter(Bytes),
 }
 
 impl RequestBody {
@@ -32,18 +35,19 @@ impl RequestBody {
             Self::Streamed(chunks) => chunks.as_mut().poll_next(context),
             #[cfg(feature = "server")]
             Self::Stalled => Poll::Pending,
+            #[cfg(feature = "server")]
+            Self::StalledAfter(first) if first.is_empty() => Poll::Pending,
+            #[cfg(feature = "server")]
+            Self::StalledAfter(first) => Poll::Ready(Some(std::mem::take(first))),
         }
     }
 
     /// Whether this is the body [`TestRequest::stalled_body`] sends.
     ///
     /// [`TestRequest::stalled_body`]: crate::test::TestRequest::stalled_body
+    #[cfg(feature = "server")]
     pub(super) const fn is_stalled(&self) -> bool {
-        match self {
-            #[cfg(feature = "server")]
-            Self::Stalled => true,
-            _ => false,
-        }
+        matches!(self, Self::Stalled)
     }
 }
 
@@ -54,6 +58,10 @@ impl fmt::Debug for RequestBody {
             Self::Streamed(_) => formatter.debug_tuple("Streamed").finish_non_exhaustive(),
             #[cfg(feature = "server")]
             Self::Stalled => formatter.write_str("Stalled"),
+            #[cfg(feature = "server")]
+            Self::StalledAfter(first) => {
+                formatter.debug_tuple("StalledAfter").field(first).finish()
+            }
         }
     }
 }

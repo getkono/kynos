@@ -51,16 +51,16 @@ pub trait CookieParams: Sized {
             .collect()
     }
 
-    /// The problem types a value breaking a bound answers with, beside
-    /// `about:blank`: the
-    /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
-    /// field type naming one, so the 400 [`Cookies`] declares names what
+    /// The problems a value breaking a bound answers with, beside
+    /// `about:blank`: the one the group names, else the
+    /// [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM) of
+    /// each field type naming one, so what [`Cookies`] declares names what
     /// [`CookieRejection::Schema`] sends.
     ///
     /// `#[derive(CookieParams)]` replaces this; the default names none, which
     /// is right for a group holding no value to a bound.
     #[must_use]
-    fn constraint_types() -> Vec<&'static str> {
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
         Vec::new()
     }
 }
@@ -75,7 +75,7 @@ impl<C: Sync, T: CookieParams + Send> FromRequestParts<C> for Cookies<T> {
 
 impl<T: CookieParams> Describe for Cookies<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        super::describe_parameters(operation, T::parameters, &T::constraint_types());
+        super::describe_parameters(operation, T::parameters, &T::constraint_problems());
     }
 }
 

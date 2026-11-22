@@ -2766,17 +2766,20 @@ fn an_interceptor_whose_reads_cannot_fail_declares_no_rejection() {
 
 // --- Scope in what a broken bound publishes ----------------------------------
 //
-// `Schema::CONSTRAINT_TYPE` puts an application's own problem type on the
+// `Schema::CONSTRAINT_PROBLEM` puts an application's own problem on the
 // refusal of a value breaking a bound its type declares. The status keeps the
 // type an input decodes into beside `about:blank`, which the same input still
 // sends for a value that never decoded, and only where that input reads a type
-// naming one.
+// naming one; a parameter's problem asking for 422 is declared there alone.
 
-/// The problem type the types below name.
-const VALIDATION_FAILED: &str = "https://errors.example.com/validation-failed";
+/// The problem the types below name.
+const VALIDATION_FAILED: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/validation-failed",
+    );
 
 #[derive(Schema, serde::Deserialize)]
-#[schema(constraint_type = VALIDATION_FAILED)]
+#[schema(constraint_problem = VALIDATION_FAILED)]
 struct NewTorrent {
     #[schema(max_length = 2048)]
     magnet: String,
@@ -2790,7 +2793,7 @@ struct Untyped {
 
 /// A page size naming the same type, as a query parameter's value.
 #[derive(Schema, Debug)]
-#[schema(constraint_type = VALIDATION_FAILED)]
+#[schema(constraint_problem = VALIDATION_FAILED)]
 struct Limit(#[schema(maximum = 100)] u32);
 
 impl std::str::FromStr for Limit {
@@ -2827,11 +2830,75 @@ async fn add_untyped(_: kynos::extract::body::json::Json<Untyped>) -> NoContent 
     NoContent
 }
 
-/// A body and a parameter whose types name a problem type declare it beside
+/// One validation problem at one status, a parameter's as a body's.
+const INVALID: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type("https://errors.example.com/invalid")
+        .titled("The request is invalid")
+        .unprocessable();
+
+/// An offset answering a broken bound with [`INVALID`].
+#[derive(Schema, Debug)]
+#[schema(constraint_problem = INVALID)]
+struct Offset(#[schema(maximum = 1000)] u32);
+
+impl std::str::FromStr for Offset {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        raw.parse().map(Self)
+    }
+}
+
+impl std::fmt::Display for Offset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl kynos::schema::ParamValue for Offset {}
+
+#[derive(Schema, kynos::QueryParams)]
+struct Window {
+    offset: Option<Offset>,
+}
+
+#[kynos::get("/window")]
+async fn window(_: kynos::extract::params::query::Query<Window>) -> NoContent {
+    NoContent
+}
+
+/// A parameter whose problem asks for 422 declares it there, under its title
+/// and alone, since nothing else a parameter sends answers 422; its 400 keeps
+/// the `about:blank` an undecodable value sends, and names no other type.
+#[test]
+fn an_unprocessable_parameter_problem_declares_its_own_422() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![window])
+        .openapi()
+        .expect("a describable router");
+
+    let declared = declared_problem(&operation(&document, "/window"), "422");
+    assert_eq!(
+        declared["description"], "The request is invalid",
+        "{declared}"
+    );
+    let schema = &declared["content"]["application/problem+json"]["schema"];
+    assert_eq!(published(schema), [INVALID.type_uri], "{schema}");
+    assert_eq!(
+        schema["allOf"][1]["required"],
+        serde_json::json!(["errors"]),
+        "{schema}"
+    );
+
+    let schema = declared_problem_schema(&document, "/window", "400");
+    assert_eq!(published(&schema), ["about:blank"], "{schema}");
+}
+
+/// A body and a parameter whose types name a problem declare it beside
 /// `about:blank`, each at its input's own status, with the `errors` member it
 /// always sends; a body whose type names none declares `about:blank` alone.
 #[test]
-fn a_named_constraint_type_is_declared_beside_about_blank() {
+fn a_named_constraint_problem_is_declared_beside_about_blank() {
     let document = Router::<()>::new()
         .mount(kynos::routes![add_torrent, add_untyped])
         .openapi()
@@ -2843,7 +2910,7 @@ fn a_named_constraint_type_is_declared_beside_about_blank() {
         published.sort();
         assert_eq!(
             published,
-            ["about:blank", VALIDATION_FAILED],
+            ["about:blank", VALIDATION_FAILED.type_uri],
             "{status}: {schema}"
         );
 
@@ -2851,7 +2918,7 @@ fn a_named_constraint_type_is_declared_beside_about_blank() {
             .as_array()
             .and_then(|branches| {
                 branches.iter().find(|branch| {
-                    branch["allOf"][1]["properties"]["type"]["const"] == VALIDATION_FAILED
+                    branch["allOf"][1]["properties"]["type"]["const"] == VALIDATION_FAILED.type_uri
                 })
             })
             .unwrap_or_else(|| panic!("{status}: no branch for the named type: {schema}"));

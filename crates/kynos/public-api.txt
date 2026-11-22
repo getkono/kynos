@@ -138,7 +138,7 @@ impl core::hash::Hash for kynos::error::problem::PointerError
 pub fn kynos::error::problem::PointerError::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::StructuralPartialEq for kynos::error::problem::PointerError
 impl kynos::schema::Schema for kynos::error::problem::PointerError
-pub const kynos::error::problem::PointerError::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::PointerError::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::PointerError::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::PointerError::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::PointerError::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
@@ -176,7 +176,7 @@ impl core::marker::StructuralPartialEq for kynos::error::problem::Problem
 impl kynos::response::IntoResponse for kynos::error::problem::Problem
 pub fn kynos::error::problem::Problem::into_response(self) -> kynos::http::Response
 impl kynos::schema::Schema for kynos::error::problem::Problem
-pub const kynos::error::problem::Problem::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::Problem::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::Problem::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::Problem::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::Problem::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
@@ -297,7 +297,7 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::error::rejection::AuthRejec
 #[non_exhaustive] pub enum kynos::error::rejection::BodyRejection
 pub kynos::error::rejection::BodyRejection::Schema
 pub kynos::error::rejection::BodyRejection::Schema::failures: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
-pub kynos::error::rejection::BodyRejection::Schema::type_uri: core::option::Option<&'static str>
+pub kynos::error::rejection::BodyRejection::Schema::problem: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub kynos::error::rejection::BodyRejection::Stalled
 pub kynos::error::rejection::BodyRejection::Stalled::after: core::time::Duration
 pub kynos::error::rejection::BodyRejection::Syntax
@@ -366,7 +366,7 @@ pub kynos::error::rejection::CookieRejection::Invalid::name: alloc::string::Stri
 pub kynos::error::rejection::CookieRejection::Schema
 pub kynos::error::rejection::CookieRejection::Schema::failures: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub kynos::error::rejection::CookieRejection::Schema::name: alloc::string::String
-pub kynos::error::rejection::CookieRejection::Schema::type_uri: core::option::Option<&'static str>
+pub kynos::error::rejection::CookieRejection::Schema::problem: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 impl kynos::error::rejection::CookieRejection
 pub fn kynos::error::rejection::CookieRejection::status(&self) -> http::status::StatusCode
 impl core::error::Error for kynos::error::rejection::CookieRejection
@@ -395,7 +395,7 @@ pub kynos::error::rejection::HeaderRejection::Invalid::name: alloc::string::Stri
 pub kynos::error::rejection::HeaderRejection::Schema
 pub kynos::error::rejection::HeaderRejection::Schema::failures: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub kynos::error::rejection::HeaderRejection::Schema::name: alloc::string::String
-pub kynos::error::rejection::HeaderRejection::Schema::type_uri: core::option::Option<&'static str>
+pub kynos::error::rejection::HeaderRejection::Schema::problem: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 impl kynos::error::rejection::HeaderRejection
 pub fn kynos::error::rejection::HeaderRejection::status(&self) -> http::status::StatusCode
 impl core::error::Error for kynos::error::rejection::HeaderRejection
@@ -449,7 +449,7 @@ pub kynos::error::rejection::PathRejection::Invalid::name: alloc::string::String
 pub kynos::error::rejection::PathRejection::Schema
 pub kynos::error::rejection::PathRejection::Schema::failures: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub kynos::error::rejection::PathRejection::Schema::name: alloc::string::String
-pub kynos::error::rejection::PathRejection::Schema::type_uri: core::option::Option<&'static str>
+pub kynos::error::rejection::PathRejection::Schema::problem: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 impl kynos::error::rejection::PathRejection
 pub fn kynos::error::rejection::PathRejection::status(&self) -> http::status::StatusCode
 impl core::error::Error for kynos::error::rejection::PathRejection
@@ -478,7 +478,7 @@ pub kynos::error::rejection::QueryRejection::Invalid::name: alloc::string::Strin
 pub kynos::error::rejection::QueryRejection::Schema
 pub kynos::error::rejection::QueryRejection::Schema::failures: alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub kynos::error::rejection::QueryRejection::Schema::name: alloc::string::String
-pub kynos::error::rejection::QueryRejection::Schema::type_uri: core::option::Option<&'static str>
+pub kynos::error::rejection::QueryRejection::Schema::problem: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 impl kynos::error::rejection::QueryRejection
 pub fn kynos::error::rejection::QueryRejection::status(&self) -> http::status::StatusCode
 impl core::error::Error for kynos::error::rejection::QueryRejection
@@ -864,7 +864,7 @@ pub const kynos::extract::body::binary::Binary<M>::DISTINCT: ()
 impl<M: kynos::http::media::MediaType> kynos::extract::describe::Describe for kynos::extract::body::binary::Binary<M>
 pub fn kynos::extract::body::binary::Binary<M>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<M: kynos::http::media::MediaType> kynos::extract::describe::RequestContent for kynos::extract::body::binary::Binary<M>
-pub fn kynos::extract::body::binary::Binary<M>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::binary::Binary<M>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::binary::Binary<M>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::binary::Binary<M>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<M: kynos::http::media::MediaType> kynos::response::IntoResponse for kynos::extract::body::binary::Binary<M>
@@ -1003,7 +1003,7 @@ pub const kynos::extract::body::codec::Encoded<C, T>::DISTINCT: ()
 impl<C: kynos::extract::body::codec::BodyCodec<T>, T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::codec::Encoded<C, T>
 pub fn kynos::extract::body::codec::Encoded<C, T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<C: kynos::extract::body::codec::BodyCodec<T>, T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::codec::Encoded<C, T>
-pub fn kynos::extract::body::codec::Encoded<C, T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::codec::Encoded<C, T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::codec::Encoded<C, T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::codec::Encoded<C, T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<C: kynos::extract::body::codec::BodyCodec<T>, T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::codec::Encoded<C, T>
@@ -1087,7 +1087,7 @@ pub const kynos::extract::body::form::Form<T>::DISTINCT: ()
 impl<T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::form::Form<T>
 pub fn kynos::extract::body::form::Form<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::form::Form<T>
-pub fn kynos::extract::body::form::Form<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::form::Form<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::form::Form<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::form::Form<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::form::Form<T>
@@ -1168,7 +1168,7 @@ pub const kynos::extract::body::json::Json<T>::DISTINCT: ()
 impl<T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::json::Json<T>
 pub fn kynos::extract::body::json::Json<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json::Json<T>
-pub fn kynos::extract::body::json::Json<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json::Json<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json::Json<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json::Json<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::json::Json<T>
@@ -1248,7 +1248,7 @@ pub const kynos::extract::body::json_as::JsonAs<M, T>::DISTINCT: ()
 impl<M: kynos::http::media::MediaType, T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::json_as::JsonAs<M, T>
 pub fn kynos::extract::body::json_as::JsonAs<M, T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<M: kynos::http::media::MediaType, T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json_as::JsonAs<M, T>
-pub fn kynos::extract::body::json_as::JsonAs<M, T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json_as::JsonAs<M, T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json_as::JsonAs<M, T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json_as::JsonAs<M, T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<M: kynos::http::media::MediaType, T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::json_as::JsonAs<M, T>
@@ -1336,7 +1336,7 @@ pub const kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json
 impl<T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>
 pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>
-pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<S> core::marker::Freeze for kynos::extract::body::json_lines::JsonLines<S> where S: core::marker::Freeze
@@ -1400,7 +1400,7 @@ pub const kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_l
 impl<T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>
 pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>
-pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<S> core::marker::Freeze for kynos::extract::body::json_lines::JsonSeq<S> where S: core::marker::Freeze
@@ -1475,7 +1475,7 @@ pub fn kynos::extract::body::multipart::FilePart::from_part(kynos::extract::body
 impl kynos::response::codec::multipart::IntoPart for kynos::extract::body::multipart::FilePart
 pub fn kynos::extract::body::multipart::FilePart::into_part(self, &str) -> kynos::extract::body::multipart::Part
 impl kynos::schema::Schema for kynos::extract::body::multipart::FilePart
-pub const kynos::extract::body::multipart::FilePart::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::extract::body::multipart::FilePart::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::multipart::FilePart::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::extract::body::multipart::FilePart::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::extract::body::multipart::FilePart::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
@@ -1546,7 +1546,7 @@ pub const kynos::extract::body::multipart::MultipartForm<T>::DISTINCT: ()
 impl<T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::multipart::MultipartForm<T>
 pub fn kynos::extract::body::multipart::MultipartForm<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::multipart::MultipartForm<T>
-pub fn kynos::extract::body::multipart::MultipartForm<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::multipart::MultipartForm<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::multipart::MultipartForm<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::multipart::MultipartForm<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::multipart::MultipartForm<T>
@@ -1658,7 +1658,7 @@ pub const kynos::extract::body::protobuf::Protobuf<T>::DISTINCT: ()
 impl<T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::protobuf::Protobuf<T>
 pub fn kynos::extract::body::protobuf::Protobuf<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::protobuf::Protobuf<T>
-pub fn kynos::extract::body::protobuf::Protobuf<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::protobuf::Protobuf<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::protobuf::Protobuf<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::protobuf::Protobuf<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::protobuf::Protobuf<T>
@@ -1697,7 +1697,7 @@ impl core::marker::StructuralPartialEq for kynos::extract::body::text::Text
 impl kynos::extract::describe::Describe for kynos::extract::body::text::Text
 pub fn kynos::extract::body::text::Text::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl kynos::extract::describe::RequestContent for kynos::extract::body::text::Text
-pub fn kynos::extract::body::text::Text::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::text::Text::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::text::Text::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::text::Text::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl kynos::response::IntoResponse for kynos::extract::body::text::Text
@@ -1810,7 +1810,7 @@ pub const kynos::extract::body::text::Text::DISTINCT: ()
 impl<M: kynos::http::media::MediaType> kynos::extract::describe::Describe for kynos::extract::body::text_as::TextAs<M>
 pub fn kynos::extract::body::text_as::TextAs<M>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<M: kynos::http::media::MediaType> kynos::extract::describe::RequestContent for kynos::extract::body::text_as::TextAs<M>
-pub fn kynos::extract::body::text_as::TextAs<M>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::text_as::TextAs<M>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::text_as::TextAs<M>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::text_as::TextAs<M>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<M: kynos::http::media::MediaType> kynos::response::IntoResponse for kynos::extract::body::text_as::TextAs<M>
@@ -1853,7 +1853,7 @@ impl<L, R> core::marker::StructuralPartialEq for kynos::extract::body::OneOf<L, 
 impl<L, R> kynos::extract::describe::Describe for kynos::extract::body::OneOf<L, R> where L: kynos::extract::body::alternative::Alternative<R>, R: kynos::extract::describe::RequestContent
 pub fn kynos::extract::body::OneOf<L, R>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<L, R> kynos::extract::describe::RequestContent for kynos::extract::body::OneOf<L, R> where L: kynos::extract::body::alternative::Alternative<R>, R: kynos::extract::describe::RequestContent
-pub fn kynos::extract::body::OneOf<L, R>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::OneOf<L, R>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::OneOf<L, R>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::OneOf<L, R>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<L: core::clone::Clone, R: core::clone::Clone> core::clone::Clone for kynos::extract::body::OneOf<L, R>
@@ -2109,55 +2109,55 @@ pub fn kynos::di::inject::Inject<T>::describe(&mut kynos::router::operation::Ope
 impl<T> kynos::extract::describe::Describe for kynos::response::negotiate::Accept<T>
 pub fn kynos::response::negotiate::Accept<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 pub trait kynos::extract::describe::RequestContent: kynos::extract::describe::Describe
-pub fn kynos::extract::describe::RequestContent::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::describe::RequestContent::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::describe::RequestContent::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::describe::RequestContent::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl kynos::extract::describe::RequestContent for kynos::extract::body::text::Text
-pub fn kynos::extract::body::text::Text::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::text::Text::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::text::Text::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::text::Text::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<C: kynos::extract::body::codec::BodyCodec<T>, T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::codec::Encoded<C, T>
-pub fn kynos::extract::body::codec::Encoded<C, T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::codec::Encoded<C, T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::codec::Encoded<C, T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::codec::Encoded<C, T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<L, R> kynos::extract::describe::RequestContent for kynos::extract::body::OneOf<L, R> where L: kynos::extract::body::alternative::Alternative<R>, R: kynos::extract::describe::RequestContent
-pub fn kynos::extract::body::OneOf<L, R>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::OneOf<L, R>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::OneOf<L, R>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::OneOf<L, R>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<M: kynos::http::media::MediaType, T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json_as::JsonAs<M, T>
-pub fn kynos::extract::body::json_as::JsonAs<M, T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json_as::JsonAs<M, T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json_as::JsonAs<M, T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json_as::JsonAs<M, T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<M: kynos::http::media::MediaType> kynos::extract::describe::RequestContent for kynos::extract::body::binary::Binary<M>
-pub fn kynos::extract::body::binary::Binary<M>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::binary::Binary<M>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::binary::Binary<M>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::binary::Binary<M>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<M: kynos::http::media::MediaType> kynos::extract::describe::RequestContent for kynos::extract::body::text_as::TextAs<M>
-pub fn kynos::extract::body::text_as::TextAs<M>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::text_as::TextAs<M>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::text_as::TextAs<M>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::text_as::TextAs<M>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::form::Form<T>
-pub fn kynos::extract::body::form::Form<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::form::Form<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::form::Form<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::form::Form<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json::Json<T>
-pub fn kynos::extract::body::json::Json<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json::Json<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json::Json<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json::Json<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>
-pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json_lines::JsonLines<kynos::extract::body::json_lines::records::Records<T>>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>
-pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json_lines::JsonSeq<kynos::extract::body::json_lines::records::Records<T>>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::multipart::MultipartForm<T>
-pub fn kynos::extract::body::multipart::MultipartForm<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::multipart::MultipartForm<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::multipart::MultipartForm<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::multipart::MultipartForm<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::protobuf::Protobuf<T>
-pub fn kynos::extract::body::protobuf::Protobuf<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::protobuf::Protobuf<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::protobuf::Protobuf<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::protobuf::Protobuf<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 pub mod kynos::extract::link
@@ -2242,7 +2242,7 @@ impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::extract::params::cook
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos::extract::params::cookie::Cookies<T> where T: core::panic::unwind_safe::UnwindSafe
 pub trait kynos::extract::params::cookie::CookieParams: core::marker::Sized
 pub const kynos::extract::params::cookie::CookieParams::NAMES: &'static [&'static str]
-pub fn kynos::extract::params::cookie::CookieParams::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::params::cookie::CookieParams::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::params::cookie::CookieParams::decode(&http::header::map::HeaderMap) -> core::result::Result<Self, kynos::error::rejection::CookieRejection>
 pub fn kynos::extract::params::cookie::CookieParams::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub mod kynos::extract::params::header
@@ -2345,7 +2345,7 @@ pub const kynos::extract::params::header::HeaderParams::DESCRIBED: bool
 pub const kynos::extract::params::header::HeaderParams::NAMES: &'static [&'static str]
 pub const kynos::extract::params::header::HeaderParams::REPEATABLE: bool
 pub const kynos::extract::params::header::HeaderParams::VARIES: &'static [&'static str]
-pub fn kynos::extract::params::header::HeaderParams::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::params::header::HeaderParams::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::params::header::HeaderParams::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::extract::params::header::HeaderParams::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for ()
@@ -2353,7 +2353,7 @@ pub const ()::DESCRIBED: bool
 pub const ()::NAMES: &'static [&'static str]
 pub const ()::REPEATABLE: bool
 pub const ()::VARIES: &'static [&'static str]
-pub fn ()::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn ()::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn ()::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn ()::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::http::etag::ETag
@@ -2361,7 +2361,7 @@ pub const kynos::http::etag::ETag::DESCRIBED: bool
 pub const kynos::http::etag::ETag::NAMES: &'static [&'static str]
 pub const kynos::http::etag::ETag::REPEATABLE: bool
 pub const kynos::http::etag::ETag::VARIES: &'static [&'static str]
-pub fn kynos::http::etag::ETag::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::http::etag::ETag::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::http::etag::ETag::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::http::etag::ETag::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::compression::ContentEncoding
@@ -2369,7 +2369,7 @@ pub const kynos::middleware::compression::ContentEncoding::DESCRIBED: bool
 pub const kynos::middleware::compression::ContentEncoding::NAMES: &'static [&'static str]
 pub const kynos::middleware::compression::ContentEncoding::REPEATABLE: bool
 pub const kynos::middleware::compression::ContentEncoding::VARIES: &'static [&'static str]
-pub fn kynos::middleware::compression::ContentEncoding::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::compression::ContentEncoding::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::compression::ContentEncoding::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::compression::ContentEncoding::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::conditional::Preconditions
@@ -2377,7 +2377,7 @@ pub const kynos::middleware::conditional::Preconditions::DESCRIBED: bool
 pub const kynos::middleware::conditional::Preconditions::NAMES: &'static [&'static str]
 pub const kynos::middleware::conditional::Preconditions::REPEATABLE: bool
 pub const kynos::middleware::conditional::Preconditions::VARIES: &'static [&'static str]
-pub fn kynos::middleware::conditional::Preconditions::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::conditional::Preconditions::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::conditional::Preconditions::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::conditional::Preconditions::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::cookies::SetCookieHeaders
@@ -2385,7 +2385,7 @@ pub const kynos::middleware::cookies::SetCookieHeaders::DESCRIBED: bool
 pub const kynos::middleware::cookies::SetCookieHeaders::NAMES: &'static [&'static str]
 pub const kynos::middleware::cookies::SetCookieHeaders::REPEATABLE: bool
 pub const kynos::middleware::cookies::SetCookieHeaders::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cookies::SetCookieHeaders::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::cookies::SetCookieHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::cookies::SetCookieHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::cookies::SetCookieHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::rate_limit::headers::RateLimitFields
@@ -2393,7 +2393,7 @@ pub const kynos::middleware::rate_limit::headers::RateLimitFields::DESCRIBED: bo
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::NAMES: &'static [&'static str]
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::REPEATABLE: bool
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::VARIES: &'static [&'static str]
-pub fn kynos::middleware::rate_limit::headers::RateLimitFields::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::rate_limit::headers::RateLimitFields::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::rate_limit::headers::RateLimitFields::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::rate_limit::headers::RateLimitFields::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::rate_limit::headers::RateLimitHeaders
@@ -2401,7 +2401,7 @@ pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::DESCRIBED: b
 pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::NAMES: &'static [&'static str]
 pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::REPEATABLE: bool
 pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::VARIES: &'static [&'static str]
-pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::request_id::XRequestId
@@ -2409,7 +2409,7 @@ pub const kynos::middleware::request_id::XRequestId::DESCRIBED: bool
 pub const kynos::middleware::request_id::XRequestId::NAMES: &'static [&'static str]
 pub const kynos::middleware::request_id::XRequestId::REPEATABLE: bool
 pub const kynos::middleware::request_id::XRequestId::VARIES: &'static [&'static str]
-pub fn kynos::middleware::request_id::XRequestId::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::request_id::XRequestId::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::request_id::XRequestId::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::request_id::XRequestId::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::response::disposition::ContentDisposition
@@ -2417,7 +2417,7 @@ pub const kynos::response::disposition::ContentDisposition::DESCRIBED: bool
 pub const kynos::response::disposition::ContentDisposition::NAMES: &'static [&'static str]
 pub const kynos::response::disposition::ContentDisposition::REPEATABLE: bool
 pub const kynos::response::disposition::ContentDisposition::VARIES: &'static [&'static str]
-pub fn kynos::response::disposition::ContentDisposition::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::disposition::ContentDisposition::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::disposition::ContentDisposition::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::disposition::ContentDisposition::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::response::language::headers::ContentLanguage
@@ -2425,7 +2425,7 @@ pub const kynos::response::language::headers::ContentLanguage::DESCRIBED: bool
 pub const kynos::response::language::headers::ContentLanguage::NAMES: &'static [&'static str]
 pub const kynos::response::language::headers::ContentLanguage::REPEATABLE: bool
 pub const kynos::response::language::headers::ContentLanguage::VARIES: &'static [&'static str]
-pub fn kynos::response::language::headers::ContentLanguage::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::language::headers::ContentLanguage::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::language::headers::ContentLanguage::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::language::headers::ContentLanguage::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::response::range::headers::AcceptRanges
@@ -2433,7 +2433,7 @@ pub const kynos::response::range::headers::AcceptRanges::DESCRIBED: bool
 pub const kynos::response::range::headers::AcceptRanges::NAMES: &'static [&'static str]
 pub const kynos::response::range::headers::AcceptRanges::REPEATABLE: bool
 pub const kynos::response::range::headers::AcceptRanges::VARIES: &'static [&'static str]
-pub fn kynos::response::range::headers::AcceptRanges::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::range::headers::AcceptRanges::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::range::headers::AcceptRanges::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::range::headers::AcceptRanges::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::response::range::headers::ContentRange
@@ -2441,7 +2441,7 @@ pub const kynos::response::range::headers::ContentRange::DESCRIBED: bool
 pub const kynos::response::range::headers::ContentRange::NAMES: &'static [&'static str]
 pub const kynos::response::range::headers::ContentRange::REPEATABLE: bool
 pub const kynos::response::range::headers::ContentRange::VARIES: &'static [&'static str]
-pub fn kynos::response::range::headers::ContentRange::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::range::headers::ContentRange::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::range::headers::ContentRange::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::range::headers::ContentRange::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl<const DESCRIBED: bool> kynos::extract::params::header::HeaderParams for kynos::middleware::cors::CorsHeaders<DESCRIBED>
@@ -2449,7 +2449,7 @@ pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::DESCRIBED: bool
 pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::NAMES: &'static [&'static str]
 pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::REPEATABLE: bool
 pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl<const HSTS: bool, const DENY_FRAMING: bool> kynos::extract::params::header::HeaderParams for kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>
@@ -2457,7 +2457,7 @@ pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING
 pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::NAMES: &'static [&'static str]
 pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::REPEATABLE: bool
 pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::VARIES: &'static [&'static str]
-pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl<const TAGGED: bool> kynos::extract::params::header::HeaderParams for kynos::middleware::cache::CacheHeaders<TAGGED>
@@ -2465,7 +2465,7 @@ pub const kynos::middleware::cache::CacheHeaders<TAGGED>::DESCRIBED: bool
 pub const kynos::middleware::cache::CacheHeaders<TAGGED>::NAMES: &'static [&'static str]
 pub const kynos::middleware::cache::CacheHeaders<TAGGED>::REPEATABLE: bool
 pub const kynos::middleware::cache::CacheHeaders<TAGGED>::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 pub mod kynos::extract::params::path
@@ -2505,7 +2505,7 @@ pub trait kynos::extract::params::path::EncodePath: kynos::extract::params::path
 pub fn kynos::extract::params::path::EncodePath::encode(&self) -> alloc::vec::Vec<(&'static str, alloc::string::String)>
 pub trait kynos::extract::params::path::PathParams: core::marker::Sized
 pub const kynos::extract::params::path::PathParams::NAMES: &'static [&'static str]
-pub fn kynos::extract::params::path::PathParams::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::params::path::PathParams::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::params::path::PathParams::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub mod kynos::extract::params::query
 pub struct kynos::extract::params::query::Query<T>(pub T)
@@ -2543,7 +2543,7 @@ pub fn kynos::extract::params::query::DecodeQuery::decode(core::option::Option<&
 pub trait kynos::extract::params::query::EncodeQuery: kynos::extract::params::query::QueryParams
 pub fn kynos::extract::params::query::EncodeQuery::encode(&self) -> alloc::string::String
 pub trait kynos::extract::params::query::QueryParams: core::marker::Sized + kynos::schema::Schema
-pub fn kynos::extract::params::query::QueryParams::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::params::query::QueryParams::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::params::query::QueryParams::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub mod kynos::extract::params::querystring
 pub struct kynos::extract::params::querystring::QueryString<T, M>
@@ -3051,7 +3051,7 @@ pub const kynos::http::etag::ETag::DESCRIBED: bool
 pub const kynos::http::etag::ETag::NAMES: &'static [&'static str]
 pub const kynos::http::etag::ETag::REPEATABLE: bool
 pub const kynos::http::etag::ETag::VARIES: &'static [&'static str]
-pub fn kynos::http::etag::ETag::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::http::etag::ETag::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::http::etag::ETag::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::http::etag::ETag::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::http::etag::ETag
@@ -3464,7 +3464,7 @@ pub const kynos::middleware::cache::CacheHeaders<TAGGED>::DESCRIBED: bool
 pub const kynos::middleware::cache::CacheHeaders<TAGGED>::NAMES: &'static [&'static str]
 pub const kynos::middleware::cache::CacheHeaders<TAGGED>::REPEATABLE: bool
 pub const kynos::middleware::cache::CacheHeaders<TAGGED>::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl<const TAGGED: bool> !core::marker::Freeze for kynos::middleware::cache::CacheHeaders<TAGGED>
@@ -3760,7 +3760,7 @@ pub const kynos::middleware::compression::ContentEncoding::DESCRIBED: bool
 pub const kynos::middleware::compression::ContentEncoding::NAMES: &'static [&'static str]
 pub const kynos::middleware::compression::ContentEncoding::REPEATABLE: bool
 pub const kynos::middleware::compression::ContentEncoding::VARIES: &'static [&'static str]
-pub fn kynos::middleware::compression::ContentEncoding::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::compression::ContentEncoding::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::compression::ContentEncoding::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::compression::ContentEncoding::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::middleware::compression::ContentEncoding
@@ -3883,7 +3883,7 @@ pub const kynos::middleware::conditional::Preconditions::DESCRIBED: bool
 pub const kynos::middleware::conditional::Preconditions::NAMES: &'static [&'static str]
 pub const kynos::middleware::conditional::Preconditions::REPEATABLE: bool
 pub const kynos::middleware::conditional::Preconditions::VARIES: &'static [&'static str]
-pub fn kynos::middleware::conditional::Preconditions::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::conditional::Preconditions::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::conditional::Preconditions::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::conditional::Preconditions::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl !core::marker::Freeze for kynos::middleware::conditional::Preconditions
@@ -3937,7 +3937,7 @@ pub const kynos::middleware::cookies::SetCookieHeaders::DESCRIBED: bool
 pub const kynos::middleware::cookies::SetCookieHeaders::NAMES: &'static [&'static str]
 pub const kynos::middleware::cookies::SetCookieHeaders::REPEATABLE: bool
 pub const kynos::middleware::cookies::SetCookieHeaders::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cookies::SetCookieHeaders::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::cookies::SetCookieHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::cookies::SetCookieHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::cookies::SetCookieHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::middleware::cookies::SetCookieHeaders
@@ -4022,7 +4022,7 @@ pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::DESCRIBED: bool
 pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::NAMES: &'static [&'static str]
 pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::REPEATABLE: bool
 pub const kynos::middleware::cors::CorsHeaders<DESCRIBED>::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::cors::CorsHeaders<DESCRIBED>::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl<const DESCRIBED: bool> !core::marker::Freeze for kynos::middleware::cors::CorsHeaders<DESCRIBED>
@@ -4078,6 +4078,33 @@ impl kynos::middleware::cors::CorsDocumentation for kynos::middleware::cors::Und
 pub type kynos::middleware::cors::Undocumented::Headers = kynos::middleware::cors::CorsHeaders<false>
 pub fn kynos::middleware::cors::Undocumented::label(kynos::middleware::cors::CorsHeaders<true>) -> Self::Headers
 pub mod kynos::middleware::csrf
+#[non_exhaustive] pub enum kynos::middleware::csrf::CrossSiteReason
+pub kynos::middleware::csrf::CrossSiteReason::FetchSite
+pub kynos::middleware::csrf::CrossSiteReason::Origin
+pub kynos::middleware::csrf::CrossSiteReason::OriginWithoutAuthority
+impl kynos::middleware::csrf::CrossSiteReason
+pub const fn kynos::middleware::csrf::CrossSiteReason::as_str(self) -> &'static str
+impl core::clone::Clone for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::clone(&self) -> kynos::middleware::csrf::CrossSiteReason
+impl core::cmp::Eq for kynos::middleware::csrf::CrossSiteReason
+impl core::cmp::PartialEq for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::eq(&self, &kynos::middleware::csrf::CrossSiteReason) -> bool
+impl core::error::Error for kynos::middleware::csrf::CrossSiteReason
+impl core::fmt::Debug for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::middleware::csrf::CrossSiteReason
+pub fn kynos::middleware::csrf::CrossSiteReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::StructuralPartialEq for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Freeze for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Send for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Sync for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::Unpin for kynos::middleware::csrf::CrossSiteReason
+impl core::marker::UnsafeUnpin for kynos::middleware::csrf::CrossSiteReason
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::csrf::CrossSiteReason
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::csrf::CrossSiteReason
 pub struct kynos::middleware::csrf::CrossSite<T>
 impl<T> kynos::middleware::csrf::CrossSite<T>
 pub fn kynos::middleware::csrf::CrossSite<T>::new() -> Self
@@ -4112,6 +4139,7 @@ impl kynos::middleware::csrf::Csrf<()>
 pub fn kynos::middleware::csrf::Csrf<()>::new() -> Self
 pub fn kynos::middleware::csrf::Csrf<()>::problem_type<T: kynos::error::problem::ProblemType>(self) -> kynos::middleware::csrf::Csrf<T>
 impl<T> kynos::middleware::csrf::Csrf<T>
+pub fn kynos::middleware::csrf::Csrf<T>::check(&self, &kynos::http::Parts) -> core::result::Result<(), kynos::middleware::csrf::CrossSiteReason>
 pub fn kynos::middleware::csrf::Csrf<T>::permits(&self, &kynos::http::Parts) -> bool
 pub fn kynos::middleware::csrf::Csrf<T>::trusting_origin(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
 pub fn kynos::middleware::csrf::Csrf<T>::when<C>(self, fn(&C) -> bool) -> kynos::middleware::csrf::CsrfWhen<C, T>
@@ -4664,7 +4692,7 @@ pub const kynos::middleware::rate_limit::headers::RateLimitFields::DESCRIBED: bo
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::NAMES: &'static [&'static str]
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::REPEATABLE: bool
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::VARIES: &'static [&'static str]
-pub fn kynos::middleware::rate_limit::headers::RateLimitFields::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::rate_limit::headers::RateLimitFields::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::rate_limit::headers::RateLimitFields::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::rate_limit::headers::RateLimitFields::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::middleware::rate_limit::headers::RateLimitFields
@@ -4693,7 +4721,7 @@ pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::DESCRIBED: b
 pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::NAMES: &'static [&'static str]
 pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::REPEATABLE: bool
 pub const kynos::middleware::rate_limit::headers::RateLimitHeaders::VARIES: &'static [&'static str]
-pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::middleware::rate_limit::headers::RateLimitHeaders
@@ -5098,7 +5126,7 @@ pub const kynos::middleware::request_id::XRequestId::DESCRIBED: bool
 pub const kynos::middleware::request_id::XRequestId::NAMES: &'static [&'static str]
 pub const kynos::middleware::request_id::XRequestId::REPEATABLE: bool
 pub const kynos::middleware::request_id::XRequestId::VARIES: &'static [&'static str]
-pub fn kynos::middleware::request_id::XRequestId::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::request_id::XRequestId::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::request_id::XRequestId::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::request_id::XRequestId::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::middleware::request_id::CorrelationHeaders for kynos::middleware::request_id::XRequestId
@@ -5133,7 +5161,7 @@ pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING
 pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::NAMES: &'static [&'static str]
 pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::REPEATABLE: bool
 pub const kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::VARIES: &'static [&'static str]
-pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl<const HSTS: bool, const DENY_FRAMING: bool> !core::marker::Freeze for kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>
@@ -5368,13 +5396,44 @@ impl !core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::Trac
 impl !core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::TraceSpan
 pub const kynos::middleware::trace::REDACTED: &[&str]
 pub mod kynos::middleware::trusted_hosts
+#[non_exhaustive] pub enum kynos::middleware::trusted_hosts::UntrustedHostReason
+pub kynos::middleware::trusted_hosts::UntrustedHostReason::Malformed
+pub kynos::middleware::trusted_hosts::UntrustedHostReason::NoAuthority
+pub kynos::middleware::trusted_hosts::UntrustedHostReason::NotAllowed
+impl kynos::middleware::trusted_hosts::UntrustedHostReason
+pub const fn kynos::middleware::trusted_hosts::UntrustedHostReason::as_str(self) -> &'static str
+impl core::clone::Clone for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::clone(&self) -> kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::cmp::Eq for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::cmp::PartialEq for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::eq(&self, &kynos::middleware::trusted_hosts::UntrustedHostReason) -> bool
+impl core::error::Error for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::fmt::Debug for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::StructuralPartialEq for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Freeze for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Send for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Sync for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Unpin for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::UnsafeUnpin for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::trusted_hosts::UntrustedHostReason
 pub struct kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl kynos::middleware::trusted_hosts::TrustedHosts<()>
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<()>::new() -> Self
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<()>::problem_type<T: kynos::error::problem::ProblemType>(self) -> kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl<T> kynos::middleware::trusted_hosts::TrustedHosts<T>
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::admit_no_authority(self) -> Self
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::admits(&self, &kynos::http::Parts) -> bool
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::allow(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::allow_loopback(self) -> Self
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::check(&self, &kynos::http::Parts) -> core::result::Result<(), kynos::middleware::trusted_hosts::UntrustedHostReason>
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::when<C>(self, fn(&C) -> bool) -> kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHosts<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Adds = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
@@ -5394,6 +5453,24 @@ impl<T> core::marker::Unpin for kynos::middleware::trusted_hosts::TrustedHosts<T
 impl<T> core::marker::UnsafeUnpin for kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos::middleware::trusted_hosts::TrustedHosts<T>
+pub struct kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::clone::Clone for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+pub fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::clone(&self) -> Self
+impl<C, T> core::fmt::Debug for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+pub fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Adds = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Reads = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
+pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::ADDS_ON: kynos::middleware::Placement
+pub async fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
+impl<C, T> core::marker::Freeze for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::Send for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::Sync for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::Unpin for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::UnsafeUnpin for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::panic::unwind_safe::UnwindSafe for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
 pub struct kynos::middleware::trusted_hosts::UntrustedHost<T>
 impl<T> kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub fn kynos::middleware::trusted_hosts::UntrustedHost<T>::new() -> Self
@@ -5597,6 +5674,12 @@ pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::trusted_hosts::TrustedHosts<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
+impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Adds = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Reads = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
+pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::ADDS_ON: kynos::middleware::Placement
+pub async fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<C, U, M, L> kynos::middleware::Interceptor<C> for kynos::middleware::decompression::Decompression<U, M, L> where C: core::marker::Sync + 'static, U: kynos::error::problem::ProblemType, M: kynos::error::problem::ProblemType, L: kynos::error::problem::ProblemType
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Adds = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Reads = ()
@@ -5718,31 +5801,34 @@ impl core::marker::Unpin for kynos::error::Error
 impl core::marker::UnsafeUnpin for kynos::error::Error
 impl !core::panic::unwind_safe::RefUnwindSafe for kynos::error::Error
 impl !core::panic::unwind_safe::UnwindSafe for kynos::error::Error
-pub struct kynos::prelude::Accepted<T>
+pub struct kynos::prelude::Accepted<T, L: kynos::response::status::AcceptedLocation>
 pub kynos::prelude::Accepted::body: T
+pub kynos::prelude::Accepted::location: L
+impl<T> kynos::response::status::Accepted<T, kynos::response::status::Location>
+pub fn kynos::response::status::Accepted<T, kynos::response::status::Location>::at(impl core::convert::Into<kynos::response::status::Location>, T) -> Self
 impl<T> kynos::response::status::Accepted<T>
 pub fn kynos::response::status::Accepted<T>::new(T) -> Self
-impl<T: core::clone::Clone> core::clone::Clone for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::clone(&self) -> kynos::response::status::Accepted<T>
-impl<T: core::cmp::Eq> core::cmp::Eq for kynos::response::status::Accepted<T>
-impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::eq(&self, &kynos::response::status::Accepted<T>) -> bool
+impl<T, L: kynos::response::status::AcceptedLocation> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T, L>
+impl<T: core::clone::Clone, L: core::clone::Clone + kynos::response::status::AcceptedLocation> core::clone::Clone for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::clone(&self) -> kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::Eq, L: core::cmp::Eq + kynos::response::status::AcceptedLocation> core::cmp::Eq for kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::PartialEq, L: core::cmp::PartialEq + kynos::response::status::AcceptedLocation> core::cmp::PartialEq for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::eq(&self, &kynos::response::status::Accepted<T, L>) -> bool
 impl<T: core::default::Default> core::default::Default for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::default() -> kynos::response::status::Accepted<T>
-impl<T: core::fmt::Debug> core::fmt::Debug for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::into_response(self) -> kynos::http::Response
-impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<T> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T>
-impl<T> core::marker::Freeze for kynos::response::status::Accepted<T> where T: core::marker::Freeze
-impl<T> core::marker::Send for kynos::response::status::Accepted<T> where T: core::marker::Send
-impl<T> core::marker::Sync for kynos::response::status::Accepted<T> where T: core::marker::Sync
-impl<T> core::marker::Unpin for kynos::response::status::Accepted<T> where T: core::marker::Unpin
-impl<T> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T> where T: core::marker::UnsafeUnpin
-impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::RefUnwindSafe
-impl<T> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::UnwindSafe
+pub fn kynos::response::status::Accepted<T>::default() -> Self
+impl<T: core::fmt::Debug, L: core::fmt::Debug + kynos::response::status::AcceptedLocation> core::fmt::Debug for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: kynos::response::IntoResponse, L: kynos::response::status::AcceptedLocation> kynos::response::IntoResponse for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::into_response(self) -> kynos::http::Response
+impl<T: kynos::response::Responses, L: kynos::response::status::AcceptedLocation> kynos::response::Responses for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
+impl<T, L> core::marker::Freeze for kynos::response::status::Accepted<T, L> where T: core::marker::Freeze, L: core::marker::Freeze
+impl<T, L> core::marker::Send for kynos::response::status::Accepted<T, L> where T: core::marker::Send, L: core::marker::Send
+impl<T, L> core::marker::Sync for kynos::response::status::Accepted<T, L> where T: core::marker::Sync, L: core::marker::Sync
+impl<T, L> core::marker::Unpin for kynos::response::status::Accepted<T, L> where T: core::marker::Unpin, L: core::marker::Unpin
+impl<T, L> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T, L> where T: core::marker::UnsafeUnpin, L: core::marker::UnsafeUnpin
+impl<T, L> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::RefUnwindSafe, L: core::panic::unwind_safe::RefUnwindSafe
+impl<T, L> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::UnwindSafe, L: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::prelude::Auth<S: kynos::security::requirement::Requirement>(pub <S as kynos::security::requirement::Requirement>::Credential)
 impl<S: kynos::security::requirement::Requirement> kynos::security::auth::Auth<S>
 pub fn kynos::security::auth::Auth<S>::into_inner(self) -> <S as kynos::security::requirement::Requirement>::Credential
@@ -5967,7 +6053,7 @@ pub const kynos::extract::body::json::Json<T>::DISTINCT: ()
 impl<T: kynos::schema::Schema> kynos::extract::describe::Describe for kynos::extract::body::json::Json<T>
 pub fn kynos::extract::body::json::Json<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::schema::Schema> kynos::extract::describe::RequestContent for kynos::extract::body::json::Json<T>
-pub fn kynos::extract::body::json::Json<T>::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::extract::body::json::Json<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::json::Json<T>::media_types() -> alloc::vec::Vec<&'static str>
 pub fn kynos::extract::body::json::Json<T>::request_body(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::body::RequestBody
 impl<T: kynos::schema::Schema> kynos::response::Responses for kynos::extract::body::json::Json<T>
@@ -6018,6 +6104,7 @@ impl core::marker::StructuralPartialEq for kynos::response::status::Location
 impl core::str::traits::FromStr for kynos::response::status::Location
 pub type kynos::response::status::Location::Err = kynos::response::status::InvalidLocation
 pub fn kynos::response::status::Location::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl kynos::response::status::AcceptedLocation for kynos::response::status::Location
 impl core::marker::Freeze for kynos::response::status::Location
 impl core::marker::Send for kynos::response::status::Location
 impl core::marker::Sync for kynos::response::status::Location
@@ -6107,7 +6194,7 @@ impl core::marker::StructuralPartialEq for kynos::error::problem::Problem
 impl kynos::response::IntoResponse for kynos::error::problem::Problem
 pub fn kynos::error::problem::Problem::into_response(self) -> kynos::http::Response
 impl kynos::schema::Schema for kynos::error::problem::Problem
-pub const kynos::error::problem::Problem::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::Problem::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::Problem::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::Problem::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::Problem::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
@@ -6254,6 +6341,7 @@ pub struct kynos::prelude::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: core::time::Duration
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
@@ -6344,109 +6432,109 @@ impl kynos::schema::ParamValue for u64
 impl kynos::schema::ParamValue for u8
 impl kynos::schema::ParamValue for uuid::Uuid
 pub trait kynos::prelude::Schema
-pub const kynos::prelude::Schema::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::prelude::Schema::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::prelude::Schema::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::prelude::Schema::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::prelude::Schema::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for ()
-pub const ()::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const ()::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn ()::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn ()::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn ()::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for alloc::string::String
-pub const alloc::string::String::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::string::String::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::string::String::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::string::String::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::string::String::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for bigdecimal::BigDecimal
-pub const bigdecimal::BigDecimal::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const bigdecimal::BigDecimal::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn bigdecimal::BigDecimal::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn bigdecimal::BigDecimal::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn bigdecimal::BigDecimal::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for bool
-pub const bool::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const bool::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn bool::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn bool::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn bool::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for char
-pub const char::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const char::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn char::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn char::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn char::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>
-pub const chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::datetime::DateTime<chrono::offset::utc::Utc>
-pub const chrono::datetime::DateTime<chrono::offset::utc::Utc>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::datetime::DateTime<chrono::offset::utc::Utc>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::datetime::DateTime<chrono::offset::utc::Utc>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::datetime::DateTime<chrono::offset::utc::Utc>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::datetime::DateTime<chrono::offset::utc::Utc>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::naive::date::NaiveDate
-pub const chrono::naive::date::NaiveDate::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::naive::date::NaiveDate::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::naive::date::NaiveDate::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::naive::date::NaiveDate::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::naive::date::NaiveDate::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::naive::datetime::NaiveDateTime
-pub const chrono::naive::datetime::NaiveDateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::naive::datetime::NaiveDateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::naive::datetime::NaiveDateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::naive::datetime::NaiveDateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::naive::datetime::NaiveDateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::naive::time::NaiveTime
-pub const chrono::naive::time::NaiveTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::naive::time::NaiveTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::naive::time::NaiveTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::naive::time::NaiveTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::naive::time::NaiveTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for core::net::ip_addr::IpAddr
-pub const core::net::ip_addr::IpAddr::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::net::ip_addr::IpAddr::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::net::ip_addr::IpAddr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::IpAddr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::IpAddr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for core::net::ip_addr::Ipv4Addr
-pub const core::net::ip_addr::Ipv4Addr::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::net::ip_addr::Ipv4Addr::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::net::ip_addr::Ipv4Addr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::Ipv4Addr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::Ipv4Addr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for core::net::ip_addr::Ipv6Addr
-pub const core::net::ip_addr::Ipv6Addr::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::net::ip_addr::Ipv6Addr::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::net::ip_addr::Ipv6Addr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::Ipv6Addr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::Ipv6Addr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for f32
-pub const f32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const f32::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn f32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn f32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn f32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for f64
-pub const f64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const f64::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn f64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn f64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn f64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i16
-pub const i16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i16::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i32
-pub const i32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i32::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i64
-pub const i64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i64::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i8
-pub const i8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i8::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::date::Date
 impl kynos::schema::Schema for jiff::civil::date::Date
-pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::date::Date::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::civil::date::Date::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::date::Date::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -6455,8 +6543,8 @@ pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -
 pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::datetime::DateTime
 impl kynos::schema::Schema for jiff::civil::datetime::DateTime
-pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::datetime::DateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::civil::datetime::DateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -6465,8 +6553,8 @@ pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Reg
 pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::time::Time
 impl kynos::schema::Schema for jiff::civil::time::Time
-pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::time::Time::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::civil::time::Time::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::time::Time::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -6475,8 +6563,8 @@ pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -
 pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
 impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
-pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::signed_duration::SignedDuration::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::signed_duration::SignedDuration::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -6485,8 +6573,8 @@ pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registr
 pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::span::Span
 impl kynos::schema::Schema for jiff::span::Span
-pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::span::Span::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::span::Span::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::span::Span::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -6495,8 +6583,8 @@ pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos
 pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::timestamp::Timestamp
 impl kynos::schema::Schema for jiff::timestamp::Timestamp
-pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::timestamp::Timestamp::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::timestamp::Timestamp::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -6504,177 +6592,177 @@ pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi:
 pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::zoned::Zoned
-pub const jiff::zoned::Zoned::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::zoned::Zoned::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::zoned::Zoned::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::zoned::Zoned::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::zoned::Zoned::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::zoned::ZonedDateTime
-pub const jiff::zoned::ZonedDateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::zoned::ZonedDateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::zoned::ZonedDateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::zoned::ZonedDateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::zoned::ZonedDateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::error::problem::PointerError
-pub const kynos::error::problem::PointerError::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::PointerError::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::PointerError::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::PointerError::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::PointerError::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::error::problem::Problem
-pub const kynos::error::problem::Problem::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::Problem::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::Problem::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::Problem::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::Problem::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::extract::body::multipart::FilePart
-pub const kynos::extract::body::multipart::FilePart::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::extract::body::multipart::FilePart::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::multipart::FilePart::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::extract::body::multipart::FilePart::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::extract::body::multipart::FilePart::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for rust_decimal::decimal::Decimal
-pub const rust_decimal::decimal::Decimal::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const rust_decimal::decimal::Decimal::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn rust_decimal::decimal::Decimal::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn rust_decimal::decimal::Decimal::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn rust_decimal::decimal::Decimal::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u16
-pub const u16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u16::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u32
-pub const u32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u32::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u64
-pub const u64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u64::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u8
-pub const u8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u8::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for uuid::Uuid
-pub const uuid::Uuid::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const uuid::Uuid::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn uuid::Uuid::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn uuid::Uuid::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn uuid::Uuid::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema, J: kynos::schema::Schema, K: kynos::schema::Schema, L: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I, J, K, L)
-pub const (A, B, C, D, E, F, G, H, I, J, K, L)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I, J, K, L)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema, J: kynos::schema::Schema, K: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I, J, K)
-pub const (A, B, C, D, E, F, G, H, I, J, K)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I, J, K)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I, J, K)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I, J, K)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I, J, K)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema, J: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I, J)
-pub const (A, B, C, D, E, F, G, H, I, J)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I, J)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I, J)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I, J)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I, J)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I)
-pub const (A, B, C, D, E, F, G, H, I)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H)
-pub const (A, B, C, D, E, F, G, H)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G)
-pub const (A, B, C, D, E, F, G)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F)
-pub const (A, B, C, D, E, F)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E)
-pub const (A, B, C, D, E)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D)
-pub const (A, B, C, D)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema> kynos::schema::Schema for (A, B, C)
-pub const (A, B, C)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema> kynos::schema::Schema for (A, B)
-pub const (A, B)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema> kynos::schema::Schema for (A)
-pub const (A)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<K: kynos::schema::MapKey, V: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::map::HashMap<K, V, S>
-pub const std::collections::hash::map::HashMap<K, V, S>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const std::collections::hash::map::HashMap<K, V, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::map::HashMap<K, V, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn std::collections::hash::map::HashMap<K, V, S>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn std::collections::hash::map::HashMap<K, V, S>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<K: kynos::schema::MapKey, V: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::btree::map::BTreeMap<K, V>
-pub const alloc::collections::btree::map::BTreeMap<K, V>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::collections::btree::map::BTreeMap<K, V>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::set::HashSet<T, S>
-pub const std::collections::hash::set::HashSet<T, S>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const std::collections::hash::set::HashSet<T, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::set::HashSet<T, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn std::collections::hash::set::HashSet<T, S>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn std::collections::hash::set::HashSet<T, S>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema, const N: usize> kynos::schema::Schema for [T; N]
-pub const [T; N]::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const [T; N]::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn [T; N]::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn [T; N]::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn [T; N]::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for [T]
-pub const [T]::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const [T]::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn [T]::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn [T]::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn [T]::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::boxed::Box<T>
-pub const alloc::boxed::Box<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::boxed::Box<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::boxed::Box<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::boxed::Box<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::boxed::Box<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::btree::set::BTreeSet<T>
-pub const alloc::collections::btree::set::BTreeSet<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::collections::btree::set::BTreeSet<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::btree::set::BTreeSet<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::btree::set::BTreeSet<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::btree::set::BTreeSet<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::vec_deque::VecDeque<T>
-pub const alloc::collections::vec_deque::VecDeque<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::collections::vec_deque::VecDeque<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::vec_deque::VecDeque<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::vec_deque::VecDeque<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::vec_deque::VecDeque<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::sync::Arc<T>
-pub const alloc::sync::Arc<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::sync::Arc<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::sync::Arc<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::sync::Arc<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::sync::Arc<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::vec::Vec<T>
-pub const alloc::vec::Vec<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::vec::Vec<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::vec::Vec<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::vec::Vec<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::vec::Vec<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for core::option::Option<T>
-pub const core::option::Option<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::option::Option<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::option::Option<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::option::Option<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::option::Option<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T> kynos::schema::Schema for kynos::schema::unchecked::Unchecked<T>
-pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::schema::unchecked::Unchecked<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::schema::unchecked::Unchecked<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
@@ -6805,7 +6893,7 @@ pub const kynos::response::disposition::ContentDisposition::DESCRIBED: bool
 pub const kynos::response::disposition::ContentDisposition::NAMES: &'static [&'static str]
 pub const kynos::response::disposition::ContentDisposition::REPEATABLE: bool
 pub const kynos::response::disposition::ContentDisposition::VARIES: &'static [&'static str]
-pub fn kynos::response::disposition::ContentDisposition::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::disposition::ContentDisposition::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::disposition::ContentDisposition::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::disposition::ContentDisposition::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::response::disposition::ContentDisposition
@@ -6861,7 +6949,7 @@ pub const kynos::response::language::headers::ContentLanguage::DESCRIBED: bool
 pub const kynos::response::language::headers::ContentLanguage::NAMES: &'static [&'static str]
 pub const kynos::response::language::headers::ContentLanguage::REPEATABLE: bool
 pub const kynos::response::language::headers::ContentLanguage::VARIES: &'static [&'static str]
-pub fn kynos::response::language::headers::ContentLanguage::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::language::headers::ContentLanguage::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::language::headers::ContentLanguage::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::language::headers::ContentLanguage::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::response::language::headers::ContentLanguage
@@ -7121,7 +7209,7 @@ pub const kynos::response::range::headers::ContentRange::DESCRIBED: bool
 pub const kynos::response::range::headers::ContentRange::NAMES: &'static [&'static str]
 pub const kynos::response::range::headers::ContentRange::REPEATABLE: bool
 pub const kynos::response::range::headers::ContentRange::VARIES: &'static [&'static str]
-pub fn kynos::response::range::headers::ContentRange::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::range::headers::ContentRange::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::range::headers::ContentRange::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::range::headers::ContentRange::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::response::range::headers::ContentRange
@@ -7156,7 +7244,7 @@ pub const kynos::response::range::headers::AcceptRanges::DESCRIBED: bool
 pub const kynos::response::range::headers::AcceptRanges::NAMES: &'static [&'static str]
 pub const kynos::response::range::headers::AcceptRanges::REPEATABLE: bool
 pub const kynos::response::range::headers::AcceptRanges::VARIES: &'static [&'static str]
-pub fn kynos::response::range::headers::AcceptRanges::constraint_types() -> alloc::vec::Vec<&'static str>
+pub fn kynos::response::range::headers::AcceptRanges::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::response::range::headers::AcceptRanges::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::response::range::headers::AcceptRanges::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl core::marker::Freeze for kynos::response::range::headers::AcceptRanges
@@ -7505,31 +7593,34 @@ impl core::marker::Unpin for kynos::response::status::InvalidLocation
 impl core::marker::UnsafeUnpin for kynos::response::status::InvalidLocation
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::InvalidLocation
 impl core::panic::unwind_safe::UnwindSafe for kynos::response::status::InvalidLocation
-pub struct kynos::response::status::Accepted<T>
+pub struct kynos::response::status::Accepted<T, L: kynos::response::status::AcceptedLocation>
 pub kynos::response::status::Accepted::body: T
+pub kynos::response::status::Accepted::location: L
+impl<T> kynos::response::status::Accepted<T, kynos::response::status::Location>
+pub fn kynos::response::status::Accepted<T, kynos::response::status::Location>::at(impl core::convert::Into<kynos::response::status::Location>, T) -> Self
 impl<T> kynos::response::status::Accepted<T>
 pub fn kynos::response::status::Accepted<T>::new(T) -> Self
-impl<T: core::clone::Clone> core::clone::Clone for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::clone(&self) -> kynos::response::status::Accepted<T>
-impl<T: core::cmp::Eq> core::cmp::Eq for kynos::response::status::Accepted<T>
-impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::eq(&self, &kynos::response::status::Accepted<T>) -> bool
+impl<T, L: kynos::response::status::AcceptedLocation> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T, L>
+impl<T: core::clone::Clone, L: core::clone::Clone + kynos::response::status::AcceptedLocation> core::clone::Clone for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::clone(&self) -> kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::Eq, L: core::cmp::Eq + kynos::response::status::AcceptedLocation> core::cmp::Eq for kynos::response::status::Accepted<T, L>
+impl<T: core::cmp::PartialEq, L: core::cmp::PartialEq + kynos::response::status::AcceptedLocation> core::cmp::PartialEq for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::eq(&self, &kynos::response::status::Accepted<T, L>) -> bool
 impl<T: core::default::Default> core::default::Default for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::default() -> kynos::response::status::Accepted<T>
-impl<T: core::fmt::Debug> core::fmt::Debug for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::into_response(self) -> kynos::http::Response
-impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<T> core::marker::StructuralPartialEq for kynos::response::status::Accepted<T>
-impl<T> core::marker::Freeze for kynos::response::status::Accepted<T> where T: core::marker::Freeze
-impl<T> core::marker::Send for kynos::response::status::Accepted<T> where T: core::marker::Send
-impl<T> core::marker::Sync for kynos::response::status::Accepted<T> where T: core::marker::Sync
-impl<T> core::marker::Unpin for kynos::response::status::Accepted<T> where T: core::marker::Unpin
-impl<T> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T> where T: core::marker::UnsafeUnpin
-impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::RefUnwindSafe
-impl<T> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T> where T: core::panic::unwind_safe::UnwindSafe
+pub fn kynos::response::status::Accepted<T>::default() -> Self
+impl<T: core::fmt::Debug, L: core::fmt::Debug + kynos::response::status::AcceptedLocation> core::fmt::Debug for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: kynos::response::IntoResponse, L: kynos::response::status::AcceptedLocation> kynos::response::IntoResponse for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::into_response(self) -> kynos::http::Response
+impl<T: kynos::response::Responses, L: kynos::response::status::AcceptedLocation> kynos::response::Responses for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
+impl<T, L> core::marker::Freeze for kynos::response::status::Accepted<T, L> where T: core::marker::Freeze, L: core::marker::Freeze
+impl<T, L> core::marker::Send for kynos::response::status::Accepted<T, L> where T: core::marker::Send, L: core::marker::Send
+impl<T, L> core::marker::Sync for kynos::response::status::Accepted<T, L> where T: core::marker::Sync, L: core::marker::Sync
+impl<T, L> core::marker::Unpin for kynos::response::status::Accepted<T, L> where T: core::marker::Unpin, L: core::marker::Unpin
+impl<T, L> core::marker::UnsafeUnpin for kynos::response::status::Accepted<T, L> where T: core::marker::UnsafeUnpin, L: core::marker::UnsafeUnpin
+impl<T, L> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::RefUnwindSafe, L: core::panic::unwind_safe::RefUnwindSafe
+impl<T, L> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Accepted<T, L> where T: core::panic::unwind_safe::UnwindSafe, L: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::response::status::Created<T>
 pub kynos::response::status::Created::body: T
 pub kynos::response::status::Created::location: kynos::response::status::Location
@@ -7588,6 +7679,7 @@ impl core::marker::StructuralPartialEq for kynos::response::status::Location
 impl core::str::traits::FromStr for kynos::response::status::Location
 pub type kynos::response::status::Location::Err = kynos::response::status::InvalidLocation
 pub fn kynos::response::status::Location::from_str(&str) -> core::result::Result<Self, Self::Err>
+impl kynos::response::status::AcceptedLocation for kynos::response::status::Location
 impl core::marker::Freeze for kynos::response::status::Location
 impl core::marker::Send for kynos::response::status::Location
 impl core::marker::Sync for kynos::response::status::Location
@@ -7647,6 +7739,9 @@ impl<const CODE: u16> core::marker::Unpin for kynos::response::status::Redirect<
 impl<const CODE: u16> core::marker::UnsafeUnpin for kynos::response::status::Redirect<CODE>
 impl<const CODE: u16> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Redirect<CODE>
 impl<const CODE: u16> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Redirect<CODE>
+pub trait kynos::response::status::AcceptedLocation: kynos::response::status::sealed::Sealed
+impl kynos::response::status::AcceptedLocation for ()
+impl kynos::response::status::AcceptedLocation for kynos::response::status::Location
 pub trait kynos::response::status::ValidRedirectCode<const CODE: u16>
 impl kynos::response::status::ValidRedirectCode<301> for ()
 impl kynos::response::status::ValidRedirectCode<302> for ()
@@ -7822,10 +7917,10 @@ impl<T: kynos::extract::body::protobuf::Message> kynos::response::IntoResponse f
 pub fn kynos::extract::body::protobuf::Protobuf<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse, L: kynos::response::language::offer::Languages> kynos::response::IntoResponse for kynos::response::language::Localized<T, L>
 pub fn kynos::response::language::Localized<T, L>::into_response(self) -> kynos::http::Response
+impl<T: kynos::response::IntoResponse, L: kynos::response::status::AcceptedLocation> kynos::response::IntoResponse for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::middleware::compression::policy::WithEncoding<T>
 pub fn kynos::middleware::compression::policy::WithEncoding<T>::into_response(self) -> kynos::http::Response
-impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::IntoResponse> kynos::response::IntoResponse for kynos::response::status::Created<T>
 pub fn kynos::response::status::Created<T>::into_response(self) -> kynos::http::Response
 impl<T: kynos::response::codec::multipart::IntoMultipart> kynos::response::IntoResponse for kynos::extract::body::multipart::MultipartForm<T>
@@ -7920,10 +8015,10 @@ impl<T: kynos::error::problem::ProblemType> kynos::response::Responses for kynos
 pub fn kynos::middleware::trusted_hosts::UntrustedHost<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::Responses, L: kynos::response::language::offer::Languages> kynos::response::Responses for kynos::response::language::Localized<T, L>
 pub fn kynos::response::language::Localized<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
+impl<T: kynos::response::Responses, L: kynos::response::status::AcceptedLocation> kynos::response::Responses for kynos::response::status::Accepted<T, L>
+pub fn kynos::response::status::Accepted<T, L>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::Responses> kynos::response::Responses for kynos::middleware::compression::policy::WithEncoding<T>
 pub fn kynos::middleware::compression::policy::WithEncoding<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Accepted<T>
-pub fn kynos::response::status::Accepted<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::Responses> kynos::response::Responses for kynos::response::status::Created<T>
 pub fn kynos::response::status::Created<T>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T: kynos::response::negotiate::representation::Representations> kynos::response::Responses for kynos::response::negotiate::Negotiated<T>
@@ -8643,6 +8738,53 @@ impl<C, P, I, S> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::Rou
 impl<C, P, I, S> !core::panic::unwind_safe::UnwindSafe for kynos::router::Router<C, P, I, S>
 pub mod kynos::schema
 pub mod kynos::schema::constraints
+#[non_exhaustive] pub enum kynos::schema::constraints::ConstraintDetail
+pub kynos::schema::constraints::ConstraintDetail::FirstFailure
+pub kynos::schema::constraints::ConstraintDetail::Summary
+impl core::clone::Clone for kynos::schema::constraints::ConstraintDetail
+pub fn kynos::schema::constraints::ConstraintDetail::clone(&self) -> kynos::schema::constraints::ConstraintDetail
+impl core::cmp::Eq for kynos::schema::constraints::ConstraintDetail
+impl core::cmp::PartialEq for kynos::schema::constraints::ConstraintDetail
+pub fn kynos::schema::constraints::ConstraintDetail::eq(&self, &kynos::schema::constraints::ConstraintDetail) -> bool
+impl core::default::Default for kynos::schema::constraints::ConstraintDetail
+pub fn kynos::schema::constraints::ConstraintDetail::default() -> kynos::schema::constraints::ConstraintDetail
+impl core::fmt::Debug for kynos::schema::constraints::ConstraintDetail
+pub fn kynos::schema::constraints::ConstraintDetail::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::schema::constraints::ConstraintDetail
+impl core::marker::StructuralPartialEq for kynos::schema::constraints::ConstraintDetail
+impl core::marker::Freeze for kynos::schema::constraints::ConstraintDetail
+impl core::marker::Send for kynos::schema::constraints::ConstraintDetail
+impl core::marker::Sync for kynos::schema::constraints::ConstraintDetail
+impl core::marker::Unpin for kynos::schema::constraints::ConstraintDetail
+impl core::marker::UnsafeUnpin for kynos::schema::constraints::ConstraintDetail
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::schema::constraints::ConstraintDetail
+impl core::panic::unwind_safe::UnwindSafe for kynos::schema::constraints::ConstraintDetail
+#[non_exhaustive] pub struct kynos::schema::constraints::ConstraintProblem
+pub kynos::schema::constraints::ConstraintProblem::detail: kynos::schema::constraints::ConstraintDetail
+pub kynos::schema::constraints::ConstraintProblem::title: core::option::Option<&'static str>
+pub kynos::schema::constraints::ConstraintProblem::type_uri: &'static str
+pub kynos::schema::constraints::ConstraintProblem::unprocessable: bool
+impl kynos::schema::constraints::ConstraintProblem
+pub const fn kynos::schema::constraints::ConstraintProblem::of_type(&'static str) -> Self
+pub const fn kynos::schema::constraints::ConstraintProblem::titled(self, &'static str) -> Self
+pub const fn kynos::schema::constraints::ConstraintProblem::unprocessable(self) -> Self
+pub const fn kynos::schema::constraints::ConstraintProblem::with_detail(self, kynos::schema::constraints::ConstraintDetail) -> Self
+impl core::clone::Clone for kynos::schema::constraints::ConstraintProblem
+pub fn kynos::schema::constraints::ConstraintProblem::clone(&self) -> kynos::schema::constraints::ConstraintProblem
+impl core::cmp::Eq for kynos::schema::constraints::ConstraintProblem
+impl core::cmp::PartialEq for kynos::schema::constraints::ConstraintProblem
+pub fn kynos::schema::constraints::ConstraintProblem::eq(&self, &kynos::schema::constraints::ConstraintProblem) -> bool
+impl core::fmt::Debug for kynos::schema::constraints::ConstraintProblem
+pub fn kynos::schema::constraints::ConstraintProblem::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::schema::constraints::ConstraintProblem
+impl core::marker::StructuralPartialEq for kynos::schema::constraints::ConstraintProblem
+impl core::marker::Freeze for kynos::schema::constraints::ConstraintProblem
+impl core::marker::Send for kynos::schema::constraints::ConstraintProblem
+impl core::marker::Sync for kynos::schema::constraints::ConstraintProblem
+impl core::marker::Unpin for kynos::schema::constraints::ConstraintProblem
+impl core::marker::UnsafeUnpin for kynos::schema::constraints::ConstraintProblem
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::schema::constraints::ConstraintProblem
+impl core::panic::unwind_safe::UnwindSafe for kynos::schema::constraints::ConstraintProblem
 #[non_exhaustive] pub struct kynos::schema::constraints::Constraints
 pub kynos::schema::constraints::Constraints::content_encoding: core::option::Option<alloc::string::String>
 pub kynos::schema::constraints::Constraints::content_media_type: core::option::Option<alloc::string::String>
@@ -8716,6 +8858,7 @@ impl kynos::schema::constraints::Violations
 pub fn kynos::schema::constraints::Violations::into_failures(self) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub fn kynos::schema::constraints::Violations::is_empty(&self) -> bool
 pub const fn kynos::schema::constraints::Violations::new() -> Self
+pub fn kynos::schema::constraints::Violations::of<T: kynos::schema::Schema + ?core::marker::Sized>(&T, kynos::schema::constraints::Pointer<'_>) -> core::result::Result<(), alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
 pub fn kynos::schema::constraints::Violations::report(&mut self, kynos::schema::constraints::Pointer<'_>, impl core::convert::Into<alloc::string::String>)
 impl core::clone::Clone for kynos::schema::constraints::Violations
 pub fn kynos::schema::constraints::Violations::clone(&self) -> kynos::schema::constraints::Violations
@@ -8950,7 +9093,7 @@ impl<T: core::marker::Copy> core::marker::Copy for kynos::schema::unchecked::Unc
 impl<T: kynos::schema::flatten::OpenMap> kynos::schema::flatten::OpenMap for kynos::schema::unchecked::Unchecked<T>
 impl<T> core::marker::StructuralPartialEq for kynos::schema::unchecked::Unchecked<T>
 impl<T> kynos::schema::Schema for kynos::schema::unchecked::Unchecked<T>
-pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::schema::unchecked::Unchecked<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::schema::unchecked::Unchecked<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
@@ -9032,109 +9175,109 @@ impl kynos::schema::ParamValue for u64
 impl kynos::schema::ParamValue for u8
 impl kynos::schema::ParamValue for uuid::Uuid
 pub trait kynos::schema::Schema
-pub const kynos::schema::Schema::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::schema::Schema::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::schema::Schema::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::schema::Schema::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::schema::Schema::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for ()
-pub const ()::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const ()::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn ()::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn ()::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn ()::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for alloc::string::String
-pub const alloc::string::String::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::string::String::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::string::String::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::string::String::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::string::String::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for bigdecimal::BigDecimal
-pub const bigdecimal::BigDecimal::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const bigdecimal::BigDecimal::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn bigdecimal::BigDecimal::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn bigdecimal::BigDecimal::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn bigdecimal::BigDecimal::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for bool
-pub const bool::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const bool::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn bool::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn bool::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn bool::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for char
-pub const char::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const char::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn char::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn char::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn char::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>
-pub const chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::datetime::DateTime<chrono::offset::fixed::FixedOffset>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::datetime::DateTime<chrono::offset::utc::Utc>
-pub const chrono::datetime::DateTime<chrono::offset::utc::Utc>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::datetime::DateTime<chrono::offset::utc::Utc>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::datetime::DateTime<chrono::offset::utc::Utc>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::datetime::DateTime<chrono::offset::utc::Utc>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::datetime::DateTime<chrono::offset::utc::Utc>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::naive::date::NaiveDate
-pub const chrono::naive::date::NaiveDate::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::naive::date::NaiveDate::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::naive::date::NaiveDate::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::naive::date::NaiveDate::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::naive::date::NaiveDate::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::naive::datetime::NaiveDateTime
-pub const chrono::naive::datetime::NaiveDateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::naive::datetime::NaiveDateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::naive::datetime::NaiveDateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::naive::datetime::NaiveDateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::naive::datetime::NaiveDateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for chrono::naive::time::NaiveTime
-pub const chrono::naive::time::NaiveTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const chrono::naive::time::NaiveTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn chrono::naive::time::NaiveTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn chrono::naive::time::NaiveTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn chrono::naive::time::NaiveTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for core::net::ip_addr::IpAddr
-pub const core::net::ip_addr::IpAddr::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::net::ip_addr::IpAddr::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::net::ip_addr::IpAddr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::IpAddr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::IpAddr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for core::net::ip_addr::Ipv4Addr
-pub const core::net::ip_addr::Ipv4Addr::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::net::ip_addr::Ipv4Addr::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::net::ip_addr::Ipv4Addr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::Ipv4Addr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::Ipv4Addr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for core::net::ip_addr::Ipv6Addr
-pub const core::net::ip_addr::Ipv6Addr::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::net::ip_addr::Ipv6Addr::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::net::ip_addr::Ipv6Addr::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::net::ip_addr::Ipv6Addr::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::net::ip_addr::Ipv6Addr::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for f32
-pub const f32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const f32::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn f32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn f32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn f32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for f64
-pub const f64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const f64::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn f64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn f64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn f64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i16
-pub const i16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i16::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i32
-pub const i32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i32::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i64
-pub const i64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i64::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for i8
-pub const i8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const i8::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn i8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn i8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn i8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::date::Date
 impl kynos::schema::Schema for jiff::civil::date::Date
-pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::civil::date::Date::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::date::Date::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::civil::date::Date::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::date::Date::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::date::Date::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -9143,8 +9286,8 @@ pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -
 pub fn jiff::civil::date::Date::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::datetime::DateTime
 impl kynos::schema::Schema for jiff::civil::datetime::DateTime
-pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::civil::datetime::DateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::datetime::DateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::civil::datetime::DateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::datetime::DateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -9153,8 +9296,8 @@ pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Reg
 pub fn jiff::civil::datetime::DateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::civil::time::Time
 impl kynos::schema::Schema for jiff::civil::time::Time
-pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::civil::time::Time::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::civil::time::Time::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::civil::time::Time::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::time::Time::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::civil::time::Time::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -9163,8 +9306,8 @@ pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -
 pub fn jiff::civil::time::Time::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
 impl kynos::schema::Schema for jiff::signed_duration::SignedDuration
-pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::signed_duration::SignedDuration::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::signed_duration::SignedDuration::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::signed_duration::SignedDuration::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::signed_duration::SignedDuration::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -9173,8 +9316,8 @@ pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registr
 pub fn jiff::signed_duration::SignedDuration::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::span::Span
 impl kynos::schema::Schema for jiff::span::Span
-pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::span::Span::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::span::Span::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::span::Span::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::span::Span::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::span::Span::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -9183,8 +9326,8 @@ pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos
 pub fn jiff::span::Span::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::timestamp::Timestamp
 impl kynos::schema::Schema for jiff::timestamp::Timestamp
-pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
-pub const jiff::timestamp::Timestamp::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::timestamp::Timestamp::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub const jiff::timestamp::Timestamp::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
@@ -9192,177 +9335,177 @@ pub fn jiff::timestamp::Timestamp::name() -> core::option::Option<kynos_openapi:
 pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 pub fn jiff::timestamp::Timestamp::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::zoned::Zoned
-pub const jiff::zoned::Zoned::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::zoned::Zoned::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::zoned::Zoned::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::zoned::Zoned::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::zoned::Zoned::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for jiff::zoned::ZonedDateTime
-pub const jiff::zoned::ZonedDateTime::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const jiff::zoned::ZonedDateTime::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn jiff::zoned::ZonedDateTime::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn jiff::zoned::ZonedDateTime::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn jiff::zoned::ZonedDateTime::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::error::problem::PointerError
-pub const kynos::error::problem::PointerError::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::PointerError::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::PointerError::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::PointerError::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::PointerError::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::error::problem::Problem
-pub const kynos::error::problem::Problem::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::Problem::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::Problem::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::Problem::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::Problem::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for kynos::extract::body::multipart::FilePart
-pub const kynos::extract::body::multipart::FilePart::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::extract::body::multipart::FilePart::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::body::multipart::FilePart::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::extract::body::multipart::FilePart::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::extract::body::multipart::FilePart::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for rust_decimal::decimal::Decimal
-pub const rust_decimal::decimal::Decimal::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const rust_decimal::decimal::Decimal::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn rust_decimal::decimal::Decimal::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn rust_decimal::decimal::Decimal::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn rust_decimal::decimal::Decimal::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u16
-pub const u16::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u16::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u16::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u16::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u32
-pub const u32::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u32::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u32::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u32::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u32::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u64
-pub const u64::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u64::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u64::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u64::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u64::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u8
-pub const u8::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const u8::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u8::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn u8::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn u8::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for uuid::Uuid
-pub const uuid::Uuid::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const uuid::Uuid::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn uuid::Uuid::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn uuid::Uuid::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn uuid::Uuid::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema, J: kynos::schema::Schema, K: kynos::schema::Schema, L: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I, J, K, L)
-pub const (A, B, C, D, E, F, G, H, I, J, K, L)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I, J, K, L)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I, J, K, L)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema, J: kynos::schema::Schema, K: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I, J, K)
-pub const (A, B, C, D, E, F, G, H, I, J, K)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I, J, K)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I, J, K)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I, J, K)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I, J, K)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema, J: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I, J)
-pub const (A, B, C, D, E, F, G, H, I, J)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I, J)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I, J)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I, J)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I, J)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema, I: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H, I)
-pub const (A, B, C, D, E, F, G, H, I)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H, I)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H, I)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H, I)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H, I)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema, H: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G, H)
-pub const (A, B, C, D, E, F, G, H)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G, H)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G, H)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G, H)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G, H)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema, G: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F, G)
-pub const (A, B, C, D, E, F, G)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F, G)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F, G)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F, G)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F, G)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema, F: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E, F)
-pub const (A, B, C, D, E, F)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E, F)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E, F)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E, F)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E, F)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema, E: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D, E)
-pub const (A, B, C, D, E)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D, E)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D, E)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D, E)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D, E)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema, D: kynos::schema::Schema> kynos::schema::Schema for (A, B, C, D)
-pub const (A, B, C, D)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C, D)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C, D)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C, D)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C, D)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema, C: kynos::schema::Schema> kynos::schema::Schema for (A, B, C)
-pub const (A, B, C)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B, C)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B, C)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B, C)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B, C)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema, B: kynos::schema::Schema> kynos::schema::Schema for (A, B)
-pub const (A, B)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A, B)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A, B)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A, B)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A, B)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<A: kynos::schema::Schema> kynos::schema::Schema for (A)
-pub const (A)::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const (A)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn (A)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<K: kynos::schema::MapKey, V: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::map::HashMap<K, V, S>
-pub const std::collections::hash::map::HashMap<K, V, S>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const std::collections::hash::map::HashMap<K, V, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::map::HashMap<K, V, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn std::collections::hash::map::HashMap<K, V, S>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn std::collections::hash::map::HashMap<K, V, S>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<K: kynos::schema::MapKey, V: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::btree::map::BTreeMap<K, V>
-pub const alloc::collections::btree::map::BTreeMap<K, V>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::collections::btree::map::BTreeMap<K, V>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::set::HashSet<T, S>
-pub const std::collections::hash::set::HashSet<T, S>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const std::collections::hash::set::HashSet<T, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::set::HashSet<T, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn std::collections::hash::set::HashSet<T, S>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn std::collections::hash::set::HashSet<T, S>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema, const N: usize> kynos::schema::Schema for [T; N]
-pub const [T; N]::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const [T; N]::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn [T; N]::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn [T; N]::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn [T; N]::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for [T]
-pub const [T]::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const [T]::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn [T]::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn [T]::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn [T]::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::boxed::Box<T>
-pub const alloc::boxed::Box<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::boxed::Box<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::boxed::Box<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::boxed::Box<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::boxed::Box<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::btree::set::BTreeSet<T>
-pub const alloc::collections::btree::set::BTreeSet<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::collections::btree::set::BTreeSet<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::btree::set::BTreeSet<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::btree::set::BTreeSet<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::btree::set::BTreeSet<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::vec_deque::VecDeque<T>
-pub const alloc::collections::vec_deque::VecDeque<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::collections::vec_deque::VecDeque<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::vec_deque::VecDeque<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::vec_deque::VecDeque<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::vec_deque::VecDeque<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::sync::Arc<T>
-pub const alloc::sync::Arc<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::sync::Arc<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::sync::Arc<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::sync::Arc<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::sync::Arc<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::vec::Vec<T>
-pub const alloc::vec::Vec<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const alloc::vec::Vec<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::vec::Vec<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::vec::Vec<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::vec::Vec<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for core::option::Option<T>
-pub const core::option::Option<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const core::option::Option<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn core::option::Option<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::option::Option<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::option::Option<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T> kynos::schema::Schema for kynos::schema::unchecked::Unchecked<T>
-pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::schema::unchecked::Unchecked<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::schema::unchecked::Unchecked<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
@@ -10313,6 +10456,9 @@ pub kynos::server::protocol::http2::Http2Config::max_local_error_reset_streams: 
 pub kynos::server::protocol::http2::Http2Config::max_pending_accept_reset_streams: usize
 pub kynos::server::protocol::http2::Http2Config::max_send_buffer_size: usize
 impl kynos::server::protocol::http2::Http2Config
+pub const kynos::server::protocol::http2::Http2Config::DEFAULT_IDLE_TIMEOUT: core::time::Duration
+pub const kynos::server::protocol::http2::Http2Config::DEFAULT_KEEP_ALIVE: kynos::server::protocol::http2::Http2KeepAlive
+pub const kynos::server::protocol::http2::Http2Config::DEFAULT_MAX_CONCURRENT_STREAMS: u32
 pub fn kynos::server::protocol::http2::Http2Config::flow_control(self, kynos::server::protocol::http2::Http2FlowControl) -> Self
 pub fn kynos::server::protocol::http2::Http2Config::idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn kynos::server::protocol::http2::Http2Config::keep_alive(self, core::option::Option<kynos::server::protocol::http2::Http2KeepAlive>) -> Self
@@ -10551,6 +10697,7 @@ pub struct kynos::server::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: core::time::Duration
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
@@ -10618,6 +10765,7 @@ pub fn kynos::test::TestClient<C>::trace(&self, &str) -> kynos::test::TestReques
 pub fn kynos::test::TestClient<C>::with_coverage(self, &kynos::test::Coverage) -> Self
 pub fn kynos::test::TestClient<C>::with_default_header(self, &str, &str) -> Self
 pub fn kynos::test::TestClient<C>::with_peer(self, core::net::socket_addr::SocketAddr) -> Self
+pub fn kynos::test::TestClient<C>::with_request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestClient<C>
 pub fn kynos::test::TestClient<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<C> !core::marker::Freeze for kynos::test::TestClient<C>
@@ -10687,6 +10835,8 @@ pub fn kynos::test::TestRequest<'_, C>::json<T: serde_core::ser::Serialize>(self
 pub fn kynos::test::TestRequest<'_, C>::peer(self, core::net::socket_addr::SocketAddr) -> Self
 pub fn kynos::test::TestRequest<'_, C>::query_string<T: serde_core::ser::Serialize>(self, &T) -> Self
 pub async fn kynos::test::TestRequest<'_, C>::send(self) -> kynos::test::TestResponse
+pub async fn kynos::test::TestRequest<'_, C>::send_timed(self) -> (kynos::test::TestResponse, core::time::Duration)
+pub fn kynos::test::TestRequest<'_, C>::stalled_after(self, &str, impl core::convert::Into<bytes::bytes::Bytes>) -> Self
 pub fn kynos::test::TestRequest<'_, C>::stalled_body(self, &str) -> Self
 pub fn kynos::test::TestRequest<'_, C>::text(self, &str) -> Self
 impl<'a, C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestRequest<'a, C>
@@ -10854,7 +11004,7 @@ impl core::marker::StructuralPartialEq for kynos::error::problem::Problem
 impl kynos::response::IntoResponse for kynos::error::problem::Problem
 pub fn kynos::error::problem::Problem::into_response(self) -> kynos::http::Response
 impl kynos::schema::Schema for kynos::error::problem::Problem
-pub const kynos::error::problem::Problem::CONSTRAINT_TYPE: core::option::Option<&'static str>
+pub const kynos::error::problem::Problem::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::error::problem::Problem::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::error::problem::Problem::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::error::problem::Problem::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema

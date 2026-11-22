@@ -617,6 +617,7 @@ fn every_interceptor_kynos_ships_is_accounted_for() {
         "SetCookies",
         "Timeout",
         "TrustedHosts",
+        "TrustedHostsWhen",
         // A stack marker with no value, so it writes nothing; the
         // method-scoped cases above read what its `N` declares.
         "When",
@@ -1793,8 +1794,8 @@ fn a_marked_interceptor_prints_and_clones_its_settings() {
     }
 }
 
-/// `TrustedHosts` prints each host as it is compared, and whether loopback is
-/// admitted; a clone prints the same.
+/// `TrustedHosts` prints each host as it is compared, and whether loopback and
+/// a request stating no authority are admitted; a clone prints the same.
 #[test]
 fn trusted_hosts_prints_and_clones_its_settings() {
     use kynos::middleware::trusted_hosts::TrustedHosts;
@@ -1809,11 +1810,15 @@ fn trusted_hosts_prints_and_clones_its_settings() {
     assert_eq!(format!("{:?}", hosts.clone()), printed);
     assert_eq!(
         printed,
-        r#"TrustedHosts { hosts: ["api.example.com", "[::1]"], loopback: true }"#
+        r#"TrustedHosts { hosts: ["api.example.com", "[::1]"], loopback: true, no_authority: false }"#
     );
     assert_eq!(
         format!("{:?}", TrustedHosts::<Bare>::default()),
-        "TrustedHosts { hosts: [], loopback: false }"
+        "TrustedHosts { hosts: [], loopback: false, no_authority: false }"
+    );
+    assert_eq!(
+        format!("{:?}", TrustedHosts::new().admit_no_authority()),
+        "TrustedHosts { hosts: [], loopback: false, no_authority: true }"
     );
 }
 

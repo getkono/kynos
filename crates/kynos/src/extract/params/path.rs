@@ -140,16 +140,16 @@ pub trait PathParams: Sized {
             .collect()
     }
 
-    /// The problem types a value breaking a bound answers with, beside
-    /// `about:blank`: the
-    /// [`CONSTRAINT_TYPE`](crate::schema::Schema::CONSTRAINT_TYPE) of each
-    /// field type naming one, so the 400 [`Path`] declares names what
+    /// The problems a value breaking a bound answers with, beside
+    /// `about:blank`: the one the group names, else the
+    /// [`CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM) of
+    /// each field type naming one, so what [`Path`] declares names what
     /// [`PathRejection::Schema`] sends.
     ///
     /// `#[derive(PathParams)]` replaces this; the default names none, which is
     /// right for a group holding no value to a bound.
     #[must_use]
-    fn constraint_types() -> Vec<&'static str> {
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem> {
         Vec::new()
     }
 }
@@ -276,7 +276,7 @@ fn decode_captures<'v, 'p: 'v>(
 
 impl<T: PathParams> Describe for Path<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        super::describe_parameters(operation, T::parameters, &T::constraint_types());
+        super::describe_parameters(operation, T::parameters, &T::constraint_problems());
     }
 }
 

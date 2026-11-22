@@ -64,7 +64,7 @@ fn each_body_failure_has_its_own_status() {
             failures: [("/id".to_owned(), "expected integer".to_owned())]
                 .into_iter()
                 .collect(),
-            type_uri: None,
+            problem: None,
         },
         BodyRejection::UnsupportedMediaType {
             received: Some("text/csv".into()),
@@ -144,7 +144,7 @@ fn a_schema_failure_travels_as_one_errors_entry_per_pointer() {
         ]
         .into_iter()
         .collect(),
-        type_uri: None,
+        problem: None,
     }
     .into_problem();
 
@@ -176,7 +176,7 @@ fn a_query_schema_failure_travels_as_one_errors_entry_per_pointer() {
         ]
         .into_iter()
         .collect(),
-        type_uri: None,
+        problem: None,
     }
     .into_problem();
 
@@ -206,7 +206,7 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
             PathRejection::Schema {
                 name: "id".into(),
                 failures: failures(),
-                type_uri: None,
+                problem: None,
             }
             .into_problem(),
             "path parameter `id` does not satisfy its schema",
@@ -215,7 +215,7 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
             HeaderRejection::Schema {
                 name: "X-Page".into(),
                 failures: failures(),
-                type_uri: None,
+                problem: None,
             }
             .into_problem(),
             "header `X-Page` does not satisfy its schema",
@@ -225,7 +225,7 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
             super::CookieRejection::Schema {
                 name: "page".into(),
                 failures: failures(),
-                type_uri: None,
+                problem: None,
             }
             .into_problem(),
             "cookie `page` does not satisfy its schema",
@@ -246,38 +246,67 @@ fn a_path_header_or_cookie_schema_failure_travels_as_an_errors_entry() {
     }
 }
 
-/// A schema failure naming a problem type carries it, at its own status and
-/// under the status's reason phrase, as a body's and as a parameter's; the
-/// `errors` member is unchanged by it.
+/// The problem type the schema failures below name.
+const NAMED: &str = "https://errors.example.com/validation-failed";
+
+/// A schema failure naming a problem carries what it names and defaults the
+/// rest, as a body's and as a parameter's: the status's reason phrase as its
+/// title, the input's own status, and the rejection's sentence as its detail.
+/// The `errors` member is unchanged by it.
 #[test]
-fn a_schema_failure_carries_the_type_its_schema_names() {
-    const NAMED: &str = "https://errors.example.com/validation-failed";
-    let failures = || [("/limit".to_owned(), "must be at most 100".to_owned())].into();
-    let problems = [
+fn a_schema_failure_carries_the_problem_its_schema_names() {
+    use crate::schema::constraints::{ConstraintDetail, ConstraintProblem};
+
+    let failures = || {
+        [
+            ("/limit".to_owned(), "must be at most 100".to_owned()),
+            ("/from".to_owned(), "must be at least 1".to_owned()),
+        ]
+        .into()
+    };
+    let plain = ConstraintProblem::of_type(NAMED);
+    let whole = plain
+        .titled("The request is invalid")
+        .unprocessable()
+        .with_detail(ConstraintDetail::FirstFailure);
+    let body = |problem| BodyRejection::Schema {
+        failures: failures(),
+        problem: Some(problem),
+    };
+    let query = |problem| QueryRejection::Schema {
+        name: "querystring".into(),
+        failures: failures(),
+        problem: Some(problem),
+    };
+
+    let cases = [
         (
-            BodyRejection::Schema {
-                failures: failures(),
-                type_uri: Some(NAMED),
-            }
-            .into_problem(),
+            body(plain).into_problem(),
             "Unprocessable Entity",
             422,
             "the request body does not satisfy its schema",
         ),
         (
-            QueryRejection::Schema {
-                name: "querystring".into(),
-                failures: failures(),
-                type_uri: Some(NAMED),
-            }
-            .into_problem(),
+            query(plain).into_problem(),
             "Bad Request",
             400,
             "query parameter `querystring` does not satisfy its schema",
         ),
+        (
+            body(whole).into_problem(),
+            "The request is invalid",
+            422,
+            "the request body at `/from` must be at least 1 (and 1 more failure)",
+        ),
+        (
+            query(whole).into_problem(),
+            "The request is invalid",
+            422,
+            "query parameter `querystring` at `/from` must be at least 1 (and 1 more failure)",
+        ),
     ];
 
-    for (problem, title, status, detail) in problems {
+    for (problem, title, status, detail) in cases {
         assert_eq!(
             serde_json::to_value(problem).expect("a problem serializes"),
             serde_json::json!({
@@ -285,50 +314,128 @@ fn a_schema_failure_carries_the_type_its_schema_names() {
                 "title": title,
                 "status": status,
                 "detail": detail,
-                "errors": [{ "pointer": "/limit", "detail": "must be at most 100" }],
+                "errors": [
+                    { "pointer": "/from", "detail": "must be at least 1" },
+                    { "pointer": "/limit", "detail": "must be at most 100" },
+                ],
             })
         );
     }
+
+    // `status()` agrees with the problem, and `statuses()` names it.
+    let rejection = query(whole);
+    assert_eq!(rejection.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    declares(&[rejection.status()], QueryRejection::statuses());
 }
 
-/// What an extractor adds for the types its schemas name: nothing where none
-/// is named, and otherwise one branch per distinct type at the status asked
-/// for, each requiring the `errors` member every such failure sends.
+/// A first-failure detail names the parameter alone where the failure is at
+/// its value's root, and counts every other location that broke a bound.
 #[test]
-fn a_named_constraint_type_declares_a_branch_of_its_own() {
-    use crate::schema::registry::Registry;
+fn a_first_failure_detail_locates_the_first_and_counts_the_rest() {
+    use crate::schema::constraints::{ConstraintDetail, ConstraintProblem};
+
+    let problem =
+        Some(ConstraintProblem::of_type(NAMED).with_detail(ConstraintDetail::FirstFailure));
+    let detail = |rejection: PathRejection| rejection.into_problem().detail;
+
+    assert_eq!(
+        detail(PathRejection::Schema {
+            name: "id".into(),
+            failures: [(String::new(), "must be at least 1".to_owned())].into(),
+            problem,
+        })
+        .as_deref(),
+        Some("path parameter `id` must be at least 1")
+    );
+    assert_eq!(
+        detail(PathRejection::Schema {
+            name: "ids".into(),
+            failures: ["/0", "/1", "/2"]
+                .map(|at| (at.to_owned(), "must be at least 1".to_owned()))
+                .into(),
+            problem,
+        })
+        .as_deref(),
+        Some("path parameter `ids` at `/0` must be at least 1 (and 2 more failures)")
+    );
+}
+
+/// What an extractor adds for the problems its schemas name: nothing where
+/// none is named, and otherwise one branch per distinct type at the status
+/// each answers with from that input, under its title, each requiring the
+/// `errors` member every such failure sends.
+#[test]
+fn a_named_constraint_problem_declares_a_branch_of_its_own() {
+    use super::Input;
+    use crate::schema::{constraints::ConstraintProblem, registry::Registry};
 
     let registry = &mut Registry::new();
     assert!(
-        super::constraint_responses(registry, StatusCode::BAD_REQUEST, &[], true)
+        super::constraint_responses(registry, Input::Parameter, &[], true)
             .responses
             .is_empty()
     );
 
-    let first = "https://errors.example.com/out-of-range";
-    let second = "https://errors.example.com/validation-failed";
-    let responses = serde_json::to_value(super::constraint_responses(
-        registry,
-        StatusCode::UNPROCESSABLE_ENTITY,
-        &[first, second, first],
-        true,
-    ))
-    .expect("responses serialize");
+    let first = ConstraintProblem::of_type("https://errors.example.com/out-of-range");
+    let second = ConstraintProblem::of_type(NAMED)
+        .titled("The request is invalid")
+        .unprocessable();
+    let named = [first, second, first];
+    let mut declared = |input| {
+        serde_json::to_value(super::constraint_responses(registry, input, &named, true))
+            .expect("responses serialize")
+    };
+    let published = |schema: &Value| -> Vec<(Value, Value, Value)> {
+        let branches = schema["oneOf"]
+            .as_array()
+            .cloned()
+            .unwrap_or_else(|| vec![schema.clone()]);
+        branches
+            .iter()
+            .map(|branch| {
+                (
+                    branch["allOf"][1]["properties"]["type"]["const"].clone(),
+                    branch["title"].clone(),
+                    branch["allOf"][1]["required"].clone(),
+                )
+            })
+            .collect()
+    };
+    let errors = serde_json::json!(["errors"]);
+    let schema = |responses: &Value, status: &str| {
+        responses[status]["content"]["application/problem+json"]["schema"].clone()
+    };
 
-    let schema = &responses["422"]["content"]["application/problem+json"]["schema"];
-    let branches = schema["oneOf"].as_array().expect("one branch per type");
-    let named: Vec<&Value> = branches
-        .iter()
-        .map(|branch| &branch["allOf"][1]["properties"]["type"]["const"])
-        .collect();
-    assert_eq!(named, [first, second]);
-    for branch in branches {
-        assert_eq!(
-            branch["allOf"][1]["required"],
-            serde_json::json!(["errors"]),
-            "{branch}"
-        );
-    }
+    // Content: both at 422, the first once.
+    let content = declared(Input::Content);
+    assert!(content.get("400").is_none(), "{content}");
+    assert_eq!(
+        published(&schema(&content, "422")),
+        [
+            (first.type_uri.into(), Value::Null, errors.clone()),
+            (
+                NAMED.into(),
+                "The request is invalid".into(),
+                errors.clone()
+            ),
+        ]
+    );
+
+    // A parameter: each at the status it asks for, a lone branch untitled
+    // since the description already carries its title.
+    let parameter = declared(Input::Parameter);
+    assert_eq!(
+        published(&schema(&parameter, "400")),
+        [(first.type_uri.into(), Value::Null, errors.clone())]
+    );
+    assert_eq!(
+        published(&schema(&parameter, "422")),
+        [(NAMED.into(), Value::Null, errors)]
+    );
+    assert_eq!(
+        parameter["422"]["description"], "The request is invalid",
+        "{parameter}"
+    );
 }
 
 /// The `errors` member a schema failure sends is declared under the status it
@@ -566,15 +673,27 @@ fn authentication_and_authorization_are_different_statuses() {
 }
 
 /// The whole point of the split: no parameter extractor may reach a status that
-/// belongs to authentication or to the body.
+/// belongs to authentication or to the body's framing. Its 422 is a broken
+/// bound's alone, where the problem asks for it, so its own `Responses`
+/// declares the 400 alone and the extractor naming the problem the 422.
 #[test]
 fn a_parameter_rejection_declares_nothing_but_a_bad_request() {
-    for declared in [
-        PathRejection::statuses(),
-        QueryRejection::statuses(),
-        HeaderRejection::statuses(),
+    use crate::{response::Responses, schema::registry::Registry};
+
+    for (statuses, responses) in [
+        (
+            PathRejection::statuses(),
+            PathRejection::responses as fn(&mut Registry) -> kynos_openapi::Responses,
+        ),
+        (QueryRejection::statuses(), QueryRejection::responses),
+        (HeaderRejection::statuses(), HeaderRejection::responses),
     ] {
-        assert_eq!(declared, [StatusCode::BAD_REQUEST]);
+        assert_eq!(
+            statuses,
+            [StatusCode::BAD_REQUEST, StatusCode::UNPROCESSABLE_ENTITY]
+        );
+        let declared = responses(&mut Registry::new());
+        assert_eq!(declared.responses.keys().collect::<Vec<_>>(), ["400"]);
     }
 }
 
@@ -606,7 +725,7 @@ fn a_cookie_rejection_is_a_bad_request() {
     };
 
     assert_eq!(rejection.status(), StatusCode::BAD_REQUEST);
-    assert_eq!(CookieRejection::statuses(), [StatusCode::BAD_REQUEST]);
+    declares(&[rejection.status()], CookieRejection::statuses());
 }
 
 /// A 403 an authorizer named carries that type on the wire; an unnamed one is
@@ -1013,8 +1132,53 @@ fn auth(expected: StatusCode, rejection: &AuthRejection) -> Row {
 /// produce.
 fn ledger() -> Vec<Row> {
     let mut rows = parameter_ledger();
+    rows.extend(unprocessable_ledger());
     rows.extend(content_ledger());
     rows
+}
+
+/// Each parameter location's `Schema` again, under a problem asking for 422.
+fn unprocessable_ledger() -> Vec<Row> {
+    let problem =
+        Some(crate::schema::constraints::ConstraintProblem::of_type(NAMED).unprocessable());
+    let failures = || [(String::new(), "must be at least 1".to_owned())].into();
+
+    [
+        path(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &PathRejection::Schema {
+                name: "id".to_owned(),
+                failures: failures(),
+                problem,
+            },
+        ),
+        query(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &QueryRejection::Schema {
+                name: "limit".to_owned(),
+                failures: failures(),
+                problem,
+            },
+        ),
+        header(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &HeaderRejection::Schema {
+                name: "x-page".to_owned(),
+                failures: failures(),
+                problem,
+            },
+        ),
+        #[cfg(feature = "cookie")]
+        cookie(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &super::CookieRejection::Schema {
+                name: "page".to_owned(),
+                failures: failures(),
+                problem,
+            },
+        ),
+    ]
+    .into()
 }
 
 /// The rows of the four parameter locations' rejections.
@@ -1036,7 +1200,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(String::new(), text("must be at least 1"))]
                     .into_iter()
                     .collect(),
-                type_uri: None,
+                problem: None,
             },
         ),
         query(
@@ -1053,7 +1217,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(text("/limit"), text("must be at most 100"))]
                     .into_iter()
                     .collect(),
-                type_uri: None,
+                problem: None,
             },
         ),
         header(
@@ -1070,7 +1234,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(String::new(), text("must be at most 64 characters long"))]
                     .into_iter()
                     .collect(),
-                type_uri: None,
+                problem: None,
             },
         ),
         #[cfg(feature = "cookie")]
@@ -1089,7 +1253,7 @@ fn parameter_ledger() -> Vec<Row> {
                 failures: [(String::new(), text("must be at least 16 characters long"))]
                     .into_iter()
                     .collect(),
-                type_uri: None,
+                problem: None,
             },
         ),
     ]
@@ -1113,7 +1277,7 @@ fn content_ledger() -> Vec<Row> {
                 failures: [(text("/name"), text("expected a string"))]
                     .into_iter()
                     .collect(),
-                type_uri: None,
+                problem: None,
             },
         ),
         body(
@@ -1188,6 +1352,12 @@ fn every_variant_produces_a_status_its_type_declares() {
         "HeaderRejection::Schema",
         #[cfg(feature = "cookie")]
         "CookieRejection::Invalid",
+        #[cfg(feature = "cookie")]
+        "CookieRejection::Schema",
+        // Again, under a problem asking for 422.
+        "PathRejection::Schema",
+        "QueryRejection::Schema",
+        "HeaderRejection::Schema",
         #[cfg(feature = "cookie")]
         "CookieRejection::Schema",
         "BodyRejection::Syntax",
@@ -1272,8 +1442,10 @@ fn every_variant_renders_a_sentence() {
 /// where it narrows nothing and refers to the shared component alone.
 ///
 /// Keyed by status and driven from `statuses()`, so a status added to a
-/// rejection is described here rather than silently skipped.
-fn declared_types<T>() -> std::collections::BTreeMap<u16, Option<String>>
+/// rejection is described here rather than silently skipped. `elsewhere` are
+/// the statuses only the extractor naming a problem declares, and asserts
+/// absent.
+fn declared_types<T>(elsewhere: &[StatusCode]) -> std::collections::BTreeMap<u16, Option<String>>
 where
     T: IntoProblem + crate::response::Responses,
 {
@@ -1281,8 +1453,16 @@ where
     let responses =
         serde_json::to_value(T::responses(&mut registry)).expect("a set of responses serializes");
 
+    for status in elsewhere {
+        assert!(
+            responses.get(status.as_u16().to_string()).is_none(),
+            "{status} is the extractor's to declare: {responses}"
+        );
+    }
+
     T::statuses()
         .iter()
+        .filter(|status| !elsewhere.contains(status))
         .map(|status| {
             let schema = &responses[status.as_u16().to_string()]["content"]
                 ["application/problem+json"]["schema"];
@@ -1308,24 +1488,27 @@ where
 /// `Problem::new`'s and each type reaches it separately.
 #[test]
 fn every_rejection_declares_the_type_its_problems_carry() {
+    // A parameter's 422 is sent only under a problem its type names, which
+    // `constraint_responses` declares for the extractor.
+    let named = &[StatusCode::UNPROCESSABLE_ENTITY];
     let declared = [
-        ("PathRejection", declared_types::<PathRejection>()),
-        ("QueryRejection", declared_types::<QueryRejection>()),
-        ("HeaderRejection", declared_types::<HeaderRejection>()),
-        ("BodyRejection", declared_types::<BodyRejection>()),
+        ("PathRejection", declared_types::<PathRejection>(named)),
+        ("QueryRejection", declared_types::<QueryRejection>(named)),
+        ("HeaderRejection", declared_types::<HeaderRejection>(named)),
+        ("BodyRejection", declared_types::<BodyRejection>(&[])),
         (
             "NegotiationRejection",
-            declared_types::<NegotiationRejection>(),
+            declared_types::<NegotiationRejection>(&[]),
         ),
-        ("RangeRejection", declared_types::<RangeRejection>()),
+        ("RangeRejection", declared_types::<RangeRejection>(&[])),
         (
             "ConnectInfoRejection",
-            declared_types::<ConnectInfoRejection>(),
+            declared_types::<ConnectInfoRejection>(&[]),
         ),
         #[cfg(feature = "cookie")]
         (
             "CookieRejection",
-            declared_types::<super::CookieRejection>(),
+            declared_types::<super::CookieRejection>(named),
         ),
     ];
 
@@ -1355,7 +1538,7 @@ fn every_rejection_declares_the_type_its_problems_carry() {
 /// is the one that does, and it narrows.
 #[test]
 fn the_403_an_authorizer_may_name_is_the_one_status_left_wide() {
-    let declared = declared_types::<AuthRejection>();
+    let declared = declared_types::<AuthRejection>(&[]);
 
     assert_eq!(
         declared[&StatusCode::UNAUTHORIZED.as_u16()].as_deref(),

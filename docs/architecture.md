@@ -713,7 +713,7 @@ module column is also where the `#[cfg]` lives.
 | `trace` | the `tracing` facade only; the subscriber stays the application's | [`middleware.md`](middleware.md) |
 | `uuid1`, `time-*`, `decimal-*` | one `schema/impls/` module each, behind a feature naming the crate's major. `time` and `decimal` are umbrellas that define the shape both backends map onto | [`schema.md`](schema.md#behind-a-feature-flag) |
 | `yaml` | the second document emitter, in `kynos-openapi` and re-exported | [`standards.md`](standards.md) |
-| `test-util` | `test/`, and the JSON Schema validator its conformance assertions need; with `server`, hyper's `client` half and tokio's `duplex`, which `TestClient::through_server` drives `Server::serve_io` with from `server/connection.rs` | [`testing.md`](testing.md) |
+| `test-util` | `test/`, and the JSON Schema validator its conformance assertions need; with `server`, hyper's `client` half and tokio's `duplex`, which `TestClient::through_server` drives `Server::serve_io` with from `server/connection.rs`, and tokio's `test-util` paused clock, which `TestRequest::send_timed` measures on from `server/request_body.rs` | [`testing.md`](testing.md) |
 | `cache` | `middleware/cache/` and `middleware/conditional/`: the seam, never a store | [`middleware.md`](middleware.md) |
 | `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
 | `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |

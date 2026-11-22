@@ -899,17 +899,17 @@ room, in the same commit.
 
 Sixteen of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
-seven public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
-`Accepted`, `Redirect` and `ValidRedirectCode` — so splitting it would turn
-`response::status::Created` into `response::status::created::Created` and do
-the same to the other six. What
+eight public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
+`Accepted`, `AcceptedLocation`, `Redirect` and `ValidRedirectCode` — so
+splitting it would turn `response::status::Created` into
+`response::status::created::Created` and do the same to the other seven. What
 pushed it over was the third case in the rule that decides a wrapper's declared
 response: a body may describe no 200, or one, or the wrapper's own status, and
 the last of those is the one whose absence let a `Created<T>` overwrite a
 representation the body had already declared. The case is four lines; the
 account of why the body's half wins is the rest, and it is the half a later
 reader needs. It stays over because `Location` is a field value by
-construction: the check and its refusal belong to the type the two wrappers
+construction: the check and its refusal belong to the type the three wrappers
 declare required, not to a module of their own.
 
 `error/problem.rs` is a different argument: splitting it would cost no public
@@ -931,7 +931,8 @@ it over was reading both sides of a split `rename`, so a member now has the name
 serde writes and the one it reads. One concern, so one file.
 
 `schema/constraints.rs` is `status.rs`'s shape. It declares `Constraints`, the
-`Pointer` and `Violations` a check reports through, and the four kind traits —
+`Pointer` and `Violations` a check reports through, the `ConstraintProblem` and
+`ConstraintDetail` a broken bound answers with, and the four kind traits —
 `Numeric`, `Textual`, `Items`, `UniqueItems` — a bound reaches a value by, so a
 split would turn `constraints::Numeric` into `constraints::kinds::Numeric` and
 likewise for the rest. What pushed it over was enforcing the bounds it used to
@@ -1100,6 +1101,23 @@ the check reads to skip two interceptors that cover no operation in common. A
 stack element and the check that reads it are one concern: which interceptors
 a type says cover an operation, and whether two of them collide.
 
+`middleware/csrf.rs` is `status.rs`'s shape. It declares `Csrf`, `CsrfWhen`,
+`CrossSite` and `CrossSiteReason`, so a split would turn
+`csrf::CrossSiteReason`, the type an authenticator matches a refusal on, into a
+longer path. What pushed it over was issue #1370's `Csrf::check`, which names
+the rule that refused so an application refusing inside its authenticator can
+label a metric by it. The reason is the decision's own output, so the two are
+one concern: whether a request came from another site, and why not.
+
+`middleware/trusted_hosts.rs` is the same shape for the same issue. It
+declares `TrustedHosts`, `TrustedHostsWhen`, `UntrustedHost` and
+`UntrustedHostReason`, so a split would turn `trusted_hosts::UntrustedHostReason`
+into a longer path. What pushed it over was `check`, `when` and
+`admit_no_authority`, which give the host check `Csrf`'s surface. The private
+host canonicalisation beside them could move for free, and does not: it is what
+an allowed host and a requested one are both read through, and the one
+decision `check` and the interceptor share. One concern, so one file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1120,11 +1138,13 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/cache/mod.rs`
 - `crates/kynos/src/middleware/compression/mod.rs`
 - `crates/kynos/src/middleware/cors/mod.rs`
+- `crates/kynos/src/middleware/csrf.rs`
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
 - `crates/kynos/src/middleware/stack.rs`
 - `crates/kynos/src/middleware/trace.rs`
+- `crates/kynos/src/middleware/trusted_hosts.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`

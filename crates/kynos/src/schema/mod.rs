@@ -129,7 +129,7 @@ mod impls;
 use kynos_openapi::{ComponentName, Schema as OpenApiSchema};
 
 use crate::schema::{
-    constraints::{Pointer, Violations},
+    constraints::{ConstraintProblem, Pointer, Violations},
     registry::Registry,
 };
 
@@ -157,45 +157,48 @@ use crate::schema::{
             is unconstrained"
 )]
 pub trait Schema {
-    /// The RFC 9457 problem `type` a value of this type answers with when it
-    /// breaks a bound [`check_constraints`](Self::check_constraints) reports,
-    /// or `None` for `about:blank`.
+    /// The RFC 9457 problem a value of this type answers with when it breaks a
+    /// bound [`check_constraints`](Self::check_constraints) reports, or `None`
+    /// for an `about:blank` one.
     ///
     /// Read by the extractor that decoded the value — a body extractor's `T`, a
-    /// `QueryString`'s `T`, the type of a field of a derived parameter group —
+    /// `QueryString`'s `T`, a derived parameter group, else the type of its
+    /// field —
     /// into both the rejection it sends and the response its operation
     /// declares, so an application publishing its own problem catalogue keeps
-    /// Kynos enforcing what the document declares. The status stays the
-    /// extractor's: 422 for a body, 400 for a parameter. A body that does not
-    /// decode into the type at all is still `about:blank`, since no bound was
-    /// consulted.
+    /// Kynos enforcing what the document declares. The problem names its
+    /// `type`, and may name its `title`, a 422 for a parameter as for a body,
+    /// and a `detail` naming the first failure; see [`ConstraintProblem`]. A
+    /// body that does not decode into the type at all is still `about:blank`,
+    /// since no bound was consulted.
     ///
     /// Only the decoded type's own answer counts: a member whose type names
     /// another one breaks a bound under the type holding it. `Option`, `Box`
     /// and `Arc` are their `T` and answer as it does.
     ///
-    /// `#[derive(Schema)]` sets it with `#[schema(constraint_type = ...)]` on
-    /// the type. The URI reaches the client verbatim, so it should name a class
-    /// of failure and be absolute (RFC 9457 section 3.1.1).
+    /// `#[derive(Schema)]` sets it with `#[schema(constraint_problem = ...)]`
+    /// on the type.
     ///
     /// ```
     /// use kynos::{
     ///     openapi::Schema as OpenApiSchema,
-    ///     schema::{Schema, registry::Registry},
+    ///     schema::{Schema, constraints::ConstraintProblem, registry::Registry},
     /// };
     ///
     /// struct Limit(u32);
     ///
     /// impl Schema for Limit {
-    ///     const CONSTRAINT_TYPE: Option<&'static str> =
-    ///         Some("https://errors.example.com/validation-failed");
+    ///     const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = Some(
+    ///         ConstraintProblem::of_type("https://errors.example.com/validation-failed")
+    ///             .unprocessable(),
+    ///     );
     ///
     ///     fn schema(registry: &mut Registry) -> OpenApiSchema {
     ///         u32::schema(registry)
     ///     }
     /// }
     /// ```
-    const CONSTRAINT_TYPE: Option<&'static str> = None;
+    const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = None;
 
     /// Produces the schema body for this type.
     ///
@@ -221,7 +224,8 @@ pub trait Schema {
     /// its own bounds and to descend into each field's value. An extractor runs
     /// it on the value it decoded and refuses when anything was reported: a body
     /// extractor with a 422, and `QueryString` and the parameter derives with a
-    /// 400. [`constraints`] says which bounds are enforced.
+    /// 400, or the 422 the type's [`CONSTRAINT_PROBLEM`](Self::CONSTRAINT_PROBLEM)
+    /// asks for. [`constraints`] says which bounds are enforced.
     ///
     /// The default reports nothing, which is right for a type with no bounds
     /// and no members. A container implements it to descend into its members;
