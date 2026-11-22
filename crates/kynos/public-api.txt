@@ -10300,6 +10300,9 @@ pub kynos::server::protocol::http2::Http2Config::max_local_error_reset_streams: 
 pub kynos::server::protocol::http2::Http2Config::max_pending_accept_reset_streams: usize
 pub kynos::server::protocol::http2::Http2Config::max_send_buffer_size: usize
 impl kynos::server::protocol::http2::Http2Config
+pub const kynos::server::protocol::http2::Http2Config::DEFAULT_IDLE_TIMEOUT: core::time::Duration
+pub const kynos::server::protocol::http2::Http2Config::DEFAULT_KEEP_ALIVE: kynos::server::protocol::http2::Http2KeepAlive
+pub const kynos::server::protocol::http2::Http2Config::DEFAULT_MAX_CONCURRENT_STREAMS: u32
 pub fn kynos::server::protocol::http2::Http2Config::flow_control(self, kynos::server::protocol::http2::Http2FlowControl) -> Self
 pub fn kynos::server::protocol::http2::Http2Config::idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 pub fn kynos::server::protocol::http2::Http2Config::keep_alive(self, core::option::Option<kynos::server::protocol::http2::Http2KeepAlive>) -> Self

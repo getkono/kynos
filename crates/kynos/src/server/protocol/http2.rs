@@ -81,17 +81,21 @@ impl Http2KeepAlive {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Http2Config {
-    /// Maximum concurrent streams on one connection.
+    /// Maximum concurrent streams on one connection,
+    /// [`DEFAULT_MAX_CONCURRENT_STREAMS`](Self::DEFAULT_MAX_CONCURRENT_STREAMS)
+    /// by default.
     pub max_concurrent_streams: u32,
     /// Flow-control policy.
     pub flow_control: Http2FlowControl,
-    /// Keep-alive policy. Pings after 30 seconds of silence and allows 20 for
-    /// the acknowledgement by default, so a vanished peer holds its connection
-    /// permit for at most 50 seconds past the last frame it sent.
+    /// Keep-alive policy, [`DEFAULT_KEEP_ALIVE`](Self::DEFAULT_KEEP_ALIVE) by
+    /// default: a PING after 30 seconds of silence, acknowledged within 20, so
+    /// a vanished peer holds its connection permit for at most 50 seconds past
+    /// the last frame it sent.
     pub keep_alive: Option<Http2KeepAlive>,
     /// How long a connection may hold no stream in flight before it is sent a
-    /// GOAWAY and closed. 30 seconds by default, the bound HTTP/1's
-    /// `header_read_timeout` puts on an idle HTTP/1 connection.
+    /// GOAWAY and closed. [`DEFAULT_IDLE_TIMEOUT`](Self::DEFAULT_IDLE_TIMEOUT),
+    /// 30 seconds, by default, the bound HTTP/1's `header_read_timeout` puts on
+    /// an idle HTTP/1 connection.
     ///
     /// A stream is in flight from its request head until its response body
     /// ends or is reset, so a long download or event stream holds the
@@ -113,16 +117,13 @@ pub struct Http2Config {
 impl Default for Http2Config {
     fn default() -> Self {
         Self {
-            max_concurrent_streams: 200,
+            max_concurrent_streams: Self::DEFAULT_MAX_CONCURRENT_STREAMS,
             flow_control: Http2FlowControl::Fixed {
                 initial_stream_window_size: 1024 * 1024,
                 initial_connection_window_size: 1024 * 1024,
             },
-            keep_alive: Some(Http2KeepAlive::new(
-                Duration::from_secs(30),
-                Duration::from_secs(20),
-            )),
-            idle_timeout: Some(Duration::from_secs(30)),
+            keep_alive: Some(Self::DEFAULT_KEEP_ALIVE),
+            idle_timeout: Some(Self::DEFAULT_IDLE_TIMEOUT),
             max_header_list_size: 16 * 1024,
             max_send_buffer_size: 400 * 1024,
             max_pending_accept_reset_streams: 20,
@@ -132,6 +133,43 @@ impl Default for Http2Config {
 }
 
 impl Http2Config {
+    /// The default [`max_concurrent_streams`](Self::max_concurrent_streams):
+    /// 200.
+    ///
+    /// ```
+    /// # use kynos::server::protocol::http2::Http2Config;
+    /// assert_eq!(
+    ///     Http2Config::default().max_concurrent_streams,
+    ///     Http2Config::DEFAULT_MAX_CONCURRENT_STREAMS,
+    /// );
+    /// ```
+    pub const DEFAULT_MAX_CONCURRENT_STREAMS: u32 = 200;
+
+    /// The default [`keep_alive`](Self::keep_alive): a PING after 30 seconds
+    /// of silence, which must be acknowledged within 20.
+    ///
+    /// ```
+    /// # use kynos::server::protocol::http2::Http2Config;
+    /// assert_eq!(
+    ///     Http2Config::default().keep_alive,
+    ///     Some(Http2Config::DEFAULT_KEEP_ALIVE),
+    /// );
+    /// ```
+    pub const DEFAULT_KEEP_ALIVE: Http2KeepAlive =
+        Http2KeepAlive::new(Duration::from_secs(30), Duration::from_secs(20));
+
+    /// The default [`idle_timeout`](Self::idle_timeout): 30 seconds, the same
+    /// as HTTP/1's default `header_read_timeout`.
+    ///
+    /// ```
+    /// # use kynos::server::protocol::http2::Http2Config;
+    /// assert_eq!(
+    ///     Http2Config::default().idle_timeout,
+    ///     Some(Http2Config::DEFAULT_IDLE_TIMEOUT),
+    /// );
+    /// ```
+    pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
+
     /// Sets the maximum concurrent streams on one connection.
     ///
     /// [`Server::prepare`](crate::server::Server::prepare) refuses zero.
