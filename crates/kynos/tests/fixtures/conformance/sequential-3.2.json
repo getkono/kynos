@@ -32,6 +32,32 @@
         "responses": {
           "200": {
             "description": "OK",
+            "headers": {
+              "Cache-Control": {
+                "description": "No cache may answer with this stream without revalidating it, per RFC 9111 section 5.2.2.4",
+                "required": true,
+                "content": {
+                  "text/plain": {
+                    "schema": {
+                      "type": "string",
+                      "const": "no-cache"
+                    }
+                  }
+                }
+              },
+              "X-Accel-Buffering": {
+                "description": "A proxying nginx is to pass each event on unbuffered",
+                "required": true,
+                "content": {
+                  "text/plain": {
+                    "schema": {
+                      "type": "string",
+                      "const": "no"
+                    }
+                  }
+                }
+              }
+            },
             "content": {
               "text/event-stream": {
                 "itemSchema": {

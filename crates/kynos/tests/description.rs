@@ -2391,6 +2391,91 @@ fn an_sse_operation_raises_the_description_to_3_2() {
     assert_eq!(claimed_version(&router), "3.2.0");
 }
 
+/// The same stream, opted out of both default fields.
+#[cfg(feature = "openapi32")]
+#[kynos::get("/cacheable-events")]
+async fn cacheable_events() -> kynos::response::stream::sse::Sse<NoEvents, true, true> {
+    kynos::response::stream::sse::Sse::new(NoEvents)
+        .cacheable()
+        .buffered()
+}
+
+/// A `Cache-Control` group, spelled as a derive's default lower-cases it.
+#[cfg(feature = "openapi32")]
+#[derive(kynos::HeaderParams)]
+struct StoredEvents {
+    /// The application's own caching policy.
+    #[header(rename = "cache-control")]
+    cache_control: String,
+}
+
+#[cfg(feature = "openapi32")]
+#[kynos::get("/stored-events")]
+async fn stored_events()
+-> kynos::response::headers::WithHeaders<kynos::response::stream::sse::Sse<NoEvents>, StoredEvents>
+{
+    kynos::response::headers::WithHeaders::new(
+        kynos::response::stream::sse::Sse::new(NoEvents),
+        StoredEvents {
+            cache_control: "no-store".to_owned(),
+        },
+    )
+}
+
+/// The `const` a declared field's `text/plain` schema fixes, if any.
+#[cfg(feature = "openapi32")]
+fn fixed_value(operation: &kynos::openapi::Operation, name: &str) -> Option<serde_json::Value> {
+    let kynos::openapi::RefOr::Item(response) = operation.responses.responses.get("200")? else {
+        panic!("the 200 is described as a `$ref`");
+    };
+    let header = serde_json::to_value(response.headers.get(name)?).expect("a serializable header");
+    header.pointer("/content/text~1plain/schema/const").cloned()
+}
+
+/// An event stream's 200 declares the two fields it sends by default, each
+/// fixed to its one value and required; an opted-out stream declares neither,
+/// and a group naming one replaces it rather than standing beside it.
+#[cfg(feature = "openapi32")]
+#[test]
+fn an_event_streams_default_fields_are_declared_only_where_sent() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![events, cacheable_events, stored_events])
+        .openapi()
+        .expect("a describable router");
+
+    let events = operation(&document, "/events");
+    assert_eq!(
+        declared_headers(&events, "200"),
+        Some(vec![
+            "Cache-Control".to_owned(),
+            "X-Accel-Buffering".to_owned()
+        ])
+    );
+    assert_eq!(
+        fixed_value(&events, "Cache-Control"),
+        Some(serde_json::json!("no-cache"))
+    );
+    assert_eq!(
+        fixed_value(&events, "X-Accel-Buffering"),
+        Some(serde_json::json!("no"))
+    );
+
+    assert_eq!(
+        declared_headers(&operation(&document, "/cacheable-events"), "200"),
+        Some(Vec::new())
+    );
+
+    let stored = operation(&document, "/stored-events");
+    assert_eq!(
+        declared_headers(&stored, "200"),
+        Some(vec![
+            "cache-control".to_owned(),
+            "X-Accel-Buffering".to_owned()
+        ])
+    );
+    assert_eq!(fixed_value(&stored, "cache-control"), None);
+}
+
 #[cfg(feature = "openapi32")]
 #[test]
 fn a_query_operation_raises_the_description_to_3_2() {

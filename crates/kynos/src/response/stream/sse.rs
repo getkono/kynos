@@ -17,12 +17,14 @@ use kynos_openapi::{
 use crate::server::lifecycle::Draining;
 use crate::{
     http::{
-        HeaderValue, Response,
+        HeaderName, HeaderValue, Response,
         body::{Body, BoxError},
+        header,
     },
     response::{
         IntoResponse, Responses,
         codec::{ok, with_content_type},
+        headers::text_header,
         stream::records::RecordBuffer,
     },
     schema::{Schema, registry::Registry},
@@ -80,8 +82,33 @@ use crate::{
 /// [`tests/sse.rs`](https://github.com/getkono/kynos/blob/master/crates/kynos/tests/sse.rs)
 /// asserts the disconnect over a real socket; backpressure has no test of its
 /// own.
+///
+/// # Caches and proxies
+///
+/// An event stream is sent, and its 200 described, with two fields beside its
+/// `Content-Type`:
+///
+/// - `Cache-Control: no-cache` (RFC 9111 section 5.2.2.4), so no cache
+///   answers a reconnecting client with a replay of the events it stored.
+/// - `X-Accel-Buffering: no`, so an nginx in front of the server passes each
+///   event on as it is written rather than in bursts. Every other hop ignores
+///   it.
+///
+/// [`cacheable`](Self::cacheable) and [`buffered`](Self::buffered) leave each
+/// out. Each is recorded in the type, as `CACHEABLE` and `BUFFERED`, because
+/// each changes what the description declares: the document never promises a
+/// field the operation does not send.
+///
+/// A [`WithHeaders`](crate::response::headers::WithHeaders) group naming
+/// either field replaces it, on the wire and in the description, so one set
+/// there is the only value sent. An interceptor setting one, as
+/// [`SecurityHeaders`](crate::middleware::security_headers::SecurityHeaders)
+/// sets `Cache-Control: no-store`, replaces it on the wire but not in the
+/// description, where a field the operation declares keeps its entry: call
+/// `cacheable` (or `buffered`) beneath it, and the interceptor's own
+/// declaration is the one the document carries.
 #[derive(Debug)]
-pub struct Sse<S> {
+pub struct Sse<S, const CACHEABLE: bool = false, const BUFFERED: bool = false> {
     /// The stream of events.
     pub events: S,
     keep_alive: Option<KeepAlive>,
@@ -90,7 +117,8 @@ pub struct Sse<S> {
 }
 
 impl<S> Sse<S> {
-    /// Creates an event stream without keep-alive messages.
+    /// Creates an event stream without keep-alive messages, sent with
+    /// `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
     #[must_use]
     pub fn new(events: S) -> Self {
         Self {
@@ -98,6 +126,48 @@ impl<S> Sse<S> {
             keep_alive: None,
             #[cfg(feature = "server")]
             draining: Draining::never(),
+        }
+    }
+}
+
+impl<S, const CACHEABLE: bool, const BUFFERED: bool> Sse<S, CACHEABLE, BUFFERED> {
+    /// Sends, and describes, no `Cache-Control`, leaving the stream to a
+    /// cache's heuristics or to a field set elsewhere.
+    ///
+    /// ```no_run
+    /// use kynos::response::stream::sse::Sse;
+    ///
+    /// fn events<S>(stream: S) -> Sse<S, true> {
+    ///     Sse::new(stream).cacheable()
+    /// }
+    /// ```
+    #[must_use]
+    pub fn cacheable(self) -> Sse<S, true, BUFFERED> {
+        Sse {
+            events: self.events,
+            keep_alive: self.keep_alive,
+            #[cfg(feature = "server")]
+            draining: self.draining,
+        }
+    }
+
+    /// Sends, and describes, no `X-Accel-Buffering`, leaving whether an nginx
+    /// buffers the stream to its own configuration.
+    ///
+    /// ```no_run
+    /// use kynos::response::stream::sse::Sse;
+    ///
+    /// fn events<S>(stream: S) -> Sse<S, false, true> {
+    ///     Sse::new(stream).buffered()
+    /// }
+    /// ```
+    #[must_use]
+    pub fn buffered(self) -> Sse<S, CACHEABLE, true> {
+        Sse {
+            events: self.events,
+            keep_alive: self.keep_alive,
+            #[cfg(feature = "server")]
+            draining: self.draining,
         }
     }
 
@@ -450,7 +520,17 @@ fn field(record: &mut bytes::BytesMut, name: &str, value: &[u8]) {
     push(rest);
 }
 
-impl<S, T, E> IntoResponse for Sse<S>
+/// The value `Cache-Control` carries unless [`Sse::cacheable`].
+const NO_CACHE: &str = "no-cache";
+
+/// nginx's own field for whether it buffers a proxied response.
+const X_ACCEL_BUFFERING: &str = "x-accel-buffering";
+
+/// The value `X-Accel-Buffering` carries unless [`Sse::buffered`].
+const UNBUFFERED: &str = "no";
+
+impl<S, T, E, const CACHEABLE: bool, const BUFFERED: bool> IntoResponse
+    for Sse<S, CACHEABLE, BUFFERED>
 where
     S: futures_core::Stream<Item = Result<Event<T>, E>> + Send + 'static,
     T: serde::Serialize,
@@ -468,14 +548,43 @@ where
             ended: false,
         };
 
-        with_content_type(
+        let mut response = with_content_type(
             Body::from_stream(records),
             HeaderValue::from_static(mime_names::TEXT_EVENT_STREAM),
-        )
+        );
+
+        let fields = response.headers_mut();
+        if !CACHEABLE {
+            fields.insert(header::CACHE_CONTROL, HeaderValue::from_static(NO_CACHE));
+        }
+        if !BUFFERED {
+            fields.insert(
+                HeaderName::from_static(X_ACCEL_BUFFERING),
+                HeaderValue::from_static(UNBUFFERED),
+            );
+        }
+
+        response
     }
 }
 
-impl<S, T, E> Responses for Sse<S>
+/// A field described as `text/plain` that only ever carries `value`, sent on
+/// every response it is declared on.
+fn fixed(value: &str, description: &str) -> kynos_openapi::RefOr<kynos_openapi::Header> {
+    let schema = SchemaObject {
+        ty: Some(TypeSet::One(SchemaType::String)),
+        const_value: Some(serde_json::Value::String(value.to_owned())),
+        ..SchemaObject::default()
+    };
+
+    kynos_openapi::RefOr::Item(
+        text_header(kynos_openapi::Schema::Object(Box::new(schema)))
+            .with_description(description)
+            .required(true),
+    )
+}
+
+impl<S, T, E, const CACHEABLE: bool, const BUFFERED: bool> Responses for Sse<S, CACHEABLE, BUFFERED>
 where
     S: futures_core::Stream<Item = Result<Event<T>, E>>,
     T: Schema,
@@ -523,10 +632,34 @@ where
         .into_iter()
         .collect();
 
-        ok(
+        let mut responses = ok(
             mime_names::TEXT_EVENT_STREAM,
             kynos_openapi::MediaType::sequential(kynos_openapi::Schema::Object(Box::new(event))),
-        )
+        );
+
+        if let Some(kynos_openapi::RefOr::Item(response)) = responses.responses.get_mut("200") {
+            if !CACHEABLE {
+                response.headers.insert(
+                    "Cache-Control".to_owned(),
+                    fixed(
+                        NO_CACHE,
+                        "No cache may answer with this stream without revalidating it, per RFC \
+                         9111 section 5.2.2.4",
+                    ),
+                );
+            }
+            if !BUFFERED {
+                response.headers.insert(
+                    "X-Accel-Buffering".to_owned(),
+                    fixed(
+                        UNBUFFERED,
+                        "A proxying nginx is to pass each event on unbuffered",
+                    ),
+                );
+            }
+        }
+
+        responses
     }
 }
 

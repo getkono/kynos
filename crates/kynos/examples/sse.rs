@@ -11,7 +11,7 @@
 //! JSON framings and raw byte streams. This file is the one protocol among them
 //! with rules of its own.
 //!
-//! Five things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **An event names its type twice, and the two must agree.** SSE's `event`
 //!   field is what a browser's `addEventListener` selects on; a serde tag inside
@@ -42,6 +42,12 @@
 //!   begins, and the client reconnects, with its `Last-Event-ID`, to whichever
 //!   instance serves next. [`Draining`] is the handler argument it reads that
 //!   from; it describes nothing.
+//! * **A proxy in front is told not to hold the stream, and the document says
+//!   so.** Every [`Sse`] is sent with `Cache-Control: no-cache`, so no cache
+//!   replays stored events to a reconnecting client, and `X-Accel-Buffering:
+//!   no`, so an nginx forwards each event as it is written; both are declared
+//!   on the 200. `Sse::cacheable` and `Sse::buffered` drop either, and the
+//!   type records it, because the description changes with it.
 //!
 //! 3.1 is not merely inconvenient here: it has no `itemSchema`, so an event
 //! stream can only be described as an opaque string. Kynos would rather not

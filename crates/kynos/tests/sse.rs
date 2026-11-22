@@ -27,7 +27,10 @@ use kynos::{
     di::inject::Inject,
     http::{Request, Response},
     middleware::Observer,
-    response::stream::sse::{Event, KeepAlive, Sse},
+    response::{
+        headers::WithHeaders,
+        stream::sse::{Event, KeepAlive, Sse},
+    },
     router::operation::Route,
     server::{Server, error::ServerError, lifecycle::Draining, shutdown::Shutdown},
 };
@@ -77,6 +80,29 @@ async fn quiet() -> Sse<OneEventThenSilence> {
     Sse::new(one_event_then_silence())
 }
 
+/// The same stream, left to caches and to an nginx's own buffering.
+#[kynos::get("/cacheable")]
+async fn cacheable() -> Sse<OneEventThenSilence, true, true> {
+    Sse::new(one_event_then_silence()).cacheable().buffered()
+}
+
+/// A `Cache-Control` the application sets itself.
+#[derive(kynos::HeaderParams)]
+struct Stored {
+    #[header(rename = "cache-control")]
+    cache_control: String,
+}
+
+#[kynos::get("/overridden")]
+async fn overridden() -> WithHeaders<Sse<OneEventThenSilence>, Stored> {
+    WithHeaders::new(
+        Sse::new(one_event_then_silence()),
+        Stored {
+            cache_control: "no-store".to_owned(),
+        },
+    )
+}
+
 /// Reads lines from a live event stream until `deadline`, returning what
 /// arrived.
 fn read_for(path: &str, address: std::net::SocketAddr, deadline: Duration) -> Vec<String> {
@@ -114,7 +140,7 @@ where
 
     let bound = Server::new(
         Router::<()>::new()
-            .mount(kynos::routes![events, quiet])
+            .mount(kynos::routes![events, quiet, cacheable, overridden])
             .build(())
             .expect("a describable router"),
     )
@@ -183,6 +209,76 @@ async fn a_stream_configured_without_keep_alive_sends_no_comment() {
     assert!(
         !lines.iter().any(|line| line.starts_with(':')),
         "a stream with no keep-alive sent one anyway: {lines:?}"
+    );
+}
+
+/// The values of `name` in a response head `read_for` read, in the order sent.
+fn field_values(lines: &[String], name: &str) -> Vec<String> {
+    lines
+        .iter()
+        .take_while(|line| !line.is_empty())
+        .filter_map(|line| line.split_once(':'))
+        .filter(|(field, _)| field.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.trim().to_owned())
+        .collect()
+}
+
+/// A proxy or cache in front of the server sees a live stream: one that no
+/// cache may replay to a reconnecting client, and that nginx does not buffer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_event_stream_is_sent_uncached_and_unbuffered_by_default() {
+    let lines = serving(|address| read_for("/quiet", address, Duration::from_millis(200))).await;
+
+    assert_eq!(
+        field_values(&lines, "cache-control"),
+        ["no-cache"],
+        "{lines:?}"
+    );
+    assert_eq!(
+        field_values(&lines, "x-accel-buffering"),
+        ["no"],
+        "{lines:?}"
+    );
+}
+
+/// The pass control: the same stream opted out of both sends neither, having
+/// sent its head.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_event_stream_opted_out_sends_neither_field() {
+    let lines =
+        serving(|address| read_for("/cacheable", address, Duration::from_millis(200))).await;
+
+    assert_eq!(
+        field_values(&lines, "content-type"),
+        ["text/event-stream"],
+        "{lines:?}"
+    );
+    assert!(
+        field_values(&lines, "cache-control").is_empty(),
+        "{lines:?}"
+    );
+    assert!(
+        field_values(&lines, "x-accel-buffering").is_empty(),
+        "{lines:?}"
+    );
+}
+
+/// A `Cache-Control` the application sets is the only one sent, rather than a
+/// second value beside the default a cache would combine with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_cache_control_the_application_sets_replaces_the_default() {
+    let lines =
+        serving(|address| read_for("/overridden", address, Duration::from_millis(200))).await;
+
+    assert_eq!(
+        field_values(&lines, "cache-control"),
+        ["no-store"],
+        "{lines:?}"
+    );
+    assert_eq!(
+        field_values(&lines, "x-accel-buffering"),
+        ["no"],
+        "{lines:?}"
     );
 }
 
