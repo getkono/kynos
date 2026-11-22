@@ -31,7 +31,10 @@ use crate::{
     http::{Request, header_name_eq},
     middleware::{Continued, Interceptor, Next, Placement, catch_panic::PanicPolicy},
     response::ShortCircuit,
-    router::group::{Group, MethodSet, Methods},
+    router::{
+        error::Overlap,
+        group::{Group, MethodSet, Methods},
+    },
 };
 
 /// One interceptor in front of the rest.
@@ -322,6 +325,52 @@ where
     L: Flatten<<R as Flatten<S>>::Out>,
 {
     type Out = <L as Flatten<<R as Flatten<S>>::Out>>::Out;
+}
+
+/// What the collision rule reads off one interceptor, as run-time data: for
+/// the pairs whose types never meet in one scope's list, which the router
+/// compares as it is built instead.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Declared {
+    /// The interceptor's type name, for the violation.
+    pub(crate) name: &'static str,
+    /// The response headers it adds.
+    pub(crate) adds: &'static [&'static str],
+    /// The statuses it short-circuits with.
+    pub(crate) statuses: &'static [u16],
+}
+
+impl Declared {
+    /// What `N` declares.
+    pub(crate) fn of<C, N>() -> Self
+    where
+        C: Sync + 'static,
+        N: Interceptor<C>,
+    {
+        Self {
+            name: std::any::type_name::<N>(),
+            adds: <N::Adds as HeaderParams>::NAMES,
+            statuses: <N::Short as ShortCircuit>::STATUSES,
+        }
+    }
+
+    /// The first thing this and `other` both claim, the response header
+    /// before the status, as [`CompatibleWith`] asserts them; `None` where they
+    /// compose.
+    pub(crate) fn overlap(&self, other: &Self) -> Option<Overlap> {
+        if let Some(header) = self
+            .adds
+            .iter()
+            .find(|name| !header_names_disjoint(&[name], other.adds))
+        {
+            return Some(Overlap::Header((*header).to_owned()));
+        }
+
+        self.statuses
+            .iter()
+            .find(|status| other.statuses.contains(status))
+            .map(|status| Overlap::Status(*status))
+    }
 }
 
 /// Fails to evaluate where `N` claims to cover fewer than every method, which

@@ -16,7 +16,9 @@ use kynos_openapi::{Method, PathTemplate};
 use crate::{
     handler::Handler,
     http::{Request, Response},
-    middleware::{Continued, Interceptor, MiddlewareError, Next, erased::ErasedInterceptor},
+    middleware::{
+        Continued, Interceptor, MiddlewareError, Next, erased::ErasedInterceptor, stack::Declared,
+    },
     router::{dispatch::recovery, operation::OperationCx},
 };
 
@@ -54,6 +56,21 @@ pub trait Endpoint<C>: Send + Sync + 'static {
     #[doc(hidden)]
     fn __unhonourable_interceptor(&self) -> Option<MiddlewareError> {
         None
+    }
+
+    /// Hands each interceptor this operation holds itself to `each`, outermost
+    /// first: its type name, the response headers it adds and the statuses it
+    /// short-circuits with, which the router compares against the scopes
+    /// enclosing it.
+    ///
+    /// Not part of the stable API, as
+    /// [`__unhonourable_interceptor`](Endpoint::__unhonourable_interceptor).
+    #[doc(hidden)]
+    fn __declare_interceptors(
+        &self,
+        each: &mut dyn FnMut(&'static str, &'static [&'static str], &'static [u16]),
+    ) {
+        let _ = each;
     }
 
     /// Whether this operation's handler takes a guard, which
@@ -158,6 +175,10 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn unhonourable_interceptor(&self) -> Option<MiddlewareError>;
 
+    /// What each interceptor this operation holds itself declares, outermost
+    /// first.
+    fn declared_interceptors(&self) -> Vec<Declared>;
+
     /// This operation's guard as an interceptor, where its handler takes one.
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>>;
 }
@@ -185,6 +206,18 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
 
     fn unhonourable_interceptor(&self) -> Option<MiddlewareError> {
         Endpoint::__unhonourable_interceptor(self)
+    }
+
+    fn declared_interceptors(&self) -> Vec<Declared> {
+        let mut declared = Vec::new();
+        Endpoint::__declare_interceptors(self, &mut |name, adds, statuses| {
+            declared.push(Declared {
+                name,
+                adds,
+                statuses,
+            });
+        });
+        declared
     }
 
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>> {

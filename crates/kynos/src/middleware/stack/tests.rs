@@ -1,10 +1,12 @@
 use std::convert::Infallible;
 
-use super::{Both, Cons, Flatten, InterceptorList, header_names_disjoint, statuses_disjoint};
+use super::{
+    Both, Cons, Declared, Flatten, InterceptorList, header_names_disjoint, statuses_disjoint,
+};
 use crate::{
     http::Request,
     middleware::{Continued, Interceptor, Next, catch_panic::Propagate},
-    router::group::Group,
+    router::{error::Overlap, group::Group},
 };
 
 /// An interceptor that collides with nothing, one distinct type per `N`.
@@ -151,4 +153,39 @@ fn an_empty_stack_flattens_away() {
     // `Both` concatenates rather than nesting, so two mounted scopes become
     // one list for a later interceptor to be compared against.
     flattens_to::<Both<Cons<Left, ()>, Cons<Right, ()>>, Cons<Left, Cons<Right, ()>>, ()>();
+}
+
+/// What `declared` would read off an interceptor adding `adds` and answering
+/// with `statuses`.
+fn declared(adds: &'static [&'static str], statuses: &'static [u16]) -> Declared {
+    Declared {
+        name: "test",
+        adds,
+        statuses,
+    }
+}
+
+/// The run-time half of the rule `CompatibleWith` asserts: a shared response
+/// header, compared without case as RFC 9110 names fields, or a shared status
+/// is an overlap, and reading the same request header is not.
+#[test]
+fn two_declarations_overlap_on_a_header_or_a_status() {
+    assert_eq!(
+        declared(&["x-request-id"], &[]).overlap(&declared(&["X-Request-Id"], &[])),
+        Some(Overlap::Header("x-request-id".to_owned()))
+    );
+    assert_eq!(
+        declared(&[], &[408, 413]).overlap(&declared(&[], &[413])),
+        Some(Overlap::Status(413))
+    );
+    // The header is reported first, as `CompatibleWith` asserts it first.
+    assert_eq!(
+        declared(&["etag"], &[412]).overlap(&declared(&["etag"], &[412])),
+        Some(Overlap::Header("etag".to_owned()))
+    );
+
+    assert_eq!(
+        declared(&["x-a"], &[413]).overlap(&declared(&["x-b"], &[408])),
+        None
+    );
 }

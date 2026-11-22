@@ -19,7 +19,7 @@ use crate::{
     },
     extract::params::header::{DecodeHeaders, HeaderParams},
     http::{Request, Response},
-    middleware::{Continued, Interceptor, Next},
+    middleware::{Continued, Interceptor, Next, stack::Declared},
     response::{IntoResponse, Responses},
     router::operation::OperationCx,
 };
@@ -29,6 +29,9 @@ pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
     /// Adds this interceptor's three declarations to `operation`, which are
     /// the same for every operation it covers.
     fn describe(&self, operation: &mut OperationCx<'_>);
+
+    /// What the collision rule reads off this interceptor.
+    fn declared(&self) -> Declared;
 
     /// Hands `request` to this interceptor, boxing the future it returns and
     /// nothing else.
@@ -117,6 +120,10 @@ where
                 }
             }
         }
+    }
+
+    fn declared(&self) -> Declared {
+        Declared::of::<C, I>()
     }
 
     fn intercept<'a>(

@@ -9,6 +9,7 @@
 //! reference page it publishes.
 
 mod build;
+mod collisions;
 mod describe;
 mod install;
 mod map;
@@ -73,6 +74,10 @@ pub(crate) struct Mounted<C> {
     /// Group- and nested-router interceptors, outermost first. The router's own
     /// are held separately, because `intercept` may be called after `mount`.
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    /// Group interceptors `intercept_when` scoped to methods this operation is
+    /// not declared with: never run on it, but compared against what it holds,
+    /// as the compile-time check compares them.
+    scoped_away: Vec<Arc<dyn ErasedInterceptor<C>>>,
     /// Where in `interceptors` the endpoint's guard runs, where an enclosing
     /// scope asked for `guard_first`: the number of them outside it.
     guard_at: Option<usize>,
@@ -318,6 +323,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
                 endpoint,
                 path,
                 interceptors: interceptors.to_vec(),
+                scoped_away: Vec::new(),
                 guard_at,
                 tags: tags.to_vec(),
                 catch_panics,
@@ -574,8 +580,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // Each operation takes only the interceptors its method is covered by,
         // which is also what keeps the others off its description.
         for endpoint in endpoints {
-            let (covering, guard_at) =
-                group::covering(&interceptors, guard_first, endpoint.method());
+            let method = endpoint.method();
+            let (covering, guard_at) = group::covering(&interceptors, guard_first, method);
+            let absorbed = self.mounted.len();
             self.absorb(
                 vec![endpoint],
                 &prefix,
@@ -584,6 +591,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 guard_at,
                 catches::<GP>(),
             );
+            // Empty where a violation refused the endpoint's path.
+            for mounted in &mut self.mounted[absorbed..] {
+                mounted.scoped_away = group::scoped_away(&interceptors, method);
+            }
         }
 
         // A group's layers cover only its operations, so they land per endpoint.

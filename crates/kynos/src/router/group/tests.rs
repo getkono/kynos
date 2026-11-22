@@ -3,7 +3,8 @@ use std::convert::Infallible;
 use kynos_openapi::Method;
 
 use super::{
-    Methods, ShortCircuit, covering, described_statuses, mismatch_between, short_circuit_mismatch,
+    Methods, ShortCircuit, covering, described_statuses, mismatch_between, scoped_away,
+    short_circuit_mismatch,
 };
 use crate::schema::registry::Registry;
 
@@ -57,6 +58,20 @@ fn an_operation_takes_only_the_interceptors_its_method_is_in() {
 
     assert_eq!(covering(&scoped, None, Method::Get).0, ["outer", "reads"]);
     assert_eq!(covering(&scoped, None, Method::Post).0, ["outer", "writes"]);
+}
+
+/// What an operation's method leaves out is the complement of what covers it,
+/// so the collision rule sees every group interceptor exactly once.
+#[test]
+fn an_operation_is_compared_against_what_its_method_leaves_out() {
+    let scoped = [
+        (Methods::EVERY, "outer"),
+        (Methods::UNSAFE, "writes"),
+        (Methods::SAFE, "reads"),
+    ];
+
+    assert_eq!(scoped_away(&scoped, Method::Get), ["writes"]);
+    assert_eq!(scoped_away(&scoped, Method::Post), ["reads"]);
 }
 
 #[test]

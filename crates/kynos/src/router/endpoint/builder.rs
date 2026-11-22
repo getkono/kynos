@@ -302,6 +302,16 @@ where
             .find_map(|interceptor| install::cors_conflict(interceptor))
     }
 
+    fn __declare_interceptors(
+        &self,
+        each: &mut dyn FnMut(&'static str, &'static [&'static str], &'static [u16]),
+    ) {
+        for interceptor in &self.interceptors {
+            let declared = interceptor.declared();
+            each(declared.name, declared.adds, declared.statuses);
+        }
+    }
+
     fn __guarded(&self) -> bool {
         H::__GUARDED
     }

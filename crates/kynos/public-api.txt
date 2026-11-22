@@ -8289,10 +8289,34 @@ pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::describ
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::method(&self) -> kynos_openapi::model::paths::method::Method
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::path(&self) -> &kynos_openapi::model::paths::template::PathTemplate
 pub mod kynos::router::error
+#[non_exhaustive] pub enum kynos::router::error::Overlap
+pub kynos::router::error::Overlap::Header(alloc::string::String)
+pub kynos::router::error::Overlap::Status(u16)
+impl core::clone::Clone for kynos::router::error::Overlap
+pub fn kynos::router::error::Overlap::clone(&self) -> kynos::router::error::Overlap
+impl core::cmp::Eq for kynos::router::error::Overlap
+impl core::cmp::PartialEq for kynos::router::error::Overlap
+pub fn kynos::router::error::Overlap::eq(&self, &kynos::router::error::Overlap) -> bool
+impl core::fmt::Debug for kynos::router::error::Overlap
+pub fn kynos::router::error::Overlap::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::router::error::Overlap
+pub fn kynos::router::error::Overlap::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kynos::router::error::Overlap
+impl core::marker::Freeze for kynos::router::error::Overlap
+impl core::marker::Send for kynos::router::error::Overlap
+impl core::marker::Sync for kynos::router::error::Overlap
+impl core::marker::Unpin for kynos::router::error::Overlap
+impl core::marker::UnsafeUnpin for kynos::router::error::Overlap
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::error::Overlap
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::error::Overlap
 #[non_exhaustive] pub enum kynos::router::error::RouterError
 pub kynos::router::error::RouterError::DuplicateOperation
 pub kynos::router::error::RouterError::DuplicateOperation::method: kynos_openapi::model::paths::method::Method
 pub kynos::router::error::RouterError::DuplicateOperation::path: alloc::string::String
+pub kynos::router::error::RouterError::InterceptorsCollide
+pub kynos::router::error::RouterError::InterceptorsCollide::endpoint: &'static str
+pub kynos::router::error::RouterError::InterceptorsCollide::overlap: kynos::router::error::Overlap
+pub kynos::router::error::RouterError::InterceptorsCollide::scope: &'static str
 pub kynos::router::error::RouterError::InvalidRoutePattern
 pub kynos::router::error::RouterError::InvalidRoutePattern::pattern: alloc::string::String
 pub kynos::router::error::RouterError::MappedOperation

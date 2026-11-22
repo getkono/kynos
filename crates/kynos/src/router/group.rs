@@ -526,6 +526,19 @@ pub(super) fn covering<T: Clone>(
     (covering, guard_at)
 }
 
+/// What of a group's `interceptors` does not cover an operation declared with
+/// `method`: the ones [`covering`] leaves out, which never run on it but which
+/// the collision rule still compares against what it holds, as
+/// [`CompatibleWith`] compares them while their types are in one list.
+#[must_use]
+pub(super) fn scoped_away<T: Clone>(interceptors: &[(Methods, T)], method: Method) -> Vec<T> {
+    interceptors
+        .iter()
+        .filter(|(methods, _)| !methods.contains(method))
+        .map(|(_, interceptor)| interceptor.clone())
+        .collect()
+}
+
 /// The statuses a [`kynos_openapi::Responses`] value declares as exact codes.
 ///
 /// Wildcard patterns and `default` are skipped: they name no one status.

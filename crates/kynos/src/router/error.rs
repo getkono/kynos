@@ -136,4 +136,43 @@ pub enum RouterError {
         /// The `paths` key it is at.
         path: String,
     },
+
+    /// An interceptor an operation holds itself collides with one a scope
+    /// enclosing it applies: both add the same response header, or both
+    /// answer with the same status, so a client could not tell which replied.
+    ///
+    /// The rule [`CompatibleWith`](crate::middleware::stack::CompatibleWith)
+    /// enforces at compile time, checked as the router is built for the pairs
+    /// no type carries both of, such as an operation collected into an
+    /// [`Endpoints`](crate::router::endpoint::set::Endpoints), whose type
+    /// erases what its members hold. Located at the operation.
+    #[error("`{endpoint}`, which this operation holds, and `{scope}`, covering it, {overlap}")]
+    InterceptorsCollide {
+        /// The interceptor the operation holds itself.
+        endpoint: &'static str,
+        /// The interceptor an enclosing scope applies.
+        scope: &'static str,
+        /// What both claim.
+        overlap: Overlap,
+    },
+}
+
+/// What two colliding interceptors both claim, as
+/// [`RouterError::InterceptorsCollide`] reports it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Overlap {
+    /// Both add this response header, named as the first of them spells it.
+    Header(String),
+    /// Both short-circuit with this status.
+    Status(u16),
+}
+
+impl std::fmt::Display for Overlap {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Header(name) => write!(formatter, "both add the `{name}` response header"),
+            Self::Status(status) => write!(formatter, "both answer with status {status}"),
+        }
+    }
 }

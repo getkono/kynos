@@ -1706,26 +1706,26 @@ fail. `every_builder_preserves_the_type_parameters` in
 builder's return type, and `tests/ui/antipattern/` carries one case per scope,
 each with the control that fails if the check over-rejects instead.
 
-### What the compile-time check still cannot see
+### What the compile-time check cannot see
 
-One, and it is the erasure the paragraph above already names.
+Wherever no type carries both halves of a pair.
 [`Endpoints`](../crates/kynos/src/router/endpoint/set.rs) declares
 `Stacks = ()` by construction, so an endpoint-scoped interceptor that reaches a
-router through a collection arrives with nothing to compare, and a router-level
-interceptor adding the same header compiles.
+router through a collection arrives with nothing to compare.
 
-There is no build-time backstop for it, and that is a decision rather than an
-omission. A router's own chain and its groups' are visible where the document is
-assembled, but an endpoint's interceptors live *inside* the endpoint and run
-there — `DynEndpoint` has no way to read them, and giving it one means adding a
-declaration method to the public `Endpoint` trait. That is a method returning a
-description beside a method producing responses, which is the `contribution`
-method [this document opens by refusing](#why-the-declaration-is-the-signature),
-and it would be a declaration a third-party `Endpoint` could get wrong.
+The router compares those pairs as it is built instead, and refuses the build
+with `RouterError::InterceptorsCollide` at the operation. Each operation
+`EndpointBuilder` makes hands the router what its own interceptors declare,
+through a hidden `Endpoint` method defaulting to nothing, beside the one that
+already reports a `Cors` it cannot honour. That is not the `contribution`
+method [this document opens by refusing](#why-the-declaration-is-the-signature):
+it is read off the same associated types `intercept` took, so it cannot
+disagree with what runs, and a third-party `Endpoint` holding no interceptor
+has nothing to declare. Each is compared against every interceptor covering the
+operation, and against a group's scoped away from its method, which the
+compile-time rule compares too.
 
-So the rule stands as `routes!` already states it: build a collection at run
-time and the endpoint-scoped interceptors inside it stop being checked. Reach
-for `routes!` wherever the set of routes is known when the program is compiled.
+The check costs the build one walk of the operations, and nothing per request.
 
 What the check compares is `const` data — `HeaderParams::NAMES` and
 `ShortCircuit::STATUSES` — so it costs nothing at run time and nothing in the

@@ -700,6 +700,7 @@ mod router_errors {
     use kynos_openapi::{Method, SpecError};
 
     use super::RouterError;
+    use crate::router::error::Overlap;
 
     /// Every variant, named. An exhaustive match, so a variant added to
     /// [`RouterError`] stops this file compiling until it is given a case.
@@ -714,6 +715,7 @@ mod router_errors {
             RouterError::ProblemMembersNotObject { .. } => "ProblemMembersNotObject",
             RouterError::ProblemMemberReserved { .. } => "ProblemMemberReserved",
             RouterError::MappedOperation { .. } => "MappedOperation",
+            RouterError::InterceptorsCollide { .. } => "InterceptorsCollide",
         }
     }
 
@@ -789,6 +791,15 @@ mod router_errors {
                  security requirement, change the media types its `QUERY` body accepts, or \
                  remove its `x-kynos-opaque` marker",
             ),
+            (
+                RouterError::InterceptorsCollide {
+                    endpoint: "app::Limit",
+                    scope: "app::Quota",
+                    overlap: Overlap::Status(429),
+                },
+                "`app::Limit`, which this operation holds, and `app::Quota`, covering it, both \
+                 answer with status 429",
+            ),
         ]
     }
 
@@ -819,6 +830,7 @@ mod router_errors {
             "ProblemMembersNotObject",
             "ProblemMemberReserved",
             "MappedOperation",
+            "InterceptorsCollide",
         ]
         .into_iter()
         .collect();

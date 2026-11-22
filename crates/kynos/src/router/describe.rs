@@ -303,6 +303,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let linked = links.resolve().map_err(Box::new)?;
 
         self.try_match_table(&mut violations);
+        self.refuse_colliding_interceptors(&mut violations);
 
         for check in &self.short_circuit_checks {
             if let Some(error) = check(&mut registry) {
