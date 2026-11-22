@@ -1108,6 +1108,15 @@ the rule that refused so an application refusing inside its authenticator can
 label a metric by it. The reason is the decision's own output, so the two are
 one concern: whether a request came from another site, and why not.
 
+`middleware/trusted_hosts.rs` is the same shape for the same issue. It
+declares `TrustedHosts`, `TrustedHostsWhen`, `UntrustedHost` and
+`UntrustedHostReason`, so a split would turn `trusted_hosts::UntrustedHostReason`
+into a longer path. What pushed it over was `check`, `when` and
+`admit_no_authority`, which give the host check `Csrf`'s surface. The private
+host canonicalisation beside them could move for free, and does not: it is what
+an allowed host and a requested one are both read through, and the one
+decision `check` and the interceptor share. One concern, so one file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1134,6 +1143,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/mod.rs`
 - `crates/kynos/src/middleware/stack.rs`
 - `crates/kynos/src/middleware/trace.rs`
+- `crates/kynos/src/middleware/trusted_hosts.rs`
 - `crates/kynos/src/response/range/served.rs`
 - `crates/kynos/src/response/status.rs`
 - `crates/kynos/src/response/stream/sse.rs`

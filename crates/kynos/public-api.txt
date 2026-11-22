@@ -5396,13 +5396,44 @@ impl !core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::Trac
 impl !core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::TraceSpan
 pub const kynos::middleware::trace::REDACTED: &[&str]
 pub mod kynos::middleware::trusted_hosts
+#[non_exhaustive] pub enum kynos::middleware::trusted_hosts::UntrustedHostReason
+pub kynos::middleware::trusted_hosts::UntrustedHostReason::Malformed
+pub kynos::middleware::trusted_hosts::UntrustedHostReason::NoAuthority
+pub kynos::middleware::trusted_hosts::UntrustedHostReason::NotAllowed
+impl kynos::middleware::trusted_hosts::UntrustedHostReason
+pub const fn kynos::middleware::trusted_hosts::UntrustedHostReason::as_str(self) -> &'static str
+impl core::clone::Clone for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::clone(&self) -> kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::cmp::Eq for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::cmp::PartialEq for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::eq(&self, &kynos::middleware::trusted_hosts::UntrustedHostReason) -> bool
+impl core::error::Error for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::fmt::Debug for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::middleware::trusted_hosts::UntrustedHostReason
+pub fn kynos::middleware::trusted_hosts::UntrustedHostReason::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::StructuralPartialEq for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Freeze for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Send for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Sync for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::Unpin for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::marker::UnsafeUnpin for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trusted_hosts::UntrustedHostReason
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::trusted_hosts::UntrustedHostReason
 pub struct kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl kynos::middleware::trusted_hosts::TrustedHosts<()>
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<()>::new() -> Self
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<()>::problem_type<T: kynos::error::problem::ProblemType>(self) -> kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl<T> kynos::middleware::trusted_hosts::TrustedHosts<T>
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::admit_no_authority(self) -> Self
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::admits(&self, &kynos::http::Parts) -> bool
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::allow(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::allow_loopback(self) -> Self
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::check(&self, &kynos::http::Parts) -> core::result::Result<(), kynos::middleware::trusted_hosts::UntrustedHostReason>
+pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::when<C>(self, fn(&C) -> bool) -> kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHosts<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Adds = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
@@ -5422,6 +5453,24 @@ impl<T> core::marker::Unpin for kynos::middleware::trusted_hosts::TrustedHosts<T
 impl<T> core::marker::UnsafeUnpin for kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trusted_hosts::TrustedHosts<T>
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos::middleware::trusted_hosts::TrustedHosts<T>
+pub struct kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::clone::Clone for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+pub fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::clone(&self) -> Self
+impl<C, T> core::fmt::Debug for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+pub fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Adds = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Reads = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
+pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::ADDS_ON: kynos::middleware::Placement
+pub async fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
+impl<C, T> core::marker::Freeze for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::Send for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::Sync for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::Unpin for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::marker::UnsafeUnpin for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
+impl<C, T> core::panic::unwind_safe::UnwindSafe for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
 pub struct kynos::middleware::trusted_hosts::UntrustedHost<T>
 impl<T> kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub fn kynos::middleware::trusted_hosts::UntrustedHost<T>::new() -> Self
@@ -5625,6 +5674,12 @@ pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::ADDS_ON: kynos::middleware::Placement
 pub async fn kynos::middleware::trusted_hosts::TrustedHosts<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
+impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Adds = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Reads = ()
+pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
+pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::ADDS_ON: kynos::middleware::Placement
+pub async fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<C, U, M, L> kynos::middleware::Interceptor<C> for kynos::middleware::decompression::Decompression<U, M, L> where C: core::marker::Sync + 'static, U: kynos::error::problem::ProblemType, M: kynos::error::problem::ProblemType, L: kynos::error::problem::ProblemType
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Adds = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Reads = ()
