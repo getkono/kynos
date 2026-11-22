@@ -191,6 +191,13 @@ reportable! {
         kynos::middleware::csrf::CrossSiteReason;
         kynos::middleware::trusted_hosts::UntrustedHostReason;
     }
+
+    /// Why a presented credential is malformed, which an authenticator logs
+    /// or hands on before it refuses it.
+    fn a_malformed_credential_is_reportable {
+        kynos::security::carrier::presented::Malformed;
+        kynos::security::carrier::presented::MalformedReason;
+    }
 }
 
 /// Every `.rs` file under `directory`, recursively, but a sibling `tests.rs`.
