@@ -184,6 +184,13 @@ reportable! {
         kynos::schema::UnknownVariant;
         kynos::middleware::limits::body_timeout::BodyTimedOut;
     }
+
+    /// Why a cross-site or rebound request was refused, which an authenticator
+    /// deciding the posture itself logs or hands on.
+    fn a_refusal_reason_is_reportable {
+        kynos::middleware::csrf::CrossSiteReason;
+        kynos::middleware::trusted_hosts::UntrustedHostReason;
+    }
 }
 
 /// Every `.rs` file under `directory`, recursively, but a sibling `tests.rs`.
