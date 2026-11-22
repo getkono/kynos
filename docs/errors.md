@@ -441,8 +441,8 @@ which could disagree, on a trait the application already implements for the
 value, the `Scopes::FORBIDDEN_TYPE` shape above. The type read is the one the
 input decodes: a body extractor's `T`, a `QueryString`'s `T`, a derived
 parameter group, else its field's type. A member naming a problem of its own
-does not override the body holding it, and `Option`, `Box` and `Arc` answer as
-their `T`. The rejection's `Schema` variant carries the problem in `problem`, as
+does not override the body holding it, and `Option`, `Box`, `Arc`, `&T` and
+`Cow` answer as their `T`. The rejection's `Schema` variant carries the problem in `problem`, as
 `AuthRejection::Forbidden` carries its URI, rather than a second variant, since
 a parameter's `Schema` is already nothing but a broken bound. A type an
 `ApiError` also publishes takes the title it publishes there, since one type
