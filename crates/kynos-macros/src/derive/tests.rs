@@ -5441,7 +5441,100 @@ mod api_error {
                 ),
                 "cannot depend on the type's generic parameter `'a`",
             ),
+            case(
+                "an `#[error(transparent)]` variant with a title and no status",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(title = "User not found")]
+                        Lookup(LookupError),
+                    }
+                ),
+                "`#[error(transparent)]` makes variant `Lookup` answer as the error it holds",
+            ),
         ]
+    }
+
+    /// `#[error(transparent)]` implies `#[problem(transparent)]` where the
+    /// variant declares no status, so the refusals of a transparent variant
+    /// reach it unwritten; one declaring a status is a failure of its own.
+    #[test]
+    fn error_transparent_implies_problem_transparent_unless_a_status_opts_out() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "an implied transparent variant holding two fields",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error(transparent)]
+                            Lookup(LookupError, u64),
+                        }
+                    ),
+                    "holds exactly one field",
+                ),
+                case(
+                    "an implied transparent variant with a type and no status",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error(transparent)]
+                            #[problem(type = "https://errors.example.com/lookup")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answer as the error it holds",
+                ),
+                case(
+                    "an implied transparent variant with a constant member",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error(transparent)]
+                            #[problem(extension(code = "lookup"))]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answer as the error it holds",
+                ),
+                case(
+                    "an `#[error(\"...\")]` variant, which is not transparent",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error("lookup failed")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "does not say what status it produces",
+                ),
+            ],
+            expand_inner,
+        );
+
+        for (description, accepted) in [
+            (
+                "a variant `#[error(transparent)]` alone makes transparent",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        Lookup(#[from] LookupError),
+                    }
+                ),
+            ),
+            (
+                "a variant whose status opts out of transparency",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(status = 404, title = "User not found")]
+                        Lookup(#[from] LookupError),
+                    }
+                ),
+            ),
+        ] {
+            let input = syn::parse2(accepted).expect("the case itself must parse");
+            assert!(
+                expand_inner(&input).is_ok(),
+                "{description} must be accepted"
+            );
+        }
     }
 
     /// The refusals of `#[problem(subset_of = ...)]`, apart for the reason

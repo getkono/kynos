@@ -166,7 +166,8 @@ struct RetryAfter {
 #[derive(Debug, thiserror::Error, ApiError)]
 #[problem(base = "https://errors.example.com/")]
 enum StoreError {
-    /// `#[from]` is what makes the `?` in `get_user` compile.
+    /// `#[from]` is what makes the `?` in `get_user` compile. Its message is
+    /// the row's, and its status is its own, so it is not transparent.
     #[error(transparent)]
     #[problem(status = 404, title = "User not found")]
     NotFound(#[from] RowMissing),
@@ -175,9 +176,9 @@ enum StoreError {
     #[problem(status = 409)]
     EmailTaken,
 
-    /// Answers as `Invalid` does, and its 422 joins this enum's statuses.
+    /// Answers as `Invalid` does, and its 422 joins this enum's statuses:
+    /// `#[error(transparent)]` with no status of its own is transparent.
     #[error(transparent)]
-    #[problem(transparent)]
     Invalid(#[from] Invalid),
 
     #[error("the store is over its {limit} row budget")]

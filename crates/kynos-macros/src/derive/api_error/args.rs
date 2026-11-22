@@ -169,6 +169,18 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
     Ok(args)
 }
 
+/// The span of `thiserror`'s `#[error(transparent)]` among `attrs`: the item
+/// displays as the one field it holds, which a variant declaring no status of
+/// its own also answers as.
+pub(super) fn error_transparent(attrs: &[Attribute]) -> Option<Span> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("error"))
+        .filter_map(|attr| attr.parse_args::<syn::Ident>().ok())
+        .find(|ident| ident == "transparent")
+        .map(|ident| ident.span())
+}
+
 /// Reads the `name = value` pairs of an item's `extension(...)` list into
 /// `constants`, refusing a name written twice or taken by RFC 9457, and a
 /// value that is neither a literal nor a path.

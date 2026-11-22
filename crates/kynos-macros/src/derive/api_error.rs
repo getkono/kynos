@@ -5,7 +5,9 @@
 //! #[problem( subset_of = <type> )]                 on an enum, alone, instead of
 //!                                                  every list below it
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
-//! #[problem(transparent)]                          on a one-field variant, instead
+//! #[problem(transparent)]                          on a one-field variant, instead;
+//!                                                  implied by `#[error(transparent)]`
+//!                                                  on a variant with no `status`
 //! #[problem(extension)]                            on a named field, optional
 //! #[problem(headers)]                              on one field, optional
 //!
@@ -50,7 +52,10 @@
 //! A transparent variant answers as the `ApiError` it holds: its problem is
 //! that type's, and its statuses and responses join the enum's, the statuses
 //! in `const` items of the expansion's own. Its response is that type's too,
-//! so the headers the held error sends reach the wire.
+//! so the headers the held error sends reach the wire. Each is read through
+//! `kynos::__private::problem::HeldError`, so a held type that is no
+//! `ApiError` is reported as that, at the field, rather than once per trait
+//! each use needs.
 //!
 //! A `subset_of` enum's variants are some of the derived enum `<type>` names,
 //! by name and fields; it converts into that enum and answers and is described
@@ -139,7 +144,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let ty = &delegate.ty;
                 (
                     delegate.variant.clone(),
-                    quote_spanned!(ty.span()=> <#ty as ::kynos::response::ShortCircuit>::STATUSES),
+                    quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::STATUSES),
                 )
             }
         });

@@ -51,7 +51,8 @@ pub(super) fn responses(
         let kept = kept(Some(&delegate.variant));
         // As for a headers group: the type's path is spanned, the bindings
         // are not.
-        let inner = quote_spanned!(ty.span()=> <#ty as ::kynos::response::Responses>::responses);
+        let inner =
+            quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::responses);
         quote! {
             if #kept {
                 ::kynos::__private::problem::union_responses(&mut responses, &#inner(registry));

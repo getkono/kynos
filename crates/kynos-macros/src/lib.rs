@@ -705,15 +705,16 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// status alone, required only where every failure answering with that status
 /// sends it. `WithHeaders` stays for a group every status sends.
 ///
-/// A variant holding one field of another `ApiError` type may say
-/// `#[problem(transparent)]` instead of declaring a status, so failures many
-/// operations share are declared once:
+/// A variant holding one field of another `ApiError` type may answer as that
+/// error instead of declaring a status, so failures many operations share are
+/// declared once. `thiserror`'s `#[error(transparent)]` already says the
+/// variant is what it holds, so it makes the variant transparent here too, as
+/// `#[problem(transparent)]` does where no `#[error(transparent)]` is written:
 ///
 /// ```ignore
 /// #[derive(Debug, thiserror::Error, ApiError)]
 /// enum PauseError {
 ///     #[error(transparent)]
-///     #[problem(transparent)]
 ///     Lookup(#[from] LookupError),
 ///
 ///     #[error("the torrent is already paused")]
@@ -722,13 +723,20 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// Its problem is the held error's, `detail` and extension members included,
-/// its response is, header groups included, and that type's statuses and
-/// responses join the enum's; a status both declare is described once, naming
-/// every type that reaches it. It declares no `status`, `title` or `type` of
-/// its own, publishes no `extension`, sends no `headers` of its own, and
-/// its field's type cannot name the enum's generic parameters, since the
-/// statuses are a `const`.
+/// A transparent variant's problem is the held error's, `detail` and
+/// extension members included, its response is, header groups included, and
+/// that type's statuses and responses join the enum's; a status both declare
+/// is described once, naming every type that reaches it. It declares no
+/// `status`, `title` or `type` of its own, publishes no `extension`, sends no
+/// `headers` of its own, and its field's type cannot name the enum's generic
+/// parameters, since the statuses are a `const`.
+///
+/// A status opts an `#[error(transparent)]` variant out: one declaring
+/// `#[problem(status = ...)]` is a failure of its own, whose `detail` is its
+/// field's `Display`, and may hold any error. A `title`, `type` or
+/// `extension(...)` beside `#[error(transparent)]` without a status is
+/// refused, since the held error's would replace it. A held type that is no
+/// `ApiError` is reported as such, naming both ways out.
 ///
 /// An operation that fails only some of a derived enum's ways returns a
 /// subset of it, so it declares no status it cannot send:

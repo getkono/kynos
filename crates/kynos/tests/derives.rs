@@ -5876,7 +5876,8 @@ struct ValidationFailed {
 
 /// Two shared groups beside failures of its own, one of which shares 404 with
 /// `LookupError`, so a status is met from both sides. One group sits in a
-/// tuple variant and one in a named field.
+/// tuple variant and one in a named field, which `#[error(transparent)]`
+/// alone makes transparent.
 #[derive(Debug, thiserror::Error, ApiError)]
 enum PauseError {
     #[error(transparent)]
@@ -5888,7 +5889,6 @@ enum PauseError {
     AlreadyPaused,
 
     #[error(transparent)]
-    #[problem(transparent)]
     Invalid {
         #[from]
         source: ValidationFailed,
@@ -5965,6 +5965,53 @@ fn a_transparent_only_enum_describes_what_it_holds() {
         responses["422"],
         emitted_responses::<ValidationFailed>()["422"],
         "{responses}"
+    );
+}
+
+/// A message that is its field's, under a failure of its own: the status
+/// beside `#[error(transparent)]` opts the variant out of transparency.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum OptedOut {
+    #[error(transparent)]
+    #[problem(status = 503, title = "Store unavailable")]
+    Store(#[from] std::io::Error),
+}
+
+/// `#[error(transparent)]` alone answers as the held error, exactly as the
+/// explicit `#[problem(transparent)]` beside it does; with a status it answers
+/// with that status, `detail` still the field's `Display`.
+#[test]
+fn error_transparent_answers_as_the_held_error_unless_a_status_opts_out() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    let implied = serde_json::to_value(
+        PauseError::from(ValidationFailed {
+            field: "name".to_owned(),
+        })
+        .into_problem(),
+    )
+    .expect("a problem serializes");
+    let held = serde_json::to_value(
+        ValidationFailed {
+            field: "name".to_owned(),
+        }
+        .into_problem(),
+    )
+    .expect("a problem serializes");
+    assert_eq!(implied, held);
+
+    assert_eq!(OptedOut::STATUSES, [503]);
+    let opted =
+        serde_json::to_value(OptedOut::from(std::io::Error::other("disk gone")).into_problem())
+            .expect("a problem serializes");
+    assert_eq!(
+        opted,
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Store unavailable",
+            "status": 503,
+            "detail": "disk gone",
+        })
     );
 }
 

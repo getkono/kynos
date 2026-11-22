@@ -10,7 +10,10 @@ use syn::{
 
 use super::{
     Extension, Failure, HeaderField, Outcome, Transparent, TypeUri,
-    args::{Base, Constant, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
+    args::{
+        Base, Constant, Markers, Position, ProblemArgs, check_field_markers, error_transparent,
+        parse_problem,
+    },
 };
 use crate::doc::doc_string;
 
@@ -45,6 +48,18 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                     if let Some(span) = args.transparent {
                         return transparent(variant, &args, span, &markers, &input.generics)
                             .map(Outcome::Transparent);
+                    }
+                    // `#[error(transparent)]` already says the variant is
+                    // what it holds; a status of its own is the opt-out.
+                    if let (None, Some(span)) = (args.status, error_transparent(&variant.attrs)) {
+                        return implied_transparent(
+                            variant,
+                            &args,
+                            span,
+                            &markers,
+                            &input.generics,
+                        )
+                        .map(Outcome::Transparent);
                     }
 
                     let Some((status, _)) = args.status else {
@@ -179,6 +194,30 @@ fn transparent(
             .map_or_else(|| Member::Unnamed(Index::from(0)), Member::Named),
         ty: field.ty.clone(),
     })
+}
+
+/// Reads a variant `#[error(transparent)]` makes transparent, having declared
+/// no `status`: a `title`, `type` or constant member beside it would be
+/// dropped as the held error's, so it is refused naming the opt-out.
+fn implied_transparent(
+    variant: &Variant,
+    args: &ProblemArgs,
+    span: Span,
+    markers: &[Markers],
+    generics: &Generics,
+) -> syn::Result<Transparent> {
+    if args.title.is_some() || args.type_uri.is_some() || !args.constants.is_empty() {
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`#[error(transparent)]` makes variant `{}` answer as the error it holds, whose \
+                 title, type and extension members are that error's. Declare \
+                 `#[problem(status = ...)]` beside them for a failure of its own, or drop them",
+                variant.ident
+            ),
+        ));
+    }
+    transparent(variant, args, span, markers, generics)
 }
 
 /// The first of `generics`' parameters `ty` names, if any.

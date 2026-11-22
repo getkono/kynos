@@ -1,29 +1,12 @@
-error[E0277]: `std::io::Error` cannot be an interceptor's short circuit
-  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
+error[E0277]: `std::io::Error` is not an `ApiError`, so a transparent variant cannot answer as it
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:11:16
    |
-10 |     Io(#[from] std::io::Error),
-   |                ^^^^^^^^^^^^^^ not a short circuit
+11 |     Io(#[from] std::io::Error),
+   |                ^^^^^^^^^^^^^^ not an `ApiError`
    |
-   = help: the trait `ShortCircuit` is not implemented for `std::io::Error`
-   = note: an interceptor answers with a type that says which statuses it can produce; derive it with `#[derive(kynos::ApiError)]`
-   = note: use `std::convert::Infallible` for an interceptor that always reaches the handler
-   = help: the following other types implement trait `ShortCircuit`:
-             AtCapacity<T>
-             BodyRefused<T, U>
-             BodySizeExceeded<T>
-             CrossSite<T>
-             Infallible
-             NotModified
-             RateLimited<T>
-             RateLimitedFields<T>
-           and $N others
-
-error[E0277]: the trait bound `std::io::Error: IntoProblem` is not satisfied
-  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
-   |
-10 |     Io(#[from] std::io::Error),
-   |                ^^^^^^^^^^^^^^ the trait `IntoProblem` is not implemented for `std::io::Error`
-   |
+   = help: the trait `IntoProblem` is not implemented for `std::io::Error`
+   = note: a variant marked `#[error(transparent)]` or `#[problem(transparent)]` answers with the problem, statuses and responses of the error it holds; derive `kynos::ApiError` for `std::io::Error`
+   = note: a variant whose message is its field's but whose failure is its own declares `#[problem(status = ...)]`, which makes it no longer transparent
    = help: the following other types implement trait `IntoProblem`:
              AtCapacity<T>
              AuthRejection
@@ -34,42 +17,67 @@ error[E0277]: the trait bound `std::io::Error: IntoProblem` is not satisfied
              CookieRejection
              CrossSite<T>
            and $N others
+   = note: required for `std::io::Error` to implement `kynos::__private::problem::HeldError`
 
-error[E0277]: `std::io::Error` cannot be turned into a response
-  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
+error[E0277]: `std::io::Error` is not an `ApiError`, so a transparent variant cannot answer as it
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:11:16
    |
-10 |     Io(#[from] std::io::Error),
-   |                ^^^^^^^^^^^^^^ not a response
+11 |     Io(#[from] std::io::Error),
+   |                ^^^^^^^^^^^^^^ not an `ApiError`
    |
-   = help: the trait `IntoResponse` is not implemented for `std::io::Error`
-   = note: return a body type, or wrap one in `Created`, `Accepted`, `NoContent` or `Redirect`
-   = note: a bare `StatusCode` is deliberately not one: a status the description does not list is a status it is wrong about. Use `#[derive(Reply)]` when an operation has several
-   = help: the following other types implement trait `IntoResponse`:
-             ()
-             Accepted<T, L>
+   = help: the trait `ShortCircuit` is not implemented for `std::io::Error`
+   = note: a variant marked `#[error(transparent)]` or `#[problem(transparent)]` answers with the problem, statuses and responses of the error it holds; derive `kynos::ApiError` for `std::io::Error`
+   = note: a variant whose message is its field's but whose failure is its own declares `#[problem(status = ...)]`, which makes it no longer transparent
+   = help: the following other types implement trait `ShortCircuit`:
+             AtCapacity<T>
+             BodyRefused<T, U>
+             BodySizeExceeded<T>
+             CrossSite<T>
+             Infallible
+             NotModified
+             ParseError
+             RateLimited<T>
+           and $N others
+   = note: required for `std::io::Error` to implement `kynos::__private::problem::HeldError`
+
+error[E0277]: `ParseIntError` is not an `ApiError`, so a transparent variant cannot answer as it
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:17:20
+   |
+17 |     Number(#[from] std::num::ParseIntError),
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^ not an `ApiError`
+   |
+   = help: the trait `IntoProblem` is not implemented for `ParseIntError`
+   = note: a variant marked `#[error(transparent)]` or `#[problem(transparent)]` answers with the problem, statuses and responses of the error it holds; derive `kynos::ApiError` for `ParseIntError`
+   = note: a variant whose message is its field's but whose failure is its own declares `#[problem(status = ...)]`, which makes it no longer transparent
+   = help: the following other types implement trait `IntoProblem`:
              AtCapacity<T>
              AuthRejection
-             BinaryStream<S, M>
              BodyRefused<T, U>
              BodyRejection
              BodySizeExceeded<T>
+             ConnectInfoRejection
+             CookieRejection
+             CrossSite<T>
            and $N others
+   = note: required for `ParseIntError` to implement `kynos::__private::problem::HeldError`
 
-error[E0277]: `std::io::Error` does not declare which responses it can produce
-  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:10:16
+error[E0277]: `ParseIntError` is not an `ApiError`, so a transparent variant cannot answer as it
+  --> tests/ui/macros/api_error_transparent_not_an_api_error.rs:17:20
    |
-10 |     Io(#[from] std::io::Error),
-   |                ^^^^^^^^^^^^^^ undeclared responses
+17 |     Number(#[from] std::num::ParseIntError),
+   |                    ^^^^^^^^^^^^^^^^^^^^^^^ not an `ApiError`
    |
-   = help: the trait `kynos::response::Responses` is not implemented for `std::io::Error`
-   = note: a handler's return type has to say what a consumer might receive; derive it with `#[derive(kynos::Reply)]`, or `#[derive(kynos::ApiError)]` for an error type
-   = help: the following other types implement trait `kynos::response::Responses`:
-             ()
-             Accepted<T, L>
+   = help: the trait `ShortCircuit` is not implemented for `ParseIntError`
+   = note: a variant marked `#[error(transparent)]` or `#[problem(transparent)]` answers with the problem, statuses and responses of the error it holds; derive `kynos::ApiError` for `ParseIntError`
+   = note: a variant whose message is its field's but whose failure is its own declares `#[problem(status = ...)]`, which makes it no longer transparent
+   = help: the following other types implement trait `ShortCircuit`:
              AtCapacity<T>
-             AuthRejection
-             BinaryStream<S, M>
              BodyRefused<T, U>
-             BodyRejection
              BodySizeExceeded<T>
+             CrossSite<T>
+             Infallible
+             NotModified
+             ParseError
+             RateLimited<T>
            and $N others
+   = note: required for `ParseIntError` to implement `kynos::__private::problem::HeldError`

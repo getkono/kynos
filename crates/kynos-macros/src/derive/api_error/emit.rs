@@ -30,7 +30,7 @@ pub(super) fn codes(outcomes: &[Outcome], statuses: &[u16]) -> TokenStream2 {
             let ty = &delegate.ty;
             // Spanned to the field, so an inner type that is no `ApiError` is
             // reported where it is named.
-            quote_spanned!(ty.span()=> <#ty as ::kynos::response::ShortCircuit>::STATUSES)
+            quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::STATUSES)
         }
     });
 
@@ -66,7 +66,7 @@ pub(super) fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) ->
         failures,
         delegates,
         arms,
-        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::error::problem::IntoProblem>::into_problem),
+        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::into_problem),
     )
 }
 
@@ -164,7 +164,7 @@ fn respond(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
         failures,
         delegates,
         arms,
-        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::response::IntoResponse>::into_response),
+        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::into_response),
     )
 }
 

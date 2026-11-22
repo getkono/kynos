@@ -129,7 +129,7 @@ enum StoreError {
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
-| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type` |
+| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`; implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
@@ -241,6 +241,16 @@ declare is unioned rather than replaced, so the description names every type
 reaching it, the enum's own first. The union is built in `const` items, so the
 held type cannot name the enum's generic parameters.
 
+`#[error(transparent)]` already says the variant is what it holds, so it makes
+the variant transparent here too, and `#[problem(transparent)]` beside it is
+redundant. A `status` is the opt-out: a variant whose message is its field's
+but whose failure is its own declares one, with the `title` and `type` that go
+with it. A `title`, `type` or `extension(...)` without a `status` is refused
+rather than read either way, since the held error's would silently replace it.
+Where the held type is no `ApiError`, the compile error says so and names both
+ways out. A transparent variant's message being its field's is `thiserror`'s
+rule, so the implication follows it rather than any guess about the type.
+
 **An operation that cannot fail every way names a subset.** A rejection
 type's statuses are declared on every operation returning it, so a `HEAD`
 sharing a `PUT`'s enum would declare a 409 it can never send. The narrower
@@ -284,7 +294,9 @@ problem.
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,
 a `base` on a variant, an `extension` on a field with
-no name, a `transparent` on a struct, beside a `status`, `title` or `type`, over
+no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an
+`#[error(transparent)]` variant with a `title`, `type` or `extension(...)` and
+no `status`, over
 other than one field, over a field marked `extension`, over a field naming the
 enum's generic parameters or holding no `ApiError`, a `headers` field whose
 type is no header group, and a type with no
