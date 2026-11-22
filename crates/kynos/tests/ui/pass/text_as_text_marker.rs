@@ -1,6 +1,5 @@
-//! The control for `traits/text_as_non_text_marker.rs` and
-//! `traits/text_as_non_utf8_charset.rs`: the same handler and the same mount,
-//! differing only in that the marker is a `text/*` type stating UTF-8.
+//! The control for `traits/text_as_non_utf8_charset.rs`: the same handler and
+//! the same mount, differing only in that the marker states UTF-8.
 
 use kynos::{extract::body::text_as::TextAs, http::media::MediaType, prelude::*};
 

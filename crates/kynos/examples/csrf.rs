@@ -39,6 +39,8 @@
 //!   browser calls same-origin, so only the authority they name gives them
 //!   away. The second router below refuses those with 421, and switches `Csrf`
 //!   on with [`Csrf::when`] only in the posture where its credential is ambient.
+//!   Both decisions are also public as `check`, naming why each refused, for
+//!   an authenticator that makes them itself.
 
 use std::time::Duration;
 
@@ -202,7 +204,50 @@ async fn on_loopback() -> kynos::Result<()> {
     a_token_posture_skips_the_check(&token).await;
     a_cookie_posture_applies_the_check(&cookie).await;
 
+    each_refusal_names_its_reason();
+
     Ok(())
+}
+
+/// The same two decisions, made over a request head by whatever holds one,
+/// such as an authenticator that alone knows the posture.
+///
+/// Each names why it refused, and `as_str` is the label a counter of refusals
+/// is keyed by. Here a rebound request and a cross-site one are each refused
+/// for their own reason, and a request naming no host at all — which no
+/// browser sends — is admitted where `admit_no_authority` says so.
+fn each_refusal_names_its_reason() {
+    let csrf = Csrf::new();
+    let hosts = TrustedHosts::new().allow_loopback().admit_no_authority();
+    let head = |method: Method, fields: &[(&str, &str)]| {
+        let mut request = Request::new(kynos::http::body::Body::empty());
+        *request.method_mut() = method;
+        for (name, value) in fields {
+            request.headers_mut().insert(
+                header::HeaderName::from_bytes(name.as_bytes()).expect("a usable field name"),
+                kynos::http::HeaderValue::from_str(value).expect("a usable field value"),
+            );
+        }
+        request.into_parts().0
+    };
+
+    let rebound = head(Method::GET, &[("host", "attacker.example:8080")]);
+    let refused = hosts.check(&rebound).expect_err("a rebound request");
+    println!("\nrebound: {refused} ({})", refused.as_str());
+    assert_eq!(refused.as_str(), "not_allowed");
+
+    let forged = head(
+        Method::POST,
+        &[("host", "127.0.0.1:8080"), ("sec-fetch-site", "cross-site")],
+    );
+    assert!(hosts.admits(&forged));
+    let refused = csrf.check(&forged).expect_err("a cross-site write");
+    println!("cross-site: {refused} ({})", refused.as_str());
+    assert_eq!(refused.as_str(), "fetch_site");
+
+    let local_tool = head(Method::POST, &[]);
+    assert!(hosts.admits(&local_tool) && csrf.permits(&local_tool));
+    println!("no authority, no browser fields: admitted");
 }
 
 /// `attacker.example`, rebound to `127.0.0.1`: same-origin to the browser, and

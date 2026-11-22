@@ -4,8 +4,9 @@ use crate::{http, middleware::Observer, router::operation::Route};
 
 /// Emits a `tracing` event for each end of an operation.
 ///
-/// Both carry `method`, `matched_path`, `operation_id` and `request_id`; the
-/// closing one adds `status` and `latency`. The opening event's `method` is the
+/// Both carry `method`, `matched_path` and `operation_id`; the closing one
+/// adds `status`, `latency` and `request_id`, which the opening one carries
+/// only when it has an identifier to name. The opening event's `method` is the
 /// request's; the closing one's is the matched operation's, so it joins with
 /// `operation_id` on its own line: `GET` for a `HEAD` that a `GET` answers, and
 /// the same placeholder as `matched_path` where nothing matched.
@@ -19,8 +20,9 @@ use crate::{http, middleware::Observer, router::operation::Route};
 /// [`RequestId`](super::request_id::RequestId) assigning an identifier. Its
 /// `request_id` is the one the client sent where
 /// [`correlating`](Trace::correlating) names a `RequestId` that echoes it, and
-/// empty otherwise, since an identifier `RequestId` replaces is not the
-/// request's. The closing event carries the identifier the response does.
+/// the field is left out otherwise, since an identifier `RequestId` replaces
+/// is not the request's. The closing event carries the identifier the
+/// response does.
 ///
 /// The two agree only on operations that `RequestId` covers and reaches. The
 /// opening event cannot know whether it will: where a trusting `RequestId` is
@@ -145,12 +147,15 @@ impl Trace {
 
     /// The identifier the opening event carries: the inbound one `RequestId`
     /// echoes, under the first declared name present as it reads it, or none.
-    fn inbound<'a>(&self, headers: &'a http::HeaderMap) -> &'a str {
+    ///
+    /// `None` leaves the field off the event, since `tracing` records nothing
+    /// for it; an empty value is none too, so the event never logs `""`.
+    fn inbound<'a>(&self, headers: &'a http::HeaderMap) -> Option<&'a str> {
         if !self.trust_client {
-            return "";
+            return None;
         }
 
-        self.present(headers)
+        Some(self.present(headers)).filter(|id| !id.is_empty())
     }
 
     /// The identifier `headers` carry under the first correlation name

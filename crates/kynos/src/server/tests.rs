@@ -7014,9 +7014,7 @@ mod request_body_idle {
     use std::time::Duration;
 
     use crate::{
-        server::request_body::{
-            DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout,
-        },
+        server::request_body::validate_request_body_idle_timeout,
         server::{Server, error::ServerError},
     };
 
@@ -7036,10 +7034,13 @@ mod request_body_idle {
 
     #[test]
     fn a_server_bounds_a_request_body_by_default() {
-        assert_eq!(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, Duration::from_secs(30));
+        assert_eq!(
+            Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT,
+            Duration::from_secs(30)
+        );
         assert_eq!(
             Server::new(super::test_service()).request_body_idle_timeout,
-            Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+            Some(Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
             "a server bounds a stalled body unless told not to"
         );
     }
@@ -7667,6 +7668,40 @@ mod request_body_idle {
             .await
             .expect("server task joins")
             .expect("server exits cleanly");
+    }
+}
+
+/// `on_paused_clock`, the half of `TestRequest::send_timed` naming the
+/// runtime: what it measures, its wall-clock guard, and the clock it leaves.
+#[cfg(feature = "test-util")]
+mod on_paused_clock {
+    use std::time::Duration;
+
+    use crate::server::request_body::on_paused_clock;
+
+    /// A wait on a tokio timer passes at once in real time, and is measured
+    /// on the paused clock, which is running again afterwards.
+    #[tokio::test]
+    async fn an_hour_on_a_timer_is_measured_and_the_clock_resumed() {
+        let hour = Duration::from_secs(60 * 60);
+        let ((), waited) = on_paused_clock(tokio::time::sleep(hour), Duration::from_secs(10))
+            .await
+            .expect("the timer ends the wait");
+
+        assert!((hour..=hour + Duration::from_millis(1)).contains(&waited));
+        // Pausing again succeeds only on a running clock.
+        tokio::time::pause();
+    }
+
+    /// A wait nothing on the clock ends is cut off by the guard, which a
+    /// paused clock cannot jump to.
+    #[tokio::test]
+    async fn a_wait_no_timer_ends_is_cut_off_by_the_guard() {
+        let outcome =
+            on_paused_clock(std::future::pending::<()>(), Duration::from_millis(20)).await;
+
+        assert!(outcome.is_none());
+        tokio::time::pause();
     }
 }
 
