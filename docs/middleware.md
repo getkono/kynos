@@ -900,12 +900,19 @@ setting, and a declared status nothing sends is the lesser error.
 The server applies the timer rather than an extractor or an interceptor because
 only the server has a peer to wait on, and it wraps the body once, before the
 chain sees it, so no reader can be left out. `TestClient` wraps each request
-body in the same timer at the server's default, so a stalled `body_stream` is
-answered as a served one is and its 408 counts toward coverage.
-`TestRequest::stalled_body` is that stall built in: one declared octet that
-never arrives, held in process to a millisecond rather than the default, so
-each operation's 408 is reached without pausing the clock. Through
-`through_server` it is the served server's own limit that ends it. The cases are in
+body in the same timer, so a stalled body is answered as a served one is and
+its 408 counts toward coverage. The timer holds the server's default until
+`TestClient::with_request_body_idle_timeout` gives the setting the
+application's server is built with, `None` included, so the bound that
+answers in process is the one that answers when served.
+`TestRequest::stalled_body` is the coverage stall: one declared octet that
+never arrives, held to a millisecond unless the client's timeout is set, so
+each operation's 408 is reached without pausing the clock.
+`TestRequest::stalled_after` sends its first octets and then goes quiet,
+held to the client's timeout and never cut short, and `send_timed` sends it
+on a paused clock and returns how long the answer took, so a test asserts
+which bound answered and when. Through `through_server` it is the served
+server's own limit that ends either. The cases are in
 [`server/tests.rs`](../crates/kynos/src/server/tests.rs) over a real socket, each
 protocol's 408 on a bare service and a body whose every gap is under the limit
 but whose total is over it, and in
