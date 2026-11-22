@@ -1809,6 +1809,7 @@ fn a_shared_status_declares_the_headers_either_contributor_sends() {
 }
 
 /// What `/drafts` reads: any body, so the extractor's rejection is reached.
+#[cfg(feature = "server")]
 #[derive(serde::Deserialize, Schema)]
 struct Draft {
     #[allow(dead_code)]
@@ -1816,6 +1817,7 @@ struct Draft {
 }
 
 /// A failure answering 408 for a reason of the handler's own, after a 409.
+#[cfg(feature = "server")]
 #[derive(Debug, thiserror::Error, ApiError)]
 #[allow(dead_code)]
 enum DraftRefused {
@@ -1833,6 +1835,7 @@ enum DraftRefused {
 }
 
 /// One operation reading a body, whose own error type declares a 408.
+#[cfg(feature = "server")]
 #[kynos::post("/drafts")]
 async fn draft(
     kynos::extract::body::json::Json(draft): kynos::extract::body::json::Json<Draft>,

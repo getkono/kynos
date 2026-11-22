@@ -1495,7 +1495,14 @@ fn every_rejection_declares_the_type_its_problems_carry() {
         ("PathRejection", declared_types::<PathRejection>(named)),
         ("QueryRejection", declared_types::<QueryRejection>(named)),
         ("HeaderRejection", declared_types::<HeaderRejection>(named)),
-        ("BodyRejection", declared_types::<BodyRejection>(&[])),
+        // The stall's 408 is the router's to declare, checked below.
+        (
+            "BodyRejection",
+            declared_types::<BodyRejection>(&[
+                #[cfg(feature = "server")]
+                StatusCode::REQUEST_TIMEOUT,
+            ]),
+        ),
         (
             "NegotiationRejection",
             declared_types::<NegotiationRejection>(&[]),
@@ -1522,6 +1529,19 @@ fn every_rejection_declares_the_type_its_problems_carry() {
                 "{rejection}'s {status} does not declare the type it sends"
             );
         }
+    }
+
+    #[cfg(feature = "server")]
+    {
+        let mut registry = crate::schema::registry::Registry::new();
+        let stalled = serde_json::to_value(BodyRejection::stalled_responses(&mut registry))
+            .expect("a set of responses serializes");
+        assert_eq!(
+            stalled["408"]["content"]["application/problem+json"]["schema"]["allOf"][1]["properties"]
+                ["type"]["const"],
+            "about:blank",
+            "the stall's 408 does not declare the type it sends: {stalled}"
+        );
     }
 }
 

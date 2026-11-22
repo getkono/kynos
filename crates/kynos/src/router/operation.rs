@@ -74,6 +74,10 @@ pub struct OperationCx<'a> {
     /// Response headers whose placement reads the finished set of responses,
     /// filed by [`finish`](Self::finish) in the order they were placed.
     placed: Vec<(Deferred, String, kynos_openapi::Header)>,
+    /// Whether a Kynos body extractor reads the request body, so a stall
+    /// can answer it with `BodyRejection::Stalled`'s 408.
+    #[cfg(feature = "server")]
+    reads_body: bool,
 }
 
 impl<'a> OperationCx<'a> {
@@ -86,6 +90,8 @@ impl<'a> OperationCx<'a> {
             tags: Vec::new(),
             links: Vec::new(),
             placed: Vec::new(),
+            #[cfg(feature = "server")]
+            reads_body: false,
         }
     }
 
@@ -192,6 +198,47 @@ impl OperationCx<'_> {
     /// where both require it.
     pub fn add_responses(&mut self, responses: &kynos_openapi::Responses) {
         crate::response::headers::union_from(&mut self.operation.responses, responses);
+    }
+
+    /// [`set_request_body`](Self::set_request_body), for a body a Kynos body
+    /// extractor reads: one a stall answers with `BodyRejection::Stalled`'s
+    /// 408, which [`declare_body_stall`](Self::declare_body_stall) declares.
+    pub(crate) fn read_request_body(&mut self, body: kynos_openapi::RequestBody) {
+        self.set_request_body(body);
+        #[cfg(feature = "server")]
+        {
+            self.reads_body = true;
+        }
+    }
+
+    /// Declares the 408 a stalled body is answered with, where a Kynos body
+    /// extractor reads the body. Called once every other contributor is
+    /// described, so the order they were described in decides nothing.
+    ///
+    /// A 408 the operation already declares is the application's account of
+    /// that status, so it keeps its description and its place, and only its
+    /// schema and headers are unioned with the stall's, as
+    /// [`add_responses`](Self::add_responses) unions them. Otherwise the 408
+    /// is added after every other status.
+    #[cfg(feature = "server")]
+    pub(crate) fn declare_body_stall(&mut self) {
+        if !self.reads_body {
+            return;
+        }
+        let stalled = crate::error::rejection::BodyRejection::stalled_responses(self.registry);
+        let key = StatusPattern::Code(408).to_string();
+        let declared = match self.operation.responses.responses.get(&key) {
+            Some(RefOr::Item(response)) => Some(response.description.clone()),
+            _ => None,
+        };
+
+        self.add_responses(&stalled);
+
+        if let (Some(description), Some(RefOr::Item(response))) =
+            (declared, self.operation.responses.responses.get_mut(&key))
+        {
+            response.description = description;
+        }
     }
 
     /// Declares a header this input causes the operation to send.

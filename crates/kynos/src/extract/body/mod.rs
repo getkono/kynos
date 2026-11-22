@@ -184,7 +184,7 @@ fn admit(headers: &HeaderMap, media_type: &str) -> Result<(), BodyRejection> {
 /// 422 of each problem it names for a broken bound.
 fn describe_body<T: RequestContent>(operation: &mut OperationCx<'_>) {
     let body = T::request_body(operation.registry());
-    operation.set_request_body(body);
+    operation.read_request_body(body);
     describe_constraints::<T>(operation);
 }
 

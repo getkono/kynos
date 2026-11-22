@@ -62,8 +62,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     where
         C: 'static,
     {
-        let described = self.describe()?;
-        described.into_document()
+        self.describe()?.into_document()
     }
 
     /// Produces the description targeting a specific specification version.
@@ -270,6 +269,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             if mounted.catch_panics || catches::<P>() {
                 dispatch::recovery::describe(&mut cx);
             }
+            #[cfg(feature = "server")]
+            cx.declare_body_stall();
 
             // The one place that sees every scope's tags, the endpoint's own
             // included.
