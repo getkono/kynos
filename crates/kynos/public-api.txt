@@ -6621,6 +6621,11 @@ pub const rust_decimal::decimal::Decimal::CONSTRAINT_PROBLEM: core::option::Opti
 pub fn rust_decimal::decimal::Decimal::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn rust_decimal::decimal::Decimal::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn rust_decimal::decimal::Decimal::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for str
+pub const str::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn str::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn str::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn str::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u16
 pub const u16::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -6706,6 +6711,11 @@ pub const (A)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constrain
 pub fn (A)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<B: kynos::schema::Schema + alloc::borrow::ToOwned + ?core::marker::Sized> kynos::schema::Schema for alloc::borrow::Cow<'_, B>
+pub const alloc::borrow::Cow<'_, B>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn alloc::borrow::Cow<'_, B>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn alloc::borrow::Cow<'_, B>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn alloc::borrow::Cow<'_, B>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<K: kynos::schema::MapKey, V: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::map::HashMap<K, V, S>
 pub const std::collections::hash::map::HashMap<K, V, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::map::HashMap<K, V, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -6716,6 +6726,21 @@ pub const alloc::collections::btree::map::BTreeMap<K, V>::CONSTRAINT_PROBLEM: co
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema + ?core::marker::Sized> kynos::schema::Schema for &T
+pub const &T::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn &T::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn &T::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn &T::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema + ?core::marker::Sized> kynos::schema::Schema for alloc::boxed::Box<T>
+pub const alloc::boxed::Box<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn alloc::boxed::Box<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn alloc::boxed::Box<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn alloc::boxed::Box<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema + ?core::marker::Sized> kynos::schema::Schema for alloc::sync::Arc<T>
+pub const alloc::sync::Arc<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn alloc::sync::Arc<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn alloc::sync::Arc<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn alloc::sync::Arc<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::set::HashSet<T, S>
 pub const std::collections::hash::set::HashSet<T, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::set::HashSet<T, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -6731,11 +6756,6 @@ pub const [T]::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constrain
 pub fn [T]::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn [T]::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn [T]::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
-impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::boxed::Box<T>
-pub const alloc::boxed::Box<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
-pub fn alloc::boxed::Box<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
-pub fn alloc::boxed::Box<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
-pub fn alloc::boxed::Box<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::btree::set::BTreeSet<T>
 pub const alloc::collections::btree::set::BTreeSet<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::btree::set::BTreeSet<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -6746,11 +6766,6 @@ pub const alloc::collections::vec_deque::VecDeque<T>::CONSTRAINT_PROBLEM: core::
 pub fn alloc::collections::vec_deque::VecDeque<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::vec_deque::VecDeque<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::vec_deque::VecDeque<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
-impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::sync::Arc<T>
-pub const alloc::sync::Arc<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
-pub fn alloc::sync::Arc<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
-pub fn alloc::sync::Arc<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
-pub fn alloc::sync::Arc<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::vec::Vec<T>
 pub const alloc::vec::Vec<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::vec::Vec<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -9340,6 +9355,11 @@ pub const rust_decimal::decimal::Decimal::CONSTRAINT_PROBLEM: core::option::Opti
 pub fn rust_decimal::decimal::Decimal::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn rust_decimal::decimal::Decimal::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn rust_decimal::decimal::Decimal::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl kynos::schema::Schema for str
+pub const str::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn str::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn str::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn str::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl kynos::schema::Schema for u16
 pub const u16::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn u16::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -9425,6 +9445,11 @@ pub const (A)::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constrain
 pub fn (A)::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn (A)::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn (A)::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<B: kynos::schema::Schema + alloc::borrow::ToOwned + ?core::marker::Sized> kynos::schema::Schema for alloc::borrow::Cow<'_, B>
+pub const alloc::borrow::Cow<'_, B>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn alloc::borrow::Cow<'_, B>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn alloc::borrow::Cow<'_, B>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn alloc::borrow::Cow<'_, B>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<K: kynos::schema::MapKey, V: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::map::HashMap<K, V, S>
 pub const std::collections::hash::map::HashMap<K, V, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::map::HashMap<K, V, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -9435,6 +9460,21 @@ pub const alloc::collections::btree::map::BTreeMap<K, V>::CONSTRAINT_PROBLEM: co
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::btree::map::BTreeMap<K, V>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema + ?core::marker::Sized> kynos::schema::Schema for &T
+pub const &T::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn &T::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn &T::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn &T::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema + ?core::marker::Sized> kynos::schema::Schema for alloc::boxed::Box<T>
+pub const alloc::boxed::Box<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn alloc::boxed::Box<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn alloc::boxed::Box<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn alloc::boxed::Box<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema + ?core::marker::Sized> kynos::schema::Schema for alloc::sync::Arc<T>
+pub const alloc::sync::Arc<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn alloc::sync::Arc<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn alloc::sync::Arc<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn alloc::sync::Arc<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema, S> kynos::schema::Schema for std::collections::hash::set::HashSet<T, S>
 pub const std::collections::hash::set::HashSet<T, S>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn std::collections::hash::set::HashSet<T, S>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -9450,11 +9490,6 @@ pub const [T]::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constrain
 pub fn [T]::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn [T]::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn [T]::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
-impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::boxed::Box<T>
-pub const alloc::boxed::Box<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
-pub fn alloc::boxed::Box<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
-pub fn alloc::boxed::Box<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
-pub fn alloc::boxed::Box<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::collections::btree::set::BTreeSet<T>
 pub const alloc::collections::btree::set::BTreeSet<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::collections::btree::set::BTreeSet<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -9465,11 +9500,6 @@ pub const alloc::collections::vec_deque::VecDeque<T>::CONSTRAINT_PROBLEM: core::
 pub fn alloc::collections::vec_deque::VecDeque<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn alloc::collections::vec_deque::VecDeque<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn alloc::collections::vec_deque::VecDeque<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
-impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::sync::Arc<T>
-pub const alloc::sync::Arc<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
-pub fn alloc::sync::Arc<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
-pub fn alloc::sync::Arc<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
-pub fn alloc::sync::Arc<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T: kynos::schema::Schema> kynos::schema::Schema for alloc::vec::Vec<T>
 pub const alloc::vec::Vec<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn alloc::vec::Vec<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
