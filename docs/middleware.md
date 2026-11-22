@@ -1286,10 +1286,14 @@ from its configuration, after the router is built. `Csrf::when(fn(&C) -> bool)`
 decides only where the context says so, and still declares the 403: the
 document describes what an operation *may* answer in any deployment, and a
 description that changed with configuration would be one no client could be
-generated against. `Csrf::permits(&Parts)` is the same decision, public, for an
+generated against. `Csrf::check(&Parts)` is the same decision, public, for an
 application that has to make it where no interceptor reaches — inside an
 authenticator, say, which alone knows whether the credential it was handed was
-ambient.
+ambient. It answers `Result<(), CrossSiteReason>`, naming the rule that refused
+so a metric or a log line can be labelled by it (`CrossSiteReason::as_str` is
+the stable label); `permits` is `check(..).is_ok()`. The reason stays off the
+wire: the interceptor's 403 is one refusal whatever the rule, since telling a
+forger which rule caught it helps nobody else.
 
 ## Trusted hosts
 
@@ -1316,6 +1320,21 @@ one), and every loopback address. `0.0.0.0` is not one.
 **Every method.** A rebinding page wants to *read* the service, so a safe method
 is no exception, unlike `Csrf`'s. Mount it outermost, where it also covers the
 404 and 405 a router answers for no operation.
+
+**No authority.** A request naming none — no target authority, and a `Host`
+absent or, as RFC 9112 §3.2 has a client send for such a target, empty — is
+refused, since nothing names a host to admit. `admit_no_authority` admits it:
+no browser omits the authority, so a rebinding page cannot either, and a local
+tool that names no host keeps working.
+
+**Decided where `Csrf` is.** The same reasons apply, so the same surface:
+`when(fn(&C) -> bool)` decides only where the context says so and declares the
+421 either way, and `check(&Parts) -> Result<(), UntrustedHostReason>` is the
+decision, public, with `admits` as `check(..).is_ok()`. An authenticator that
+refuses a rebound or cross-site request itself calls both checks and answers
+with its own status. There is no 403 variant of the interceptor: the posture
+mounts `Csrf` beside it, and two interceptors answering one status on one
+operation are a compile error, since a client could not tell which replied.
 
 ## Vary is declared apart from the names
 

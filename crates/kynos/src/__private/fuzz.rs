@@ -201,7 +201,7 @@ pub fn trusted_host(
     if loopback {
         hosts = hosts.allow_loopback();
     }
-    Some(hosts.admits(headers, authority.as_ref()))
+    Some(hosts.decides(headers, authority.as_ref()).is_ok())
 }
 
 /// Whether a request carrying `headers` forbids `Cache` from answering it
