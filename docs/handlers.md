@@ -99,7 +99,7 @@ There is no way to choose a status at run time.
 | --- | --- | --- |
 | [`NoContent`](../crates/kynos/src/response/status.rs) | 204 | |
 | [`Created<T>`](../crates/kynos/src/response/status.rs) | 201 | `location` is a required field, not an option |
-| [`Accepted<T>`](../crates/kynos/src/response/status.rs) | 202 | |
+| [`Accepted<T, L>`](../crates/kynos/src/response/status.rs) | 202 | `Accepted::at` makes `L` a `Location`, the status monitor; `Accepted::new` leaves it `()` |
 | [`Redirect<CODE>`](../crates/kynos/src/response/status.rs) | `CODE` | 301, 302, 303, 307 or 308 only |
 | [`WithHeaders<T, H>`](../crates/kynos/src/response/headers.rs) | `T`'s | `H` implements `HeaderParams`, usually by deriving it, so `Response.headers` is complete |
 
@@ -118,18 +118,28 @@ content rather than choosing between promises it did not make — including
 where only one of them carries content, since the others reach the same status
 carrying none.
 
-`Created` and `Redirect` both carry a
+`Created`, `Redirect` and `Accepted::at` carry a
 [`Location`](../crates/kynos/src/response/status.rs), which exists because a
 route attribute's `relative_uri` and a `Link`'s `uri` return an `http::Uri`,
 and neither that type
 nor `String` is Kynos's to write a conversion between. Naming the concept is
-what lets a typed URI arrive without a call-site conversion. Both wrappers
-declare the header `required`, so a `Location` is an RFC 9110 field value by
+what lets a typed URI arrive without a call-site conversion. Each declares
+the header `required`, so a `Location` is an RFC 9110 field value by
 construction: a string is checked by `TryFrom` or `parse`, a literal by
 `Location::from_static` (at compile time in a `const`), and a URI needs no
 check. Refusing at construction rather than dropping the field when sending
 keeps the description true. Nothing beyond the field is validated: a
 `Location` value is a URI reference, and relative forms are legal.
+
+A 202 may point at a status monitor (RFC 9110 §15.3.3) or not, so whether it
+does is `Accepted`'s second type parameter rather than an `Option` field. A
+description is read from the type alone, and an optional field would leave
+every `Accepted<T>` declaring a `Location` it may never send, and `at` unable
+to declare one required. `Accepted<T>` declares none and sends none;
+`Accepted<T, Location>` declares it required and always sends it. Returning
+`Accepted::at` from a handler typed `Accepted<T>` does not compile, so the
+signature is the promise. `AcceptedLocation` is sealed over `()` and
+`Location`, since each state decides a header the description declares.
 
 `Redirect<CODE>` is bounded on `(): ValidRedirectCode<CODE>`, a witness
 implemented for exactly those five codes. Both the trait and `()` are foreign to

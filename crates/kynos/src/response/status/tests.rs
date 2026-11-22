@@ -3,10 +3,10 @@
 ///
 /// `relative_uri` returns an `http::Uri`, and neither that type nor `String`
 /// belongs to Kynos — so without a type of its own here, the sanctioned way to
-/// name another operation could not be handed to the two constructors that
+/// name another operation could not be handed to the three constructors that
 /// take a location.
 mod a_location_takes_every_spelling {
-    use crate::response::status::{Created, Location, Redirect};
+    use crate::response::status::{Accepted, Created, Location, Redirect};
 
     #[test]
     fn the_four_spellings_agree() {
@@ -33,6 +33,14 @@ mod a_location_takes_every_spelling {
     }
 
     #[test]
+    fn a_typed_uri_reaches_an_accepted_response() {
+        let uri: crate::http::Uri = "/imports/7".parse().expect("a valid reference");
+        let accepted = Accepted::at(uri, ());
+
+        assert_eq!(accepted.location.as_str(), "/imports/7");
+    }
+
+    #[test]
     fn a_typed_uri_reaches_a_redirect() {
         let uri: crate::http::Uri = "/users".parse().expect("a valid reference");
         let redirect = Redirect::<303>::to(uri);
@@ -51,9 +59,9 @@ mod a_location_takes_every_spelling {
 
 /// A `Location` is a field value by construction (RFC 9110 §5.5).
 ///
-/// `Created` and `Redirect` declare the header `required`, so a value that
-/// cannot be sent must never reach them: refused where it is made, rather
-/// than dropped where it is sent.
+/// `Created`, `Redirect` and `Accepted::at` declare the header `required`, so
+/// a value that cannot be sent must never reach them: refused where it is
+/// made, rather than dropped where it is sent.
 mod a_location_is_a_field_value {
     use crate::{
         http::header,
@@ -206,6 +214,46 @@ mod a_wrapper_produces_and_declares_one_status {
         assert!(response.headers().get(header::LOCATION).is_none());
         assert_eq!(declared::<Accepted<Text>>(), ["202"]);
         assert_eq!(representations::<Accepted<Text>>(202), ["text/plain"]);
+        // Nor declared: the type names no monitor, so a declared `Location`
+        // would promise a header that is never sent.
+        assert!(location_declared::<Accepted<Text>>(202).is_none());
+    }
+
+    #[test]
+    fn accepted_at_sends_202_and_points_at_its_monitor() {
+        let response =
+            Accepted::at(Location::from_static("/jobs/7"), Text("body".to_owned())).into_response();
+
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        assert_eq!(
+            response
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|value| value.to_str().ok()),
+            Some("/jobs/7")
+        );
+        assert_eq!(declared::<Accepted<Text, Location>>(), ["202"]);
+        assert_eq!(
+            representations::<Accepted<Text, Location>>(202),
+            ["text/plain"]
+        );
+        // Required, as `Created`'s is: the type admits no value without one.
+        assert_eq!(
+            location_declared::<Accepted<Text, Location>>(202)
+                .and_then(|location| location.required),
+            Some(true)
+        );
+    }
+
+    /// The `Location` header a type declares under one status, if any.
+    fn location_declared<T: Responses>(status: u16) -> Option<kynos_openapi::Header> {
+        let mut registry = Registry::new();
+        T::responses(&mut registry)
+            .get(status)
+            .and_then(kynos_openapi::RefOr::as_item)
+            .and_then(|response| response.headers.get("Location"))
+            .and_then(kynos_openapi::RefOr::as_item)
+            .cloned()
     }
 
     /// A `$ref` 200 beside a 404, the 200 first.
@@ -854,5 +902,15 @@ mod a_failed_body_keeps_its_status {
     #[test]
     fn accepted_sends_the_failure() {
         assert_problem(&Accepted::new(Json(Unserializable)).into_response());
+    }
+
+    #[test]
+    fn accepted_at_sends_the_failure_and_no_location() {
+        let response =
+            Accepted::at(Location::from_static("/jobs/7"), Json(Unserializable)).into_response();
+
+        assert_problem(&response);
+        // Nothing was accepted, so there is no monitor to point at.
+        assert!(response.headers().get(header::LOCATION).is_none());
     }
 }
