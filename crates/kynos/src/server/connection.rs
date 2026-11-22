@@ -16,7 +16,7 @@ use hyper_util::{
 };
 use tokio::{
     io::{AsyncRead, AsyncWrite, ReadBuf},
-    sync::watch,
+    sync::{Notify, watch},
     time::Instant,
 };
 
@@ -307,14 +307,49 @@ fn first_head_deadline_from_now(config: &TransportConfig) -> Option<Instant> {
     first_head_deadline(config, Instant::now())
 }
 
-/// Resolves once `deadline` passes unless `head_seen` says a request head
-/// arrived, and never otherwise: past its first head, a connection is
-/// governed by hyper's own timers.
-async fn unheard(deadline: Option<Instant>, head_seen: Option<&AtomicBool>) {
+/// Whether a connection's first request head has arrived, and the wake-up
+/// [`unheard`] races its deadline against.
+#[derive(Default)]
+struct HeadSeen {
+    seen: AtomicBool,
+    arrived: Notify,
+}
+
+impl HeadSeen {
+    /// Records a request head. Loaded before stored, so a busy connection
+    /// does not write a shared line on every request; only the first head
+    /// notifies.
+    fn record(&self) {
+        if !self.seen.load(Ordering::Relaxed) {
+            self.seen.store(true, Ordering::Relaxed);
+            // A permit, so a head recorded before `arrived` is polled is
+            // still seen.
+            self.arrived.notify_one();
+        }
+    }
+
+    /// Resolves once [`record`](Self::record) has run.
+    async fn arrived(&self) {
+        self.arrived.notified().await;
+    }
+}
+
+/// Resolves once `deadline` passes unless `head` says a request head arrived
+/// first, and never otherwise: past its first head, a connection is governed
+/// by hyper's own timers. The deadline's timer is dropped as the head
+/// arrives, so it is not left registered for a paused clock to advance to.
+async fn unheard(deadline: Option<Instant>, head: Option<&HeadSeen>) {
     if let Some(deadline) = deadline {
-        tokio::time::sleep_until(deadline).await;
-        if !head_seen.is_some_and(|head_seen| head_seen.load(Ordering::Relaxed)) {
-            return;
+        let arrived = async {
+            match head {
+                Some(head) => head.arrived().await,
+                None => std::future::pending().await,
+            }
+        };
+        tokio::select! {
+            biased;
+            () = arrived => {}
+            () = tokio::time::sleep_until(deadline) => return,
         }
     }
     std::future::pending::<()>().await;
@@ -404,20 +439,16 @@ where
         _ => None,
     };
 
-    // Set by the first request head; loaded before stored, so a busy
-    // connection does not write a shared line on every request.
-    let head_seen = deadline.map(|_| Arc::new(AtomicBool::new(false)));
+    // Recorded by the first request head.
+    let head_seen = deadline.map(|_| Arc::new(HeadSeen::default()));
     let handler_head_seen = head_seen.clone();
     #[cfg(feature = "http2")]
     let streams = Arc::new(Streams::default());
     #[cfg(feature = "http2")]
     let handler_streams = Arc::clone(&streams);
     let handler = service_fn(move |request: hyper::Request<hyper::body::Incoming>| {
-        if let Some(head_seen) = handler_head_seen
-            .as_ref()
-            .filter(|head_seen| !head_seen.load(Ordering::Relaxed))
-        {
-            head_seen.store(true, Ordering::Relaxed);
+        if let Some(head_seen) = &handler_head_seen {
+            head_seen.record();
         }
         // Taken before the handler runs and released with the response body,
         // so a stream is in flight for as long as hyper serves it.
