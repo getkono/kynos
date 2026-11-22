@@ -645,7 +645,7 @@ Tests are hermetic by construction, not by convention.
 | One process per test | `cargo nextest` |
 | `retries = 0` | [`.config/nextest.toml`](../.config/nextest.toml) |
 | `slow-timeout` terminating after four periods | same |
-| `leak-timeout` failing the test | same |
+| `leak-timeout` failing the test, off macOS | same |
 | A guard test that fails under a shared process | [`tests/hermeticity.rs`](../crates/kynos/tests/hermeticity.rs) |
 
 `hermeticity.rs` is the interesting one: its two tests observe the same `static`

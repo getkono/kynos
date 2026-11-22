@@ -46,6 +46,18 @@ slow-timeout = { period = "60s", terminate-after = 10 }
 filter = 'binary(readme_quickstart)'
 slow-timeout = { period = "60s", terminate-after = 10 }
 
+# On macOS a leak is reported, not failed. std creates a test's output pipes
+# with `pipe` and sets close-on-exec afterwards, because Apple has no `pipe2`,
+# so a sibling test that nextest spawns in that gap inherits them. The pipe then
+# stays open until the sibling exits, however long that is, and the test that
+# owns it is marked leaky through no fault of its own. Under load this fails
+# tests that start nothing, `kynos-openapi`'s among them, past a 1 s period as
+# readily as past 100 ms, and never with `--test-threads 1`. Linux and Windows
+# keep the failure, so a real leak is still caught there.
+[[profile.default.overrides]]
+platform = 'cfg(target_os = "macos")'
+leak-timeout = { period = "100ms", result = "pass" }
+
 # Inherits the default profile; only the log shape differs.
 #
 # The UI suite is *not* filtered out here. It was, and the filter is
