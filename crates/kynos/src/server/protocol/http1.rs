@@ -31,6 +31,13 @@ pub struct Http1Config {
     /// build with `http2`, to the HTTP/2 idle timeout as well, whichever passes
     /// first. Past the first head, it bounds each later HTTP/1 head; an
     /// HTTP/2 connection is then held to the HTTP/2 idle timeout instead.
+    ///
+    /// So in a build with `http2`, this and `Http2Config::idle_timeout` share
+    /// one job: how long a connection may wait for its next request. Both
+    /// default to 30 seconds; to change that bound for every client, set both
+    /// to the same value. No `Server` setter does it for you, because
+    /// `Server::http1` and `Server::http2` each replace their whole config, so
+    /// a server-wide value would hold or vanish depending on call order.
     pub header_read_timeout: Option<Duration>,
     /// The maximum number of request headers.
     pub max_headers: usize,
