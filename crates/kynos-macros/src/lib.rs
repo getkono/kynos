@@ -913,9 +913,10 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// type's `$ref`, and checked on the value `FromStr` read, with the bounds its
 /// type declares: one it breaks is refused as `QueryRejection::Schema`, naming
 /// the parameter. The refusal answers with the problem the group's own
-/// `#[schema(constraint_problem = ...)]` names, for every field it holds,
-/// else with the one the field's type names, as the other parameter derives
-/// do:
+/// `Schema::CONSTRAINT_PROBLEM` names, for every field it holds, else with
+/// the one the field's type names. The group's is read through its `Schema`,
+/// so a hand-written one counts as `#[schema(constraint_problem = ...)]`
+/// does, and the group answers through `Query` as through `QueryString`:
 ///
 /// ```ignore
 /// #[derive(kynos::Schema, kynos::QueryParams)]

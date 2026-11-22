@@ -34,25 +34,43 @@ pub(crate) fn group_problem(input: &DeriveInput) -> Option<Expr> {
     constraint_problem(input).ok().flatten()
 }
 
+/// Where the problem a group answers every field's broken bound with comes from.
+#[derive(Clone, Copy)]
+pub(crate) enum Group<'a> {
+    /// None: each field answers with its type's.
+    None,
+    /// The [`group_problem`] its attribute names.
+    Named(&'a Expr),
+    /// Its own `Schema::CONSTRAINT_PROBLEM`, however written, else each field
+    /// type's: a `QueryParams` group is a `Schema`, read as `QueryString` does.
+    OfSelf,
+}
+
+impl<'a> From<Option<&'a Expr>> for Group<'a> {
+    fn from(problem: Option<&'a Expr>) -> Self {
+        problem.map_or(Self::None, Self::Named)
+    }
+}
+
 /// One field of a parameter group, paired with the wire name it occupies.
 pub(crate) struct Param<'a> {
     field: &'a Field,
     name: String,
     /// The one value a header's `()` field stands for, as its schema's `const`.
     fixed: Option<String>,
-    /// The problem the group names for every field's broken bound, if any.
-    group: Option<&'a Expr>,
+    /// Where the group's problem for every field's broken bound comes from.
+    group: Group<'a>,
 }
 
 impl<'a> Param<'a> {
     /// Pairs each field with the wire name already resolved for it, under the
-    /// problem `group` names for the whole group, which [`group_problem`]
-    /// reads.
+    /// problem `group` names for the whole group.
     pub(crate) fn pair(
         fields: &'a FieldsNamed,
         names: &[String],
-        group: Option<&'a Expr>,
+        group: impl Into<Group<'a>>,
     ) -> Vec<Self> {
+        let group = group.into();
         fields
             .named
             .iter()
@@ -182,9 +200,18 @@ pub(crate) fn decode_field(
 /// The problem a broken bound on the field answers with: the group's, else
 /// the `CONSTRAINT_PROBLEM` of the `ParamValue` it carries.
 fn carried(param: &Param<'_>) -> TokenStream2 {
-    if let Some(group) = param.group {
-        return quote!(::core::option::Option::Some(#group));
+    let typed = typed(param);
+    match param.group {
+        Group::None => typed,
+        Group::Named(group) => quote!(::core::option::Option::Some(#group)),
+        Group::OfSelf => quote! {
+            ::core::option::Option::or(<Self as ::kynos::schema::Schema>::CONSTRAINT_PROBLEM, #typed)
+        },
     }
+}
+
+/// The `CONSTRAINT_PROBLEM` of the `ParamValue` the field carries.
+fn typed(param: &Param<'_>) -> TokenStream2 {
     let carried = param.optional().unwrap_or(param.ty());
     quote!(<#carried as ::kynos::schema::Schema>::CONSTRAINT_PROBLEM)
 }
@@ -194,14 +221,14 @@ fn carried(param: &Param<'_>) -> TokenStream2 {
 /// `CONSTRAINT_PROBLEM`, in declaration order, those naming none left out. A
 /// fixed field carries no value to check.
 pub(crate) fn constraint_problems_body(params: &[Param<'_>]) -> TokenStream2 {
+    let group = params.first().map_or(Group::None, |param| param.group);
     let checked = params.iter().filter(|param| param.fixed.is_none());
-    let named: Vec<TokenStream2> = if params.iter().any(|param| param.group.is_some()) {
-        checked.take(1).map(carried).collect()
-    } else {
-        checked.map(carried).collect()
+    let named: Vec<TokenStream2> = match group {
+        Group::Named(_) => checked.take(1).map(carried).collect(),
+        _ => checked.map(typed).collect(),
     };
     let count = named.len();
-    quote! {
+    let flattened = quote! {
         // Typed, so a group with no checked field still names its element.
         let named: [
             ::core::option::Option<::kynos::schema::constraints::ConstraintProblem>;
@@ -210,6 +237,15 @@ pub(crate) fn constraint_problems_body(params: &[Param<'_>]) -> TokenStream2 {
         ::core::iter::Iterator::collect(::core::iter::Iterator::flatten(
             ::core::iter::IntoIterator::into_iter(named),
         ))
+    };
+    match group {
+        Group::OfSelf if count > 0 => quote! {
+            match <Self as ::kynos::schema::Schema>::CONSTRAINT_PROBLEM {
+                ::core::option::Option::Some(problem) => ::std::vec![problem],
+                ::core::option::Option::None => { #flattened }
+            }
+        },
+        _ => flattened,
     }
 }
 
