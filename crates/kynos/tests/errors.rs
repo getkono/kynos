@@ -347,6 +347,16 @@ witnesses! {
         head_rejects_with(Infallible, (), Range<Binary<OctetStream>>);
     }
 
+    /// An identifier no `RequestId` assigned reads as `None` rather than
+    /// refusing the request, so reading one adds no status to the operation.
+    fn the_assigned_request_id_cannot_fail {
+        head_rejects_with(
+            Infallible,
+            (),
+            Option<kynos::middleware::request_id::AssignedId>
+        );
+    }
+
     /// Injection is synchronous and infallible by construction; a fallible
     /// provider would produce a response no operation declares.
     fn injection_cannot_fail {
@@ -542,6 +552,8 @@ fn the_sweep_reads_each_spelling_of_an_implementation() {
 /// declares whatever its `Rejection` says with nothing pinning it — nine of
 /// them did, unnoticed, until this sweep. Comparing names rather than a count
 /// also catches a witness that stopped covering the type it was written for.
+/// A name is compared once, as the witnesses are: `Option` is both an optional
+/// body and the identifier `RequestId` assigned.
 #[test]
 fn every_extractor_kynos_ships_names_its_rejection() {
     let mut shipped = sources(std::path::Path::new(concat!(
@@ -554,6 +566,7 @@ fn every_extractor_kynos_ships_names_its_rejection() {
     })
     .collect::<Vec<_>>();
     shipped.sort();
+    shipped.dedup();
 
     assert_eq!(
         shipped,
