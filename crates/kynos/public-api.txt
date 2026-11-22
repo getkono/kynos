@@ -8127,12 +8127,14 @@ pub struct kynos::router::docs::Docs<M>
 impl kynos::router::docs::Docs
 pub fn kynos::router::docs::Docs::at(self, &str) -> Self
 pub fn kynos::router::docs::Docs::custom(impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
+pub fn kynos::router::docs::Docs::describe_page(self, kynos::router::docs::DocsOperation) -> Self
 pub fn kynos::router::docs::Docs::redoc() -> Self
 pub fn kynos::router::docs::Docs::scalar() -> Self
 pub fn kynos::router::docs::Docs::title(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl kynos::router::docs::Docs<kynos::router::docs::DescriptionOnly>
 pub fn kynos::router::docs::Docs<kynos::router::docs::DescriptionOnly>::description_only() -> Self
 impl<M> kynos::router::docs::Docs<M>
+pub fn kynos::router::docs::Docs<M>::describe_description(self, kynos::router::docs::DocsOperation) -> Self
 pub fn kynos::router::docs::Docs<M>::description_at(self, &str) -> Self
 pub fn kynos::router::docs::Docs<M>::operation_id_prefix(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
 pub fn kynos::router::docs::Docs<M>::tag<T: kynos::router::operation::Tag>(self) -> Self
@@ -8147,6 +8149,24 @@ impl<M> core::marker::Unpin for kynos::router::docs::Docs<M>
 impl<M> core::marker::UnsafeUnpin for kynos::router::docs::Docs<M>
 impl<M> core::panic::unwind_safe::RefUnwindSafe for kynos::router::docs::Docs<M>
 impl<M> core::panic::unwind_safe::UnwindSafe for kynos::router::docs::Docs<M>
+pub struct kynos::router::docs::DocsOperation
+impl kynos::router::docs::DocsOperation
+pub fn kynos::router::docs::DocsOperation::description(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
+pub fn kynos::router::docs::DocsOperation::operation_id(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
+pub fn kynos::router::docs::DocsOperation::summary(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
+impl core::clone::Clone for kynos::router::docs::DocsOperation
+pub fn kynos::router::docs::DocsOperation::clone(&self) -> kynos::router::docs::DocsOperation
+impl core::default::Default for kynos::router::docs::DocsOperation
+pub fn kynos::router::docs::DocsOperation::default() -> kynos::router::docs::DocsOperation
+impl core::fmt::Debug for kynos::router::docs::DocsOperation
+pub fn kynos::router::docs::DocsOperation::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Freeze for kynos::router::docs::DocsOperation
+impl core::marker::Send for kynos::router::docs::DocsOperation
+impl core::marker::Sync for kynos::router::docs::DocsOperation
+impl core::marker::Unpin for kynos::router::docs::DocsOperation
+impl core::marker::UnsafeUnpin for kynos::router::docs::DocsOperation
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::docs::DocsOperation
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::docs::DocsOperation
 pub mod kynos::router::endpoint
 pub mod kynos::router::endpoint::builder
 pub struct kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>
