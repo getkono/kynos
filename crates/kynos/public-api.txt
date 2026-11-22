@@ -8692,6 +8692,7 @@ impl kynos::schema::constraints::Violations
 pub fn kynos::schema::constraints::Violations::into_failures(self) -> alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>
 pub fn kynos::schema::constraints::Violations::is_empty(&self) -> bool
 pub const fn kynos::schema::constraints::Violations::new() -> Self
+pub fn kynos::schema::constraints::Violations::of<T: kynos::schema::Schema + ?core::marker::Sized>(&T, kynos::schema::constraints::Pointer<'_>) -> core::result::Result<(), alloc::collections::btree::map::BTreeMap<alloc::string::String, alloc::string::String>>
 pub fn kynos::schema::constraints::Violations::report(&mut self, kynos::schema::constraints::Pointer<'_>, impl core::convert::Into<alloc::string::String>)
 impl core::clone::Clone for kynos::schema::constraints::Violations
 pub fn kynos::schema::constraints::Violations::clone(&self) -> kynos::schema::constraints::Violations

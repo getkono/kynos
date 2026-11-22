@@ -398,7 +398,38 @@ impl Violations {
 
     /// Holds `value`, sitting at `at`, to the bounds its schema declares: the
     /// [failures](Self::into_failures) when it breaks any.
-    pub(crate) fn of<T: crate::schema::Schema + ?Sized>(
+    ///
+    /// The check every extractor runs on the value it decoded, for a value
+    /// taken without one — under
+    /// [`Unchecked`](crate::schema::unchecked::Unchecked), say, to fold its
+    /// failures into an application's own problem beside checks the schema
+    /// cannot state — so no bound is restated by hand.
+    ///
+    /// ```
+    /// use kynos::{
+    ///     Schema,
+    ///     schema::constraints::{Pointer, Violations},
+    /// };
+    ///
+    /// #[derive(Schema)]
+    /// struct UploadLimit {
+    ///     #[schema(minimum = 1)]
+    ///     bytes_per_sec: Option<u32>,
+    /// }
+    ///
+    /// let broken = UploadLimit { bytes_per_sec: Some(0) };
+    /// let failures = Violations::of(&broken, Pointer::root()).unwrap_err();
+    /// assert_eq!(failures["/bytes_per_sec"], "must be at least 1");
+    ///
+    /// let unlimited = UploadLimit { bytes_per_sec: None };
+    /// assert!(Violations::of(&unlimited, Pointer::root()).is_ok());
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// The failures, keyed by JSON Pointer from `at`, when `value` breaks any
+    /// bound.
+    pub fn of<T: crate::schema::Schema + ?Sized>(
         value: &T,
         at: Pointer<'_>,
     ) -> Result<(), BTreeMap<String, String>> {
