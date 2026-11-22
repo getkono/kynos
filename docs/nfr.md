@@ -1118,6 +1118,14 @@ host canonicalisation beside them could move for free, and does not: it is what
 an allowed host and a requested one are both read through, and the one
 decision `check` and the interceptor share. One concern, so one file.
 
+`middleware/request_id.rs` is `status.rs`'s shape. It declares `RequestId`,
+`RequestIdSource`, `Counter`, `Random`, `CorrelationHeaders`, `XRequestId` and
+`AssignedId`, so a split would turn `request_id::Random`, the source an
+application mounts, into a longer path. What pushed it over was issue #1374's
+`AssignedId`, which hands the identifier on without naming its header. It is
+set by `intercept` from the same value the group's fields carry and nowhere
+else, so the two are one concern: which identifier a request is correlated by.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1142,6 +1150,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
+- `crates/kynos/src/middleware/request_id.rs`
 - `crates/kynos/src/middleware/stack.rs`
 - `crates/kynos/src/middleware/trace.rs`
 - `crates/kynos/src/middleware/trusted_hosts.rs`

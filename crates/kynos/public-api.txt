@@ -2040,6 +2040,8 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::extract::connection::UnixAd
 pub mod kynos::extract::describe
 pub trait kynos::extract::describe::Describe
 pub fn kynos::extract::describe::Describe::describe(&mut kynos::router::operation::OperationCx<'_>)
+impl kynos::extract::describe::Describe for core::option::Option<kynos::middleware::request_id::AssignedId>
+pub fn core::option::Option<kynos::middleware::request_id::AssignedId>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl kynos::extract::describe::Describe for kynos::extract::body::text::Text
 pub fn kynos::extract::body::text::Text::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl kynos::extract::describe::Describe for kynos::extract::connection::ConnectInfo
@@ -2686,6 +2688,9 @@ pub async fn kynos::extract::params::querystring::QueryString<T, M>::from_reques
 impl<C: core::marker::Sync, T> kynos::extract::FromRequestParts<C> for kynos::response::range::Range<T>
 pub type kynos::response::range::Range<T>::Rejection = core::convert::Infallible
 pub async fn kynos::response::range::Range<T>::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, core::convert::Infallible>
+impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for core::option::Option<kynos::middleware::request_id::AssignedId>
+pub type core::option::Option<kynos::middleware::request_id::AssignedId>::Rejection = core::convert::Infallible
+pub async fn core::option::Option<kynos::middleware::request_id::AssignedId>::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 impl<C: core::marker::Sync> kynos::extract::FromRequestParts<C> for kynos::extract::connection::ConnectInfo
 pub type kynos::extract::connection::ConnectInfo::Rejection = kynos::error::rejection::ConnectInfoRejection
 pub async fn kynos::extract::connection::ConnectInfo::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
@@ -5051,6 +5056,27 @@ pub type kynos::middleware::rate_limit::Structured::Headers = kynos::middleware:
 pub fn kynos::middleware::rate_limit::Structured::allow(&[kynos::middleware::rate_limit::decision::ServiceLimit], &[kynos::middleware::rate_limit::decision::QuotaPolicy]) -> Self::Headers
 pub fn kynos::middleware::rate_limit::Structured::deny(core::time::Duration, &[kynos::middleware::rate_limit::decision::ServiceLimit], &[kynos::middleware::rate_limit::decision::QuotaPolicy]) -> Self::Denied
 pub mod kynos::middleware::request_id
+pub struct kynos::middleware::request_id::AssignedId(_)
+impl kynos::middleware::request_id::AssignedId
+pub fn kynos::middleware::request_id::AssignedId::as_header_value(&self) -> &http::header::value::HeaderValue
+pub fn kynos::middleware::request_id::AssignedId::as_str(&self) -> core::option::Option<&str>
+pub fn kynos::middleware::request_id::AssignedId::of(&kynos::http::Request) -> core::option::Option<&Self>
+pub fn kynos::middleware::request_id::AssignedId::of_response(&kynos::http::Response) -> core::option::Option<&Self>
+impl core::clone::Clone for kynos::middleware::request_id::AssignedId
+pub fn kynos::middleware::request_id::AssignedId::clone(&self) -> kynos::middleware::request_id::AssignedId
+impl core::cmp::Eq for kynos::middleware::request_id::AssignedId
+impl core::cmp::PartialEq for kynos::middleware::request_id::AssignedId
+pub fn kynos::middleware::request_id::AssignedId::eq(&self, &kynos::middleware::request_id::AssignedId) -> bool
+impl core::fmt::Debug for kynos::middleware::request_id::AssignedId
+pub fn kynos::middleware::request_id::AssignedId::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kynos::middleware::request_id::AssignedId
+impl !core::marker::Freeze for kynos::middleware::request_id::AssignedId
+impl core::marker::Send for kynos::middleware::request_id::AssignedId
+impl core::marker::Sync for kynos::middleware::request_id::AssignedId
+impl core::marker::Unpin for kynos::middleware::request_id::AssignedId
+impl core::marker::UnsafeUnpin for kynos::middleware::request_id::AssignedId
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::request_id::AssignedId
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::request_id::AssignedId
 pub struct kynos::middleware::request_id::Counter
 impl core::default::Default for kynos::middleware::request_id::Counter
 pub fn kynos::middleware::request_id::Counter::default() -> kynos::middleware::request_id::Counter
@@ -5084,6 +5110,8 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::request_id::Ran
 pub struct kynos::middleware::request_id::RequestId<S, H>
 impl kynos::middleware::request_id::RequestId<kynos::middleware::request_id::Counter, kynos::middleware::request_id::XRequestId>
 pub fn kynos::middleware::request_id::RequestId<kynos::middleware::request_id::Counter, kynos::middleware::request_id::XRequestId>::new() -> Self
+pub fn kynos::middleware::request_id::RequestId<kynos::middleware::request_id::Counter, kynos::middleware::request_id::XRequestId>::of(&kynos::http::Request) -> core::option::Option<&kynos::middleware::request_id::AssignedId>
+pub fn kynos::middleware::request_id::RequestId<kynos::middleware::request_id::Counter, kynos::middleware::request_id::XRequestId>::of_response(&kynos::http::Response) -> core::option::Option<&kynos::middleware::request_id::AssignedId>
 impl<S: kynos::middleware::request_id::RequestIdSource, H: kynos::extract::params::header::HeaderParams> kynos::middleware::request_id::RequestId<S, H>
 pub fn kynos::middleware::request_id::RequestId<S, H>::header<G: kynos::middleware::request_id::CorrelationHeaders>(self) -> kynos::middleware::request_id::RequestId<S, G>
 pub fn kynos::middleware::request_id::RequestId<S, H>::source<T: kynos::middleware::request_id::RequestIdSource>(self, T) -> kynos::middleware::request_id::RequestId<T, H>
