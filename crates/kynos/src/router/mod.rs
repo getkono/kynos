@@ -536,26 +536,25 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
     /// Mounts a group.
     ///
-    /// Both of the group's stacks are checked against this router's own: its
-    /// interceptors, and whatever the endpoints mounted inside it carried. Both
-    /// are then remembered, so a later [`intercept`] is checked against them.
+    /// The group's own interceptors are checked against this router's at
+    /// compile time, then remembered, so a later [`intercept`] is checked
+    /// against them too. What the operations inside it hold is not in the
+    /// group's type, and is checked against both when this router is built.
     ///
     /// Neither is checked against an earlier sibling `group`: no request
     /// reaches both, so sharing an interceptor is not a collision.
     ///
     /// [`intercept`]: Router::intercept
     #[must_use]
-    pub fn group<GP: PanicPolicy, GI, GS>(
+    pub fn group<GP: PanicPolicy, GI>(
         mut self,
-        group: Group<C, GP, GI, GS>,
-    ) -> Router<C, P, I, <GI as Flatten<<GS as Flatten<S>>::Out>>::Out>
+        group: Group<C, GP, GI>,
+    ) -> Router<C, P, I, <GI as Flatten<S>>::Out>
     where
         C: 'static,
-        GS: CompatibleStack<I, C> + Flatten<S>,
-        GI: CompatibleStack<I, C> + Flatten<<GS as Flatten<S>>::Out>,
+        GI: CompatibleStack<I, C> + Flatten<S>,
     {
         let () = <GI as CompatibleStack<I, C>>::CHECK;
-        let () = <GS as CompatibleStack<I, C>>::CHECK;
 
         let Group {
             prefix,

@@ -143,9 +143,11 @@ pub enum RouterError {
     ///
     /// The rule [`CompatibleWith`](crate::middleware::stack::CompatibleWith)
     /// enforces at compile time, checked as the router is built for the pairs
-    /// no type carries both of, such as an operation collected into an
+    /// no type carries both of: an operation mounted into a
+    /// [`Group`](crate::router::group::Group), whose type leaves out what its
+    /// operations hold, or collected into an
     /// [`Endpoints`](crate::router::endpoint::set::Endpoints), whose type
-    /// erases what its members hold. Located at the operation.
+    /// erases it. Located at the operation.
     #[error("`{endpoint}`, which this operation holds, and `{scope}`, covering it, {overlap}")]
     InterceptorsCollide {
         /// The interceptor the operation holds itself.

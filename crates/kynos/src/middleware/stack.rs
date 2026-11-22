@@ -7,7 +7,11 @@
 //! [`EndpointBuilder`](crate::router::endpoint::builder::EndpointBuilder), so
 //! that mounting an interceptor that would collide with one already there
 //! fails to compile. Nothing here exists at run time save
-//! [`InterceptorList`], which is a tuple of `intercept` calls.
+//! [`InterceptorList`], which is a tuple of `intercept` calls, and the
+//! declarations the router compares as it is built for the pairs no type
+//! carries both of: what an operation mounted into a [`Group`] or collected
+//! into an [`Endpoints`](crate::router::endpoint::set::Endpoints) holds,
+//! against the scopes enclosing it.
 //!
 //! # What counts as a collision
 //!
@@ -154,11 +158,10 @@ macro_rules! stack {
 /// [`Group::intercept_all`], first element outermost.
 ///
 /// Implemented for tuples of up to sixteen interceptors, and sealed. `I` is the
-/// stack already mounted and `S` what the group's endpoints brought: each
-/// element is checked against both and against the elements before it, by the
-/// same [`CompatibleWith`] a single `intercept` uses, since applying the tuple
-/// *is* that sequence of calls.
-pub trait InterceptorList<C, I, S>: sealed::Apply<C, I, S> {
+/// stack already mounted: each element is checked against it and against the
+/// elements before it, by the same [`CompatibleWith`] a single `intercept`
+/// uses, since applying the tuple *is* that sequence of calls.
+pub trait InterceptorList<C, I>: sealed::Apply<C, I> {
     /// The stack once every element is mounted: `I` with each element in front
     /// of it, last element first.
     type Stack;
@@ -170,26 +173,26 @@ pub(crate) mod sealed {
 
     /// The one operation an [`InterceptorList`] has, unreachable from outside
     /// the crate so that the tuples are its only implementors.
-    pub trait Apply<C, I, S> {
+    pub trait Apply<C, I> {
         /// `intercept` for each element, in order.
         fn apply<P: PanicPolicy>(
             self,
-            group: Group<C, P, I, S>,
-        ) -> Group<C, P, <Self as InterceptorList<C, I, S>>::Stack, S>
+            group: Group<C, P, I>,
+        ) -> Group<C, P, <Self as InterceptorList<C, I>>::Stack>
         where
-            Self: InterceptorList<C, I, S>;
+            Self: InterceptorList<C, I>;
     }
 }
 
-impl<C, I, S> InterceptorList<C, I, S> for () {
+impl<C, I> InterceptorList<C, I> for () {
     type Stack = I;
 }
 
-impl<C, I, S> sealed::Apply<C, I, S> for () {
+impl<C, I> sealed::Apply<C, I> for () {
     fn apply<P: PanicPolicy>(
         self,
-        group: Group<C, P, I, S>,
-    ) -> Group<C, P, <Self as InterceptorList<C, I, S>>::Stack, S> {
+        group: Group<C, P, I>,
+    ) -> Group<C, P, <Self as InterceptorList<C, I>>::Stack> {
         group
     }
 }
@@ -198,30 +201,28 @@ impl<C, I, S> sealed::Apply<C, I, S> for () {
 /// the tail is a list over the stack that leaves.
 macro_rules! interceptor_list {
     ($head:ident $(, $tail:ident)*) => {
-        impl<C, I, S, $head, $($tail),*> InterceptorList<C, I, S> for ($head, $($tail,)*)
+        impl<C, I, $head, $($tail),*> InterceptorList<C, I> for ($head, $($tail,)*)
         where
             C: Sync + 'static,
             $head: Interceptor<C>,
             I: CompatibleWith<$head, C>,
-            S: CompatibleWith<$head, C>,
-            ($($tail,)*): InterceptorList<C, Cons<$head, I>, S>,
+            ($($tail,)*): InterceptorList<C, Cons<$head, I>>,
         {
-            type Stack = <($($tail,)*) as InterceptorList<C, Cons<$head, I>, S>>::Stack;
+            type Stack = <($($tail,)*) as InterceptorList<C, Cons<$head, I>>>::Stack;
         }
 
-        impl<C, I, S, $head, $($tail),*> sealed::Apply<C, I, S> for ($head, $($tail,)*)
+        impl<C, I, $head, $($tail),*> sealed::Apply<C, I> for ($head, $($tail,)*)
         where
             C: Sync + 'static,
             $head: Interceptor<C>,
             I: CompatibleWith<$head, C>,
-            S: CompatibleWith<$head, C>,
-            ($($tail,)*): InterceptorList<C, Cons<$head, I>, S>,
+            ($($tail,)*): InterceptorList<C, Cons<$head, I>>,
         {
             #[allow(non_snake_case)]
             fn apply<P: PanicPolicy>(
                 self,
-                group: Group<C, P, I, S>,
-            ) -> Group<C, P, <Self as InterceptorList<C, I, S>>::Stack, S> {
+                group: Group<C, P, I>,
+            ) -> Group<C, P, <Self as InterceptorList<C, I>>::Stack> {
                 let ($head, $($tail,)*) = self;
                 sealed::Apply::apply(($($tail,)*), group.intercept($head))
             }

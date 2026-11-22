@@ -242,12 +242,14 @@ fn renders(message: &str, snapshot: &str) -> bool {
     true
 }
 
-/// Every `Router` and `Group` builder carries all four type parameters across.
+/// Every `Router` and `Group` builder carries all of its type parameters
+/// across.
 ///
-/// Both types are parameterised by `<C, P, I, S>`, and two of those are the
-/// phantom lists the compile-time conflict check reads: `I`, the interceptors
-/// mounted on this scope, and `S`, what the scopes mounted here brought with
-/// them. A builder naming fewer than four in its return type resets the ones it
+/// `Router` is parameterised by `<C, P, I, S>`, two of them the phantom lists
+/// the compile-time conflict check reads: `I`, the interceptors mounted on this
+/// scope, and `S`, what the scopes mounted here brought with them. `Group` is
+/// `<C, P, I>`, since what its operations hold is checked as the router is
+/// built instead. A builder naming fewer in its return type resets the ones it
 /// omits to their default of `()`, and the check then compares a newcomer
 /// against an empty list and finds nothing to collide with.
 ///
@@ -262,12 +264,10 @@ fn renders(message: &str, snapshot: &str) -> bool {
 /// reason `every_rejected_schema_type_has_a_case` gives: it catches the drift
 /// that actually happens -- a parameter dropped from a return type -- and does
 /// not pretend to check that the parameter carried is the right one. Methods
-/// returning `Self` need no case: every `impl` block declaring one is
-/// `impl<C, P, I, S>`, so `Self` is all four by construction.
+/// returning `Self` need no case: every `impl` block declaring one names every
+/// parameter, so `Self` is all of them by construction.
 #[test]
 fn every_builder_preserves_the_type_parameters() {
-    const PARAMETERS: usize = 4;
-
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut checked = 0;
 
@@ -283,7 +283,7 @@ fn every_builder_preserves_the_type_parameters() {
                 continue;
             }
 
-            for type_name in ["Router", "Group"] {
+            for (type_name, parameters) in [("Router", 4), ("Group", 3)] {
                 let opening = format!("-> {type_name}<");
                 let Some(at) = line.find(&opening) else {
                     continue;
@@ -300,11 +300,11 @@ fn every_builder_preserves_the_type_parameters() {
 
                 assert_eq!(
                     count,
-                    PARAMETERS,
+                    parameters,
                     "{relative}:{} returns `{type_name}<` with {count} type argument(s) and \
-                     `{type_name}` has {PARAMETERS}; the omitted one falls back to its default of \
+                     `{type_name}` has {parameters}; the omitted one falls back to its default of \
                      `()`, which silently empties a phantom list the conflict check reads. Name \
-                     all {PARAMETERS}, or return `Self`.",
+                     all {parameters}, or return `Self`.",
                     number + 1
                 );
 

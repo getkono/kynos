@@ -2,8 +2,9 @@
 //!
 //! The collision rule is `CompatibleWith`'s, and a compile error wherever both
 //! interceptors' types meet in one scope's list. An operation collected into an
-//! `Endpoints` erases what it holds, so there the router compares the pair as
-//! it is built instead, and refuses the build with the operation's location.
+//! `Endpoints` erases what it holds, and a `Group`'s type leaves out what its
+//! operations hold, so there the router compares the pair as it is built
+//! instead, and refuses the build with the operation's location.
 //! A collision is a refusal with no diagnostic text of its own, so it is
 //! asserted here rather than by a `trybuild` pair, each beside the control that
 //! differs in exactly the property under test.
@@ -160,6 +161,96 @@ fn a_scoped_group_interceptor_is_compared_against_every_operation() {
                 Group::<()>::new("/a")
                     .intercept_when(SafeMethods, BodySize::new(1024))
                     .mount(writes),
+            )
+            .build(())
+            .is_ok()
+    );
+}
+
+/// `list` holding a `RequestId`, mounted into a group whose type then says
+/// nothing of it.
+fn holding_a_request_id() -> Group<()> {
+    Group::new("/a").mount(kynos::routes![list].0.intercept(RequestId::new()))
+}
+
+/// A group interceptor applied after a mount covers what was mounted, so the
+/// two are compared, though the group's type no longer carries the first.
+/// `catch_panics` between them changes nothing.
+#[test]
+fn a_group_interceptor_after_a_mount_is_compared_against_it() {
+    let refusals = [
+        refusal(Router::<()>::new().group(holding_a_request_id().intercept(RequestId::new()))),
+        refusal(
+            Router::<()>::new().group(
+                holding_a_request_id()
+                    .catch_panics()
+                    .intercept(RequestId::new()),
+            ),
+        ),
+    ];
+    for violations in refusals {
+        let [violation] = violations.as_slice() else {
+            panic!("one violation: {violations:#?}");
+        };
+        assert_eq!(violation.location, "#/paths/~1a~1users/get");
+    }
+
+    // The control: a 408 claims nothing a `RequestId` does.
+    assert!(
+        Router::<()>::new()
+            .group(holding_a_request_id().intercept(Timeout::new(Duration::from_secs(5))))
+            .build(())
+            .is_ok()
+    );
+}
+
+/// What a group's operations hold reaches every router above it, whichever
+/// order the router's interceptor and the group were written in, and through a
+/// nest and a merge.
+#[test]
+fn a_router_interceptor_is_compared_against_what_a_group_holds() {
+    let refusals = [
+        refusal(
+            Router::<()>::new()
+                .intercept(RequestId::new())
+                .group(holding_a_request_id()),
+        ),
+        refusal(
+            Router::<()>::new()
+                .group(holding_a_request_id())
+                .intercept(RequestId::new()),
+        ),
+        refusal(
+            Router::<()>::new()
+                .intercept(RequestId::new())
+                .nest("/x", Router::<()>::new().group(holding_a_request_id())),
+        ),
+        refusal(
+            Router::<()>::new()
+                .intercept(RequestId::new())
+                .merge(Router::<()>::new().group(holding_a_request_id())),
+        ),
+    ];
+    let locations: Vec<Vec<String>> = refusals
+        .iter()
+        .map(|violations| violations.iter().map(|v| v.location.clone()).collect())
+        .collect();
+    assert_eq!(
+        locations,
+        [
+            ["#/paths/~1a~1users/get"],
+            ["#/paths/~1a~1users/get"],
+            ["#/paths/~1x~1a~1users/get"],
+            ["#/paths/~1a~1users/get"],
+        ]
+    );
+
+    // The control: two mounts in one group, each holding a `RequestId`, under
+    // no interceptor of the group's or a router's. No request reaches both.
+    assert!(
+        Router::<()>::new()
+            .group(
+                holding_a_request_id().mount(kynos::routes![create].0.intercept(RequestId::new()))
             )
             .build(())
             .is_ok()

@@ -53,12 +53,12 @@ fn a_stack_is_named_in_mount_order() {
 fn a_tuple_stacks_its_elements_in_order_onto_the_existing_stack() {
     type Mounted = Cons<Noop<9>, ()>;
 
-    same::<<(Noop<0>,) as InterceptorList<(), (), ()>>::Stack, crate::stack![Noop<0>]>();
+    same::<<(Noop<0>,) as InterceptorList<(), ()>>::Stack, crate::stack![Noop<0>]>();
     same::<
-        <(Noop<0>, Noop<1>) as InterceptorList<(), Mounted, ()>>::Stack,
+        <(Noop<0>, Noop<1>) as InterceptorList<(), Mounted>>::Stack,
         crate::stack![Noop<9>, Noop<0>, Noop<1>],
     >();
-    same::<<() as InterceptorList<(), Mounted, ()>>::Stack, Mounted>();
+    same::<<() as InterceptorList<(), Mounted>>::Stack, Mounted>();
 }
 
 /// `intercept_all` returns the group `intercept` per element would, at both

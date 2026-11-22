@@ -103,8 +103,9 @@ definitions, which the router reports when it is built.
 scope*. A router's interceptors cover the operations in every
 group, nested router and endpoint beneath it, so a `Router::intercept` is
 checked against the stacks those scopes brought with them as well as against the
-router's own. That is what the fourth type parameter on `Router` and `Group`
-carries; [Composition](#composition) has the shape.
+router's own. That is what the fourth type parameter on `Router` carries;
+[Composition](#composition) has the shape, and why what a group's operations
+hold is checked as the router is built instead.
 
 What it is *not* checked against is a sibling. Two groups covering different
 operations may hold the same interceptor, and refusing that pair would be a
@@ -1670,8 +1671,9 @@ both.
 
 ### Two lists, not one
 
-`Router` and `Group` carry **two** phantom lists, and the reason is that they
-are checked in opposite directions.
+`Router` carries **two** phantom lists, and the reason is that they are checked
+in opposite directions. `Group` carries only `I`; why it gives `S` up is
+[below](#why-a-group-leaves-out-what-its-operations-hold).
 
 | Parameter | Holds | Obliges |
 | --- | --- | --- |
@@ -1706,12 +1708,38 @@ fail. `every_builder_preserves_the_type_parameters` in
 builder's return type, and `tests/ui/antipattern/` carries one case per scope,
 each with the control that fails if the check over-rejects instead.
 
+### Why a group leaves out what its operations hold
+
+A group is the unit an application returns from a function — one per
+resource, assembled in its own module and handed to the router in another. With
+`S` in its type, putting a body limit on one upload inside `routes!` changed
+that function's signature to
+`Group<App, Propagate, (), Cons<BodySize, Cons<BodySize, ()>>>`, and every
+change to one operation's limit had to be copied into a return type it is no
+business of. So `Group::mount` returns `Self`: the type names what the group
+applies, and `-> Group<App>` holds whatever its operations carry.
+
+Nothing stops being checked. `mount` still compares what the operations hold
+against the group's own interceptors at compile time. The pairs the type no
+longer carries — a `Group::intercept` written after the `mount`, and every
+scope the group ends up under — are compared as the router is built, by the
+same rule, through
+[the check below](#what-the-compile-time-check-cannot-see). A group's own
+interceptors stay in `I`, so a router checks them against its own at compile
+time as before.
+
+The alternative was an explicit `Group::seal` dropping `S` on request, and it
+was refused: the signature churn is the default an application meets first, and
+a `seal` that dropped `S` without a build-time comparison behind it would trade
+the churn for collisions nothing reports.
+
 ### What the compile-time check cannot see
 
 Wherever no type carries both halves of a pair.
 [`Endpoints`](../crates/kynos/src/router/endpoint/set.rs) declares
 `Stacks = ()` by construction, so an endpoint-scoped interceptor that reaches a
-router through a collection arrives with nothing to compare.
+router through a collection arrives with nothing to compare, and a `Group`
+leaves what its operations hold out of its type by design.
 
 The router compares those pairs as it is built instead, and refuses the build
 with `RouterError::InterceptorsCollide` at the operation. Each operation

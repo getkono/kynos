@@ -9,7 +9,7 @@ use crate::{
         Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
         erased::ErasedInterceptor,
-        stack::{self, CompatibleStack, CompatibleWith, Cons, Flatten, InterceptorList, When},
+        stack::{self, CompatibleStack, CompatibleWith, Cons, InterceptorList, When},
     },
     response::ShortCircuit,
     router::error::RouterError,
@@ -30,7 +30,33 @@ use crate::{
 /// each interceptor's contribution is merged into each operation's description
 /// — so attaching authentication to a group documents it on every operation
 /// underneath.
-pub struct Group<C, P = Propagate, I = (), S = ()> {
+///
+/// The type names what the group itself applies — its context, its panic
+/// policy and its own interceptors — and nothing its operations hold, so
+/// changing one operation's limit inside `routes!` leaves the signature of a
+/// function returning the group alone:
+///
+/// ```no_run
+/// use kynos::{middleware::limits::body_size::BodySize, router::group::Group};
+///
+/// #[kynos::post("/imports")]
+/// async fn create_import() {}
+///
+/// fn imports() -> Group<()> {
+///     Group::new("/").mount(kynos::routes![
+///         create_import.intercept(BodySize::new(96 << 20))
+///     ])
+/// }
+/// # let _ = imports();
+/// ```
+///
+/// What an operation holds is still checked against every interceptor
+/// covering it: against the group's own when it is [mounted](Group::mount), at
+/// compile time, and against everything else — a later
+/// [`intercept`](Group::intercept), and the routers it ends up under — when
+/// the router is built, as
+/// [`RouterError::InterceptorsCollide`](crate::router::error::RouterError::InterceptorsCollide).
+pub struct Group<C, P = Propagate, I = ()> {
     // `pub(super)`: the router mounting a group destructures it.
     pub(super) prefix: String,
     pub(super) endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
@@ -54,13 +80,13 @@ pub struct Group<C, P = Propagate, I = (), S = ()> {
     #[cfg(feature = "unchecked")]
     pub(crate) unchecked_layers: Vec<Arc<dyn crate::unchecked::ErasedLayer>>,
 
-    // As on `Router`: `I` is this group's interceptor list, `S` what its
-    // endpoints brought.
+    // As on `Router`, `I` is this group's interceptor list. What its endpoints
+    // hold is not in the type: see docs/middleware.md, "Two lists, not one".
     #[allow(clippy::type_complexity)]
-    pub(super) _private: PhantomData<fn() -> (C, P, I, S)>,
+    pub(super) _private: PhantomData<fn() -> (C, P, I)>,
 }
 
-impl<C, P, I, S> std::fmt::Debug for Group<C, P, I, S> {
+impl<C, P, I> std::fmt::Debug for Group<C, P, I> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("Group")
@@ -97,9 +123,9 @@ impl<C> Group<C, Propagate, ()> {
     }
 }
 
-impl<C, P, I, S> Group<C, P, I, S> {
+impl<C, P, I> Group<C, P, I> {
     /// Carries every field across a change of type parameter.
-    fn retype<Q, J, T>(self) -> Group<C, Q, J, T> {
+    fn retype<Q, J>(self) -> Group<C, Q, J> {
         Group {
             prefix: self.prefix,
             endpoints: self.endpoints,
@@ -116,7 +142,7 @@ impl<C, P, I, S> Group<C, P, I, S> {
     }
 }
 
-impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
+impl<C, P: PanicPolicy, I> Group<C, P, I> {
     /// Converts panics from covered operations into documented 500 responses.
     ///
     /// The policy is carried in the group's type and resolved when the group is
@@ -134,7 +160,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// # let _ = users;
     /// ```
     #[must_use]
-    pub fn catch_panics(self) -> Group<C, Catch, I, S> {
+    pub fn catch_panics(self) -> Group<C, Catch, I> {
         const { install::require_unwind() }
         self.retype()
     }
@@ -153,19 +179,17 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// them sits inside whatever the enclosing router applied; see
     /// [the module's ordering rule](crate::middleware#the-order-a-chain-runs-in).
     ///
-    /// Checked against the group's own interceptors *and* against the stacks
-    /// the endpoints already mounted here brought with them, since this covers
-    /// both.
+    /// Checked against the group's own interceptors at compile time. It covers
+    /// the operations already mounted here too, and what they hold is checked
+    /// against it when the router is built, since the group's type does not
+    /// carry it.
     #[must_use]
-    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Group<C, P, Cons<N, I>, S>
+    pub fn intercept<N: Interceptor<C>>(self, interceptor: N) -> Group<C, P, Cons<N, I>>
     where
         C: Sync + 'static,
         I: CompatibleWith<N, C>,
-        S: CompatibleWith<N, C>,
     {
         let () = <I as CompatibleWith<N, C>>::CHECK;
-        // Endpoints mounted earlier are covered too.
-        let () = <S as CompatibleWith<N, C>>::CHECK;
 
         self.scoped(Methods::EVERY, interceptor)
     }
@@ -232,14 +256,12 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
         self,
         methods: M,
         interceptor: N,
-    ) -> Group<C, P, Cons<When<M, N>, I>, S>
+    ) -> Group<C, P, Cons<When<M, N>, I>>
     where
         C: Sync + 'static,
         I: CompatibleWith<When<M, N>, C>,
-        S: CompatibleWith<When<M, N>, C>,
     {
         let () = <I as CompatibleWith<When<M, N>, C>>::CHECK;
-        let () = <S as CompatibleWith<When<M, N>, C>>::CHECK;
 
         let _ = methods;
         self.scoped(M::METHODS, interceptor)
@@ -247,13 +269,13 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
 
     /// Pushes `interceptor`, covering the operations whose method is in
     /// `methods`, under whichever stack type the caller checked.
-    fn scoped<N: Interceptor<C>, J>(self, methods: Methods, interceptor: N) -> Group<C, P, J, S>
+    fn scoped<N: Interceptor<C>, J>(self, methods: Methods, interceptor: N) -> Group<C, P, J>
     where
         C: Sync + 'static,
     {
         const { stack::unscoped::<C, N>() };
 
-        let mut group: Group<C, P, J, S> = self.retype();
+        let mut group: Group<C, P, J> = self.retype();
         // `N` itself rather than a wrapper, so the router still recognises a
         // `Cors` by identity.
         group.interceptors.push((methods, Arc::new(interceptor)));
@@ -267,8 +289,9 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// first element outermost.
     ///
     /// Exactly [`intercept`](Group::intercept) once per element, in order, and
-    /// checked as those calls are: each element against the group's stack, the
-    /// endpoints already mounted, and the elements before it. What it adds is
+    /// checked as those calls are: each element against the group's stack and
+    /// the elements before it, and the endpoints already mounted against each
+    /// element when the router is built. What it adds is
     /// that a chain is one value, so a function can hand it out, and that the
     /// group it returns is named with [`stack!`](crate::stack!) in the same
     /// order the tuple is written.
@@ -293,7 +316,7 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     /// let _ = Group::<()>::new("/a").intercept_all((RequestId::new(), RequestId::new()));
     /// ```
     #[must_use]
-    pub fn intercept_all<L: InterceptorList<C, I, S>>(self, chain: L) -> Group<C, P, L::Stack, S> {
+    pub fn intercept_all<L: InterceptorList<C, I>>(self, chain: L) -> Group<C, P, L::Stack> {
         crate::middleware::stack::sealed::Apply::apply(chain, self)
     }
 
@@ -334,13 +357,13 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
 
     /// Mounts operations into this group.
     ///
-    /// What the endpoints carry is checked against the group's own
-    /// interceptors and then remembered, so a later [`intercept`] sees it. It
-    /// is *not* checked against an earlier `mount`, since no request reaches
-    /// two operations.
-    ///
-    /// Mounting operations that carry no interceptor leaves this type
-    /// unchanged.
+    /// What the endpoints hold is checked against the group's own interceptors
+    /// at compile time, and then left out of the group's type, which this
+    /// returns unchanged: an operation's own limit is that operation's
+    /// business, not a signature's. A later [`intercept`], and every scope the
+    /// group is mounted under, is compared against it when the router is
+    /// built instead. It is *not* checked against an earlier `mount`, since no
+    /// request reaches two operations.
     ///
     /// # Panics
     ///
@@ -350,19 +373,16 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     ///
     /// [`intercept`]: Group::intercept
     #[must_use]
-    pub fn mount<E: IntoEndpoints<C>>(
-        mut self,
-        endpoints: E,
-    ) -> Group<C, P, I, <E::Stacks as Flatten<S>>::Out>
+    pub fn mount<E: IntoEndpoints<C>>(mut self, endpoints: E) -> Self
     where
-        E::Stacks: CompatibleStack<I, C> + Flatten<S>,
+        E::Stacks: CompatibleStack<I, C>,
     {
         let () = <E::Stacks as CompatibleStack<I, C>>::CHECK;
 
         let mut sink = crate::router::endpoint::set::Endpoints::new();
         endpoints.into_endpoints(&mut sink);
         self.endpoints.extend(sink.into_inner());
-        self.retype()
+        self
     }
 }
 

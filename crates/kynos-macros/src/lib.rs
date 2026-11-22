@@ -156,7 +156,8 @@ pub fn operation(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// `.intercept(..)` after an operation scopes an interceptor to that operation
 /// alone, as `EndpointBuilder::intercept` does: the first call is the
 /// outermost, and every enclosing scope wraps it. One resource's operations
-/// can then differ in limits and still be mounted together.
+/// can then differ in limits and still be mounted together, and a `Group`
+/// they are mounted into keeps the same type whatever they hold.
 ///
 /// ```ignore
 /// routes![users::list, users::create.intercept(BodySize::new(64 * 1024))]

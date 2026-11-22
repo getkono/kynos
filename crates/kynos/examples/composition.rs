@@ -29,7 +29,8 @@
 //!   decided at compile time and its 500 is contributed for the same reason.
 //! * **An interceptor can cover one operation.** `get_user.intercept(..)`
 //!   inside `routes!` gives that operation its own deadline without a group of
-//!   its own, so groups stay one per resource.
+//!   its own, so groups stay one per resource. It stays out of the group's
+//!   type, too: `users` returns `Group<()>` whatever its operations hold.
 //! * **A link knows where its target was mounted.** `suspend_user` extracts a
 //!   `Link<get_user>` and redirects through it, so the `/users` prefix only
 //!   the group names reaches the `Location`. A link to an operation the router
@@ -178,23 +179,29 @@ async fn version() -> NoContent {
     NoContent
 }
 
+/// The users resource. A group is the recommended unit of API structure, one
+/// per resource, and the second tag scope, with the prefix that joins each path
+/// beneath.
+///
+/// `Group<()>` names what the group applies and nothing its operations hold, so
+/// changing `get_user`'s deadline changes no signature.
+fn users() -> Group<()> {
+    Group::new("/users")
+        .tag::<Users>()
+        // The fifth scope an interceptor has: one operation.
+        .mount(kynos::routes![
+            list_users,
+            get_user.intercept(Timeout::new(Duration::from_secs(2)))
+        ])
+}
+
 /// The whole API, as one value both the document and the service come from.
 fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
     Router::<()>::new()
         // The first tag scope: everything in this router, whatever else it
         // also carries.
         .tag::<Ops>()
-        // A group is the recommended unit of API structure, one per resource.
-        // The second tag scope, and the prefix that joins each path beneath.
-        .group(
-            Group::new("/users")
-                .tag::<Users>()
-                // The fifth scope an interceptor has: one operation.
-                .mount(kynos::routes![
-                    list_users,
-                    get_user.intercept(Timeout::new(Duration::from_secs(2)))
-                ]),
-        )
+        .group(users())
         // `nest` introduces a prefix; the nested router did not know it.
         .nest("/admin", admin_router())
         // `merge` does not; the two operation sets union at this level.

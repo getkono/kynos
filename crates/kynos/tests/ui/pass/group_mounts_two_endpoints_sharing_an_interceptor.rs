@@ -1,11 +1,11 @@
-//! The passing half of `group_mount_then_group_intercept_collide`.
-//!
 //! One group, two mounts, each endpoint carrying its own `RequestId`, and no
-//! group-scoped interceptor over them. It differs in exactly the property
-//! under test, and it is what proves `mount` folds a stack into the group's
-//! *sub*-stack rather than into the group's own: folding into the group's own
-//! would compare the second endpoint against the first and refuse two
-//! operations that no request reaches together.
+//! group-scoped interceptor over them.
+//!
+//! The false positive `mount` must not introduce: it checks what the endpoints
+//! hold against the group's own interceptors and nothing else, so the second
+//! endpoint is never compared against the first, and two operations no request
+//! reaches together compile. `tests/collisions.rs` holds the same program to
+//! building, where the router compares what is no longer in the group's type.
 
 use kynos::{middleware::request_id::RequestId, prelude::*};
 

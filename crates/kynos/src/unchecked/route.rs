@@ -328,7 +328,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     }
 }
 
-impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
+impl<C, P: PanicPolicy, I> Group<C, P, I> {
     /// Wraps this group in an arbitrary `tower` layer.
     ///
     /// Flags exactly this group's operations, and nothing else.

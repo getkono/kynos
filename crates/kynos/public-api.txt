@@ -5261,41 +5261,41 @@ impl<L, R, S> kynos::middleware::stack::Flatten<S> for kynos::middleware::stack:
 pub type kynos::middleware::stack::Both<L, R>::Out = <L as kynos::middleware::stack::Flatten<<R as kynos::middleware::stack::Flatten<S>>::Out>>::Out
 impl<S> kynos::middleware::stack::Flatten<S> for ()
 pub type ()::Out = S
-pub trait kynos::middleware::stack::InterceptorList<C, I, S>: kynos::middleware::stack::sealed::Apply<C, I, S>
+pub trait kynos::middleware::stack::InterceptorList<C, I>: kynos::middleware::stack::sealed::Apply<C, I>
 pub type kynos::middleware::stack::InterceptorList::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8, T9> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8, T9) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7, T8> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7, T8) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7, T8)::Stack = <(T2, T3, T4, T5, T6, T7, T8) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6, T7> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6, T7) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6, T7)::Stack = <(T2, T3, T4, T5, T6, T7) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5, T6> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5, T6) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5, T6)::Stack = <(T2, T3, T4, T5, T6) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4, T5> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4, T5) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4, T5)::Stack = <(T2, T3, T4, T5) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3, T4> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3, T4) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3, T4)::Stack = <(T2, T3, T4) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2, T3> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2, T3) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2, T3)::Stack = <(T2, T3) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1, T2> kynos::middleware::stack::InterceptorList<C, I, S> for (T1, T2) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (T2): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1, T2)::Stack = <(T2) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S, T1> kynos::middleware::stack::InterceptorList<C, I, S> for (T1) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, S: kynos::middleware::stack::CompatibleWith<T1, C>, (): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>
-pub type (T1)::Stack = <() as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>, S>>::Stack
-impl<C, I, S> kynos::middleware::stack::InterceptorList<C, I, S> for ()
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15, T16) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14, T15) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13, T14) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12, T13) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11, T12) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10, T11): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10, T11)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10, T11) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9, T10> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9, T10): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9, T10)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9, T10) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8, T9> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8, T9) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8, T9): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8, T9)::Stack = <(T2, T3, T4, T5, T6, T7, T8, T9) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7, T8> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7, T8) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7, T8): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7, T8)::Stack = <(T2, T3, T4, T5, T6, T7, T8) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6, T7> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6, T7) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6, T7): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6, T7)::Stack = <(T2, T3, T4, T5, T6, T7) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5, T6> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5, T6) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5, T6): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5, T6)::Stack = <(T2, T3, T4, T5, T6) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4, T5> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4, T5) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4, T5): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4, T5)::Stack = <(T2, T3, T4, T5) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3, T4> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3, T4) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3, T4): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3, T4)::Stack = <(T2, T3, T4) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2, T3> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2, T3) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2, T3): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2, T3)::Stack = <(T2, T3) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1, T2> kynos::middleware::stack::InterceptorList<C, I> for (T1, T2) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (T2): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1, T2)::Stack = <(T2) as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I, T1> kynos::middleware::stack::InterceptorList<C, I> for (T1) where C: core::marker::Sync + 'static, T1: kynos::middleware::Interceptor<C>, I: kynos::middleware::stack::CompatibleWith<T1, C>, (): kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>
+pub type (T1)::Stack = <() as kynos::middleware::stack::InterceptorList<C, kynos::middleware::stack::Cons<T1, I>>>::Stack
+impl<C, I> kynos::middleware::stack::InterceptorList<C, I> for ()
 pub type ()::Stack = I
 pub mod kynos::middleware::trace
 pub enum kynos::middleware::trace::Level
@@ -5820,28 +5820,28 @@ impl<T> core::marker::Unpin for kynos::response::status::Created<T> where T: cor
 impl<T> core::marker::UnsafeUnpin for kynos::response::status::Created<T> where T: core::marker::UnsafeUnpin
 impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::Created<T> where T: core::panic::unwind_safe::RefUnwindSafe
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos::response::status::Created<T> where T: core::panic::unwind_safe::UnwindSafe
-pub struct kynos::prelude::Group<C, P, I, S>
-impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::catch_panics(self) -> kynos::router::group::Group<C, kynos::middleware::catch_panic::Catch, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::guard_first(self) -> Self
-pub fn kynos::router::group::Group<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
-pub fn kynos::router::group::Group<C, P, I, S>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I, S>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack, S>
-pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
-pub fn kynos::router::group::Group<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::group::Group<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
-pub fn kynos::router::group::Group<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
-impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::layer_unchecked<L>(self, L) -> Self where C: core::marker::Send + core::marker::Sync + 'static, L: tower_layer::Layer<kynos::unchecked::UncheckedInner<C>> + core::marker::Send + core::marker::Sync + 'static, <L as tower_layer::Layer>::Service: tower_service::Service<kynos::http::Request, Response = kynos::http::Response, Error = core::convert::Infallible> + core::clone::Clone + core::marker::Send + core::marker::Sync + 'static, <<L as tower_layer::Layer>::Service as tower_service::Service<kynos::http::Request>>::Future: core::marker::Send + 'static
+pub struct kynos::prelude::Group<C, P, I>
+impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I> kynos::router::group::Group<C, P, I>
+pub fn kynos::router::group::Group<C, P, I>::catch_panics(self) -> kynos::router::group::Group<C, kynos::middleware::catch_panic::Catch, I>
+pub fn kynos::router::group::Group<C, P, I>::guard_first(self) -> Self
+pub fn kynos::router::group::Group<C, P, I>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::group::Group<C, P, I>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack>
+pub fn kynos::router::group::Group<C, P, I>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
+pub fn kynos::router::group::Group<C, P, I>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> Self where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C>
+pub fn kynos::router::group::Group<C, P, I>::tag<T: kynos::router::operation::Tag>(self) -> Self
+impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I> kynos::router::group::Group<C, P, I>
+pub fn kynos::router::group::Group<C, P, I>::layer_unchecked<L>(self, L) -> Self where C: core::marker::Send + core::marker::Sync + 'static, L: tower_layer::Layer<kynos::unchecked::UncheckedInner<C>> + core::marker::Send + core::marker::Sync + 'static, <L as tower_layer::Layer>::Service: tower_service::Service<kynos::http::Request, Response = kynos::http::Response, Error = core::convert::Infallible> + core::clone::Clone + core::marker::Send + core::marker::Sync + 'static, <<L as tower_layer::Layer>::Service as tower_service::Service<kynos::http::Request>>::Future: core::marker::Send + 'static
 impl<C> kynos::router::group::Group<C, kynos::middleware::catch_panic::Propagate, ()>
 pub fn kynos::router::group::Group<C, kynos::middleware::catch_panic::Propagate, ()>::new(&str) -> Self
-impl<C, P, I, S> core::fmt::Debug for kynos::router::group::Group<C, P, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C, P, I, S> core::marker::Freeze for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::Send for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::Sync for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::Unpin for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::UnsafeUnpin for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> !core::panic::unwind_safe::UnwindSafe for kynos::router::group::Group<C, P, I, S>
+impl<C, P, I> core::fmt::Debug for kynos::router::group::Group<C, P, I>
+pub fn kynos::router::group::Group<C, P, I>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C, P, I> core::marker::Freeze for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::Send for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::Sync for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::Unpin for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::UnsafeUnpin for kynos::router::group::Group<C, P, I>
+impl<C, P, I> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::Group<C, P, I>
+impl<C, P, I> !core::panic::unwind_safe::UnwindSafe for kynos::router::group::Group<C, P, I>
 pub struct kynos::prelude::Headers<T>(pub T)
 impl<C: core::marker::Sync, T: kynos::extract::params::header::DecodeHeaders + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::header::Headers<T>
 pub type kynos::extract::params::header::Headers<T>::Rejection = kynos::error::rejection::HeaderRejection
@@ -6182,7 +6182,7 @@ pub fn kynos::router::Router<C, P, I, S>::catch_panics(self) -> kynos::router::R
 pub fn kynos::router::Router<C, P, I, S>::deny_unchecked_schemas(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::docs<M>(self, kynos::router::docs::Docs<M>) -> Self where C: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::router::Router<C, P, I, S>::external_docs(self, kynos_openapi::model::external_docs::ExternalDocumentation) -> Self
-pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_panic::PanicPolicy, GI, GS>(self, kynos::router::group::Group<C, GP, GI, GS>) -> kynos::router::Router<C, P, I, <GI as kynos::middleware::stack::Flatten<<GS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, GS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, GI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<GS as kynos::middleware::stack::Flatten<S>>::Out>
+pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_panic::PanicPolicy, GI>(self, kynos::router::group::Group<C, GP, GI>) -> kynos::router::Router<C, P, I, <GI as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, GI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
@@ -8359,28 +8359,28 @@ impl core::marker::UnsafeUnpin for kynos::router::error::RouterError
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::error::RouterError
 impl core::panic::unwind_safe::UnwindSafe for kynos::router::error::RouterError
 pub mod kynos::router::group
-pub struct kynos::router::group::Group<C, P, I, S>
-impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::catch_panics(self) -> kynos::router::group::Group<C, kynos::middleware::catch_panic::Catch, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::guard_first(self) -> Self
-pub fn kynos::router::group::Group<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
-pub fn kynos::router::group::Group<C, P, I, S>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I, S>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack, S>
-pub fn kynos::router::group::Group<C, P, I, S>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>, S: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
-pub fn kynos::router::group::Group<C, P, I, S>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> kynos::router::group::Group<C, P, I, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::middleware::stack::Flatten<S>>::Out> where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
-pub fn kynos::router::group::Group<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
-impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::group::Group<C, P, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::layer_unchecked<L>(self, L) -> Self where C: core::marker::Send + core::marker::Sync + 'static, L: tower_layer::Layer<kynos::unchecked::UncheckedInner<C>> + core::marker::Send + core::marker::Sync + 'static, <L as tower_layer::Layer>::Service: tower_service::Service<kynos::http::Request, Response = kynos::http::Response, Error = core::convert::Infallible> + core::clone::Clone + core::marker::Send + core::marker::Sync + 'static, <<L as tower_layer::Layer>::Service as tower_service::Service<kynos::http::Request>>::Future: core::marker::Send + 'static
+pub struct kynos::router::group::Group<C, P, I>
+impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I> kynos::router::group::Group<C, P, I>
+pub fn kynos::router::group::Group<C, P, I>::catch_panics(self) -> kynos::router::group::Group<C, kynos::middleware::catch_panic::Catch, I>
+pub fn kynos::router::group::Group<C, P, I>::guard_first(self) -> Self
+pub fn kynos::router::group::Group<C, P, I>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<N, I>> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>
+pub fn kynos::router::group::Group<C, P, I>::intercept_all<L: kynos::middleware::stack::InterceptorList<C, I>>(self, L) -> kynos::router::group::Group<C, P, <L as kynos::middleware::stack::InterceptorList>::Stack>
+pub fn kynos::router::group::Group<C, P, I>::intercept_when<M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>>(self, M, N) -> kynos::router::group::Group<C, P, kynos::middleware::stack::Cons<kynos::middleware::stack::When<M, N>, I>> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<kynos::middleware::stack::When<M, N>, C>
+pub fn kynos::router::group::Group<C, P, I>::mount<E: kynos::router::endpoint::set::IntoEndpoints<C>>(self, E) -> Self where <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::middleware::stack::CompatibleStack<I, C>
+pub fn kynos::router::group::Group<C, P, I>::tag<T: kynos::router::operation::Tag>(self) -> Self
+impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I> kynos::router::group::Group<C, P, I>
+pub fn kynos::router::group::Group<C, P, I>::layer_unchecked<L>(self, L) -> Self where C: core::marker::Send + core::marker::Sync + 'static, L: tower_layer::Layer<kynos::unchecked::UncheckedInner<C>> + core::marker::Send + core::marker::Sync + 'static, <L as tower_layer::Layer>::Service: tower_service::Service<kynos::http::Request, Response = kynos::http::Response, Error = core::convert::Infallible> + core::clone::Clone + core::marker::Send + core::marker::Sync + 'static, <<L as tower_layer::Layer>::Service as tower_service::Service<kynos::http::Request>>::Future: core::marker::Send + 'static
 impl<C> kynos::router::group::Group<C, kynos::middleware::catch_panic::Propagate, ()>
 pub fn kynos::router::group::Group<C, kynos::middleware::catch_panic::Propagate, ()>::new(&str) -> Self
-impl<C, P, I, S> core::fmt::Debug for kynos::router::group::Group<C, P, I, S>
-pub fn kynos::router::group::Group<C, P, I, S>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C, P, I, S> core::marker::Freeze for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::Send for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::Sync for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::Unpin for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> core::marker::UnsafeUnpin for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::Group<C, P, I, S>
-impl<C, P, I, S> !core::panic::unwind_safe::UnwindSafe for kynos::router::group::Group<C, P, I, S>
+impl<C, P, I> core::fmt::Debug for kynos::router::group::Group<C, P, I>
+pub fn kynos::router::group::Group<C, P, I>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C, P, I> core::marker::Freeze for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::Send for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::Sync for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::Unpin for kynos::router::group::Group<C, P, I>
+impl<C, P, I> core::marker::UnsafeUnpin for kynos::router::group::Group<C, P, I>
+impl<C, P, I> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::group::Group<C, P, I>
+impl<C, P, I> !core::panic::unwind_safe::UnwindSafe for kynos::router::group::Group<C, P, I>
 pub struct kynos::router::group::Methods
 impl kynos::router::group::Methods
 pub const fn kynos::router::group::Methods::contains(self, kynos_openapi::model::paths::method::Method) -> bool
@@ -8598,7 +8598,7 @@ pub fn kynos::router::Router<C, P, I, S>::catch_panics(self) -> kynos::router::R
 pub fn kynos::router::Router<C, P, I, S>::deny_unchecked_schemas(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::docs<M>(self, kynos::router::docs::Docs<M>) -> Self where C: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::router::Router<C, P, I, S>::external_docs(self, kynos_openapi::model::external_docs::ExternalDocumentation) -> Self
-pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_panic::PanicPolicy, GI, GS>(self, kynos::router::group::Group<C, GP, GI, GS>) -> kynos::router::Router<C, P, I, <GI as kynos::middleware::stack::Flatten<<GS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, GS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, GI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<GS as kynos::middleware::stack::Flatten<S>>::Out>
+pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_panic::PanicPolicy, GI>(self, kynos::router::group::Group<C, GP, GI>) -> kynos::router::Router<C, P, I, <GI as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, GI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
@@ -10876,7 +10876,7 @@ pub fn kynos::router::Router<C, P, I, S>::catch_panics(self) -> kynos::router::R
 pub fn kynos::router::Router<C, P, I, S>::deny_unchecked_schemas(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::docs<M>(self, kynos::router::docs::Docs<M>) -> Self where C: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::router::Router<C, P, I, S>::external_docs(self, kynos_openapi::model::external_docs::ExternalDocumentation) -> Self
-pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_panic::PanicPolicy, GI, GS>(self, kynos::router::group::Group<C, GP, GI, GS>) -> kynos::router::Router<C, P, I, <GI as kynos::middleware::stack::Flatten<<GS as kynos::middleware::stack::Flatten<S>>::Out>>::Out> where C: 'static, GS: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>, GI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<<GS as kynos::middleware::stack::Flatten<S>>::Out>
+pub fn kynos::router::Router<C, P, I, S>::group<GP: kynos::middleware::catch_panic::PanicPolicy, GI>(self, kynos::router::group::Group<C, GP, GI>) -> kynos::router::Router<C, P, I, <GI as kynos::middleware::stack::Flatten<S>>::Out> where C: 'static, GI: kynos::middleware::stack::CompatibleStack<I, C> + kynos::middleware::stack::Flatten<S>
 pub fn kynos::router::Router<C, P, I, S>::guard_first(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::info(self, kynos_openapi::model::info::Info) -> Self
 pub fn kynos::router::Router<C, P, I, S>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::Router<C, P, kynos::middleware::stack::Cons<N, I>, S> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>, S: kynos::middleware::stack::CompatibleWith<N, C>
