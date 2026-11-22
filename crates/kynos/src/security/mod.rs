@@ -594,9 +594,15 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// A store that cannot be reached is neither: [`AuthRejection::unavailable`].
     ///
     /// A [`Malformed`](carrier::presented::Presented::Malformed) credential
-    /// always reaches here, so its refusal is this method's to name, count
-    /// and log; [`Presented::require`](carrier::presented::Presented::require)
-    /// refuses it, and absence, with the 401 the guard would answer.
+    /// reaches here under a guard over this scheme alone, so its refusal is
+    /// this method's to name, count and log;
+    /// [`Presented::require`](carrier::presented::Presented::require) refuses
+    /// it, and absence, with the 401 the guard would answer. A combination
+    /// asks only the schemes it gets to: an
+    /// [`AnyOf`](requirement::AnyOf) stops at the first alternative
+    /// satisfied, and an [`AllOf`](requirement::AllOf) answers a 401 before
+    /// any authenticator runs when one of its credentials is absent, and
+    /// asks no scheme after the first one refused.
     ///
     /// An [`Absent`](carrier::presented::Presented::Absent) credential never
     /// reaches here — that is [`Auth`](auth::Auth)'s 401 and

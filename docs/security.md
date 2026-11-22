@@ -40,10 +40,20 @@ satisfying it means authenticating *and* holding them: see
 
 - **`AnyOf` tries in order.** An absent credential is skipped and a refused one
   does not block the next. When none is satisfied, the first refusal in tuple
-  order is the answer; when none was presented, the guard sees absence.
+  order is the answer; when none was presented, the guard sees absence. A
+  credential of a later alternative is malformed to an earlier one, so under
+  `AnyOf<(Bearer, Basic)>` every Basic request reaches `Bearer`'s authenticator
+  as `Malformed` with `MalformedReason::OtherScheme` first. That is kept: a
+  carrier reads one scheme and cannot know another follows, and calling it
+  absence would let `MaybeAuth<Bearer>` wave a Basic request through. A counter
+  of malformed credentials under an `AnyOf` therefore leaves `OtherScheme` out,
+  or counts in the last alternative's authenticator.
 - **`AllOf` reads every credential before verifying any.** None presented is
   absence; some but not all is a 401, because a partial set is not an anonymous
-  request.
+  request, answered before any authenticator runs, so a malformed credential
+  beside an absent one reaches none. With every credential presented, each
+  authenticator runs in tuple order and the first refusal is the answer, so a
+  malformed credential after a refused one is never seen.
 - **A combination's 401 carries the first challenge among its schemes.**
   RFC 9110 section 11.6.1's `WWW-Authenticate = #challenge` admits a list and
   requires a 401 to carry at least one, but `Requirement::challenge` returns at

@@ -3,9 +3,12 @@
 //!
 //! A carrier answers one of three things, and none of them is a refusal. The
 //! guard answers an [`Absent`](Presented::Absent) credential itself, unless the
-//! scheme hands absence on; a [`Malformed`](Presented::Malformed) one always
-//! reaches the [`Authenticator`](crate::security::Authenticator), which names
-//! why it refuses it, or admits it, as the application decides.
+//! scheme hands absence on; a [`Malformed`](Presented::Malformed) one reaches
+//! the [`Authenticator`](crate::security::Authenticator), which names why it
+//! refuses it, or admits it, as the application decides. That holds for a
+//! guard over one scheme; a combination asks only the schemes it gets to, as
+//! [`Authenticator::authenticate`](crate::security::Authenticator::authenticate)
+//! states.
 
 use std::fmt;
 
