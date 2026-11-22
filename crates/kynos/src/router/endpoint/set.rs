@@ -68,7 +68,7 @@ impl<C> Endpoints<C> {
 
 /// A value that can contribute operations to a router or a group.
 ///
-/// Implemented for [`Endpoints`], for [`EndpointBuilder`](crate::router::endpoint::builder::EndpointBuilder),
+/// Implemented for [`Endpoints`], for [`EndpointBuilder`],
 /// for an asset set, and for tuples, arrays and vectors of those. `routes![a, b, c]`
 /// expands to a tuple, which is what lets it be one argument while each member
 /// keeps the interceptor types the mount site checks.

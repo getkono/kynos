@@ -55,7 +55,7 @@ use crate::{
 /// compile time, and against everything else — a later
 /// [`intercept`](Group::intercept), and the routers it ends up under — when
 /// the router is built, as
-/// [`RouterError::InterceptorsCollide`](crate::router::error::RouterError::InterceptorsCollide).
+/// [`RouterError::InterceptorsCollide`].
 pub struct Group<C, P = Propagate, I = ()> {
     // `pub(super)`: the router mounting a group destructures it.
     pub(super) prefix: String,
