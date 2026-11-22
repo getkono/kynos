@@ -381,7 +381,7 @@ impl<C> Transport<C> {
                     let limit = if stalled {
                         STALLED_BODY_IDLE_TIMEOUT
                     } else {
-                        crate::server::request_body::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT
+                        crate::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT
                     };
                     let (parts, body) = request.into_parts();
                     let (body, stall) = crate::server::request_body::bounded(

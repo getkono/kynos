@@ -6254,6 +6254,7 @@ pub struct kynos::prelude::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: core::time::Duration
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self
@@ -10527,6 +10528,7 @@ pub struct kynos::server::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
 pub const kynos::server::Server<()>::DEFAULT_MAX_CONNECTIONS: core::num::nonzero::NonZeroUsize
+pub const kynos::server::Server<()>::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: core::time::Duration
 pub const kynos::server::Server<()>::DEFAULT_SHUTDOWN_TIMEOUT: core::time::Duration
 impl<C: 'static> kynos::server::Server<C>
 pub fn kynos::server::Server<C>::accept_shards(self, core::num::nonzero::NonZeroUsize) -> Self

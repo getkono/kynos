@@ -29,10 +29,6 @@ use crate::{
     server::{error::ServerError, protocol::non_zero},
 };
 
-/// How long a request body may go without a frame unless the server is told
-/// otherwise: the same 30 seconds a request head is given.
-pub(crate) const DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Refuses an idle timeout that would expire before a frame could arrive.
 pub(crate) fn validate_request_body_idle_timeout(
     timeout: Option<Duration>,
