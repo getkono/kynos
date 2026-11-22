@@ -32,9 +32,10 @@ use crate::{
 /// [`http::Uri`]: crate::http::Uri
 /// [`Link`]: crate::extract::link::Link
 ///
-/// Always an RFC 9110 field value, since [`Created`] and [`Redirect`] declare
-/// the header required and so must always send it. Nothing beyond that is
-/// checked: a `Location` value is a URI reference, relative forms included.
+/// Always an RFC 9110 field value, since [`Created`], [`Redirect`] and
+/// [`Accepted::at`] declare the header required and so must always send it.
+/// Nothing beyond that is checked: a `Location` value is a URI reference,
+/// relative forms included.
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Location(Cow<'static, str>);
 
@@ -196,20 +197,111 @@ impl<T> Created<T> {
 
 /// A 202 Accepted response for work that has not finished.
 ///
-/// A body that answers with a 4xx or 5xx is sent unchanged rather than as 202.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Accepted<T> {
+/// `L` says whether the response points at a status monitor, the resource a
+/// client polls for the request's outcome (RFC 9110 §15.3.3). `Accepted<T>`,
+/// from [`new`](Accepted::new), sends no `Location`; `Accepted<T, Location>`,
+/// from [`at`](Accepted::at), always sends one and declares it required. The
+/// return type is therefore what the description reads, and one cannot stand
+/// in for the other:
+///
+/// ```compile_fail
+/// use kynos::response::status::{Accepted, Location};
+/// fn queue() -> Accepted<&'static str> {
+///     Accepted::at(Location::from_static("/jobs/7"), "queued")
+/// }
+/// ```
+///
+/// A body that answers with a 4xx or 5xx is sent unchanged, with neither 202
+/// nor `Location`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Accepted<T, L: AcceptedLocation = ()> {
     /// A representation of the accepted work, typically a job handle.
     pub body: T,
+    /// Where the request's status can be monitored, or `()` for nowhere.
+    pub location: L,
 }
 
 impl<T> Accepted<T> {
-    /// Creates a 202 response carrying the accepted work representation.
+    /// Creates a 202 response carrying the accepted work representation, and
+    /// no `Location`.
     #[must_use]
     pub fn new(body: T) -> Self {
-        Self { body }
+        Self { body, location: () }
     }
 }
+
+/// Only where no `Location` is sent: a default location would point a client
+/// at an empty URI reference.
+impl<T: Default> Default for Accepted<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
+impl<T> Accepted<T, Location> {
+    /// Creates a 202 response whose status monitor is at `location`.
+    ///
+    /// Takes a [`Location`], a route attribute's `relative_uri`, or a `Link`'s
+    /// `uri`.
+    #[must_use]
+    pub fn at(location: impl Into<Location>, body: T) -> Self {
+        Self {
+            body,
+            location: location.into(),
+        }
+    }
+}
+
+/// Closes the set of [`AcceptedLocation`] states, since each one decides a
+/// header the description declares.
+mod sealed {
+    /// The private supertrait, holding what each state does.
+    pub trait Sealed {
+        /// Sets the state's header, if any, on a 202.
+        fn send(self, response: &mut super::Response);
+
+        /// Declares the state's header, if any, on the 202's description.
+        fn declare(accepted: kynos_openapi::Response) -> kynos_openapi::Response;
+    }
+}
+
+/// Whether an [`Accepted`] sends `Location`: `()` for no header, [`Location`]
+/// for a required one.
+///
+/// Sealed, so those two are the whole set:
+///
+/// ```compile_fail
+/// struct Elsewhere;
+/// impl kynos::response::status::AcceptedLocation for Elsewhere {}
+/// ```
+pub trait AcceptedLocation: sealed::Sealed {}
+
+impl sealed::Sealed for () {
+    fn send(self, response: &mut Response) {
+        let _ = response;
+    }
+
+    fn declare(accepted: kynos_openapi::Response) -> kynos_openapi::Response {
+        accepted
+    }
+}
+
+impl AcceptedLocation for () {}
+
+impl sealed::Sealed for Location {
+    fn send(self, response: &mut Response) {
+        set_location(response, self);
+    }
+
+    fn declare(accepted: kynos_openapi::Response) -> kynos_openapi::Response {
+        accepted.with_header(
+            "Location",
+            location_header("Where the request's status can be monitored"),
+        )
+    }
+}
+
+impl AcceptedLocation for Location {}
 
 /// A redirect with a status fixed at compile time.
 ///
@@ -430,18 +522,19 @@ impl<T: Responses> Responses for Created<T> {
     }
 }
 
-impl<T: IntoResponse> IntoResponse for Accepted<T> {
+impl<T: IntoResponse, L: AcceptedLocation> IntoResponse for Accepted<T, L> {
     fn into_response(self) -> Response {
         let mut response = self.body.into_response();
         if is_failure(&response) {
             return response;
         }
         *response.status_mut() = StatusCode::ACCEPTED;
+        self.location.send(&mut response);
         response
     }
 }
 
-impl<T: Responses> Responses for Accepted<T> {
+impl<T: Responses, L: AcceptedLocation> Responses for Accepted<T, L> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let mut responses = T::responses(registry);
         let Some(accepted) = body_response(
@@ -452,7 +545,7 @@ impl<T: Responses> Responses for Accepted<T> {
             return responses;
         };
 
-        responses.with(ACCEPTED, accepted)
+        responses.with(ACCEPTED, L::declare(accepted))
     }
 }
 
