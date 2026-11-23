@@ -66,11 +66,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             )?;
 
             let method = mounted.endpoint.method();
-            let described = document
-                .paths
-                .items
-                .get(&key)
-                .and_then(|item| item.operation(method));
+            let item = document.paths.items.get(&key);
+            let described = item.and_then(|item| item.operation(method));
             let operation_id = described
                 .and_then(|operation| operation.operation_id.clone())
                 .unwrap_or_default();
@@ -79,12 +76,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let interceptors = covering(&self.interceptors, self.guard_first, &mounted);
 
             #[cfg(feature = "unchecked")]
-            let unchecked_layers = {
-                let mut layers = self.unchecked.layers.clone();
-                layers.extend(mounted.unchecked_layers);
-                layers
-            };
+            let unchecked_layers =
+                [self.unchecked.layers.clone(), mounted.unchecked_layers].concat();
 
+            // Where it describes a `HEAD`, the entry holding it.
+            let head = mounted.endpoint.described_head().and(item);
             let terminal = EndpointTerminal::new(mounted.endpoint);
             #[cfg(feature = "openapi32")]
             let terminal = terminal.with_accept_query(record_accept_query(
@@ -93,7 +89,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 described,
             ));
 
-            paths[index].operations.push(dispatch::Served {
+            let served = dispatch::Served {
                 method,
                 operation_id,
                 terminal: Arc::new(terminal),
@@ -102,7 +98,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 secured,
                 #[cfg(feature = "unchecked")]
                 unchecked_layers,
-            });
+            };
+            paths[index]
+                .operations
+                .extend(super::head::with_head(served, head));
         }
 
         #[cfg(feature = "unchecked")]

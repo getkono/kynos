@@ -49,7 +49,8 @@
 //!   and `/partners/settlements` demands two together through `AllOf`: the
 //!   combination is the guard's type, so it is what runs and what is declared.
 //!   `/reports/summary` demands one scope set of either of two schemes, through
-//!   `Scoped` over an `AnyOf`.
+//!   `Scoped` over an `AnyOf`, and `/exports/reports` demands one of a single
+//!   alternative, through `Scoped` inside an `AnyOf`.
 //!
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
@@ -70,10 +71,11 @@
 //!
 //! `ReadReports` says that URI a second time as `Scopes::FORBIDDEN_TYPE`, which
 //! is the only seam a document assembled from *types* has for a value chosen at
-//! run time. `/reports` then declares a 403 publishing that type or
-//! `about:blank`; every other guarded operation here names no scope set and
-//! declares the shared `Problem` component, which is the widest thing true of a
-//! refusal nothing has named.
+//! run time. `/reports` and `/reports/summary` then declare a 403 publishing
+//! that type or `about:blank`; every other guarded operation here declares the
+//! shared `Problem` component, which is the widest thing true of a refusal
+//! nothing has named. `/exports/reports` scopes its token by `ReadReports` too,
+//! but its service key names no refusal, so its 403 stays wide.
 
 use std::{collections::HashMap, net::Ipv4Addr, time::Duration};
 
@@ -592,6 +594,23 @@ async fn exports(caller: Auth<AnyOf<(ServiceKey, AccessToken)>>) -> NoContent {
     NoContent
 }
 
+/// Exports reports for an integration, or for a person whose token holds
+/// `reports:read`.
+///
+/// A scope set written on one alternative scopes that alternative alone:
+/// `[{ServiceKey: []}, {AccessToken: [reports:read]}]`. The key is trusted as
+/// it is, so no second scheme type is needed to give the token its set.
+#[kynos::get("/exports/reports")]
+async fn report_exports(
+    caller: Auth<AnyOf<(ServiceKey, Scoped<AccessToken, ReadReports>)>>,
+) -> NoContent {
+    match caller.into_inner() {
+        Either2::First(key) => drop(key),
+        Either2::Second(claims) => drop(claims.subject),
+    }
+    NoContent
+}
+
 /// Settles a partner's account, which needs both its certificate and a token.
 ///
 /// `AllOf` declares the single requirement
@@ -619,6 +638,7 @@ async fn main() -> kynos::Result<()> {
         reports,
         report_summary,
         exports,
+        report_exports,
         settlement,
     ]);
 

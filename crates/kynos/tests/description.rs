@@ -52,6 +52,10 @@
 //! The tenth is which components a named instantiation reaches. A name declared
 //! on a nested router applies to the whole document, and a document still
 //! carrying the mangled name would validate against everything else here.
+//!
+//! The eleventh is what the HEAD a `GET` describes says. It is that `GET`
+//! without content, and a document that copied the content, dropped a field,
+//! or let it stand beside a declared `head` would still validate.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -3200,4 +3204,161 @@ fn a_named_instantiation_declared_on_a_nested_router_names_its_component() {
         shelf.description.as_deref(),
         Some("The books on one shelf.")
     );
+}
+
+// --- The HEAD a GET describes -----------------------------------------------
+
+/// `object`'s `GET`, describing the HEAD it answers as `head_object`.
+fn object_and_its_head() -> impl kynos::router::endpoint::set::IntoEndpoints<(), Stacks = ()> {
+    EndpointBuilder::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/objects/current").expect("a valid path"),
+        object,
+    )
+    .operation_id("get_object")
+    .describe_head("head_object")
+}
+
+/// The HEAD a `GET` describes is that `GET` under its own name with no
+/// response carrying content (RFC 9110 section 9.3.2) and no range handling,
+/// every other field the `GET` declares still declared; a `GET` that describes
+/// none leaves its HEAD out.
+#[test]
+fn a_described_head_is_its_get_without_content() {
+    let document = Router::<()>::new()
+        .mount(object_and_its_head())
+        .mount(kynos::routes![alpha])
+        .openapi()
+        .expect("a describable router");
+
+    let item = &document.paths.items["/objects/current"];
+    let get = item
+        .operation(kynos::openapi::Method::Get)
+        .expect("the GET")
+        .clone();
+    let head = item
+        .operation(kynos::openapi::Method::Head)
+        .expect("the HEAD it describes")
+        .clone();
+
+    // Not vacuous: the GET's 200 has content to remove and fields to keep.
+    let Some(kynos::openapi::RefOr::Item(ok)) = get.responses.responses.get("200") else {
+        panic!("an inline 200");
+    };
+    assert!(!ok.content.is_empty() && ok.headers.contains_key("ETag"));
+
+    // Not vacuous either: the GET declares range handling, which a HEAD lacks
+    // (RFC 9110 section 14.2), so its HEAD declares none.
+    let ranged = |parameter: &kynos::openapi::RefOr<kynos::openapi::Parameter>| {
+        parameter
+            .as_item()
+            .is_some_and(|parameter| ["Range", "If-Range"].contains(&parameter.name.as_str()))
+    };
+    assert!(get.parameters.iter().any(ranged));
+    assert!(get.responses.responses.contains_key("206"));
+    assert!(get.responses.responses.contains_key("416"));
+
+    let mut expected = get.clone();
+    expected.operation_id = Some("head_object".to_owned());
+    expected.parameters.retain(|parameter| !ranged(parameter));
+    expected.responses.responses.shift_remove("206");
+    expected.responses.responses.shift_remove("416");
+    for response in expected.responses.responses.values_mut() {
+        let kynos::openapi::RefOr::Item(response) = response else {
+            panic!("an inline response");
+        };
+        response.content.clear();
+    }
+    assert_eq!(head, expected);
+
+    let alpha = &document.paths.items["/alpha"];
+    assert!(alpha.operation(kynos::openapi::Method::Head).is_none());
+}
+
+// The same `GET` as `object`, describing its HEAD through the attribute; no
+// doc comment, which the builder it is compared with has no summary for.
+#[kynos::get("/objects/current", head)]
+async fn get_object(conditions: Conditions) -> Delivery<OctetStream> {
+    object(conditions).await
+}
+
+/// The attribute's `head` reaches the document as the builder's does: the
+/// same HEAD, under the name derived from the handler's.
+#[test]
+fn a_route_attributes_head_describes_what_the_builders_does() {
+    let attributed = Router::<()>::new()
+        .mount(kynos::routes![get_object])
+        .openapi()
+        .expect("a describable router");
+    let built = Router::<()>::new()
+        .mount(object_and_its_head())
+        .openapi()
+        .expect("a describable router");
+
+    let head = |document: &Document| {
+        document.paths.items["/objects/current"]
+            .operation(kynos::openapi::Method::Head)
+            .expect("a described HEAD")
+            .clone()
+    };
+    assert_eq!(head(&attributed), head(&built));
+}
+
+/// The router's violations of `error`'s kind, by location.
+fn violations_like(router: &Router<()>, error: fn(&RouterError) -> bool) -> Vec<String> {
+    router
+        .validate()
+        .expect("a describable router")
+        .into_iter()
+        .filter(|violation| error(&violation.error))
+        .map(|violation| violation.location)
+        .collect()
+}
+
+#[kynos::head("/objects/current")]
+async fn object_head() -> NoContent {
+    NoContent
+}
+
+/// A path declaring its own HEAD beside a `GET` describing one is refused at
+/// the HEAD, whichever was mounted first: both were asked for.
+#[test]
+fn a_described_head_beside_a_declared_one_is_refused() {
+    for router in [
+        Router::<()>::new()
+            .mount(object_and_its_head())
+            .mount(kynos::routes![object_head]),
+        Router::<()>::new()
+            .mount(kynos::routes![object_head])
+            .mount(object_and_its_head()),
+    ] {
+        let located = violations_like(
+            &router,
+            |error| matches!(error, RouterError::HeadDescribedTwice { path } if path == "/objects/current"),
+        );
+        assert_eq!(located, ["#/paths/~1objects~1current/head"]);
+        assert!(router.openapi().is_err());
+    }
+}
+
+/// Only a `GET` answers a HEAD, so describing one from any other method is
+/// refused at that operation.
+#[test]
+fn a_head_described_by_another_method_is_refused() {
+    let router = Router::<()>::new().mount(
+        EndpointBuilder::new(
+            kynos::openapi::Method::Post,
+            kynos::openapi::PathTemplate::parse("/alpha").expect("a valid path"),
+            alpha,
+        )
+        .describe_head("head_alpha"),
+    );
+
+    let located = violations_like(&router, |error| {
+        matches!(
+            error,
+            RouterError::HeadWithoutGet { method: kynos::openapi::Method::Post, path } if path == "/alpha"
+        )
+    });
+    assert_eq!(located, ["#/paths/~1alpha/post"]);
 }

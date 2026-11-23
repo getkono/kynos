@@ -91,6 +91,17 @@ pub trait Endpoint<C>: Send + Sync + 'static {
         true
     }
 
+    /// The `operationId` of the `HEAD` this operation describes beside
+    /// itself, if it does.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from [`describe_head`](builder::EndpointBuilder::describe_head),
+    /// and any other endpoint describes only itself.
+    #[doc(hidden)]
+    fn __described_head(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Runs this operation's guard from the request head, ahead of the
     /// interceptors a [`guard_first`](crate::router::group::Group::guard_first)
     /// scope puts it before, handing the request on with what the guard
@@ -190,6 +201,8 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn reads_body(&self) -> bool;
 
+    fn described_head(&self) -> Option<&'static str>;
+
     /// This operation's guard as an interceptor, where its handler takes one.
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>>;
 }
@@ -229,6 +242,10 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
 
     fn reads_body(&self) -> bool {
         Endpoint::__reads_body(self)
+    }
+
+    fn described_head(&self) -> Option<&'static str> {
+        Endpoint::__described_head(self)
     }
 
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>> {

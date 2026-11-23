@@ -31,10 +31,10 @@
 //!   defined against one, so a source that cannot mint a strong `ETag` is
 //!   telling you it cannot support resumption. `Last-Modified` is the weaker
 //!   partner and is ranked below it, per section 13.1.3.
-//! * **HEAD is declared on its own here.** Kynos would answer a HEAD from the
-//!   GET without content anyway; declaring `head` is what makes it a separate
-//!   operation in the description, and a declared `head` wins over the GET.
-//!   Both reach the same builder, and `Served` sends no content for the second.
+//! * **HEAD is described from the GET.** Kynos answers a HEAD from the GET
+//!   without content anyway; the GET's `head` argument is what puts that HEAD
+//!   in the description, as `head_recording`, for a client sizing the
+//!   download first. It runs the GET's handler, so no second one is written.
 //! * **A media type can be chosen per request.** A file whose container is known
 //!   only once it is read names the set it can be with `MediaRanges`, which
 //!   becomes the `content` keys of its 200 and 206, and hands the one it detected
@@ -122,17 +122,8 @@ fn recording() -> Served<Synthetic, Mpeg> {
 }
 
 /// Streams the recording, honouring a range and the conditions around it.
-#[kynos::get("/recordings/current")]
+#[kynos::get("/recordings/current", head)]
 async fn get_recording(conditions: Conditions) -> Delivery<Mpeg> {
-    recording()
-        .deliver(&conditions)
-        .await
-        .expect("a generator cannot fail")
-}
-
-/// The same fields with no content, for a client sizing the download first.
-#[kynos::head("/recordings/current")]
-async fn head_recording(conditions: Conditions) -> Delivery<Mpeg> {
     recording()
         .deliver(&conditions)
         .await
@@ -152,7 +143,7 @@ async fn get_clip(conditions: Conditions) -> Delivery<Video> {
 
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new().mount(kynos::routes![get_recording, head_recording, get_clip]);
+    let router = Router::<()>::new().mount(kynos::routes![get_recording, get_clip]);
 
     println!("{}", router.openapi()?.to_json()?);
 
