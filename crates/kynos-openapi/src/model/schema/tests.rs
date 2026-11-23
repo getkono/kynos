@@ -55,3 +55,28 @@ fn component_references_use_the_schema_ref_keyword() {
     let json = serde_json::to_string(&Schema::component("User")).expect("ok");
     assert_eq!(json, r##"{"$ref":"#/components/schemas/User"}"##);
 }
+
+/// A described boolean schema still accepts exactly what the boolean did, and
+/// an object keeps its other keywords.
+#[test]
+fn a_description_promotes_a_boolean_schema_without_changing_what_it_accepts() {
+    let described =
+        |schema: Schema| serde_json::to_string(&schema.with_description("d")).expect("ok");
+    assert_eq!(described(Schema::any()), r#"{"description":"d"}"#);
+    assert_eq!(
+        described(Schema::never()),
+        r#"{"not":true,"description":"d"}"#
+    );
+    assert_eq!(
+        described(Schema::of_type(SchemaType::String)),
+        r#"{"type":"string","description":"d"}"#
+    );
+}
+
+/// Editing in place never promotes a boolean schema.
+#[test]
+fn a_boolean_schema_has_no_keywords_to_edit() {
+    assert!(Schema::any().as_object_mut().is_none());
+    assert!(Schema::never().as_object_mut().is_none());
+    assert!(Schema::default().as_object_mut().is_some());
+}

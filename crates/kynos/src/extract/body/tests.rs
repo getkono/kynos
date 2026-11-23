@@ -2873,6 +2873,51 @@ mod a_text_body_under_a_declared_media_type {
         }
     }
 
+    /// A type outside `text/*` that declares `charset=utf-8`, which a
+    /// request may repeat and may not contradict.
+    struct OpenMetrics;
+
+    impl MediaType for OpenMetrics {
+        const MEDIA_TYPE: &'static str =
+            "application/openmetrics-text; version=1.0.0; charset=utf-8";
+    }
+
+    #[tokio::test]
+    async fn a_type_outside_text_declaring_utf_8_reads_as_its_own_type() {
+        for content_type in [
+            "application/openmetrics-text",
+            "Application/OpenMetrics-Text; charset=UTF-8; version=1.0.0",
+        ] {
+            let text =
+                super::extract::<TextAs<OpenMetrics>>(request(content_type, "é\n".as_bytes()))
+                    .await
+                    .unwrap_or_else(|rejection| panic!("{content_type}: {rejection:?}"));
+            assert_eq!(text.into_inner(), "é\n");
+        }
+
+        for content_type in [
+            "application/openmetrics-text; charset=iso-8859-1",
+            "text/openmetrics-text",
+        ] {
+            let rejection = super::extract::<TextAs<OpenMetrics>>(request(content_type, b"a"))
+                .await
+                .expect_err(content_type);
+            assert!(
+                matches!(rejection, BodyRejection::UnsupportedMediaType { .. }),
+                "{content_type}: {rejection:?}"
+            );
+        }
+
+        let rejection =
+            super::extract::<TextAs<OpenMetrics>>(request("application/openmetrics-text", b"\xe9"))
+                .await
+                .expect_err("Latin-1 is not UTF-8");
+        assert!(
+            matches!(rejection, BodyRejection::Syntax { .. }),
+            "{rejection:?}"
+        );
+    }
+
     #[tokio::test]
     async fn bytes_that_are_not_utf_8_are_a_syntax_rejection() {
         let rejection = super::extract::<TextAs<Csv>>(request("text/csv", b"caf\xe9"))

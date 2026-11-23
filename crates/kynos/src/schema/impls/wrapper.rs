@@ -1,6 +1,6 @@
 //! Transparent wrappers, and the one that adds nullability.
 
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 use kynos_openapi::{
     ComponentName, Schema as OpenApiSchema,
@@ -67,7 +67,7 @@ impl<T: Schema> Schema for Option<T> {
 macro_rules! transparent {
     ($($ty:ident),+ $(,)?) => {
         $(
-            impl<T: Schema> Schema for $ty<T> {
+            impl<T: Schema + ?Sized> Schema for $ty<T> {
                 const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = T::CONSTRAINT_PROBLEM;
 
                 fn schema(registry: &mut Registry) -> OpenApiSchema {
@@ -87,8 +87,44 @@ macro_rules! transparent {
 }
 
 // `name` delegates too, so a `Box<User>` and a `User` are one component; and
-// `CONSTRAINT_PROBLEM`, so one answers as the other does.
+// `CONSTRAINT_PROBLEM`, so one answers as the other does. Over unsized `T`
+// too, so `Box<str>` and `Arc<[T]>` are `str`'s and `[T]`'s answer.
 transparent!(Box, Arc);
+
+// A borrow is what it points at, as `Box` is, unsized `T` included. Any
+// lifetime: a schema describes a type, never how long one of its values lives.
+impl<T: Schema + ?Sized> Schema for &T {
+    const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = T::CONSTRAINT_PROBLEM;
+
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        T::schema(registry)
+    }
+
+    fn name() -> Option<ComponentName> {
+        T::name()
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        T::check_constraints(*self, at, violations);
+    }
+}
+
+// Borrowed or owned, the wire form is `B`'s: serde writes either as `B`.
+impl<B: Schema + ToOwned + ?Sized> Schema for Cow<'_, B> {
+    const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = B::CONSTRAINT_PROBLEM;
+
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        B::schema(registry)
+    }
+
+    fn name() -> Option<ComponentName> {
+        B::name()
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        B::check_constraints(self, at, violations);
+    }
+}
 
 // The flatten markers carry across as `T`'s answer. Written out rather than in
 // `transparent!`, so rustc's unsatisfied-trait notes do not name the macro.

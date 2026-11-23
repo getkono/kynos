@@ -16,6 +16,7 @@ An argument that contributes nothing to the contract says so, by implementing
 | [`ConnectInfo`](../crates/kynos/src/extract/connection.rs) | nothing | it is a property of the connection, not the API |
 | [`Connection`](../crates/kynos/src/extract/connection.rs) | nothing | it is the connection itself — peer, local address, TLS — not the API |
 | [`Forwarded`](../crates/kynos/src/http/forwarded.rs) | nothing | it is what the deployment's proxies say about the connection, not the API |
+| [`Option<AssignedId>`](../crates/kynos/src/middleware/request_id.rs) | nothing | the header it arrives in is the covering `RequestId`'s to describe; an operation no `RequestId` covers reads `None` |
 | [`Draining`](../crates/kynos/src/server/lifecycle.rs) | nothing | it is the server's state, not the API |
 | [`Readiness`](../crates/kynos/src/server/lifecycle.rs) | nothing | it is the server's state, not the API; a probe's 503 is its own operation's to declare |
 
@@ -193,8 +194,11 @@ A body's media type is its type's. `Json<T>` is `application/json`;
 under the `application/json` or `+json` type its marker names, so two versions
 of a document are two distinct types in one `OneOf` or `Negotiated` rather than
 a branch on a header. [`TextAs<M>`](../crates/kynos/src/extract/body/text_as.rs)
-is `Text` under the `text/*` type its marker names; it decodes only UTF-8, so a
-marker stating another charset fails the build.
+is `Text` under the type its marker names; it decodes only UTF-8, so a marker
+stating another charset fails the build. That type is `text/*` unless the marker
+states `charset=utf-8`, which is how a text format registered elsewhere, such
+as `application/openmetrics-text`, is carried: RFC 6657's UTF-8 default reaches
+only `text/*`, so elsewhere the charset is the only evidence the body is text.
 
 Putting a body under a media type is a ladder of three rungs, each taken only
 when the one before cannot carry the body:

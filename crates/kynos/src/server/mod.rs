@@ -104,7 +104,7 @@ use crate::{
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
-        request_body::{DEFAULT_REQUEST_BODY_IDLE_TIMEOUT, validate_request_body_idle_timeout},
+        request_body::validate_request_body_idle_timeout,
         shutdown::{ForceFuture, Shutdown, ShutdownFuture},
         tcp::{SocketOptions, TcpKeepAlive, validate_tcp_keepalive},
     },
@@ -170,6 +170,11 @@ impl Server<()> {
     /// assert_eq!(Server::DEFAULT_LISTEN_BACKLOG.get(), u32::MAX);
     /// ```
     pub const DEFAULT_LISTEN_BACKLOG: NonZeroU32 = NonZeroU32::MAX;
+
+    /// The default
+    /// [`request_body_idle_timeout`](Self::request_body_idle_timeout): 30
+    /// seconds without a frame, the same budget a request head is given.
+    pub const DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
 }
 
 impl<C: 'static> Server<C> {
@@ -196,7 +201,7 @@ impl<C: 'static> Server<C> {
             accept_shards: NonZeroUsize::MIN,
             listen_backlog: Server::DEFAULT_LISTEN_BACKLOG,
             tcp_keepalive: Some(TcpKeepAlive::default()),
-            request_body_idle_timeout: Some(DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
+            request_body_idle_timeout: Some(Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
             proxy_protocol: TrustedProxies::none(),
         }
     }
@@ -550,7 +555,7 @@ impl<C: 'static> Server<C> {
     /// Sets how long a request body may go without a frame, or `None` to wait
     /// indefinitely.
     ///
-    /// On by default at 30 seconds, the same budget a request head is given.
+    /// On by default at [`DEFAULT_REQUEST_BODY_IDLE_TIMEOUT`](Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT).
     /// The clock runs only while something is reading the body and has nothing
     /// to read, so a large upload arriving steadily is never cut short, and a
     /// handler that reads its body late is not charged for the wait.

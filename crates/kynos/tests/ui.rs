@@ -140,6 +140,10 @@ fn every_guided_diagnostic_has_a_snapshot() {
             "antipattern/raw_header_map_extractor.stderr",
         ),
         ("Handler", "traits/handler.stderr"),
+        (
+            "HeldError",
+            "macros/api_error_transparent_not_an_api_error.stderr",
+        ),
         ("IntoEndpoints", "traits/into_endpoints.stderr"),
         ("IntoResponse", "antipattern/bare_status_code.stderr"),
         ("Items", "macros/schema_item_bound_on_a_string.stderr"),

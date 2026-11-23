@@ -30,14 +30,14 @@
 //! | Rust | Schema |
 //! | --- | --- |
 //! | `bool` | `boolean` |
-//! | `String` | `string` |
+//! | `String`, `str` | `string` |
 //! | `char` | `string`/`char`, with `minLength` and `maxLength` of 1 |
 //! | `i8`–`i32` | `integer`/`int8`–`int32`, with the type's exact range |
 //! | `u8`–`u32` | `integer`/`uint8`–`uint32`, with the type's exact range |
 //! | `i64`, `u64` | `integer`/`int64`, `uint64`; of their bounds only `u64`'s `minimum: 0` survives an `f64`, so it is the only one stated |
 //! | `f32`, `f64` | `number`/`float`, `number`/`double` |
 //! | `Option<T>` | `T`, widened to admit `null` |
-//! | `Box<T>`, `Arc<T>` | `T`, under `T`'s own component name |
+//! | `Box<T>`, `Arc<T>`, `&T`, `Cow<'_, T>` | `T`, under `T`'s own component name |
 //! | `Vec<T>`, `VecDeque<T>`, `[T]` | `array` with `items` |
 //! | `[T; N]` | `array` of exactly `N` |
 //! | `HashSet<T>`, `BTreeSet<T>` | `array` with `uniqueItems` |
@@ -146,7 +146,7 @@ use crate::schema::{
 /// its field types through `registry.resolve::<T>()` rather than `T::schema`.
 ///
 /// The one exception is a wrapper with no wire form of its own — `Box<T>`,
-/// `Arc<T>` — which *is* `T` and delegates to `T::schema` directly; `resolve`
+/// `Arc<T>`, `&T`, `Cow<'_, T>` — which *is* `T` and delegates to `T::schema` directly; `resolve`
 /// there would return a `$ref` to the component being defined.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` cannot describe itself as a schema",
@@ -173,8 +173,8 @@ pub trait Schema {
     /// since no bound was consulted.
     ///
     /// Only the decoded type's own answer counts: a member whose type names
-    /// another one breaks a bound under the type holding it. `Option`, `Box`
-    /// and `Arc` are their `T` and answer as it does.
+    /// another one breaks a bound under the type holding it. `Option`, `Box`,
+    /// `Arc`, `&T` and `Cow` are their `T` and answer as it does.
     ///
     /// `#[derive(Schema)]` sets it with `#[schema(constraint_problem = ...)]`
     /// on the type.
@@ -492,6 +492,18 @@ impl MapKey for String {
 /// }
 /// ```
 ///
+/// `#[derive(kynos::ParamValue)]` writes the two delegating impls and the
+/// marker for a newtype, bounding its field by `ParamValue`; its `Schema` is
+/// still yours:
+///
+/// ```
+/// #[derive(kynos::Schema, kynos::ParamValue)]
+/// struct PageLimit(#[schema(maximum = 1000)] u32);
+///
+/// assert_eq!(PageLimit(50).to_string(), "50");
+/// assert!(matches!("50".parse(), Ok(PageLimit(50))));
+/// ```
+///
 /// A field-less enum derives all three from the names its `Schema` derive
 /// publishes, so the parameter's `enum` and its decoder cannot disagree, and
 /// other text is refused with [`UnknownVariant`]:
@@ -515,7 +527,8 @@ impl MapKey for String {
     label = "not one parameter value",
     note = "a parameter field is read with `FromStr`, written with `Display` and described by \
             its `Schema`, so that schema must describe one value, not an object or an array; \
-            implement `kynos::schema::ParamValue` for a newtype or enum whose schema does",
+            derive or implement `kynos::schema::ParamValue` for a newtype or enum whose schema \
+            does",
     note = "for a structured query such as a search filter, take the whole query string as \
             `kynos::extract::params::querystring::QueryString` under `openapi32`"
 )]

@@ -824,7 +824,7 @@ const VALIDATION_FAILED: ConstraintProblem =
     ConstraintProblem::of_type("https://errors.example.com/validation-failed");
 
 /// A body naming its own problem, holding a member that names another.
-#[derive(Debug, Schema, Deserialize)]
+#[derive(Debug, Clone, Schema, Deserialize)]
 #[schema(constraint_problem = VALIDATION_FAILED)]
 struct Named {
     #[schema(maximum = 100)]
@@ -833,7 +833,7 @@ struct Named {
 }
 
 /// A member naming a type of its own, which the body holding it overrides.
-#[derive(Debug, Schema, Deserialize)]
+#[derive(Debug, Clone, Schema, Deserialize)]
 #[schema(constraint_problem = ConstraintProblem::of_type("https://errors.example.com/inner"))]
 struct Inner {
     #[schema(minimum = 1)]
@@ -878,6 +878,15 @@ async fn a_broken_bound_carries_the_problem_its_body_names() {
     );
     assert_eq!(
         carried(refusal::<Option<Named>>(&broken).await),
+        Some(VALIDATION_FAILED)
+    );
+    assert_eq!(
+        carried(refusal::<std::borrow::Cow<'static, Named>>(&broken).await),
+        Some(VALIDATION_FAILED)
+    );
+    // A borrow never decodes from a body, so its answer is read directly.
+    assert_eq!(
+        <&Named as SchemaTrait>::CONSTRAINT_PROBLEM,
         Some(VALIDATION_FAILED)
     );
 

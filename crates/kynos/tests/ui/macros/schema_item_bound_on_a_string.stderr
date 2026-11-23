@@ -6,6 +6,7 @@ error[E0277]: `std::string::String` is not an array, so an item bound cannot app
   |
   = help: the trait `Items` is not implemented for `std::string::String`
   = note: `min_items` and `max_items` apply to sequences and sets, and to an `Option`, `Box` or `Arc` of one
+  = note: or, on a `Schema` field whose serde form is an array, describe it as one with `#[schema(as = Vec<T>)]`, converting through `From<&std::string::String>` or `via = path`
   = help: the following other types implement trait `Items`:
             Arc<T>
             BTreeSet<T>

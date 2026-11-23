@@ -1,0 +1,23 @@
+error[E0277]: `Window` is not a value one parameter carries
+  --> tests/ui/macros/param_value_newtype_over_an_object.rs:11:14
+   |
+11 | struct Range(Window);
+   |              ^^^^^^ not one parameter value
+   |
+help: the trait `ParamValue` is not implemented for `Window`
+  --> tests/ui/macros/param_value_newtype_over_an_object.rs:5:1
+   |
+ 5 | struct Window {
+   | ^^^^^^^^^^^^^
+   = note: a parameter field is read with `FromStr`, written with `Display` and described by its `Schema`, so that schema must describe one value, not an object or an array; derive or implement `kynos::schema::ParamValue` for a newtype or enum whose schema does
+   = note: for a structured query such as a search filter, take the whole query string as `kynos::extract::params::querystring::QueryString` under `openapi32`
+   = help: the following other types implement trait `ParamValue`:
+             IpAddr
+             Ipv4Addr
+             Ipv6Addr
+             Range
+             bool
+             char
+             chrono::naive::date::NaiveDate
+             chrono::naive::time::NaiveTime
+           and $N others

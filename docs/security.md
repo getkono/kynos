@@ -249,6 +249,21 @@ Under an optional carrier nothing reports absence, so `MaybeAuth<S>` never sees
 anonymity, an `AnyOf` never skips `S`, and an `AllOf` holding `S` treats a
 missing partner as a partial set.
 
+An open deployment is the one whose credential is ambient: a browser reaching
+it spends whatever grants access, so a cross-site or rebound request is the
+attack, and only the authenticator knows the deployment is open. That is where
+the refusal goes. A hand-written `Carries` presents the request head beside the
+credential — `Parts` is `Clone`, and the fields the checks read are routing and
+browser-set fields the interceptors declare nowhere either, so `reads` stays
+empty — and the authenticator runs
+[`Csrf::check`](middleware.md#what-the-cookie-interceptor-is-not) and
+[`TrustedHosts::check`](middleware.md#trusted-hosts) over it, refusing with
+`AuthRejection::forbidden()`. Each check names its reason, and
+`CrossSiteReason::as_str` and `UntrustedHostReason::as_str` are the stable
+labels for a counter. Mounting the two interceptors with `when` instead decides
+the same thing outside the authenticator, at the price of a 403 and a 421 that
+are not the authenticator's.
+
 ### A scope is a value of the scheme's scope type
 
 `SecurityScheme::Scope` names, once per scheme, what one scope is — an

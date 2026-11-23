@@ -323,11 +323,12 @@ async fn main() -> kynos::Result<()> {
     // two events per request rather than one span: an observer holds
     // nothing between the two ends it is told about.
     //
-    // `correlating` reads the header and the trust setting from the
-    // `RequestId` above, so the closing event's `request_id` is the
-    // `X-Correlation-Id` this service sends. Without it, `Trace` assumes
-    // `RequestId::new()` and looks for an `x-request-id` no response carries.
-    // Both are bound here because `intercept` takes `request_id` by value.
+    // The closing event's `request_id` is the `AssignedId` the `RequestId`
+    // above hands on, whatever header carries it. `correlating` reads the
+    // header and the trust setting from it for the opening event, which
+    // fires before an identifier is assigned: without it, `Trace` assumes
+    // `RequestId::new()` and looks for an inbound `x-request-id`. Both are
+    // bound here because `intercept` takes `request_id` by value.
     let trace = Trace::new()
         .level(Level::Info)
         .correlating(&request_id)

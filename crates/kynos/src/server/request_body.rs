@@ -29,10 +29,6 @@ use crate::{
     server::{error::ServerError, protocol::non_zero},
 };
 
-/// How long a request body may go without a frame unless the server is told
-/// otherwise: the same 30 seconds a request head is given.
-pub(crate) const DEFAULT_REQUEST_BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(30);
-
 /// Refuses an idle timeout that would expire before a frame could arrive.
 pub(crate) fn validate_request_body_idle_timeout(
     timeout: Option<Duration>,
@@ -186,4 +182,60 @@ where
     fn size_hint(&self) -> SizeHint {
         self.inner.size_hint()
     }
+}
+
+/// `exchange` run on a paused clock, with how long it took on that clock, or
+/// `None` once `guard` of wall time passed without its end.
+///
+/// The half of [`TestRequest::send_timed`](crate::test::TestRequest::send_timed)
+/// that names the runtime, here beside the timer it measures. The guard is a
+/// thread waiting on the real clock: a tokio timer would be the earliest
+/// deadline, and the paused clock would jump to it. The clock is resumed
+/// however the exchange ends.
+///
+/// # Panics
+///
+/// Panics, as `tokio::time::pause` does, outside a current-thread runtime and
+/// on a clock already paused.
+#[cfg(feature = "test-util")]
+pub(crate) async fn on_paused_clock<F: Future>(
+    exchange: F,
+    guard: Duration,
+) -> Option<(F::Output, Duration)> {
+    /// Resumes the clock it paused when dropped, the exchange's panic
+    /// included.
+    struct Resume;
+    impl Drop for Resume {
+        fn drop(&mut self) {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                tokio::time::resume();
+            }
+        }
+    }
+
+    tokio::time::pause();
+    let _resume = Resume;
+    let started = Instant::now();
+
+    let (fired, mut expired) = tokio::sync::oneshot::channel::<()>();
+    let (done, finished) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = finished.recv_timeout(guard) {
+            let _ = fired.send(());
+        }
+    });
+
+    let mut exchange = std::pin::pin!(exchange);
+    let outcome = std::future::poll_fn(|context| {
+        if let Poll::Ready(output) = exchange.as_mut().poll(context) {
+            return Poll::Ready(Some((output, started.elapsed())));
+        }
+        Pin::new(&mut expired).poll(context).map(|_| None)
+    })
+    .await;
+
+    drop(done);
+    // Ends at once: its channel just closed, or it already fired.
+    let _ = watchdog.join();
+    outcome
 }

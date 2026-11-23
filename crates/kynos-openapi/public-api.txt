@@ -1721,11 +1721,13 @@ pub kynos_openapi::model::schema::Schema::Object(alloc::boxed::Box<kynos_openapi
 impl kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::any() -> Self
 pub fn kynos_openapi::model::schema::Schema::as_object(&self) -> core::option::Option<&kynos_openapi::model::schema::object::SchemaObject>
+pub fn kynos_openapi::model::schema::Schema::as_object_mut(&mut self) -> core::option::Option<&mut kynos_openapi::model::schema::object::SchemaObject>
 pub fn kynos_openapi::model::schema::Schema::component(&str) -> Self
 pub fn kynos_openapi::model::schema::Schema::never() -> Self
 pub fn kynos_openapi::model::schema::Schema::nullable(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::of_type(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::reference(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kynos_openapi::model::schema::Schema::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::clone(&self) -> kynos_openapi::model::schema::Schema
 impl core::cmp::PartialEq for kynos_openapi::model::schema::Schema
@@ -2555,11 +2557,13 @@ pub kynos_openapi::Schema::Object(alloc::boxed::Box<kynos_openapi::model::schema
 impl kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::any() -> Self
 pub fn kynos_openapi::model::schema::Schema::as_object(&self) -> core::option::Option<&kynos_openapi::model::schema::object::SchemaObject>
+pub fn kynos_openapi::model::schema::Schema::as_object_mut(&mut self) -> core::option::Option<&mut kynos_openapi::model::schema::object::SchemaObject>
 pub fn kynos_openapi::model::schema::Schema::component(&str) -> Self
 pub fn kynos_openapi::model::schema::Schema::never() -> Self
 pub fn kynos_openapi::model::schema::Schema::nullable(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::of_type(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::reference(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kynos_openapi::model::schema::Schema::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::clone(&self) -> kynos_openapi::model::schema::Schema
 impl core::cmp::PartialEq for kynos_openapi::model::schema::Schema
