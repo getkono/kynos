@@ -10980,9 +10980,13 @@ impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::Server<C>
 pub mod kynos::test
 pub struct kynos::test::Coverage
 impl kynos::test::Coverage
+pub fn kynos::test::Coverage::assert_covered(&self)
 pub fn kynos::test::Coverage::assert_declared_responses_covered(&self, &kynos_openapi::model::document::Document)
+pub fn kynos::test::Coverage::for_document(impl core::convert::Into<alloc::sync::Arc<kynos_openapi::model::document::Document>>) -> Self
 pub fn kynos::test::Coverage::new() -> Self
 pub fn kynos::test::Coverage::record(&self, &http::method::Method, &str, http::status::StatusCode)
+impl core::clone::Clone for kynos::test::Coverage
+pub fn kynos::test::Coverage::clone(&self) -> kynos::test::Coverage
 impl core::default::Default for kynos::test::Coverage
 pub fn kynos::test::Coverage::default() -> kynos::test::Coverage
 impl core::fmt::Debug for kynos::test::Coverage
