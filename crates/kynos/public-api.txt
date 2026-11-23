@@ -11105,6 +11105,36 @@ impl<C> core::marker::UnsafeUnpin for kynos::server::Server<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::Server<C>
 impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::Server<C>
 pub mod kynos::test
+pub mod kynos::test::cookie
+#[non_exhaustive] pub struct kynos::test::cookie::TestSetCookie<'a>
+pub kynos::test::cookie::TestSetCookie::domain: core::option::Option<&'a str>
+pub kynos::test::cookie::TestSetCookie::expires: core::option::Option<std::time::SystemTime>
+pub kynos::test::cookie::TestSetCookie::http_only: bool
+pub kynos::test::cookie::TestSetCookie::max_age: core::option::Option<core::time::Duration>
+pub kynos::test::cookie::TestSetCookie::name: &'a str
+pub kynos::test::cookie::TestSetCookie::partitioned: bool
+pub kynos::test::cookie::TestSetCookie::path: core::option::Option<&'a str>
+pub kynos::test::cookie::TestSetCookie::same_site: core::option::Option<kynos::response::cookie::SameSite>
+pub kynos::test::cookie::TestSetCookie::secure: bool
+pub kynos::test::cookie::TestSetCookie::value: &'a str
+impl<'a> kynos::test::cookie::TestSetCookie<'a>
+pub fn kynos::test::cookie::TestSetCookie<'a>::is_removal(&self) -> bool
+impl<'a> core::clone::Clone for kynos::test::cookie::TestSetCookie<'a>
+pub fn kynos::test::cookie::TestSetCookie<'a>::clone(&self) -> kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::cmp::Eq for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::cmp::PartialEq for kynos::test::cookie::TestSetCookie<'a>
+pub fn kynos::test::cookie::TestSetCookie<'a>::eq(&self, &kynos::test::cookie::TestSetCookie<'a>) -> bool
+impl<'a> core::fmt::Debug for kynos::test::cookie::TestSetCookie<'a>
+pub fn kynos::test::cookie::TestSetCookie<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::marker::StructuralPartialEq for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::marker::Freeze for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::marker::Send for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::marker::Sync for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::marker::Unpin for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::marker::UnsafeUnpin for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for kynos::test::cookie::TestSetCookie<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for kynos::test::cookie::TestSetCookie<'a>
 pub struct kynos::test::Coverage
 impl kynos::test::Coverage
 pub fn kynos::test::Coverage::assert_covered(&self)
@@ -11257,6 +11287,10 @@ pub fn kynos::test::TestResponse::path(&self) -> &str
 pub fn kynos::test::TestResponse::problem(&self) -> kynos::test::TestProblem
 pub fn kynos::test::TestResponse::status(&self) -> http::status::StatusCode
 pub fn kynos::test::TestResponse::text(&self) -> &str
+impl kynos::test::TestResponse
+pub fn kynos::test::TestResponse::assert_cookie_cleared(&self, &str) -> &Self
+pub fn kynos::test::TestResponse::assert_cookie_set(&self, &str) -> &Self
+pub fn kynos::test::TestResponse::set_cookie(&self, &str) -> core::option::Option<kynos::test::cookie::TestSetCookie<'_>>
 impl core::fmt::Debug for kynos::test::TestResponse
 pub fn kynos::test::TestResponse::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl !core::marker::Freeze for kynos::test::TestResponse

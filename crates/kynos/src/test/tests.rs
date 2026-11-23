@@ -1172,6 +1172,182 @@ mod assertions {
     fn json_fails_on_a_body_that_is_not_the_type_and_names_the_request() {
         let _: u8 = received(StatusCode::OK, &[], b"\"x\"").json();
     }
+
+    /// How a `Set-Cookie` field reads, and how the cookie assertions tell a
+    /// live cookie from a removal.
+    #[cfg(feature = "cookie")]
+    mod set_cookie {
+        use std::time::{Duration, SystemTime};
+
+        use super::received;
+        use crate::{
+            http::StatusCode,
+            response::cookie::{Cookie, SameSite},
+            test::{TestResponse, cookie::TestSetCookie},
+        };
+
+        fn setting(fields: &[&str]) -> TestResponse {
+            let headers: Vec<(&str, &str)> =
+                fields.iter().map(|field| ("set-cookie", *field)).collect();
+            received(StatusCode::OK, &headers, b"")
+        }
+
+        fn encoded(cookie: &Cookie) -> String {
+            cookie
+                .encode()
+                .expect("a representable cookie")
+                .to_str()
+                .expect("an ASCII field")
+                .to_owned()
+        }
+
+        /// Every attribute the writer can spell reads back as it was set.
+        #[test]
+        fn every_attribute_the_writer_spells_reads_back() {
+            let field = encoded(
+                &Cookie::new("session", "abc123")
+                    .path("/app")
+                    .domain(".example.com")
+                    .max_age(Duration::from_secs(3600))
+                    .http_only()
+                    .same_site(SameSite::Strict)
+                    .partitioned(),
+            );
+            let response = setting(&[&field]);
+
+            assert_eq!(
+                response.set_cookie("session"),
+                Some(TestSetCookie {
+                    name: "session",
+                    value: "abc123",
+                    path: Some("/app"),
+                    domain: Some("example.com"),
+                    max_age: Some(Duration::from_secs(3600)),
+                    expires: None,
+                    secure: true,
+                    http_only: true,
+                    same_site: Some(SameSite::Strict),
+                    partitioned: true,
+                })
+            );
+        }
+
+        /// RFC 6265 section 5.2: attribute names in any case, the last of a
+        /// repeated one winning, and one a user agent ignores read as absent.
+        #[test]
+        fn attributes_read_as_a_user_agent_reads_them() {
+            let response = setting(&[
+                " a = 1 ;path=/x; PATH=/y; max-age=10; MAX-AGE=1e3; samesite=lax; \
+                 SameSite=bogus; domain=; HTTPONLY; Expires=Sun, 06 Nov 1994 08:49:37 GMT",
+                "b=2; Path=relative; Max-Age=99999999999999999999999",
+            ]);
+
+            let a = response.set_cookie("a").expect("`a` is set");
+            assert_eq!((a.name, a.value), ("a", "1"));
+            assert_eq!(a.path, Some("/y"));
+            assert_eq!(a.max_age, Some(Duration::from_secs(10)));
+            assert_eq!(a.same_site, None);
+            assert_eq!(a.domain, None);
+            assert!(a.http_only && !a.secure && !a.partitioned);
+            assert_eq!(
+                a.expires,
+                Some(SystemTime::UNIX_EPOCH + Duration::from_secs(784_111_777))
+            );
+
+            let b = response.set_cookie("b").expect("`b` is set");
+            assert_eq!(b.path, None);
+            assert_eq!(b.max_age, Some(Duration::from_secs(u64::MAX)));
+        }
+
+        /// A removal is a `Max-Age` of zero or less, or a past `Expires`
+        /// where no `Max-Age` overrides it; an empty value alone is not one.
+        #[test]
+        fn a_removal_is_told_from_an_empty_cookie() {
+            let removal = encoded(&Cookie::removal("sid"));
+            let response = setting(&[
+                &removal,
+                "negative=x; Max-Age=-1",
+                "expired=x; Expires=Sun, 06 Nov 1994 08:49:37 GMT",
+                "kept=x; Max-Age=60; Expires=Sun, 06 Nov 1994 08:49:37 GMT",
+                "later=x; Expires=Fri, 31 Dec 9999 23:59:59 GMT",
+                "empty=",
+            ]);
+            let removed = |name| {
+                response
+                    .set_cookie(name)
+                    .unwrap_or_else(|| panic!("`{name}` is set"))
+                    .is_removal()
+            };
+
+            assert_eq!(response.set_cookie("sid").map(|sid| sid.value), Some(""));
+            assert!(removed("sid"));
+            assert!(removed("negative"));
+            assert!(removed("expired"));
+            assert!(!removed("kept"));
+            assert!(!removed("later"));
+            assert!(!removed("empty"));
+        }
+
+        /// Of several fields naming one cookie, the last is the one a user
+        /// agent is left holding; a field naming no cookie is skipped.
+        #[test]
+        fn the_last_field_naming_a_cookie_is_the_one_read() {
+            let response = setting(&["sid=old", "sid=; Max-Age=0", "sid=new", "no-pair", "=x"]);
+
+            assert_eq!(response.set_cookie("sid").map(|sid| sid.value), Some("new"));
+            assert_eq!(response.set_cookie("no-pair"), None);
+            assert_eq!(response.set_cookie(""), None);
+            assert_eq!(response.set_cookie("SID"), None);
+        }
+
+        #[test]
+        fn assert_cookie_set_passes_on_a_live_cookie_and_chains() {
+            setting(&["sid=; Max-Age=0", "sid=r4nd0m; HttpOnly", "theme="])
+                .assert_cookie_set("sid")
+                .assert_cookie_set("theme");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: expected cookie `sid` set, the response cleared it: \
+                        `Set-Cookie: sid=; Max-Age=0`"
+        )]
+        fn assert_cookie_set_fails_on_a_removal() {
+            setting(&["sid=; Max-Age=0"]).assert_cookie_set("sid");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: no `Set-Cookie` names `sid`; the response set [\"theme\"]"
+        )]
+        fn assert_cookie_set_fails_on_a_cookie_never_set_and_names_the_ones_that_were() {
+            setting(&["theme=dark", "not a cookie"]).assert_cookie_set("sid");
+        }
+
+        #[test]
+        fn assert_cookie_cleared_passes_on_a_removal_and_chains() {
+            setting(&["sid=; Max-Age=0", "theme=; Max-Age=0"])
+                .assert_cookie_cleared("sid")
+                .assert_cookie_cleared("theme");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: expected cookie `sid` cleared, the response set it: \
+                        `Set-Cookie: sid=; Path=/`"
+        )]
+        fn assert_cookie_cleared_fails_on_an_empty_live_cookie() {
+            setting(&["sid=; Path=/"]).assert_cookie_cleared("sid");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: no `Set-Cookie` names `sid`; the response set []"
+        )]
+        fn assert_cookie_cleared_fails_on_a_cookie_never_set() {
+            setting(&[]).assert_cookie_cleared("sid");
+        }
+    }
 }
 
 /// What `TestClient::method` reads a method from: a name as the method it

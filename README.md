@@ -181,7 +181,7 @@ Each of these is something another Rust framework offers and Kynos does not. Mos
 | `decimal-rust1`, `decimal-big04` | no | Decimals, written as JSON strings so the precision they exist for survives |
 | `compression` | no | Response compression, and decompressing a request body the client compressed |
 | `yaml` | no | YAML document emission |
-| `test-util` | no | In-process test client and contract-conformance assertions |
+| `test-util` | no | In-process test client and contract-conformance assertions; with `cookie`, a response's `Set-Cookie` fields read attribute by attribute |
 | `assets` | no | Compile a directory into the binary as one described operation per file |
 | `cache` | no | A shared response cache over a store you supply, and the conditional-request half |
 | `docs` | no | `Router::docs`: a Scalar or Redoc reference and this API's own description, mounted as two described operations, or the description alone. Ships the wiring and the pages, no UI and no dependency |

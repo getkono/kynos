@@ -8,6 +8,8 @@
 
 mod body;
 mod conformance;
+#[cfg(feature = "cookie")]
+pub mod cookie;
 
 #[cfg(test)]
 mod tests;
