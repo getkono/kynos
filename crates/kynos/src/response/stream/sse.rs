@@ -43,21 +43,48 @@ use crate::{
 /// }
 /// ```
 ///
-/// `S` is a [`Stream`](super::Stream) of [`Event`]s, and that re-export is how a
-/// handler names it without a `futures-core` dependency of its own:
+/// `S` is a [`Stream`](super::Stream) of [`SseItem`]s, and that re-export is
+/// how a handler names it without a `futures-core` dependency of its own. A
+/// stream that cannot fail yields each [`Event`] as it is:
 ///
 /// ```no_run
-/// use std::convert::Infallible;
 /// use kynos::response::stream::{
 ///     Stream,
 ///     sse::{Event, Sse},
 /// };
 ///
 /// fn events(
-///     ticks: impl Stream<Item = Result<Event<u32>, Infallible>>,
-/// ) -> Sse<impl Stream<Item = Result<Event<u32>, Infallible>>> {
+///     ticks: impl Stream<Item = Event<u32>> + Send + 'static,
+/// ) -> Sse<impl Stream<Item = Event<u32>> + Send + 'static> {
 ///     Sse::new(ticks)
 /// }
+/// # fn answers(
+/// #     ticks: impl Stream<Item = Event<u32>> + Send + 'static,
+/// # ) -> impl kynos::response::IntoResponse + kynos::response::Responses {
+/// #     events(ticks)
+/// # }
+/// ```
+///
+/// One that can yields `Result<Event<T>, E>`, and its first `Err` ends the
+/// body there, since the status was sent with the head:
+///
+/// ```no_run
+/// use std::io;
+/// use kynos::response::stream::{
+///     Stream,
+///     sse::{Event, Sse},
+/// };
+///
+/// fn events(
+///     reads: impl Stream<Item = Result<Event<u32>, io::Error>> + Send + 'static,
+/// ) -> Sse<impl Stream<Item = Result<Event<u32>, io::Error>> + Send + 'static> {
+///     Sse::new(reads)
+/// }
+/// # fn answers(
+/// #     reads: impl Stream<Item = Result<Event<u32>, io::Error>> + Send + 'static,
+/// # ) -> impl kynos::response::IntoResponse + kynos::response::Responses {
+/// #     events(reads)
+/// # }
 /// ```
 ///
 /// # Disconnect and backpressure
@@ -252,6 +279,57 @@ impl<T> Event<T> {
     }
 }
 
+/// What an [`Sse`] stream yields: an [`Event`], or a `Result` of one.
+///
+/// A bare event is a stream that cannot fail, so it needs no `Ok` around each
+/// item and no `Infallible` in its type. An `Err` ends the body after the
+/// last whole event, and is reported to the connection as the body's error.
+///
+/// Sealed: these two are the whole set.
+pub trait SseItem: sealed::Sealed {
+    /// The payload each event carries.
+    type Data;
+
+    /// The error that ends the stream; [`Infallible`](std::convert::Infallible)
+    /// for a bare event.
+    type Error: Into<BoxError>;
+
+    /// The event this item carries, or the error that ends the stream.
+    ///
+    /// # Errors
+    ///
+    /// The item's own error, which a bare event never has.
+    fn into_event(self) -> Result<Event<Self::Data>, Self::Error>;
+}
+
+/// Closes [`SseItem`], so a third item shape cannot change what the two
+/// existing ones mean.
+mod sealed {
+    /// The private supertrait.
+    pub trait Sealed {}
+}
+
+impl<T> sealed::Sealed for Event<T> {}
+impl<T, E> sealed::Sealed for Result<Event<T>, E> {}
+
+impl<T> SseItem for Event<T> {
+    type Data = T;
+    type Error = std::convert::Infallible;
+
+    fn into_event(self) -> Result<Event<T>, Self::Error> {
+        Ok(self)
+    }
+}
+
+impl<T, E: Into<BoxError>> SseItem for Result<Event<T>, E> {
+    type Data = T;
+    type Error = E;
+
+    fn into_event(self) -> Self {
+        self
+    }
+}
+
 /// The events, framed as the `text/event-stream` bytes that carry them.
 ///
 /// The stream is held boxed so that it can be polled without a projection:
@@ -313,11 +391,9 @@ fn heartbeat_record(comment: &str) -> bytes::Bytes {
     record.freeze()
 }
 
-impl<S, T, E> futures_core::Stream for Records<S>
+impl<S> futures_core::Stream for Records<S>
 where
-    S: futures_core::Stream<Item = Result<Event<T>, E>>,
-    T: serde::Serialize,
-    E: Into<BoxError>,
+    S: futures_core::Stream<Item: SseItem<Data: serde::Serialize>>,
 {
     type Item = Result<bytes::Bytes, BoxError>;
 
@@ -344,7 +420,11 @@ where
 
         // Events first: each resets the silence, so a busy stream sends no comment.
         match records.events.as_mut().poll_next(context) {
-            Poll::Ready(Some(Ok(event))) => {
+            Poll::Ready(Some(item)) => {
+                let event = match item.into_event() {
+                    Ok(event) => event,
+                    Err(error) => return Poll::Ready(Some(Err(error.into()))),
+                };
                 if let Some(keep_alive) = records.keep_alive.as_mut() {
                     keep_alive.restart();
                 }
@@ -353,7 +433,6 @@ where
                     records.buffer.record(|record| encode(record, data, &event)),
                 ));
             }
-            Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error.into()))),
             Poll::Ready(None) => return Poll::Ready(None),
             Poll::Pending => {}
         }
@@ -450,11 +529,9 @@ fn field(record: &mut bytes::BytesMut, name: &str, value: &[u8]) {
     push(rest);
 }
 
-impl<S, T, E> IntoResponse for Sse<S>
+impl<S> IntoResponse for Sse<S>
 where
-    S: futures_core::Stream<Item = Result<Event<T>, E>> + Send + 'static,
-    T: serde::Serialize,
-    E: Into<BoxError> + 'static,
+    S: futures_core::Stream<Item: SseItem<Data: serde::Serialize>> + Send + 'static,
 {
     fn into_response(self) -> Response {
         let records = Records {
@@ -475,10 +552,9 @@ where
     }
 }
 
-impl<S, T, E> Responses for Sse<S>
+impl<S> Responses for Sse<S>
 where
-    S: futures_core::Stream<Item = Result<Event<T>, E>>,
-    T: Schema,
+    S: futures_core::Stream<Item: SseItem<Data: Schema>>,
 {
     // OpenAPI 3.2 describes `text/event-stream` as parsed events, so the item is
     // the event and the JSON payload hangs off `data`'s `contentSchema`.
@@ -488,7 +564,7 @@ where
             ..SchemaObject::default()
         };
         data.content_media_type = Some(mime_names::APPLICATION_JSON.to_owned());
-        data.content_schema = Some(Box::new(registry.resolve::<T>()));
+        data.content_schema = Some(Box::new(registry.resolve::<<S::Item as SseItem>::Data>()));
 
         let mut retry = SchemaObject {
             ty: Some(TypeSet::One(SchemaType::Integer)),
