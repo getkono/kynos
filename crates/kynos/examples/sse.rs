@@ -15,10 +15,9 @@
 //!
 //! * **An event names its type twice, and the two must agree.** SSE's `event`
 //!   field is what a browser's `addEventListener` selects on; a serde tag inside
-//!   the data is what a consumer holding a parsed value branches on. `Update`
-//!   below carries the tag and [`Event::event`] carries the name, set from the
-//!   same variant — because a stream where they disagree is one no client can
-//!   read both ways.
+//!   the data is what a consumer holding a parsed value branches on.
+//!   [`Event::tagged`] reads the name from `Update`'s serde tag, so the variant
+//!   is spelled once and a stream where the two disagree cannot be written.
 //! * **Resumption is a header and an identifier, and nothing else.** A client
 //!   that drops the connection reconnects with `Last-Event-ID` set to the last
 //!   [`Event::id`] it saw, and a browser does it without being asked. Minting
@@ -48,7 +47,6 @@
 //! compile than emit that.
 
 use std::{
-    io,
     net::Ipv4Addr,
     pin::Pin,
     task::{Context, Poll},
@@ -98,21 +96,6 @@ enum Update {
     Closed,
 }
 
-impl Update {
-    /// The SSE event name for this variant.
-    ///
-    /// The single place the two spellings are tied together. A new variant that
-    /// forgets its name is a non-exhaustive match here rather than a stream a
-    /// listener silently never fires on.
-    fn event_name(&self) -> &'static str {
-        match self {
-            Self::Reading { .. } => "reading",
-            Self::Alert { .. } => "alert",
-            Self::Closed => "closed",
-        }
-    }
-}
-
 /// A feed that can begin part-way through.
 ///
 /// Hand-written, because [`Stream`] is the entire requirement. Kynos re-exports
@@ -155,11 +138,11 @@ impl Feed {
 }
 
 impl Stream for Feed {
-    // A `Result`, because a feed can fail after the status is on the wire. The
-    // error terminates the stream; it cannot retract the 200 already sent,
-    // which is why a streamed operation should validate everything it can
-    // before it returns.
-    type Item = Result<Event<Update>, io::Error>;
+    // A bare `Event`, because this feed cannot fail. One that can yields
+    // `Result<Event<Update>, E>` instead: its first error ends the stream, but
+    // cannot retract the 200 already sent, which is why a streamed operation
+    // should validate everything it can before it returns.
+    type Item = Event<Update>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.next_id == Self::MINTED {
@@ -182,10 +165,9 @@ impl Stream for Feed {
             }
         };
 
-        // Read before the payload moves into the event, so the SSE name and the
-        // serde tag come from the same value and cannot drift apart.
-        let name = update.event_name();
-        let mut event = Event::new(update).event(name).id(id.to_string());
+        // `event: reading`, `alert`, or `closed`: serde's own spelling of the
+        // `kind` tag, so a new variant is named the moment it is declared.
+        let mut event = Event::tagged(update).id(id.to_string());
 
         if !self.advised {
             self.advised = true;
@@ -196,7 +178,7 @@ impl Stream for Feed {
                 .comment("reconnect after two seconds, resuming from the last id");
         }
 
-        Poll::Ready(Some(Ok(event)))
+        Poll::Ready(Some(event))
     }
 }
 
@@ -224,7 +206,7 @@ async fn updates(LastEventId(resume): LastEventId, draining: Draining) -> Sse<Fe
 /// The return type names only the bound, which is what a handler writes when the
 /// stream's own type is an adapter's or cannot be spelled at all.
 #[kynos::get("/updates/burst")]
-async fn burst() -> Sse<impl Stream<Item = Result<Event<Update>, io::Error>>> {
+async fn burst() -> Sse<impl Stream<Item = Event<Update>>> {
     Sse::new(Feed::resuming_after(None))
 }
 
@@ -268,8 +250,7 @@ mod tests {
     fn sent(mut feed: Feed) -> usize {
         let mut cx = Context::from_waker(Waker::noop());
         let mut sent = 0;
-        while let Poll::Ready(Some(event)) = Pin::new(&mut feed).poll_next(&mut cx) {
-            event.expect("the feed never fails");
+        while let Poll::Ready(Some(_)) = Pin::new(&mut feed).poll_next(&mut cx) {
             sent += 1;
         }
         sent
