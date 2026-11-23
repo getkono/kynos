@@ -597,7 +597,7 @@ impl Forwarded {
     /// field named it IPv4-mapped (`::ffff:203.0.113.7`), so one host is one
     /// address whichever listener it reached.
     ///
-    /// `None` where no socket and no trusted hop named one — a `TestClient`, a
+    /// `None` where no socket and no trusted hop named one — a directly
     /// driven `Service::call` — or where trust ends on an element naming no
     /// address: `for=unknown`, an obfuscated or unparseable `for=`, one that
     /// is not text, or no `for=` at all, as in a proxy sending only
