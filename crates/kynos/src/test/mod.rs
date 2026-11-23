@@ -68,6 +68,8 @@ pub struct TestClient<C> {
     peer: Option<std::net::SocketAddr>,
     /// The fields every request starts from.
     headers: HeaderMap,
+    /// What a problem type with no scheme is joined to, for every response.
+    problem_base: Option<Arc<str>>,
     /// What [`Transport::Direct`] holds a request body to between frames.
     #[cfg(feature = "server")]
     request_body_idle_timeout: IdleTimeout,
@@ -88,7 +90,10 @@ enum IdleTimeout {
 impl<C> TestClient<C> {
     /// Wraps a built service.
     ///
-    /// With the `server` feature, every request body is held to the idle
+    /// Every request arrives on a connection from the peer
+    /// [`with_peer`](Self::with_peer) documents, as a served one does, so
+    /// the extractors reading a peer read the same one whichever transport
+    /// a test is moved to. With the `server` feature, every request body is held to the idle
     /// timeout a server holds it to,
     /// [`Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT`](crate::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
     /// unless [`with_request_body_idle_timeout`](Self::with_request_body_idle_timeout)
@@ -105,6 +110,7 @@ impl<C> TestClient<C> {
             coverage: None,
             peer: None,
             headers: HeaderMap::new(),
+            problem_base: None,
             #[cfg(feature = "server")]
             request_body_idle_timeout: IdleTimeout::Default,
         }
@@ -215,6 +221,16 @@ impl<C> TestClient<C> {
     /// client address: a rate limiter keyed by client, or a trusted-proxy
     /// policy. A second call replaces the first.
     ///
+    /// Until this is called, a request a client built [`new`](Self::new) or
+    /// [`through_server`](Self::through_server) sends comes from
+    /// `127.0.0.1:0`, over a connection whose local address is `127.0.0.1:0`
+    /// too: the loopback a request [`connect`](Self::connect) sends comes
+    /// from, so a test reads the same client whichever transport carries it.
+    /// Either way the request arrived on a connection:
+    /// [`Connection::is_in_process`](crate::extract::connection::Connection::is_in_process)
+    /// is `false`, and a trusted-proxy policy trusting loopback reads its
+    /// forwarding fields.
+    ///
     /// # Panics
     ///
     /// Panics on a client built [`connect`](Self::connect), whose requests
@@ -243,6 +259,47 @@ impl<C> TestClient<C> {
     pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
         let (name, value) = field(name, value);
         self.headers.insert(name, value);
+        self
+    }
+
+    /// Joins `base` to every problem type given to
+    /// [`TestResponse::assert_problem`] and
+    /// [`TestResponse::assert_problem_type`] as a slug, one with no URI
+    /// scheme, so an API whose types share one prefix names each by its
+    /// slug. A type with a scheme, `about:blank` or a full URI, is compared
+    /// as given. A second call replaces the first.
+    ///
+    /// `base` and the slug are joined verbatim, as
+    /// [`problem_type!`](crate::problem_type) joins them, so the base is the
+    /// string the application's [`problem_base!`](crate::problem_base)
+    /// declares, its trailing `/` included.
+    ///
+    /// ```
+    /// # async fn run(service: kynos::router::service::Service<()>) {
+    /// use kynos::test::TestClient;
+    ///
+    /// let client = TestClient::new(service).with_problem_base("https://errors.example.com/");
+    /// // Compared against `https://errors.example.com/insufficient-scope`.
+    /// client
+    ///     .get("/admin")
+    ///     .send()
+    ///     .await
+    ///     .assert_problem(403, "insufficient-scope");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `base` has no URI scheme (RFC 3986 section 3.1), so that
+    /// no type it is joined to could be absolute.
+    #[must_use]
+    pub fn with_problem_base(mut self, base: &str) -> Self {
+        assert!(
+            has_scheme(base),
+            "`{base}` is not a problem base: one begins with a URI scheme, as \
+             `https://errors.example.com/` does"
+        );
+        self.problem_base = Some(Arc::from(base));
         self
     }
 
@@ -308,12 +365,30 @@ impl<C> TestClient<C> {
         )
     }
 
-    /// Begins a request with any method.
+    /// Begins a request with any method, given as a
+    /// [`Method`](crate::http::Method) or by its name.
     ///
-    /// For a method Kynos routes that this type has no shortcut for.
+    /// For a method Kynos routes that this type has no shortcut for, and for
+    /// a table of cases that names each method as text.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::http::Method;
+    ///
+    /// for (method, path, status) in [("GET", "/v1/status", 200), ("DELETE", "/v1/status", 405)] {
+    ///     client.method(method, path).send().await.assert_status(status);
+    /// }
+    /// client.method(Method::PUT, "/v1/status").send().await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`IntoMethod::into_method`] does: when a name is not a
+    /// method token, or spells a method RFC 9110 registers in another case.
     #[must_use]
-    pub fn method(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
-        self.request(method, path)
+    pub fn method(&self, method: impl IntoMethod, path: &str) -> TestRequest<'_, C> {
+        self.request(method.into_method(), path)
     }
 
     fn request(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
@@ -451,7 +526,8 @@ impl<C: 'static> TestClient<C> {
     ///   [`TestStream`] closes it without draining.
     /// - The connection is recorded between [`TestRequest::peer`], the
     ///   client's [`with_peer`](Self::with_peer), or `127.0.0.1:0` where
-    ///   neither is set, and a local `127.0.0.1:0`.
+    ///   neither is set, and a local `127.0.0.1:0`, as a request
+    ///   [`new`](Self::new)'s client sends arrives.
     /// - A body ending short of its
     ///   [`content_length`](TestRequest::content_length) aborts the message,
     ///   as a client whose connection broke does.
@@ -612,12 +688,9 @@ impl<C> Transport<C> {
     ) -> std::io::Result<Response> {
         match self {
             Self::Direct(service) => {
-                if let Some(peer) = peer {
-                    // The same extension the server inserts per connection.
-                    request
-                        .extensions_mut()
-                        .insert(Connection::from_peer(peer, IN_PROCESS));
-                }
+                // The same extension the server inserts per connection, so
+                // the request arrives from where a served one does.
+                request.extensions_mut().insert(connection_from(peer));
                 // Held as a server holds it, so a stalled body is answered as
                 // a served one is.
                 #[cfg(feature = "server")]
@@ -642,8 +715,7 @@ impl<C> Transport<C> {
             }
             #[cfg(feature = "server")]
             Self::Served { server, exchange } => {
-                let connection = Connection::from_peer(peer.unwrap_or(IN_PROCESS), IN_PROCESS);
-                exchange(server, request, connection).await
+                exchange(server, request, connection_from(peer)).await
             }
             // The peer is the socket's own; `with_peer` and `peer` refuse
             // to set one.
@@ -699,12 +771,21 @@ const STALLED_BODY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from
 type Exchanged =
     std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Response>> + Send>>;
 
-/// Where neither the test nor its client says who a served request is from,
-/// and where every request arrives.
-const IN_PROCESS: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+/// Where a request comes from when neither the test nor its client says, and
+/// where every request [`TestClient::new`] or
+/// [`through_server`](TestClient::through_server) sends arrives: loopback,
+/// as a request [`connect`](TestClient::connect) sends comes from, with port
+/// zero, which no socket's own port is.
+const DEFAULT_PEER: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
     std::net::Ipv4Addr::LOCALHOST,
     0,
 ));
+
+/// The connection a request from `peer`, or from [`DEFAULT_PEER`], arrives
+/// on, whichever transport carries it in process.
+fn connection_from(peer: Option<std::net::SocketAddr>) -> Connection {
+    Connection::from_peer(peer.unwrap_or(DEFAULT_PEER), DEFAULT_PEER)
+}
 
 /// The responses any number of [`TestClient`]s received, checked together
 /// against one description.
@@ -993,8 +1074,9 @@ impl<'a, C> TestRequest<'a, C> {
     /// Says who the request came from.
     ///
     /// Without one, a service reading a peer address sees the client's
-    /// [`with_peer`](TestClient::with_peer), or the in-process default where
-    /// the client sets none; set it to test a rate limiter keyed by client, or
+    /// [`with_peer`](TestClient::with_peer), or the loopback default it
+    /// documents where the client sets none; set it to test a rate limiter
+    /// keyed by client, or
     /// a trusted-proxy policy.
     ///
     /// # Panics
@@ -1212,6 +1294,7 @@ impl<'a, C> TestRequest<'a, C> {
             path,
             response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
             body: bytes,
+            problem_base: client.problem_base.clone(),
         }
     }
 
@@ -1268,6 +1351,7 @@ impl<'a, C> TestRequest<'a, C> {
             read: 0,
             observed: &client.observed,
             record,
+            problem_base: client.problem_base.clone(),
         }
     }
 
@@ -1434,6 +1518,9 @@ pub struct TestStream<'a> {
     observed: &'a Mutex<Vec<Observed>>,
     /// This exchange's place in `observed`.
     record: usize,
+    /// The client's [`with_problem_base`](TestClient::with_problem_base),
+    /// for the response [`finish`](Self::finish) returns.
+    problem_base: Option<Arc<str>>,
 }
 
 impl TestStream<'_> {
@@ -1517,6 +1604,7 @@ impl TestStream<'_> {
             path: self.path,
             response: Response::from_parts(self.parts, Body::from_bytes(body.clone())),
             body,
+            problem_base: self.problem_base,
         }
     }
 
@@ -1585,6 +1673,8 @@ pub struct TestResponse {
     response: Response,
     /// The drained body, kept so the response stays readable after assertions.
     body: Bytes,
+    /// The client's [`with_problem_base`](TestClient::with_problem_base).
+    problem_base: Option<Arc<str>>,
 }
 
 impl TestResponse {
@@ -1648,17 +1738,53 @@ impl TestResponse {
     /// Panics, with the body included, when the status differs, and when a
     /// number is outside 100 to 999, which no status can be.
     pub fn assert_status(&self, expected: impl IntoStatus) -> &Self {
+        self.check_status(expected, None)
+    }
+
+    /// [`assert_status`](Self::assert_status), saying which rule the status
+    /// checks: `reason` follows the exchange at the head of the failure
+    /// message, before the statuses and the body.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .get("/sessions/current")
+    ///     .bearer("revoked")
+    ///     .send()
+    ///     .await
+    ///     .assert_status_because(401, "a revoked token is dead");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`assert_status`](Self::assert_status) does, naming
+    /// `reason`.
+    pub fn assert_status_because(
+        &self,
+        expected: impl IntoStatus,
+        reason: impl std::fmt::Display,
+    ) -> &Self {
+        self.check_status(expected, Some(&reason))
+    }
+
+    /// Asserts the status, `reason` leading the failure where there is one.
+    fn check_status(
+        &self,
+        expected: impl IntoStatus,
+        reason: Option<&dyn std::fmt::Display>,
+    ) -> &Self {
+        let head = match reason {
+            Some(reason) => format!("{}: {reason}", self.exchange()),
+            None => self.exchange(),
+        };
         let expected = expected.status().unwrap_or_else(|code| {
-            panic!(
-                "{}: `{code}` is not a status code, which is 100 to 999",
-                self.exchange()
-            )
+            panic!("{head}: `{code}` is not a status code, which is 100 to 999")
         });
         let actual = self.status();
         assert!(
             actual == expected,
-            "{}: expected {expected}, received {actual}\n{}",
-            self.exchange(),
+            "{head}: expected {expected}, received {actual}\n{}",
             self.rendered_body()
         );
         self
@@ -1691,12 +1817,16 @@ impl TestResponse {
     /// Asserts that the body is an RFC 9457 problem document of a given type.
     ///
     /// A problem document that omits `type` means `about:blank`, which RFC 9457
-    /// section 3.1.1 makes the default rather than an absence.
+    /// section 3.1.1 makes the default rather than an absence. A slug is
+    /// joined to the client's
+    /// [`with_problem_base`](TestClient::with_problem_base) first.
     ///
     /// # Panics
     ///
     /// Panics when the body is not a problem document, or its `type` differs.
     pub fn assert_problem_type(&self, expected: &str) -> &Self {
+        let expected = self.problem_type(expected);
+        let expected = expected.as_ref();
         let document: Value = serde_json::from_slice(&self.body).unwrap_or_else(|error| {
             panic!(
                 "{}: the body is not a problem document: {error}\n{}",
@@ -1732,7 +1862,9 @@ impl TestResponse {
     /// [`assert_status`](Self::assert_status) does; that `Content-Type` is
     /// `application/problem+json` (RFC 9457 section 6.1), its parameters aside;
     /// that the body's `type` is `type_uri`, an omitted one being
-    /// `about:blank` (section 3.1.1); and that a `status` member, where the
+    /// `about:blank` (section 3.1.1), and a slug being joined to the client's
+    /// [`with_problem_base`](TestClient::with_problem_base) first; and that a
+    /// `status` member, where the
     /// document carries one, names the status line, which section 3.1.2 binds a
     /// generator to.
     ///
@@ -1780,6 +1912,8 @@ impl TestResponse {
         }
 
         let problem = self.problem();
+        let type_uri = self.problem_type(type_uri);
+        let type_uri = type_uri.as_ref();
         assert!(
             problem.type_uri == type_uri,
             "{}: expected problem type `{type_uri}`, received `{}`\n{}",
@@ -2093,6 +2227,15 @@ impl TestResponse {
         )
     }
 
+    /// `type_uri` joined to the problem base where it is a slug, and as
+    /// given where it has a scheme or the client set no base.
+    fn problem_type<'t>(&self, type_uri: &'t str) -> std::borrow::Cow<'t, str> {
+        match &self.problem_base {
+            Some(base) if !has_scheme(type_uri) => format!("{base}{type_uri}").into(),
+            _ => type_uri.into(),
+        }
+    }
+
     /// The body as an assertion message shows it.
     fn rendered_body(&self) -> String {
         match std::str::from_utf8(&self.body) {
@@ -2122,6 +2265,73 @@ mod sealed {
     pub trait Sealed: Sized {
         /// The status, or the number that names none.
         fn status(self) -> Result<StatusCode, u16>;
+    }
+
+    /// What closes [`IntoMethod`](super::IntoMethod) to the types here.
+    pub trait SealedMethod {}
+}
+
+/// A method [`TestClient::method`] sends: a [`Method`](crate::http::Method),
+/// or its name, which a table of cases holds more naturally.
+///
+/// Sealed: implemented for `Method`, `&Method` and `&str`.
+pub trait IntoMethod: sealed::SealedMethod {
+    /// The method this names.
+    ///
+    /// A name is case-sensitive, as RFC 9110 section 9.1 makes a method, so
+    /// `"POST"` names `POST`. One that spells a registered method in another
+    /// case, as `"post"` does, panics rather than sending the extension
+    /// method it names; a test of that method sends
+    /// `Method::from_bytes(b"post")`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a name is not a method token, and when it spells a
+    /// registered method in another case.
+    fn into_method(self) -> HttpMethod;
+}
+
+/// The methods RFC 9110 section 9.3, RFC 5789 and the `QUERY` draft
+/// register, whose names a test spells in another case only by mistake.
+const REGISTERED_METHODS: [&str; 10] = [
+    "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "QUERY",
+];
+
+impl sealed::SealedMethod for HttpMethod {}
+impl sealed::SealedMethod for &HttpMethod {}
+impl sealed::SealedMethod for &str {}
+
+impl IntoMethod for HttpMethod {
+    fn into_method(self) -> HttpMethod {
+        self
+    }
+}
+
+impl IntoMethod for &HttpMethod {
+    fn into_method(self) -> HttpMethod {
+        self.clone()
+    }
+}
+
+impl IntoMethod for &str {
+    fn into_method(self) -> HttpMethod {
+        let method = HttpMethod::from_bytes(self.as_bytes()).unwrap_or_else(|_| {
+            panic!(
+                "`{}` is not a method, which is a token (RFC 9110 section 9.1)",
+                self.escape_debug()
+            )
+        });
+        if let Some(registered) = REGISTERED_METHODS
+            .iter()
+            .find(|registered| registered.eq_ignore_ascii_case(self) && **registered != self)
+        {
+            panic!(
+                "`{self}` is not `{registered}`: a method is case-sensitive (RFC 9110 \
+                 section 9.1); write `{registered}`, or pass `Method::from_bytes(b\"{self}\")` \
+                 to send the extension method `{self}`"
+            );
+        }
+        method
     }
 }
 
@@ -2161,6 +2371,20 @@ fn field(name: &str, value: &str) -> (HeaderName, HeaderValue) {
     let value =
         HeaderValue::from_str(value).unwrap_or_else(|_| panic!("`{value}` is not a header value"));
     (name, value)
+}
+
+/// Whether `reference` opens with a URI scheme, `ALPHA *( ALPHA / DIGIT /
+/// "+" / "-" / "." ) ":"` (RFC 3986 section 3.1): an absolute URI does, and
+/// a relative reference cannot, since section 4.2 bars a colon from its
+/// first segment.
+fn has_scheme(reference: &str) -> bool {
+    reference.split_once(':').is_some_and(|(scheme, _)| {
+        let mut octets = scheme.bytes();
+        octets
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
+            && octets.all(|octet| octet.is_ascii_alphanumeric() || b"+-.".contains(&octet))
+    })
 }
 
 /// `n responses`, or `1 response`, for an assertion message that counts them.
