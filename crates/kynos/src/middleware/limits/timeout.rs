@@ -63,7 +63,6 @@ impl<T: ProblemType> Responses for TimedOut<T> {
             408,
             refusal_response::<T>(
                 registry,
-                408,
                 "the handler did not finish within the configured limit",
             ),
         )

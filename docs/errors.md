@@ -42,6 +42,12 @@ not a value, and why the marker goes on the *refusal* rather than on the
 interceptor: a type answering with three statuses carries three markers, which
 is what `middleware::decompression::Undecodable` does.
 
+The two are public, so an interceptor an application writes refuses the way
+every built-in one does rather than copying a built-in refusal's description
+and rewriting it. `refusal_response` takes no status: its `summary` is the
+whole description, and `Responses::with` already keys the status, so a second
+spelling could only disagree with the first.
+
 **Two shapes for one idea, and the difference is whether a type is already
 there.** `Scopes::FORBIDDEN_TYPE` is a `const` on a trait the *application*
 already implements for its own scope set, so a URI has somewhere to hang and a

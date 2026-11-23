@@ -80,11 +80,7 @@ impl<T: ProblemType> Responses for BodySizeExceeded<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             413,
-            refusal_response::<T>(
-                registry,
-                413,
-                "the request body exceeds the configured limit",
-            ),
+            refusal_response::<T>(registry, "the request body exceeds the configured limit"),
         )
     }
 }
@@ -202,7 +198,6 @@ impl<T: ProblemType, U: ProblemType> Responses for BodyRefused<T, U> {
             408,
             refusal_response::<U>(
                 registry,
-                408,
                 "the request body did not arrive within the configured limit",
             ),
         );

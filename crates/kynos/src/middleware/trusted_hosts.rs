@@ -405,7 +405,6 @@ impl<T: ProblemType> crate::response::Responses for UntrustedHost<T> {
             421,
             refusal_response::<T>(
                 registry,
-                421,
                 "the request named a host this server does not answer for",
             ),
         )

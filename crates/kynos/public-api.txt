@@ -254,6 +254,8 @@ pub trait kynos::error::problem::ProblemType: 'static
 pub const kynos::error::problem::ProblemType::TYPE_URI: core::option::Option<&'static str>
 impl kynos::error::problem::ProblemType for ()
 pub const ()::TYPE_URI: core::option::Option<&'static str>
+pub fn kynos::error::problem::refusal_problem<T: kynos::error::problem::ProblemType>(http::status::StatusCode) -> kynos::error::problem::Problem
+pub fn kynos::error::problem::refusal_response<T: kynos::error::problem::ProblemType>(&mut kynos::schema::registry::Registry, &'static str) -> kynos_openapi::model::response::Response
 pub mod kynos::error::rejection
 #[non_exhaustive] pub enum kynos::error::rejection::AuthRejection
 pub kynos::error::rejection::AuthRejection::Forbidden

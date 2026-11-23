@@ -361,7 +361,7 @@ impl<T: ProblemType> crate::response::Responses for CrossSite<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             403,
-            refusal_response::<T>(registry, 403, "the request came from another site"),
+            refusal_response::<T>(registry, "the request came from another site"),
         )
     }
 }
