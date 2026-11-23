@@ -118,8 +118,9 @@ matches scope in the router.
 405 and 501 the router answers when no operation does pass through them, so a
 request id or a header every response carries reaches those too. A group's and
 a nested router's do not: they cover operations, and a fallback is none. One
-covering `Covers::BodyReading`, as `BodySize` does, covers a fallback only
-while a router interceptor beneath it may read the body (`READS_BODY`), since
+covering `Covers::BodyReading`, as `BodySize` and `Decompression` do, covers a
+fallback only while a router interceptor beneath it may read the body
+(`READS_BODY`), since
 no handler reads that one. `Next::route` is `None` there, an interceptor keyed by the operation (`Cache`,
 `RateLimit`) hands the response on untouched, and nothing is added to the
 document — a fallback stays out of `paths`, as
@@ -873,7 +874,12 @@ measures the one number an attacker chooses freely. `Decompression` takes the
 limit instead and applies it to what the handler will actually see. The two
 cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
-codings, `BodySize` alone is not a weaker guard but a misleading one.
+codings, `BodySize` alone is not a weaker guard but a misleading one. Being the
+route's body limit, it covers what `BodySize` covers, `Covers::BodyReading`: one
+`Decompression` over a resource's group runs on and declares its 400, 413 and
+415 on the operations reading a body, and leaves a `GET` by id or a `DELETE`,
+which ignores whatever body arrives, coded or not, declaring none of them. It
+keeps `READS_BODY` at `true`, since it buffers the body wherever it runs.
 
 **A coding nothing decoded is refused, without `Accept-Encoding`.**
 `Decompression` removes `Content-Encoding` once it decodes, and hands a body
