@@ -1132,7 +1132,10 @@ fn every_schema_keyword_has_a_pinned_spelling() {
     let body = SOURCE
         .split_once("pub struct SchemaObject {")
         .expect("the struct is declared in this file")
-        .1;
+        .1
+        .split_once("\n}\n")
+        .expect("the struct is closed")
+        .0;
     // One `pub` field per keyword, less the flattened catch-all, which is not
     // a keyword and emits no key of its own.
     let declared = body
