@@ -1483,8 +1483,13 @@ mod assertions {
             fails_here!(client.assert_declared_responses_covered());
             fails_here!(coverage.assert_declared_responses_covered(&document));
             fails_here!(coverage.assert_covered());
+            fails_here!(coverage.assert_declared_responses_covered_where(&document, |_| true));
+            fails_here!(coverage.assert_declared_responses_covered_where(&document, |_| false));
+            fails_here!(coverage.assert_covered_where(|_| true));
             let bound = Coverage::for_document(document);
             fails_here!(bound.assert_covered());
+            fails_here!(bound.assert_covered_where(|_| true));
+            fails_here!(bound.assert_covered_where(|_| false));
         }
     }
 }

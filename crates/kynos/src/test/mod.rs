@@ -22,7 +22,8 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 use kynos_openapi::{
-    Document, Method, model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
+    Document, Method, OperationAt,
+    model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
 };
 use serde_json::{Map, Value};
 
@@ -571,6 +572,7 @@ impl<C> TestClient<C> {
         let recorded = self.recorded();
         assert_covered(
             self.service().openapi(),
+            |_| true,
             recorded
                 .iter()
                 .map(|record| (&record.method, &record.uri, record.status)),
@@ -941,7 +943,7 @@ impl Coverage {
     /// Panics listing every declared response that was never seen.
     #[track_caller]
     pub fn assert_declared_responses_covered(&self, document: &Document) {
-        self.assert_against(document);
+        self.assert_against(document, |_| true);
     }
 
     /// Asserts that every response the document given to
@@ -957,23 +959,102 @@ impl Coverage {
     /// declared response that was never seen.
     #[track_caller]
     pub fn assert_covered(&self) {
-        let document = self.document.as_deref().expect(
-            "a Coverage built without a document has nothing to assert against; \
-             build it with `Coverage::for_document`, or name the document with \
-             `assert_declared_responses_covered`",
-        );
-        self.assert_against(document);
+        self.assert_against(self.bound("assert_declared_responses_covered"), |_| true);
     }
 
-    /// Asserts the recorded exchanges cover what `document` declares.
+    /// Asserts that every response declared by the operations of `document`
+    /// that `keep` selects was exercised by at least one client recording
+    /// here, as
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// does for all of them.
+    ///
+    /// `keep` is asked of each operation under `document`'s `paths`, as
+    /// [`Document::operations`] yields it, so it can select by tag, by path
+    /// or by anything else the operation declares. One suite per area of an
+    /// API asserts that area's responses alone:
+    ///
+    /// ```
+    /// use kynos::{openapi::Document, test::Coverage};
+    ///
+    /// fn assert_lists_covered(coverage: &Coverage, document: &Document) {
+    ///     coverage.assert_declared_responses_covered_where(document, |op| {
+    ///         op.operation.tags.iter().any(|tag| tag == "lists")
+    ///     });
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `keep` selects no operation, which would assert nothing,
+    /// and otherwise listing every declared response of a selected operation
+    /// that was never seen.
     #[track_caller]
-    fn assert_against(&self, document: &Document) {
+    pub fn assert_declared_responses_covered_where(
+        &self,
+        document: &Document,
+        keep: impl Fn(&OperationAt<'_>) -> bool,
+    ) {
+        assert!(
+            routed(document).any(|(_, _, at)| keep(&at)),
+            "the predicate selects no operation under the description's `paths`, \
+             so there is nothing to assert"
+        );
+        self.assert_against(document, keep);
+    }
+
+    /// Asserts that every response declared by the operations that `keep`
+    /// selects, of the document given to [`for_document`](Self::for_document),
+    /// was exercised by at least one client recording here, as
+    /// [`assert_declared_responses_covered_where`](Self::assert_declared_responses_covered_where)
+    /// does for an explicit document.
+    ///
+    /// ```
+    /// use kynos::test::Coverage;
+    ///
+    /// fn assert_lists_covered(coverage: &Coverage) {
+    ///     coverage.assert_covered_where(|op| op.operation.tags.iter().any(|tag| tag == "lists"));
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), when `keep` selects no
+    /// operation, and otherwise listing every declared response of a
+    /// selected operation that was never seen.
+    #[track_caller]
+    pub fn assert_covered_where(&self, keep: impl Fn(&OperationAt<'_>) -> bool) {
+        self.assert_declared_responses_covered_where(
+            self.bound("assert_declared_responses_covered_where"),
+            keep,
+        );
+    }
+
+    /// The document this record was built for, or a panic naming `explicit`,
+    /// the assertion that takes one instead.
+    #[track_caller]
+    fn bound(&self, explicit: &str) -> &Document {
+        let Some(document) = self.document.as_deref() else {
+            panic!(
+                "a Coverage built without a document has nothing to assert against; \
+                 build it with `Coverage::for_document`, or name the document with \
+                 `{explicit}`"
+            )
+        };
+        document
+    }
+
+    /// Asserts the recorded exchanges cover what the operations of `document`
+    /// that `keep` selects declare.
+    #[track_caller]
+    fn assert_against(&self, document: &Document, keep: impl Fn(&OperationAt<'_>) -> bool) {
         let exchanges = self
             .exchanges
             .lock()
             .expect("a coverage record whose recorder panicked cannot be asserted on");
         assert_covered(
             document,
+            keep,
             exchanges
                 .iter()
                 .map(|exchange| (&exchange.method, &exchange.uri, exchange.status)),
@@ -998,10 +1079,23 @@ fn push(exchanges: &Mutex<Vec<Exchange>>, exchange: Exchange) {
         .push(exchange);
 }
 
-/// Asserts that every response `document` declares is among `received`.
+/// Each operation under `document`'s `paths` that a request can name, with
+/// its template and method: the operations a response is matched to, and
+/// the only ones coverage asks of.
+fn routed(document: &Document) -> impl Iterator<Item = (&str, Method, OperationAt<'_>)> {
+    document.operations().filter_map(|at| {
+        let template = at.path?;
+        let method = Method::from_wire_str(at.method)?;
+        Some((template, method, at))
+    })
+}
+
+/// Asserts that every response the operations of `document` that `keep`
+/// selects declare is among `received`.
 #[track_caller]
 fn assert_covered<'r>(
     document: &Document,
+    keep: impl Fn(&OperationAt<'_>) -> bool,
     received: impl Iterator<Item = (&'r HttpMethod, &'r Uri, StatusCode)>,
 ) {
     let exercised: BTreeSet<(&str, Method, String)> = received
@@ -1015,12 +1109,10 @@ fn assert_covered<'r>(
         .collect();
 
     let mut missing = Vec::new();
-    for (template, item) in &document.paths.items {
-        for (method, operation) in item.operations() {
-            for key in declared_keys(&operation.responses) {
-                if !exercised.contains(&(template.as_str(), method, key.clone())) {
-                    missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
-                }
+    for (template, method, at) in routed(document).filter(|(_, _, at)| keep(at)) {
+        for key in declared_keys(&at.operation.responses) {
+            if !exercised.contains(&(template, method, key.clone())) {
+                missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
             }
         }
     }

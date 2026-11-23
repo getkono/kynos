@@ -339,6 +339,45 @@ fn an_unbound_coverage_refuses_to_assert_covered() {
     Coverage::new().assert_covered();
 }
 
+/// A predicate scopes coverage to the operations it selects: the reads alone
+/// cover `GET /users/{id}`, whatever `POST /users` declares, whether the
+/// document is the bound one or named.
+#[tokio::test]
+async fn a_scoped_coverage_asks_only_of_the_operations_it_selects() {
+    let document = service().expect("a describable router").openapi().clone();
+    let coverage = Coverage::for_document(document.clone());
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+
+    coverage.assert_covered_where(|op| op.method == "GET");
+    coverage
+        .assert_declared_responses_covered_where(&document, |op| op.path == Some("/users/{id}"));
+}
+
+/// What a selected operation declares and nobody exercised is reported, and
+/// nothing of the operations the predicate left out.
+#[test]
+#[should_panic(expected = "2 responses declared but never exercised:\n  \
+                           GET /users/{id} -> 400\n  GET /users/{id} -> 200")]
+fn a_scoped_coverage_reports_only_what_its_operations_declare() {
+    let document = service().expect("a describable router").openapi().clone();
+
+    Coverage::for_document(document).assert_covered_where(|op| op.method == "GET");
+}
+
+/// A predicate selecting nothing, as a misspelt tag does, would assert
+/// nothing, which is refused rather than passed vacuously.
+#[test]
+#[should_panic(expected = "the predicate selects no operation under the description's `paths`")]
+fn a_predicate_selecting_no_operation_is_refused() {
+    let document = service().expect("a describable router").openapi().clone();
+
+    Coverage::new().assert_declared_responses_covered_where(&document, |op| {
+        op.operation.tags.iter().any(|tag| tag == "lsits")
+    });
+}
+
 /// Naming a document asserts against that document even on a bound record:
 /// bound to one declaring nothing, the record still reports what the named
 /// document declares and nobody exercised.
