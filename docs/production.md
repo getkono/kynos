@@ -170,16 +170,25 @@ address only the internal network reaches. The public document then leaves it
 out because the public listener does not serve it, and the internal router's
 own document describes it, checked by `build` like any other. Both routers take
 the context that holds what they share, such as the metrics registry, and both
-servers take one `Shutdown`, so one signal drains them together:
+servers take one `Shutdown`, so one signal drains them together. Both are
+prepared before either serves, so an address that cannot be bound stops startup
+rather than leaving the other listener serving alone:
 
 ```rust
 let shutdown = Shutdown::signals();
 let api = Router::new().mount(public_routes()).build(context.clone())?;
 let ops = Router::new().mount(kynos::routes![render_metrics]).build(context)?;
-let (public, internal) = tokio::join!(
-    Server::new(api).bind(public_address).graceful_shutdown(shutdown.clone()).serve(),
-    Server::new(ops).bind(internal_address).graceful_shutdown(shutdown).serve(),
-);
+let public = Server::new(api)
+    .bind(public_address)
+    .graceful_shutdown(shutdown.clone())
+    .prepare()
+    .await?;
+let internal = Server::new(ops)
+    .bind(internal_address)
+    .graceful_shutdown(shutdown)
+    .prepare()
+    .await?;
+let (public, internal) = tokio::join!(public.serve(), internal.serve());
 public.and(internal)
 ```
 
