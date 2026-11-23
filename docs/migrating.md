@@ -32,6 +32,7 @@ the section for the release that ships it.
 | `http::Method::from_bytes(name.as_bytes()).unwrap()` before `test::TestClient::method(..)`, for a table of cases naming each method as text | `client.method("POST", path)`: `method` takes any `test::IntoMethod`, a `Method`, a `&Method` or a name | #1391 |
 | `assert_eq!(resp.status().as_u16(), 401, "a revoked token is dead")`, which drops the body from the failure | `resp.assert_status_because(401, "a revoked token is dead")` | #1391 |
 | An `assert_problem(resp, status, slug)` wrapper formatting `BASE + slug` | `test::TestClient::new(service).with_problem_base(BASE)` once, then `resp.assert_problem(403, "insufficient-scope")` | #1391 |
+| `.peer(..)` on every request so a test reads one client whether built `test::TestClient::new` or `through_server` | nothing: both send from `127.0.0.1:0`; `with_peer` once where the address itself matters | #1391 |
 
 ## 0.5 to 0.6
 

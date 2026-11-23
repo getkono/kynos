@@ -90,7 +90,10 @@ enum IdleTimeout {
 impl<C> TestClient<C> {
     /// Wraps a built service.
     ///
-    /// With the `server` feature, every request body is held to the idle
+    /// Every request arrives on a connection from the peer
+    /// [`with_peer`](Self::with_peer) documents, as a served one does, so
+    /// the extractors reading a peer read the same one whichever transport
+    /// a test is moved to. With the `server` feature, every request body is held to the idle
     /// timeout a server holds it to,
     /// [`Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT`](crate::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
     /// unless [`with_request_body_idle_timeout`](Self::with_request_body_idle_timeout)
@@ -217,6 +220,16 @@ impl<C> TestClient<C> {
     /// For a service every request of a suite reaches through the same
     /// client address: a rate limiter keyed by client, or a trusted-proxy
     /// policy. A second call replaces the first.
+    ///
+    /// Until this is called, a request a client built [`new`](Self::new) or
+    /// [`through_server`](Self::through_server) sends comes from
+    /// `127.0.0.1:0`, over a connection whose local address is `127.0.0.1:0`
+    /// too: the loopback a request [`connect`](Self::connect) sends comes
+    /// from, so a test reads the same client whichever transport carries it.
+    /// Either way the request arrived on a connection:
+    /// [`Connection::is_in_process`](crate::extract::connection::Connection::is_in_process)
+    /// is `false`, and a trusted-proxy policy trusting loopback reads its
+    /// forwarding fields.
     ///
     /// # Panics
     ///
@@ -513,7 +526,8 @@ impl<C: 'static> TestClient<C> {
     ///   [`TestStream`] closes it without draining.
     /// - The connection is recorded between [`TestRequest::peer`], the
     ///   client's [`with_peer`](Self::with_peer), or `127.0.0.1:0` where
-    ///   neither is set, and a local `127.0.0.1:0`.
+    ///   neither is set, and a local `127.0.0.1:0`, as a request
+    ///   [`new`](Self::new)'s client sends arrives.
     /// - A body ending short of its
     ///   [`content_length`](TestRequest::content_length) aborts the message,
     ///   as a client whose connection broke does.
@@ -674,12 +688,9 @@ impl<C> Transport<C> {
     ) -> std::io::Result<Response> {
         match self {
             Self::Direct(service) => {
-                if let Some(peer) = peer {
-                    // The same extension the server inserts per connection.
-                    request
-                        .extensions_mut()
-                        .insert(Connection::from_peer(peer, IN_PROCESS));
-                }
+                // The same extension the server inserts per connection, so
+                // the request arrives from where a served one does.
+                request.extensions_mut().insert(connection_from(peer));
                 // Held as a server holds it, so a stalled body is answered as
                 // a served one is.
                 #[cfg(feature = "server")]
@@ -704,8 +715,7 @@ impl<C> Transport<C> {
             }
             #[cfg(feature = "server")]
             Self::Served { server, exchange } => {
-                let connection = Connection::from_peer(peer.unwrap_or(IN_PROCESS), IN_PROCESS);
-                exchange(server, request, connection).await
+                exchange(server, request, connection_from(peer)).await
             }
             // The peer is the socket's own; `with_peer` and `peer` refuse
             // to set one.
@@ -761,12 +771,21 @@ const STALLED_BODY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from
 type Exchanged =
     std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Response>> + Send>>;
 
-/// Where neither the test nor its client says who a served request is from,
-/// and where every request arrives.
-const IN_PROCESS: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+/// Where a request comes from when neither the test nor its client says, and
+/// where every request [`TestClient::new`] or
+/// [`through_server`](TestClient::through_server) sends arrives: loopback,
+/// as a request [`connect`](TestClient::connect) sends comes from, with port
+/// zero, which no socket's own port is.
+const DEFAULT_PEER: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
     std::net::Ipv4Addr::LOCALHOST,
     0,
 ));
+
+/// The connection a request from `peer`, or from [`DEFAULT_PEER`], arrives
+/// on, whichever transport carries it in process.
+fn connection_from(peer: Option<std::net::SocketAddr>) -> Connection {
+    Connection::from_peer(peer.unwrap_or(DEFAULT_PEER), DEFAULT_PEER)
+}
 
 /// The responses any number of [`TestClient`]s received, checked together
 /// against one description.
@@ -1055,8 +1074,9 @@ impl<'a, C> TestRequest<'a, C> {
     /// Says who the request came from.
     ///
     /// Without one, a service reading a peer address sees the client's
-    /// [`with_peer`](TestClient::with_peer), or the in-process default where
-    /// the client sets none; set it to test a rate limiter keyed by client, or
+    /// [`with_peer`](TestClient::with_peer), or the loopback default it
+    /// documents where the client sets none; set it to test a rate limiter
+    /// keyed by client, or
     /// a trusted-proxy policy.
     ///
     /// # Panics

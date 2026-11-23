@@ -326,6 +326,24 @@ mod defaults {
         let _ = client.get("/a").bearer("a\nb");
     }
 
+    /// The connection both in-process transports insert: from loopback where
+    /// nothing names a peer, to loopback, and a connection rather than the
+    /// no-socket sentinel, as `connect`'s real one is.
+    #[test]
+    fn a_request_naming_no_peer_arrives_on_a_loopback_connection() {
+        let loopback = SocketAddr::from(([127, 0, 0, 1], 0));
+
+        let defaulted = crate::test::connection_from(None);
+        assert_eq!(defaulted.peer_addr(), Some(loopback));
+        assert_eq!(defaulted.local_addr(), Some(loopback));
+        assert!(!defaulted.is_in_process());
+
+        let named = crate::test::connection_from(Some(address(40000)));
+        assert_eq!(named.peer_addr(), Some(address(40000)));
+        assert_eq!(named.local_addr(), Some(loopback));
+        assert!(!named.is_in_process());
+    }
+
     /// The base reaches every response the client receives, and the last
     /// one set is the one joined.
     #[tokio::test]

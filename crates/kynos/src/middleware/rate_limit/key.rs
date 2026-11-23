@@ -23,8 +23,8 @@ pub trait RateLimitKey<C>: Send + Sync + 'static {
 /// An IPv4-mapped peer (`::ffff:203.0.113.7`), as a dual-stack listener
 /// reports an IPv4 client, is keyed by the IPv4 host it embeds.
 ///
-/// A request that arrived on no socket — a `TestClient`, a directly driven
-/// `Service::call` — counts against one shared bucket rather than being
+/// A request that arrived on no socket — a directly driven `Service::call` —
+/// counts against one shared bucket rather than being
 /// exempted, so a limit is never silently absent. So does every request on a
 /// connection with no IP peer, such as a Unix domain socket's, in a bucket of
 /// its own: such a peer has no address that tells two clients apart.

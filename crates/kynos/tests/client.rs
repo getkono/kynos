@@ -329,6 +329,24 @@ async fn a_request_through_a_server_carries_its_fields_body_and_peer() {
     assert_eq!(defaulted.peer, "127.0.0.1:0");
 }
 
+/// With no peer set, a request arrives from the same loopback peer whether
+/// the service is driven directly or through a server, so a test moved
+/// between the two sees one client.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn both_in_process_transports_default_to_one_loopback_peer() {
+    let direct: Seen = client().post("/echo").text("").send().await.json();
+    let served: Seen = TestClient::through_server(kynos::server::Server::new(service()))
+        .post("/echo")
+        .text("")
+        .send()
+        .await
+        .json();
+
+    assert_eq!(direct.peer, "127.0.0.1:0");
+    assert_eq!(served.peer, direct.peer);
+}
+
 /// A body ending short of its declared length breaks the message off, as a
 /// client whose connection broke does, so no response arrives to assert on.
 #[cfg(feature = "server")]
