@@ -306,7 +306,13 @@ struct Departures(Arc<Mutex<Vec<Option<AssignedId>>>>);
 impl Observer<App> for Departures {
     fn on_request(&self, _: &kynos::http::Request, _: Option<Route<'_>>, _: &App) {}
 
-    fn on_response(&self, response: &kynos::http::Response, _: Option<Route<'_>>, _: Duration) {
+    fn on_response(
+        &self,
+        response: &kynos::http::Response,
+        _: Option<Route<'_>>,
+        _: Duration,
+        _: &App,
+    ) {
         self.0
             .lock()
             .expect("an unpoisoned record")

@@ -42,7 +42,7 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
-use support::{App, get, send, service};
+use support::{App, Pool, get, send, service};
 
 // --- The five outcomes ---------------------------------------------------
 
@@ -265,7 +265,7 @@ impl Observer<App> for Sightings {
             .push((request.method().clone(), route));
     }
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, _: &App) {}
 }
 
 /// A derived HEAD runs the GET operation, so an observer is told that is the
@@ -474,7 +474,7 @@ fn named(route: Option<Route<'_>>) -> String {
 impl Observer<App> for Endings {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &App) {}
 
-    fn on_response(&self, response: &Response, route: Option<Route<'_>>, _: Duration) {
+    fn on_response(&self, response: &Response, route: Option<Route<'_>>, _: Duration, _: &App) {
         use hyper::body::Body as _;
 
         self.push(format!(
@@ -561,7 +561,7 @@ struct Timings(Arc<Mutex<(Option<Duration>, Option<Duration>)>>);
 impl Observer<App> for Timings {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &App) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, elapsed: Duration) {
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, elapsed: Duration, _: &App) {
         self.0.lock().expect("an unpoisoned record").0 = Some(elapsed);
     }
 
@@ -601,6 +601,61 @@ async fn a_completion_measures_up_to_the_last_frame_not_the_head() {
     assert!(
         complete >= head + PAUSE,
         "on_complete's {complete:?} is not {PAUSE:?} past on_response's {head:?}"
+    );
+}
+
+/// Records where each hook found the context, and what it read from it.
+#[derive(Clone, Default)]
+struct Contexts(Arc<Mutex<Vec<(&'static str, usize, u32)>>>);
+
+impl Contexts {
+    fn push(&self, hook: &'static str, context: &App) {
+        self.0.lock().expect("an unpoisoned record").push((
+            hook,
+            std::ptr::from_ref(context).addr(),
+            context.pool.0,
+        ));
+    }
+}
+
+impl Observer<App> for Contexts {
+    fn on_request(&self, _: &Request, _: Option<Route<'_>>, context: &App) {
+        self.push("request", context);
+    }
+
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, context: &App) {
+        self.push("response", context);
+    }
+}
+
+/// `on_response` is handed the very context `on_request` was, the one the
+/// router was built with, whether or not an operation matched.
+#[tokio::test]
+async fn on_response_is_handed_the_context_on_request_was() {
+    let contexts = Contexts::default();
+    let service = support::router()
+        .observe(contexts.clone())
+        .build(App { pool: Pool(11) })
+        .expect("a describable router");
+
+    get(&service, "/users/42").call().await;
+    get(&service, "/nowhere").call().await;
+
+    let seen = contexts.0.lock().expect("an unpoisoned record").clone();
+    let hooks: Vec<_> = seen.iter().map(|&(hook, _, pool)| (hook, pool)).collect();
+    assert_eq!(
+        hooks,
+        [
+            ("request", 11),
+            ("response", 11),
+            ("request", 11),
+            ("response", 11),
+        ]
+    );
+    let built = seen[0].1;
+    assert!(
+        seen.iter().all(|&(_, address, _)| address == built),
+        "{seen:?}"
     );
 }
 

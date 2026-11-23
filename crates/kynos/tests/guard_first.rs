@@ -145,7 +145,7 @@ struct Heard(Arc<AtomicUsize>);
 impl Observer<Gate> for Heard {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &Gate) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, _: &Gate) {}
 
     fn on_panic(&self, _: &(dyn Any + Send), _: Option<Route<'_>>) {
         self.0.fetch_add(1, Ordering::SeqCst);

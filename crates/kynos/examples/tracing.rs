@@ -112,7 +112,13 @@ impl<C> Observer<C> for Slo {
         tracing::trace!(target: "slo", operation_id = route.operation_id(), "started");
     }
 
-    fn on_response(&self, response: &http::Response, route: Option<Route<'_>>, elapsed: Duration) {
+    fn on_response(
+        &self,
+        response: &http::Response,
+        route: Option<Route<'_>>,
+        elapsed: Duration,
+        _: &C,
+    ) {
         let Some(route) = route else { return };
         let Some(budget) = self.budgets.get(route.operation_id()) else {
             return;

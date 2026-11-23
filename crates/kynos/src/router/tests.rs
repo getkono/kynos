@@ -70,7 +70,7 @@ impl Observer<()> for Seen {
             .push(request.uri().path().to_owned());
     }
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, (): &()) {}
 }
 
 /// An observer sees whole requests rather than operations, so one an absorbed

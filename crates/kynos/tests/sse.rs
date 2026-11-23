@@ -272,7 +272,7 @@ struct Counting(Arc<Witness>);
 impl Observer<Arc<Witness>> for Counting {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &Arc<Witness>) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, _: &Arc<Witness>) {
         self.0.responses.fetch_add(1, Ordering::SeqCst);
     }
 

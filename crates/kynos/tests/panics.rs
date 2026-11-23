@@ -166,7 +166,7 @@ impl Heard {
 impl Observer<()> for Heard {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, (): &()) {}
 
     fn on_panic(&self, _: &(dyn Any + Send), route: Option<Route<'_>>) {
         let path = route.map_or_else(|| "<unmatched>".to_owned(), |route| route.path().to_owned());
@@ -260,7 +260,7 @@ impl Observer<()> for Log {
         self.push("request".to_owned());
     }
 
-    fn on_response(&self, response: &Response, _: Option<Route<'_>>, _: Duration) {
+    fn on_response(&self, response: &Response, _: Option<Route<'_>>, _: Duration, (): &()) {
         self.push(format!("response {}", response.status().as_u16()));
     }
 

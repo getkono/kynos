@@ -748,7 +748,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let elapsed = started.elapsed();
         let route = at.map(|at| self.route_at(at));
         for observer in &self.observers {
-            observer.on_response(&response, route, elapsed);
+            observer.on_response(&response, route, elapsed, &self.context);
         }
 
         // Rebuilt inside the watch: the body outlives any borrow of the table.

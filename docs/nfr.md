@@ -1249,7 +1249,8 @@ module, for the reasons closing this section. What did land is the
 seam they need: `Observer` receives the matched
 [`Route`](../crates/kynos/src/router/operation.rs), so a label can be keyed by
 operation rather than by request path, which is the property the second row
-measures.
+measures, and both `on_request` and `on_response` receive the application
+context, so the registry those labels feed is the one the context owns.
 
 The third row is the one that was not simply missing but wrong. `on_response`
 fires when the response head is ready, which for a stream or a download is
