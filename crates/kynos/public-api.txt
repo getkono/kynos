@@ -10945,6 +10945,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for kynos::test::Coverage
 impl core::panic::unwind_safe::UnwindSafe for kynos::test::Coverage
 pub struct kynos::test::TestClient<C>
 impl<C: 'static> kynos::test::TestClient<C>
+pub fn kynos::test::TestClient<C>::connect(&kynos::server::Running<C>) -> Self
 pub fn kynos::test::TestClient<C>::through_server(kynos::server::Server<C>) -> Self
 impl<C> kynos::test::TestClient<C>
 pub fn kynos::test::TestClient<C>::assert_conformance(&self)

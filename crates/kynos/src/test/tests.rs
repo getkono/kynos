@@ -1,6 +1,7 @@
 //! The request body a `TestRequest` sends: what it yields, and what it tells a
 //! reader about its end and its length before the reader polls. And, in
-//! [`assertions`], how each `TestResponse::assert_*` helper fails.
+//! [`assertions`], how each `TestResponse::assert_*` helper fails, and in
+//! `connected`, what a client built `connect` reaches and refuses.
 //!
 //! `tests/client.rs` holds what a service reads from it; the end and length
 //! signals are read by a body's consumer rather than by the frames, so they
@@ -1169,5 +1170,191 @@ mod streaming {
         );
 
         let _ = stream.next_event().await;
+    }
+}
+
+/// A client built `connect`: where it reaches a listener, the listener-only
+/// setting `through_server` cannot reach, and each refusal of what a real
+/// socket fixes for itself.
+#[cfg(feature = "server")]
+mod connected {
+    use std::{
+        net::SocketAddr,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        time::Duration,
+    };
+
+    use crate::{
+        http::{Response, body::Body},
+        router::service::Service,
+        server::{Running, Server},
+        test::{TestClient, reachable},
+    };
+
+    fn document() -> kynos_openapi::Document {
+        kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        )
+    }
+
+    /// Answers every request with an empty 200.
+    fn answering() -> Service<()> {
+        Service::new(document(), |_| async { Response::new(Body::empty()) })
+    }
+
+    async fn spawned(server: Server<()>) -> Running<()> {
+        server
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .prepare()
+            .await
+            .expect("loopback listener binds")
+            .spawn()
+    }
+
+    fn address(written: &str) -> SocketAddr {
+        written.parse().expect("a socket address")
+    }
+
+    /// An unspecified address names no host to connect to, so its family's
+    /// loopback stands in; any other is reached as it is.
+    #[test]
+    fn an_unspecified_address_is_reached_through_its_loopback() {
+        assert_eq!(reachable(address("0.0.0.0:80")), address("127.0.0.1:80"));
+        assert_eq!(reachable(address("[::]:80")), address("[::1]:80"));
+        assert_eq!(reachable(address("192.0.2.7:80")), address("192.0.2.7:80"));
+        assert_eq!(reachable(address("[::1]:80")), address("[::1]:80"));
+    }
+
+    /// The connection limit is the listener's: with a cap of one, a second
+    /// request waits in the backlog while the first is served, and is served
+    /// once the first ends.
+    #[cfg(feature = "http1")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_connection_limit_holds_a_second_request_until_the_first_ends() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let service = {
+            let calls = Arc::clone(&calls);
+            let release = Arc::clone(&release);
+            Service::new(document(), move |_| {
+                let calls = Arc::clone(&calls);
+                let release = Arc::clone(&release);
+                async move {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        release.notified().await;
+                    }
+                    Response::new(Body::empty())
+                }
+            })
+        };
+        let running =
+            spawned(Server::new(service).max_connections(std::num::NonZeroUsize::MIN)).await;
+        let client = Arc::new(TestClient::connect(&running));
+        let send = || {
+            let client = Arc::clone(&client);
+            tokio::spawn(async move { client.get("/").send().await.status() })
+        };
+        let served = |count| {
+            let calls = Arc::clone(&calls);
+            async move {
+                while calls.load(Ordering::SeqCst) != count {
+                    tokio::task::yield_now().await;
+                }
+            }
+        };
+
+        let first = send();
+        tokio::time::timeout(Duration::from_secs(5), served(1))
+            .await
+            .expect("the first request reaches the handler");
+        let second = send();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), served(2))
+                .await
+                .is_err(),
+            "the second connection must wait in the listener backlog"
+        );
+
+        release.notify_one();
+        assert_eq!(first.await.expect("the first request joins"), 200);
+        assert_eq!(second.await.expect("the second request joins"), 200);
+        running
+            .shutdown()
+            .await
+            .expect("an idle server drains cleanly");
+    }
+
+    #[tokio::test]
+    #[should_panic(
+        expected = "a client built `connect` sends from its own socket's address, which \
+                    `with_peer` cannot set"
+    )]
+    async fn a_connected_client_refuses_a_default_peer() {
+        let running = spawned(Server::new(answering())).await;
+        let _ = TestClient::connect(&running).with_peer(address("203.0.113.7:4242"));
+    }
+
+    #[tokio::test]
+    #[should_panic(
+        expected = "a client built `connect` sends from its own socket's address, which \
+                    `peer` cannot set"
+    )]
+    async fn a_connected_client_refuses_a_requests_peer() {
+        let running = spawned(Server::new(answering())).await;
+        let _ = TestClient::connect(&running)
+            .get("/")
+            .peer(address("203.0.113.7:4242"));
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "a client built `connect` holds a body to its server's \
+                               `request_body_idle_timeout`; set it there")]
+    async fn a_connected_client_refuses_an_idle_timeout_of_its_own() {
+        let running = spawned(Server::new(answering())).await;
+        let _ = TestClient::connect(&running).with_request_body_idle_timeout(None);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "GET /: a client built `connect` cannot time on a paused clock")]
+    async fn a_connected_client_refuses_to_time_on_a_paused_clock() {
+        let running = spawned(Server::new(answering())).await;
+        let _ = TestClient::connect(&running).get("/").send_timed().await;
+    }
+
+    #[cfg(feature = "tls")]
+    #[tokio::test]
+    #[should_panic(expected = "a server whose listeners speak TLS cannot be connected to")]
+    async fn a_server_speaking_tls_cannot_be_connected_to() {
+        let certified = rcgen::generate_simple_self_signed(["localhost".to_owned()])
+            .expect("a self-signed certificate");
+        let tls = crate::server::tls::TlsConfig::from_pem(
+            certified.cert.pem().as_bytes(),
+            certified.signing_key.serialize_pem().as_bytes(),
+        )
+        .expect("TLS identity parses");
+        let running = spawned(Server::new(answering()).tls(tls)).await;
+        let _ = TestClient::connect(&running);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[should_panic(expected = "a server with no TCP listener cannot be connected to")]
+    async fn a_server_with_no_tcp_listener_cannot_be_connected_to() {
+        let directory = std::env::temp_dir().join(format!("kynos-{}-connect", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("a scratch directory");
+        let listener = std::os::unix::net::UnixListener::bind(directory.join("api.sock"))
+            .expect("the socket binds");
+        let running = Server::new(answering())
+            .unix_listener(listener)
+            .prepare()
+            .await
+            .expect("a Unix listener alone is something to listen on")
+            .spawn();
+        let _ = std::fs::remove_dir_all(&directory);
+        let _ = TestClient::connect(&running);
     }
 }

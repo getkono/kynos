@@ -53,9 +53,10 @@ struct Observed {
     body: Option<Bytes>,
 }
 
-/// Sends requests to a [`Service`] directly, or through a configured
+/// Sends requests to a [`Service`] directly, through a configured
 /// [`Server`](crate::server::Server) with
-/// [`through_server`](Self::through_server).
+/// [`through_server`](Self::through_server), or to a spawned one over its
+/// listener with [`connect`](Self::connect).
 #[derive(Debug)]
 pub struct TestClient<C> {
     transport: Transport<C>,
@@ -139,16 +140,18 @@ impl<C> TestClient<C> {
     ///
     /// Panics when `timeout` is `Some(Duration::ZERO)`, which a server
     /// refuses too, and on a client built
-    /// [`through_server`](Self::through_server), whose server's own setting
-    /// holds its bodies.
+    /// [`through_server`](Self::through_server) or
+    /// [`connect`](Self::connect), whose server's own setting holds its
+    /// bodies.
     #[cfg(feature = "server")]
     #[must_use]
     pub fn with_request_body_idle_timeout(mut self, timeout: Option<std::time::Duration>) -> Self {
-        assert!(
-            matches!(self.transport, Transport::Direct(_)),
-            "a client built `through_server` holds a body to its server's \
-             `request_body_idle_timeout`; set it there"
-        );
+        if let Some(built) = self.transport.served_by() {
+            panic!(
+                "a client built `{built}` holds a body to its server's \
+                 `request_body_idle_timeout`; set it there"
+            );
+        }
         if let Err(error) = crate::server::request_body::validate_request_body_idle_timeout(timeout)
         {
             panic!("{error}");
@@ -175,7 +178,24 @@ impl<C> TestClient<C> {
             Transport::Direct(service) => service,
             #[cfg(feature = "server")]
             Transport::Served { server, .. } => server.served(),
+            #[cfg(feature = "server")]
+            Transport::Connected { service, .. } => service,
         }
+    }
+
+    /// Panics, naming `setter`, on a client built
+    /// [`connect`](Self::connect), whose requests leave from their own
+    /// socket's address.
+    fn refuse_peer_over_a_socket(&self, setter: &str) {
+        #[cfg(feature = "server")]
+        if let Transport::Connected { .. } = self.transport {
+            panic!(
+                "a client built `connect` sends from its own socket's address, \
+                 which `{setter}` cannot set; use `through_server` to test a peer"
+            );
+        }
+        #[cfg(not(feature = "server"))]
+        let _ = setter;
     }
 
     /// Records every response this client receives into `coverage` as well.
@@ -195,8 +215,14 @@ impl<C> TestClient<C> {
     /// For a service every request of a suite reaches through the same
     /// client address: a rate limiter keyed by client, or a trusted-proxy
     /// policy. A second call replaces the first.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a client built [`connect`](Self::connect), whose requests
+    /// leave from their own socket's address.
     #[must_use]
     pub fn with_peer(mut self, peer: std::net::SocketAddr) -> Self {
+        self.refuse_peer_over_a_socket("with_peer");
         self.peer = Some(peer);
         self
     }
@@ -419,6 +445,7 @@ impl<C: 'static> TestClient<C> {
     ///
     /// - Listener-only settings do not apply: the connection limit, TCP
     ///   keepalive, and graceful shutdown and its timeout.
+    ///   [`connect`](Self::connect) sends to a listener, where they do.
     /// - Each connection carries one request and closes once its response
     ///   body has been read; a dropped [`send`](TestRequest::send) or
     ///   [`TestStream`] closes it without draining.
@@ -456,6 +483,85 @@ impl<C: 'static> TestClient<C> {
             exchange: crate::server::Server::exchange,
         })
     }
+
+    /// Sends every request over a fresh TCP connection to a spawned server's
+    /// first [`local_addr`](crate::server::Running::local_addr), so every
+    /// setting applies, the listener's included: the connection limit, TCP
+    /// keepalive, and graceful shutdown. Conformance and coverage read the
+    /// description of the service `running`
+    /// [serves](crate::server::Running::service).
+    ///
+    /// An unspecified address, `0.0.0.0` or `::`, is reached through its
+    /// family's loopback. The request is written as
+    /// [`through_server`](Self::through_server) writes it, and its
+    /// connection closes as that one does: once its response body has been
+    /// read, or a dropped [`send`](TestRequest::send) or [`TestStream`] has
+    /// hung up. The client borrows nothing from `running`, so
+    /// [`Running::shutdown`](crate::server::Running::shutdown) may begin
+    /// while it is held; a request sent once the listener has closed panics
+    /// with the refusal.
+    ///
+    /// What a socket fixes for itself, the client cannot set: a request
+    /// leaves from the connection's own loopback address, so
+    /// [`with_peer`](Self::with_peer) and [`TestRequest::peer`] panic, and
+    /// [`TestRequest::send_timed`] panics, since the real socket's
+    /// readiness is not on the paused clock it measures. Nor does it write a
+    /// PROXY protocol header, so a server trusting loopback as its proxy
+    /// refuses every connection.
+    ///
+    /// ```
+    /// use kynos::{Router, server::Server, test::TestClient};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let running = Server::new(Router::<()>::new().build(())?)
+    ///     .bind(("127.0.0.1", 0))
+    ///     .prepare()
+    ///     .await?
+    ///     .spawn();
+    /// let client = TestClient::connect(&running);
+    /// client.get("/").send().await.assert_status(501);
+    /// running.shutdown().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `running` has no TCP listener, as one serving only Unix
+    /// domain sockets has, and when its listeners speak TLS, since the
+    /// client writes plaintext.
+    #[must_use]
+    pub fn connect(running: &crate::server::Running<C>) -> Self {
+        let address = running.local_addr().unwrap_or_else(|| {
+            panic!("a server with no TCP listener cannot be connected to; `connect` sends over TCP")
+        });
+        assert!(
+            !running.serves_tls(),
+            "a server whose listeners speak TLS cannot be connected to; `connect` writes plaintext"
+        );
+        Self::over(Transport::Connected {
+            address: reachable(address),
+            service: running.shared_service(),
+        })
+    }
+}
+
+/// Where a client reaches a listener bound to `address`: its family's
+/// loopback where `address` is unspecified, which names no host to connect
+/// to, and `address` itself otherwise.
+#[cfg(feature = "server")]
+fn reachable(mut address: std::net::SocketAddr) -> std::net::SocketAddr {
+    match address.ip() {
+        std::net::IpAddr::V4(ip) if ip.is_unspecified() => {
+            address.set_ip(std::net::Ipv4Addr::LOCALHOST.into());
+        }
+        std::net::IpAddr::V6(ip) if ip.is_unspecified() => {
+            address.set_ip(std::net::Ipv6Addr::LOCALHOST.into());
+        }
+        _ => {}
+    }
+    address
 }
 
 /// Where a [`TestClient`] sends its requests. Each variant boxes what it
@@ -472,9 +578,28 @@ enum Transport<C> {
         /// needs no such bound.
         exchange: fn(&crate::server::Server<C>, Request, Connection) -> Exchanged,
     },
+    /// Over one fresh TCP connection each, to a spawned server's listener.
+    #[cfg(feature = "server")]
+    Connected {
+        address: std::net::SocketAddr,
+        /// The service that listener serves, whose description assertions
+        /// read.
+        service: Arc<Service<C>>,
+    },
 }
 
 impl<C> Transport<C> {
+    /// The constructor of a client whose server holds its bodies to its own
+    /// timer, or `None` for [`Self::Direct`].
+    #[cfg(feature = "server")]
+    fn served_by(&self) -> Option<&'static str> {
+        match self {
+            Self::Direct(_) => None,
+            Self::Served { .. } => Some("through_server"),
+            Self::Connected { .. } => Some("connect"),
+        }
+    }
+
     /// Sends `request` from `peer`, failing only where a connection ended
     /// without a response. [`Self::Direct`] holds the body to `idle` between
     /// frames, as a server would; a served one is held to its server's own.
@@ -518,6 +643,12 @@ impl<C> Transport<C> {
             Self::Served { server, exchange } => {
                 let connection = Connection::from_peer(peer.unwrap_or(IN_PROCESS), IN_PROCESS);
                 exchange(server, request, connection).await
+            }
+            // The peer is the socket's own; `with_peer` and `peer` refuse
+            // to set one.
+            #[cfg(feature = "server")]
+            Self::Connected { address, .. } => {
+                crate::server::connection::test_client::exchange_at(*address, request).await
             }
         }
     }
@@ -819,8 +950,14 @@ impl<'a, C> TestRequest<'a, C> {
     /// [`with_peer`](TestClient::with_peer), or the in-process default where
     /// the client sets none; set it to test a rate limiter keyed by client, or
     /// a trusted-proxy policy.
+    ///
+    /// # Panics
+    ///
+    /// Panics on a client built [`connect`](TestClient::connect), whose
+    /// requests leave from their own socket's address.
     #[must_use]
     pub fn peer(mut self, address: std::net::SocketAddr) -> Self {
+        self.client.refuse_peer_over_a_socket("peer");
         self.peer = Some(address);
         self
     }
@@ -873,8 +1010,9 @@ impl<'a, C> TestRequest<'a, C> {
     /// clock and no wall-clock wait; one given
     /// [`with_request_body_idle_timeout`](TestClient::with_request_body_idle_timeout)
     /// waits that timeout instead, as a served body would. One built
-    /// [`through_server`](TestClient::through_server) sends it on the wire,
-    /// where the server's own
+    /// [`through_server`](TestClient::through_server) or
+    /// [`connect`](TestClient::connect) sends it on the wire, where the
+    /// server's own
     /// [`request_body_idle_timeout`](crate::server::Server::request_body_idle_timeout)
     /// ends the wait: give that server a short one, and with `None` the
     /// request is never answered.
@@ -983,8 +1121,9 @@ impl<'a, C> TestRequest<'a, C> {
     /// Sends the request.
     ///
     /// The response arrives with the `Content-Length` a connection would
-    /// frame it with, by either client: one built
-    /// [`through_server`](TestClient::through_server) reads it off the wire,
+    /// frame it with, by any client: one built
+    /// [`through_server`](TestClient::through_server) or
+    /// [`connect`](TestClient::connect) reads it off the wire,
     /// and one built with [`TestClient::new`] states the body's length where
     /// the body knows it and RFC 9110 section 8.6 allows one, keeping any the
     /// service set. A streamed body of unknown length states none, as a
@@ -995,7 +1134,8 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics when the path is not a request target, when a
     /// [`cookie`](Self::cookie) leaves the `Cookie` field no header value, or
     /// when the response body fails part-way through, or, for a client built
-    /// [`through_server`](TestClient::through_server), when the connection
+    /// [`through_server`](TestClient::through_server) or
+    /// [`connect`](TestClient::connect), when the connection is refused or
     /// ends without a response.
     pub async fn send(self) -> TestResponse {
         let Answered {
@@ -1187,11 +1327,18 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics as [`send`](Self::send) does; outside a current-thread tokio
     /// runtime, and where the clock is already paused, as under
     /// `#[tokio::test(start_paused = true)]`, both of which
-    /// `tokio::time::pause` refuses; and when no response arrives within the
-    /// guard.
+    /// `tokio::time::pause` refuses; when no response arrives within the
+    /// guard; and on a client built [`connect`](TestClient::connect), whose
+    /// real socket is ready on the real clock, not the paused one, so the
+    /// clock would leap to the server's timers while a write is in flight.
     #[cfg(feature = "server")]
     pub async fn send_timed(self) -> (TestResponse, std::time::Duration) {
         let exchange = format!("{} {}", self.method, self.path);
+        assert!(
+            !matches!(self.client.transport, Transport::Connected { .. }),
+            "{exchange}: a client built `connect` cannot time on a paused clock, \
+             which leaps past a real socket's wait; use `through_server`"
+        );
         crate::server::request_body::on_paused_clock(self.send(), SEND_TIMED_GUARD)
             .await
             .unwrap_or_else(|| {
@@ -1219,7 +1366,8 @@ struct Answered<'a, C> {
 /// read from one position, so each octet is returned once, by whichever
 /// reads it first. Dropping the stream closes the body unread, as a client
 /// that hangs up does: an operation's stream is dropped, and a connection
-/// built [`through_server`](TestClient::through_server) closes.
+/// built [`through_server`](TestClient::through_server) or
+/// [`connect`](TestClient::connect) closes.
 ///
 /// Every panic a method here raises opens with the request and its status,
 /// as [`TestResponse`]'s do.

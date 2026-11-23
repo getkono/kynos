@@ -30,7 +30,8 @@
 //! through.
 
 mod accept;
-mod connection;
+// Crate-visible so the test client reaches its socket half.
+pub(crate) mod connection;
 mod describe;
 // Every Unix but those whose `rustix` has no `getrlimit`.
 #[cfg(all(
@@ -1069,6 +1070,8 @@ impl<C: 'static> BoundServer<C> {
         Running {
             service: Arc::clone(&self.service),
             local_addrs: self.local_addrs.clone(),
+            #[cfg(feature = "tls")]
+            tls: self.config.tls.is_some(),
             trigger,
             task: tokio::spawn(self.serve()),
         }
@@ -1084,6 +1087,9 @@ pub struct Running<C> {
     /// The service every connection shares, as `serve` holds it.
     service: Arc<Service<C>>,
     local_addrs: Vec<SocketAddr>,
+    /// Whether the TCP listeners speak TLS.
+    #[cfg(feature = "tls")]
+    tls: bool,
     /// Never sent: dropping it is the trigger.
     trigger: oneshot::Sender<Infallible>,
     task: JoinHandle<Result<()>>,

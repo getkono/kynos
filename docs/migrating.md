@@ -27,6 +27,7 @@ the section for the release that ships it.
 | `#[derive(Schema, QueryParams)]`, or `Schema` beside another parameter derive only so the group's `#[schema(...)]` bounds compile | the parameter derive alone, which registers and checks `#[schema(...)]` itself | #1378 |
 | `#[error(transparent)]` and `#[problem(transparent)]` on one `ApiError` variant | `#[error(transparent)]` alone; a `#[problem(status = ...)]` beside it opts out | #1378 |
 | A variant copied from another `ApiError` enum, and a `match` or `let ... else { unreachable!() }` moving a value across | `#[problem(variant_of = Other::Variant)]` on the variant, and `Narrow::try_from(other)` | #1378 |
+| `TcpListener::bind`, `tokio::spawn(server.listener(..).serve())`, a hand-formatted request head and a status-line parser, to test what only a listener answers | `test::TestClient::connect(&running)` over `server::BoundServer::spawn`'s handle, then `running.shutdown()` | #1389 |
 
 ## 0.5 to 0.6
 
