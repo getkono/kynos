@@ -52,7 +52,7 @@ as reading the authenticated caller in a handler, which is
 | Example | Shows | Features |
 | --- | --- | --- |
 | [`composition.rs`](composition.rs) | `nest` versus `merge` versus `Group`, the four tag scopes, an interceptor on one operation, the fallback policies, one router value both described and built, and a `/ready` probe that leaves rotation through a deregistration delay before the drain | — |
-| [`state.rs`](state.rs) | Compile-time dependency injection: `#[derive(Provider)]` and `Inject<T>` | — |
+| [`state.rs`](state.rs) | Compile-time dependency injection: `#[derive(Provider)]`, a services struct forwarded with `#[provider(for, via)]`, and `Inject<T>` | — |
 | [`document.rs`](document.rs) | Document metadata, validation, version refusal, and serving the description as a route | `openapi32,yaml` |
 
 ## Middleware
