@@ -78,6 +78,11 @@ advice copied from another framework, or reasoned without a measurement, is
 what this page exists to replace. kynos-bench has not yet recorded those
 results, so none of that advice is here, and nothing below tunes a cost.
 
+kynos-bench runs on a Linux rig. Nothing it records speaks for another
+operating system or for a shape it has not measured; its
+[methodology](https://github.com/getkono/kynos-bench/blob/master/docs/METHODOLOGY.md)
+says what it measures.
+
 ### Operating system limits
 
 - Size the hard `RLIMIT_NOFILE` for the connection cap: `LimitNOFILE=` under
@@ -162,7 +167,38 @@ results, so none of that advice is here, and nothing below tunes a cost.
   (`terminationGracePeriodSeconds`); widen the window rather than shortening
   the drain where in-flight requests need it.
 
-kynos-bench runs on a Linux rig. Nothing it records speaks for another
-operating system or for a shape it has not measured; its
-[methodology](https://github.com/getkono/kynos-bench/blob/master/docs/METHODOLOGY.md)
-says what it measures.
+### Internal operations
+
+An operation no API client should call, such as a Prometheus `/metrics`
+scrape, belongs on a router of its own, served by a second `Server` on an
+address only the internal network reaches. The public document then leaves it
+out because the public listener does not serve it, and the internal router's
+own document describes it, checked by `build` like any other. Both routers take
+the context that holds what they share, such as the metrics registry, and both
+servers take one `Shutdown`, so one signal drains them together. Both are
+prepared before either serves, so an address that cannot be bound stops startup
+rather than leaving the other listener serving alone:
+
+```rust
+let shutdown = Shutdown::signals();
+let api = Router::new().mount(public_routes()).build(context.clone())?;
+let ops = Router::new().mount(kynos::routes![render_metrics]).build(context)?;
+let public = Server::new(api)
+    .bind(public_address)
+    .graceful_shutdown(shutdown.clone())
+    .prepare()
+    .await?;
+let internal = Server::new(ops)
+    .bind(internal_address)
+    .graceful_shutdown(shutdown)
+    .prepare()
+    .await?;
+let (public, internal) = tokio::join!(public.serve(), internal.serve());
+public.and(internal)
+```
+
+Where the deployment exposes one port only, mount the operation on the public
+router under an `internal` tag instead, so a client generator can skip it by
+tag. No route attribute serves an operation while leaving it out of `paths`;
+[routing.md](routing.md#why-no-served-operation-is-left-out-of-paths) says
+why.
