@@ -156,6 +156,14 @@ carries no interceptor of its own the mount site can check — and an
 interceptors belong to whatever is mounting, not to the endpoints, so there is
 nothing there for a caller to reach into.
 
+A module hands its operations out from a function, not a macro, through
+`Endpoints::from_routes(routes![..])`. The tuple's type names every handler
+and cannot be written; `Endpoints<C, S>` can, and `S` keeps what the members'
+own interceptors were, gathered into one `stack![..]` in the order `routes!`
+names them, so the mount site still checks them. Erasing them instead would
+let an upload's own `BodySize` mount under a group's smaller one and lose to
+it silently. A set with no such interceptor is `Endpoints<C>`.
+
 ### The description a router serves is the one it emits
 
 `Router::docs` is the only mount whose *payload* is the document. The bytes

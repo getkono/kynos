@@ -5316,6 +5316,8 @@ impl<L, R, S> kynos::middleware::stack::Flatten<S> for kynos::middleware::stack:
 pub type kynos::middleware::stack::Both<L, R>::Out = <L as kynos::middleware::stack::Flatten<<R as kynos::middleware::stack::Flatten<S>>::Out>>::Out
 impl<L: core::fmt::Debug, R: core::fmt::Debug> core::fmt::Debug for kynos::middleware::stack::Both<L, R>
 pub fn kynos::middleware::stack::Both<L, R>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<L: kynos::router::endpoint::set::Collect<S>, R: kynos::router::endpoint::set::Collect<<L as kynos::router::endpoint::set::Collect>::Out>, S> kynos::router::endpoint::set::Collect<S> for kynos::middleware::stack::Both<L, R>
+pub type kynos::middleware::stack::Both<L, R>::Out = <R as kynos::router::endpoint::set::Collect<<L as kynos::router::endpoint::set::Collect<S>>::Out>>::Out
 impl<N, L, R, C> kynos::middleware::stack::CompatibleWith<N, C> for kynos::middleware::stack::Both<L, R> where L: kynos::middleware::stack::CompatibleWith<N, C>, R: kynos::middleware::stack::CompatibleWith<N, C>
 pub const kynos::middleware::stack::Both<L, R>::CHECK: ()
 impl<Other, L, R, C> kynos::middleware::stack::CompatibleStack<Other, C> for kynos::middleware::stack::Both<L, R> where L: kynos::middleware::stack::CompatibleStack<Other, C>, R: kynos::middleware::stack::CompatibleStack<Other, C>
@@ -5330,6 +5332,8 @@ impl<L, R> core::panic::unwind_safe::UnwindSafe for kynos::middleware::stack::Bo
 pub struct kynos::middleware::stack::Cons<H, T>(_)
 impl<H, T, S> kynos::middleware::stack::Flatten<S> for kynos::middleware::stack::Cons<H, T> where T: kynos::middleware::stack::Flatten<S>
 pub type kynos::middleware::stack::Cons<H, T>::Out = kynos::middleware::stack::Cons<H, <T as kynos::middleware::stack::Flatten<S>>::Out>
+impl<H, T: kynos::router::endpoint::set::Collect<S>, S> kynos::router::endpoint::set::Collect<S> for kynos::middleware::stack::Cons<H, T>
+pub type kynos::middleware::stack::Cons<H, T>::Out = kynos::middleware::stack::Cons<H, <T as kynos::router::endpoint::set::Collect<S>>::Out>
 impl<H: core::fmt::Debug, T: core::fmt::Debug> core::fmt::Debug for kynos::middleware::stack::Cons<H, T>
 pub fn kynos::middleware::stack::Cons<H, T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<N, H, T, C> kynos::middleware::stack::CompatibleWith<N, C> for kynos::middleware::stack::Cons<H, T> where C: core::marker::Sync + 'static, N: kynos::middleware::Interceptor<C>, H: kynos::middleware::Interceptor<C>, T: kynos::middleware::stack::CompatibleWith<N, C>
@@ -8451,26 +8455,36 @@ pub trait kynos::router::endpoint::meta::EndpointUri: kynos::router::endpoint::m
 pub type kynos::router::endpoint::meta::EndpointUri::Params
 pub fn kynos::router::endpoint::meta::EndpointUri::render(&str, Self::Params) -> http::uri::Uri
 pub mod kynos::router::endpoint::set
-pub struct kynos::router::endpoint::set::Endpoints<C>
+pub struct kynos::router::endpoint::set::Endpoints<C, S>
+impl<C, S> kynos::router::endpoint::set::Endpoints<C, S>
+pub fn kynos::router::endpoint::set::Endpoints<C, S>::is_empty(&self) -> bool
+pub fn kynos::router::endpoint::set::Endpoints<C, S>::len(&self) -> usize
 impl<C> kynos::router::endpoint::set::Endpoints<C>
-pub fn kynos::router::endpoint::set::Endpoints<C>::is_empty(&self) -> bool
-pub fn kynos::router::endpoint::set::Endpoints<C>::len(&self) -> usize
+pub fn kynos::router::endpoint::set::Endpoints<C>::from_routes<E>(E) -> kynos::router::endpoint::set::Endpoints<C, <<E as kynos::router::endpoint::set::IntoEndpoints>::Stacks as kynos::router::endpoint::set::Collect<()>>::Out> where E: kynos::router::endpoint::set::IntoEndpoints<C>, <E as kynos::router::endpoint::set::IntoEndpoints>::Stacks: kynos::router::endpoint::set::Collect<()>
 pub fn kynos::router::endpoint::set::Endpoints<C>::new() -> Self
 pub fn kynos::router::endpoint::set::Endpoints<C>::push<E: kynos::router::endpoint::Endpoint<C>>(&mut self, E) -> &mut Self where C: core::marker::Send + core::marker::Sync + 'static
+impl<C, S> core::fmt::Debug for kynos::router::endpoint::set::Endpoints<C, S>
+pub fn kynos::router::endpoint::set::Endpoints<C, S>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C, S> kynos::router::endpoint::set::IntoEndpoints<C> for kynos::router::endpoint::set::Endpoints<C, S>
+pub type kynos::router::endpoint::set::Endpoints<C, S>::Stacks = S
+pub fn kynos::router::endpoint::set::Endpoints<C, S>::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
 impl<C> core::default::Default for kynos::router::endpoint::set::Endpoints<C>
 pub fn kynos::router::endpoint::set::Endpoints<C>::default() -> Self
-impl<C> core::fmt::Debug for kynos::router::endpoint::set::Endpoints<C>
-pub fn kynos::router::endpoint::set::Endpoints<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C> kynos::router::endpoint::set::IntoEndpoints<C> for kynos::router::endpoint::set::Endpoints<C>
-pub type kynos::router::endpoint::set::Endpoints<C>::Stacks = ()
-pub fn kynos::router::endpoint::set::Endpoints<C>::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
-impl<C> core::marker::Freeze for kynos::router::endpoint::set::Endpoints<C>
-impl<C> core::marker::Send for kynos::router::endpoint::set::Endpoints<C>
-impl<C> core::marker::Sync for kynos::router::endpoint::set::Endpoints<C>
-impl<C> core::marker::Unpin for kynos::router::endpoint::set::Endpoints<C>
-impl<C> core::marker::UnsafeUnpin for kynos::router::endpoint::set::Endpoints<C>
-impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::endpoint::set::Endpoints<C>
-impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::router::endpoint::set::Endpoints<C>
+impl<C, S> core::marker::Freeze for kynos::router::endpoint::set::Endpoints<C, S>
+impl<C, S> core::marker::Send for kynos::router::endpoint::set::Endpoints<C, S>
+impl<C, S> core::marker::Sync for kynos::router::endpoint::set::Endpoints<C, S>
+impl<C, S> core::marker::Unpin for kynos::router::endpoint::set::Endpoints<C, S>
+impl<C, S> core::marker::UnsafeUnpin for kynos::router::endpoint::set::Endpoints<C, S>
+impl<C, S> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::endpoint::set::Endpoints<C, S>
+impl<C, S> !core::panic::unwind_safe::UnwindSafe for kynos::router::endpoint::set::Endpoints<C, S>
+pub trait kynos::router::endpoint::set::Collect<S>
+pub type kynos::router::endpoint::set::Collect::Out
+impl<H, T: kynos::router::endpoint::set::Collect<S>, S> kynos::router::endpoint::set::Collect<S> for kynos::middleware::stack::Cons<H, T>
+pub type kynos::middleware::stack::Cons<H, T>::Out = kynos::middleware::stack::Cons<H, <T as kynos::router::endpoint::set::Collect<S>>::Out>
+impl<L: kynos::router::endpoint::set::Collect<S>, R: kynos::router::endpoint::set::Collect<<L as kynos::router::endpoint::set::Collect>::Out>, S> kynos::router::endpoint::set::Collect<S> for kynos::middleware::stack::Both<L, R>
+pub type kynos::middleware::stack::Both<L, R>::Out = <R as kynos::router::endpoint::set::Collect<<L as kynos::router::endpoint::set::Collect<S>>::Out>>::Out
+impl<S> kynos::router::endpoint::set::Collect<S> for ()
+pub type ()::Out = S
 pub trait kynos::router::endpoint::set::IntoEndpoints<C>
 pub type kynos::router::endpoint::set::IntoEndpoints::Stacks
 pub fn kynos::router::endpoint::set::IntoEndpoints::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
@@ -8525,6 +8539,9 @@ pub fn (A)::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>
 impl<C, H, A, P, I> kynos::router::endpoint::set::IntoEndpoints<C> for kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I> where C: core::marker::Send + core::marker::Sync + 'static, H: kynos::handler::Handler<C, A>, A: 'static, P: kynos::middleware::catch_panic::PanicPolicy, I: 'static
 pub type kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::Stacks = I
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
+impl<C, S> kynos::router::endpoint::set::IntoEndpoints<C> for kynos::router::endpoint::set::Endpoints<C, S>
+pub type kynos::router::endpoint::set::Endpoints<C, S>::Stacks = S
+pub fn kynos::router::endpoint::set::Endpoints<C, S>::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
 impl<C, T: kynos::router::endpoint::set::IntoEndpoints<C>, const N: usize> kynos::router::endpoint::set::IntoEndpoints<C> for [T; N]
 pub type [T; N]::Stacks = <T as kynos::router::endpoint::set::IntoEndpoints<C>>::Stacks
 pub fn [T; N]::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
@@ -8534,9 +8551,6 @@ pub fn alloc::vec::Vec<T>::into_endpoints(self, &mut kynos::router::endpoint::se
 impl<C: core::marker::Send + core::marker::Sync + 'static> kynos::router::endpoint::set::IntoEndpoints<C> for kynos::router::assets::AssetSet
 pub type kynos::router::assets::AssetSet::Stacks = ()
 pub fn kynos::router::assets::AssetSet::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
-impl<C> kynos::router::endpoint::set::IntoEndpoints<C> for kynos::router::endpoint::set::Endpoints<C>
-pub type kynos::router::endpoint::set::Endpoints<C>::Stacks = ()
-pub fn kynos::router::endpoint::set::Endpoints<C>::into_endpoints(self, &mut kynos::router::endpoint::set::Endpoints<C>)
 pub trait kynos::router::endpoint::Endpoint<C>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::router::endpoint::Endpoint::call(&self, kynos::http::Request, &C) -> impl core::future::future::Future<Output = kynos::http::Response> + core::marker::Send
 pub fn kynos::router::endpoint::Endpoint::describe(&self, &mut kynos::router::operation::OperationCx<'_>)

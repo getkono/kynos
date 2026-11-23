@@ -1,9 +1,9 @@
 //! The collection a router mounts, and what can become one.
 
-use std::sync::Arc;
+use std::{marker::PhantomData, sync::Arc};
 
 use crate::{
-    middleware::stack::Both,
+    middleware::stack::{Both, Cons},
     router::endpoint::{DynEndpoint, Endpoint},
 };
 
@@ -11,11 +11,17 @@ use crate::{
 ///
 /// What [`IntoEndpoints`] fills in. Opaque and append-only: the prefix, the
 /// panic policy and the interceptors belong to whatever is mounting.
-pub struct Endpoints<C> {
+///
+/// `S` is the interceptors its operations carry themselves, as a type-level
+/// list the mount site checks, as it checks a `routes![..]` tuple's.
+/// [`from_routes`](Endpoints::from_routes) is what fills it; a set built with
+/// [`push`](Endpoints::push) carries `()`, whatever its members hold.
+pub struct Endpoints<C, S = ()> {
     endpoints: Vec<Arc<dyn DynEndpoint<C>>>,
+    _stacks: PhantomData<fn() -> S>,
 }
 
-impl<C> std::fmt::Debug for Endpoints<C> {
+impl<C, S> std::fmt::Debug for Endpoints<C, S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Endpoints")
             .field("len", &self.endpoints.len())
@@ -35,6 +41,7 @@ impl<C> Endpoints<C> {
     pub fn new() -> Self {
         Self {
             endpoints: Vec::new(),
+            _stacks: PhantomData,
         }
     }
 
@@ -47,6 +54,88 @@ impl<C> Endpoints<C> {
         self
     }
 
+    /// Collects `routes` — a `routes![..]` — into one value a function can
+    /// name and return, so a module hands its operations out without a macro
+    /// of its own.
+    ///
+    /// The interceptors its operations carry stay in the type, as the list
+    /// `S`, and are checked wherever it is mounted, as the `routes![..]` would
+    /// have been. Written with [`stack!`](crate::stack!), `S` names them in
+    /// the order the `routes![..]` does, each operation's own in the order it
+    /// mounts them, and is `()` where no operation carries one.
+    ///
+    /// ```no_run
+    /// use kynos::{
+    ///     extract::body::text::Text,
+    ///     middleware::limits::body_size::BodySize,
+    ///     response::status::NoContent,
+    ///     router::{endpoint::set::Endpoints, group::Group},
+    /// };
+    ///
+    /// #[kynos::get("/torrents")]
+    /// async fn list_torrents() -> NoContent {
+    ///     NoContent
+    /// }
+    ///
+    /// #[kynos::post("/torrents")]
+    /// async fn add_torrent(Text(metainfo): Text) -> NoContent {
+    ///     let _ = metainfo;
+    ///     NoContent
+    /// }
+    ///
+    /// /// The torrent operations, the upload under a limit of its own.
+    /// fn torrents() -> Endpoints<(), kynos::stack![BodySize]> {
+    ///     Endpoints::from_routes(kynos::routes![
+    ///         list_torrents,
+    ///         add_torrent.intercept(BodySize::new(64 << 20)),
+    ///     ])
+    /// }
+    ///
+    /// let group = Group::<()>::new("/v1").mount(torrents());
+    /// # let _ = group;
+    /// ```
+    ///
+    /// The list is what the mount site checks, so an operation's interceptor
+    /// colliding with its group's still fails to compile there:
+    ///
+    /// ```compile_fail,E0080
+    /// # use kynos::{
+    /// #     extract::body::text::Text,
+    /// #     middleware::limits::body_size::BodySize,
+    /// #     response::status::NoContent,
+    /// #     router::{endpoint::set::Endpoints, group::Group},
+    /// # };
+    /// #[kynos::post("/torrents")]
+    /// async fn add_torrent(Text(metainfo): Text) -> NoContent {
+    ///     let _ = metainfo;
+    ///     NoContent
+    /// }
+    ///
+    /// fn torrents() -> Endpoints<(), kynos::stack![BodySize]> {
+    ///     Endpoints::from_routes(kynos::routes![add_torrent.intercept(BodySize::new(64 << 20))])
+    /// }
+    ///
+    /// let group = Group::<()>::new("/v1")
+    ///     .intercept(BodySize::new(64 << 10))
+    ///     .mount(torrents());
+    /// # let _ = group;
+    /// ```
+    #[must_use]
+    pub fn from_routes<E>(routes: E) -> Endpoints<C, <E::Stacks as Collect<()>>::Out>
+    where
+        E: IntoEndpoints<C>,
+        E::Stacks: Collect<()>,
+    {
+        let mut collected = Self::new();
+        routes.into_endpoints(&mut collected);
+        Endpoints {
+            endpoints: collected.endpoints,
+            _stacks: PhantomData,
+        }
+    }
+}
+
+impl<C, S> Endpoints<C, S> {
     /// The number of operations collected.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -93,13 +182,40 @@ pub trait IntoEndpoints<C> {
     fn into_endpoints(self, sink: &mut Endpoints<C>);
 }
 
-impl<C> IntoEndpoints<C> for Endpoints<C> {
-    /// Already erased: an `Endpoints` cannot say what its members carry.
-    type Stacks = ();
+impl<C, S> IntoEndpoints<C> for Endpoints<C, S> {
+    /// What [`from_routes`](Endpoints::from_routes) kept of its members'
+    /// interceptors, or `()` for a set built with
+    /// [`push`](Endpoints::push).
+    type Stacks = S;
 
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
         sink.endpoints.extend(self.endpoints);
     }
+}
+
+/// The interceptors a set of operations carries, gathered onto the list `S`
+/// as one list: what [`Endpoints::from_routes`] keeps of a `routes![..]`.
+///
+/// Each member's list goes on in the order the members are written, so the
+/// result reads, through [`stack!`](crate::stack!), in that order. Gathering
+/// siblings into one list is sound for the reason
+/// [`Flatten`](crate::middleware::stack::Flatten) gives: no check compares two
+/// members of one list to each other.
+pub trait Collect<S> {
+    /// `S` with every interceptor here on top of it.
+    type Out;
+}
+
+impl<S> Collect<S> for () {
+    type Out = S;
+}
+
+impl<H, T: Collect<S>, S> Collect<S> for Cons<H, T> {
+    type Out = Cons<H, T::Out>;
+}
+
+impl<L: Collect<S>, R: Collect<L::Out>, S> Collect<S> for Both<L, R> {
+    type Out = R::Out;
 }
 
 impl<C, T: IntoEndpoints<C>, const N: usize> IntoEndpoints<C> for [T; N] {
