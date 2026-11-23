@@ -79,6 +79,9 @@ const UNRECEIVABLE: &[&str] = &[
     // Private to `middleware::limits::body_size`: a late body's reader sees it
     // as a failed read, and the interceptor answers the 408 in its place.
     "Late",
+    // Private to `response::stream::sse::leading`: it only stops the
+    // serializer `Event::tagged` reads a tag with, and never leaves it.
+    "Stop",
 ];
 
 /// A scope set for `ScopedRejection`, which is generic over one.

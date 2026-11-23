@@ -322,6 +322,150 @@ fn each_event_of_a_stream_is_written_as_its_own_record() {
     assert_eq!(&third[..], b"data: 5\n\n");
 }
 
+/// Every shape serde writes a tag in puts it first, so the first member is
+/// the tag under its renamed key and value, whatever the variant holds.
+#[test]
+fn the_leading_member_is_the_tag_of_every_tagged_shape() {
+    use std::collections::BTreeMap;
+
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    struct Inner {
+        name: &'static str,
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Internal {
+        UnitVariant,
+        StructVariant {
+            count: u8,
+        },
+        NewtypeStruct(Inner),
+        NewtypeMap(BTreeMap<&'static str, u8>),
+        #[serde(rename = "renamed")]
+        Other,
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "t", content = "c")]
+    enum Adjacent {
+        Pair(u8, u8),
+    }
+
+    #[derive(Serialize)]
+    #[serde(tag = "type", rename = "Ping")]
+    struct Tagged {
+        at: u64,
+    }
+
+    #[derive(Serialize)]
+    struct Wrapped(Internal);
+
+    let member = |key: &str, value: &str| Some((key.to_owned(), value.to_owned()));
+
+    assert_eq!(
+        super::leading_member(&Internal::UnitVariant),
+        member("kind", "unit_variant")
+    );
+    assert_eq!(
+        super::leading_member(&Internal::StructVariant { count: 1 }),
+        member("kind", "struct_variant")
+    );
+    assert_eq!(
+        super::leading_member(&Internal::NewtypeStruct(Inner { name: "x" })),
+        member("kind", "newtype_struct")
+    );
+    assert_eq!(
+        super::leading_member(&Internal::NewtypeMap(BTreeMap::from([("a", 1)]))),
+        member("kind", "newtype_map")
+    );
+    assert_eq!(
+        super::leading_member(&Internal::Other),
+        member("kind", "renamed")
+    );
+    assert_eq!(
+        super::leading_member(&Adjacent::Pair(1, 2)),
+        member("t", "Pair")
+    );
+    assert_eq!(
+        super::leading_member(&Tagged { at: 1 }),
+        member("type", "Ping")
+    );
+    // Through a newtype struct, which serde writes as what it wraps.
+    assert_eq!(
+        super::leading_member(&Wrapped(Internal::UnitVariant)),
+        member("kind", "unit_variant")
+    );
+}
+
+/// What serde writes without a leading string member has no tag to read:
+/// a scalar, a sequence, an externally tagged variant, whose name is a key,
+/// an object led by a number, and an empty one.
+#[test]
+fn a_payload_without_a_leading_string_member_has_no_tag() {
+    use serde::Serialize;
+
+    #[derive(Serialize)]
+    enum External {
+        Unit,
+        Struct { count: u8 },
+    }
+
+    #[derive(Serialize)]
+    struct Counted {
+        count: u8,
+        name: &'static str,
+    }
+
+    #[derive(Serialize)]
+    struct Empty {}
+
+    assert_eq!(super::leading_member(&1_u8), None);
+    assert_eq!(super::leading_member("tick"), None);
+    assert_eq!(super::leading_member(&[1_u8, 2]), None);
+    assert_eq!(super::leading_member(&Some("tick")), None);
+    assert_eq!(super::leading_member(&External::Unit), None);
+    assert_eq!(super::leading_member(&External::Struct { count: 1 }), None);
+    assert_eq!(
+        super::leading_member(&Counted {
+            count: 1,
+            name: "tick"
+        }),
+        None
+    );
+    assert_eq!(super::leading_member(&Empty {}), None);
+}
+
+/// A payload with no tag is refused where it is named, rather than sent as
+/// an event no listener of the expected name hears.
+#[test]
+#[should_panic(expected = "this payload writes none")]
+fn an_untagged_payload_is_refused_a_tagged_name() {
+    let _ = Event::tagged(1_u8);
+}
+
+/// A struct led by a string field writes what a tag does, so it is told
+/// apart by its schema, which describes no tag there.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "its schema does not describe a tag there")]
+fn a_leading_string_field_its_schema_does_not_call_a_tag_is_refused() {
+    #[derive(serde::Serialize)]
+    struct Named {
+        name: &'static str,
+    }
+
+    impl crate::schema::Schema for Named {
+        fn schema(_: &mut crate::schema::registry::Registry) -> kynos_openapi::Schema {
+            kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::Object)
+        }
+    }
+
+    let _ = Event::tagged(Named { name: "tick" });
+}
+
 /// A zero interval re-arms the keep-alive timer at the instant it fired, so an
 /// idle stream would write heartbeat records back to back. It is refused where
 /// it is configured rather than discovered on a live connection.
