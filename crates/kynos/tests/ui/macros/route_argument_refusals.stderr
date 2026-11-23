@@ -12,7 +12,7 @@ error: expected a string literal
 15 | #[kynos::operation(method = "GET", path = 7)]
    |                                           ^
 
-error: expected a path string literal, `operation_id = "..."`, `tag = Tag`, or `catch_panics`
+error: expected a path string literal, `operation_id = "..."`, `tag = Tag`, `catch_panics`, or `head`
   --> tests/ui/macros/route_argument_refusals.rs:18:25
    |
 18 | #[kynos::get("/health", nonsense)]

@@ -8504,6 +8504,7 @@ pub trait kynos::router::endpoint::meta::EndpointMeta
 pub type kynos::router::endpoint::meta::EndpointMeta::PanicPolicy: kynos::middleware::catch_panic::PanicPolicy
 pub const kynos::router::endpoint::meta::EndpointMeta::DEPRECATED: bool
 pub const kynos::router::endpoint::meta::EndpointMeta::DESCRIPTION: core::option::Option<&'static str>
+pub const kynos::router::endpoint::meta::EndpointMeta::HEAD_OPERATION_ID: core::option::Option<&'static str>
 pub const kynos::router::endpoint::meta::EndpointMeta::METHOD: &'static str
 pub const kynos::router::endpoint::meta::EndpointMeta::OPERATION_ID: &'static str
 pub const kynos::router::endpoint::meta::EndpointMeta::PATH: &'static str

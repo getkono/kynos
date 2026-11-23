@@ -43,6 +43,23 @@ use proc_macro::TokenStream;
 /// Accepts `operation_id = "..."` and `tag = SomeTag` after the path. The tag
 /// becomes `EndpointMeta::TAGS` and may be named once; `Router::tag`,
 /// `Group::tag` and `EndpointBuilder::tag` add the rest.
+///
+/// `head` describes the `HEAD` this `GET` already answers (RFC 9110 section
+/// 9.3.2) as an operation of its own, so a generated client can call it
+/// without a second handler: the `GET`'s operation with no response carrying
+/// content, its headers kept, run by this handler. A bare `head` names it
+/// after the handler, `get_file` describing `head_file` and any other name `n`
+/// describing `head_n`; beside an explicit `operation_id` it must be named,
+/// with `head = "headFile"`. Only `GET` takes it, and a path that also declares
+/// a `#[kynos::head]` operation refuses to build.
+///
+/// ```ignore
+/// /// Download one file.
+/// #[kynos::get("/files/{id}", head)]
+/// async fn get_file(Path(id): Path<FileId>, conditions: Conditions) -> Delivery<OctetStream> {
+///     todo!()
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn get(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("GET", attribute, item)
@@ -75,8 +92,9 @@ pub fn delete(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// Declares a `HEAD` operation. See [`macro@get`] for the syntax.
 ///
 /// Rarely needed: a `HEAD` is answered from the corresponding `GET` unless one
-/// is declared, per RFC 9110. Declare it only when the description should say
-/// so explicitly.
+/// is declared, per RFC 9110, and the `GET`'s `head` argument describes that
+/// one (see [`macro@get`]). Declare it only when the `HEAD` should run a
+/// handler of its own.
 #[proc_macro_attribute]
 pub fn head(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("HEAD", attribute, item)

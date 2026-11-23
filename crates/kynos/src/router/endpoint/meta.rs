@@ -66,6 +66,15 @@ pub trait EndpointMeta {
     /// [`EndpointBuilder::tag`](crate::router::endpoint::builder::EndpointBuilder::tag),
     /// and the only one readable without building a router.
     const TAGS: &'static [DeclaredTag];
+
+    /// The `operationId` of the `HEAD` this `GET` describes beside itself, as
+    /// [`EndpointBuilder::describe_head`](crate::router::endpoint::builder::EndpointBuilder::describe_head)
+    /// does; `None` where it describes none.
+    ///
+    /// Set by the route attribute's `head` argument, which only `GET` takes.
+    /// Defaults to `None`, so an implementation written before it existed
+    /// describes nothing it did not.
+    const HEAD_OPERATION_ID: Option<&'static str> = None;
 }
 
 /// How a route attribute renders its operation's URI against a path template.

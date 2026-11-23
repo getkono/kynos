@@ -780,6 +780,8 @@ mod arguments {
                 "catch_panics",
                 quote!(path = "/health", catch_panics, catch_panics),
             ),
+            // Bare and named are one argument.
+            ("head", quote!(path = "/health", head, head = "probe")),
         ] {
             let Err(error) = RouteArgs::parse(tokens) else {
                 panic!("a second `{argument}` must be rejected");
@@ -1166,13 +1168,40 @@ mod templates {
     /// A `%` the parser refuses.
     const MALFORMED: &str = "does not introduce a percent-encoded triple";
 
-    /// One row per `syn::Error::new` site in `emit.rs`.
-    fn emit_cases() -> Vec<(&'static str, proc_macro2::TokenStream, &'static str)> {
-        vec![(
-            "a route attribute's malformed path",
-            quote!(path = "/files/%zz"),
-            MALFORMED,
-        )]
+    /// One row per `syn::Error::new` site in `emit.rs`, with the method of
+    /// the attribute it is written on.
+    fn emit_cases() -> Vec<(
+        &'static str,
+        &'static str,
+        proc_macro2::TokenStream,
+        &'static str,
+    )> {
+        vec![
+            (
+                "a route attribute's malformed path",
+                "GET",
+                quote!(path = "/files/%zz"),
+                MALFORMED,
+            ),
+            (
+                "a bare `head` beside an explicit `operation_id`",
+                "GET",
+                quote!(path = "/files", operation_id = "listFiles", head),
+                "name the HEAD's too",
+            ),
+            (
+                "`head` on a method that answers no HEAD",
+                "POST",
+                quote!(path = "/files", head = "headFiles"),
+                "only a `GET` takes it",
+            ),
+            (
+                "`head` naming the GET's own operationId",
+                "GET",
+                quote!(path = "/files", head = "files"),
+                "names the GET's own operationId",
+            ),
+        ]
     }
 
     /// One row per `syn::Error::new` site in `path.rs`.
@@ -1192,9 +1221,9 @@ mod templates {
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
-        for (description, tokens, expected) in emit_cases() {
+        for (description, method, tokens, expected) in emit_cases() {
             let args = RouteArgs::parse(tokens).expect("the arguments themselves parse");
-            let Err(error) = emit("GET", &args, &handler()) else {
+            let Err(error) = emit(method, &args, &handler()) else {
                 panic!("{description} must be rejected");
             };
             let reported = error.to_string();
@@ -1550,6 +1579,97 @@ mod public {
             error
                 .to_string()
                 .contains("`#[kynos::public]` takes no arguments")
+        );
+    }
+}
+
+/// The `operationId` a `GET`'s `head` argument gives the HEAD it describes.
+mod head {
+    use proc_macro2::TokenStream as TokenStream2;
+    use quote::{ToTokens, quote};
+    use syn::ItemFn;
+
+    use super::RouteArgs;
+    use crate::route::emit::emit;
+
+    /// The `HEAD_OPERATION_ID` the expansion of `handler` under `arguments`
+    /// sets, as tokens.
+    fn described(arguments: TokenStream2, handler: &ItemFn) -> String {
+        let args = RouteArgs::parse(arguments).expect("well-formed arguments");
+        let expansion = emit("GET", &args, handler).expect("an accepted route");
+        let file: syn::File = syn::parse2(expansion).expect("the expansion parses as items");
+        file.items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Impl(block) => Some(block),
+                _ => None,
+            })
+            .flat_map(|block| &block.items)
+            .find_map(|item| match item {
+                syn::ImplItem::Const(constant) if constant.ident == "HEAD_OPERATION_ID" => {
+                    Some(constant.expr.to_token_stream().to_string())
+                }
+                _ => None,
+            })
+            .expect("the endpoint sets `HEAD_OPERATION_ID`")
+    }
+
+    fn some(id: &str) -> String {
+        quote!(::core::option::Option::Some(#id)).to_string()
+    }
+
+    /// A bare `head` names the HEAD after the handler, the GET's own
+    /// `operationId`, with a leading `get_` read as the method it names.
+    #[test]
+    fn a_bare_head_derives_its_operation_id_from_the_handler() {
+        let cases: [(ItemFn, &str); 3] = [
+            (
+                syn::parse_quote!(
+                    async fn get_file() {}
+                ),
+                "head_file",
+            ),
+            (
+                syn::parse_quote!(
+                    async fn file() {}
+                ),
+                "head_file",
+            ),
+            (
+                syn::parse_quote!(
+                    async fn forget_file() {}
+                ),
+                "head_forget_file",
+            ),
+        ];
+        for (handler, expected) in cases {
+            assert_eq!(
+                described(quote!(path = "/file", head), &handler),
+                some(expected),
+                "{}",
+                handler.sig.ident
+            );
+        }
+    }
+
+    /// A named `head` is that name, beside an explicit `operation_id` too;
+    /// without `head` the GET describes none.
+    #[test]
+    fn a_named_head_is_its_name_and_no_head_is_none() {
+        let handler: ItemFn = syn::parse_quote!(
+            async fn get_file() {}
+        );
+
+        assert_eq!(
+            described(
+                quote!(path = "/file", operation_id = "getFile", head = "probeFile"),
+                &handler
+            ),
+            some("probeFile")
+        );
+        assert_eq!(
+            described(quote!(path = "/file"), &handler),
+            quote!(::core::option::Option::None).to_string()
         );
     }
 }

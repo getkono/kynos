@@ -3260,6 +3260,35 @@ fn a_described_head_is_its_get_without_content() {
     assert!(alpha.operation(kynos::openapi::Method::Head).is_none());
 }
 
+// The same `GET` as `object`, describing its HEAD through the attribute; no
+// doc comment, which the builder it is compared with has no summary for.
+#[kynos::get("/objects/current", head)]
+async fn get_object(conditions: Conditions) -> Delivery<OctetStream> {
+    object(conditions).await
+}
+
+/// The attribute's `head` reaches the document as the builder's does: the
+/// same HEAD, under the name derived from the handler's.
+#[test]
+fn a_route_attributes_head_describes_what_the_builders_does() {
+    let attributed = Router::<()>::new()
+        .mount(kynos::routes![get_object])
+        .openapi()
+        .expect("a describable router");
+    let built = Router::<()>::new()
+        .mount(object_and_its_head())
+        .openapi()
+        .expect("a describable router");
+
+    let head = |document: &Document| {
+        document.paths.items["/objects/current"]
+            .operation(kynos::openapi::Method::Head)
+            .expect("a described HEAD")
+            .clone()
+    };
+    assert_eq!(head(&attributed), head(&built));
+}
+
 /// The router's violations of `error`'s kind, by location.
 fn violations_like(router: &Router<()>, error: fn(&RouterError) -> bool) -> Vec<String> {
     router

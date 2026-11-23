@@ -420,9 +420,21 @@ a flipped spelling that collides with one is discarded.
 
 The `Allow` header on a 405 is derived from the operations actually declared on
 that path, plus `HEAD` wherever `GET` is declared. RFC 9110 §9.3.2 defines a
-HEAD as the GET without content, so a `get` operation answers and describes
-both, and no `head` is minted into the document; a declared `head` wins. No
+HEAD as the GET without content, so a `get` operation answers both, and by
+default no `head` is minted into the document; a declared `head` wins. No
 response to a HEAD carries content, whatever answered it.
+
+`#[kynos::get(.., head)]`, or `EndpointBuilder::describe_head`, describes that
+HEAD as an operation of its own: the GET's, as the router finished it, with no
+response carrying content and every header kept. It is opt-in because a default
+would add an operation, and an `operationId`, for every `GET` in every
+document. A bare `head` names it after the handler (`get_file` describes
+`head_file`); beside an explicit `operation_id` it is named, `head = "..."`.
+It runs the GET's handler under the GET's chain, so `Allow`, the implemented
+set and every CORS scope read as they do for an undescribed HEAD, while
+observers and interceptors see it under its own `operationId`, as a declared
+`head` would be. A path declaring a `head` beside a GET that describes one is
+refused, `HeadDescribedTwice`: both were asked for, and one is a mistake.
 
 A method no operation in the service implements is a 501 with no `Allow`,
 decided before the 404 or 308 on an unmatched path and instead of the 405 on a
