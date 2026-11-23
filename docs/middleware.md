@@ -1312,6 +1312,38 @@ the stable label); `permits` is `check(..).is_ok()`. The reason stays off the
 wire: the interceptor's 403 is one refusal whatever the rule, since telling a
 forger which rule caught it helps nobody else.
 
+## The identifier `RequestId` assigned
+
+`RequestId` writes one identifier under every name its header group declares,
+on the request and on the response, and hands the same value on as an
+`AssignedId`: in the request's extensions before the rest of the chain runs,
+and in the response's on the way out. Reading it names no header, so it is the
+same call whichever group the router was given — a handler takes
+`Option<AssignedId>`, an interceptor mounted inside reads `AssignedId::of`,
+and an observer `AssignedId::of_response`. `RequestId::of` and `of_response`
+are the same two readers.
+
+Reading the header instead is the trap this closes: `XRequestId::decode`, or a
+literal `"x-request-id"`, reads the *default* group, so a router switched to a
+group of its own with `.header::<G>()` leaves every such read silently empty. Nothing
+fails to compile, and the description is still right; only the log is wrong.
+
+It is absent where no `RequestId` reached the request — an operation outside
+the group it is mounted on, a request an earlier interceptor answered — and
+where the group refused to encode it, since that 500 carries no identifier
+either. The handler argument is therefore an `Option` that never rejects and
+describes nothing: the header is the covering `RequestId`'s to describe, and
+an argument that refused an uncovered operation would add a status for a
+mounting mistake.
+
+`Trace`'s closing event logs the `AssignedId` the response carries, not a field
+of the identifier's name, so a header some other code wrote is not logged as
+the request's identifier. Its opening event cannot: observers run before any
+interceptor, so nothing has been assigned yet, and `correlating` still supplies
+the names and the trust setting that event reads an inbound identifier by. A
+`Trace::span` mounted inside `RequestId` opens with the `AssignedId`; mounted
+outside, with what the client sent.
+
 ## Trusted hosts
 
 `TrustedHosts` refuses a request whose authority — the target's, else `Host`,

@@ -16,6 +16,7 @@ An argument that contributes nothing to the contract says so, by implementing
 | [`ConnectInfo`](../crates/kynos/src/extract/connection.rs) | nothing | it is a property of the connection, not the API |
 | [`Connection`](../crates/kynos/src/extract/connection.rs) | nothing | it is the connection itself — peer, local address, TLS — not the API |
 | [`Forwarded`](../crates/kynos/src/http/forwarded.rs) | nothing | it is what the deployment's proxies say about the connection, not the API |
+| [`Option<AssignedId>`](../crates/kynos/src/middleware/request_id.rs) | nothing | the header it arrives in is the covering `RequestId`'s to describe; an operation no `RequestId` covers reads `None` |
 | [`Draining`](../crates/kynos/src/server/lifecycle.rs) | nothing | it is the server's state, not the API |
 | [`Readiness`](../crates/kynos/src/server/lifecycle.rs) | nothing | it is the server's state, not the API; a probe's 503 is its own operation's to declare |
 

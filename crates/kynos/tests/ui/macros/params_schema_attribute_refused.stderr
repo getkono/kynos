@@ -1,0 +1,17 @@
+error: `maxium` is not part of the `#[schema(...)]` grammar, which is the keys of `kynos::schema::constraints::Constraints`: `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, `max_length`, `pattern`, `min_items`, `max_items`, `unique_items`, `content_encoding` and `content_media_type`; plus `open`, which says a flattened field's members are not named, `as = T`, which describes a field as the type `T`, and `via = path`, which names the function converting it into that `T`
+ --> tests/ui/macros/params_schema_attribute_refused.rs:8:14
+  |
+8 |     #[schema(maxium = 3)]
+  |              ^^^^^^
+
+error: a type's `#[schema(...)]` takes only `constraint_problem = ...`, the problem a broken bound answers with; bounds go on a field, whose value they hold
+  --> tests/ui/macros/params_schema_attribute_refused.rs:13:10
+   |
+13 | #[schema(minimum = 1)]
+   |          ^^^^^^^
+
+error: `maxium` is not part of the `#[schema(...)]` grammar, which is the keys of `kynos::schema::constraints::Constraints`: `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum`, `multiple_of`, `min_length`, `max_length`, `pattern`, `min_items`, `max_items`, `unique_items`, `content_encoding` and `content_media_type`; plus `open`, which says a flattened field's members are not named, `as = T`, which describes a field as the type `T`, and `via = path`, which names the function converting it into that `T`
+  --> tests/ui/macros/params_schema_attribute_refused.rs:21:14
+   |
+21 |     #[schema(maxium = 3)]
+   |              ^^^^^^

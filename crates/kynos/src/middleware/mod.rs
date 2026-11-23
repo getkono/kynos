@@ -456,6 +456,16 @@ impl<H> Continued<H> {
         *self.response.body_mut() = body;
     }
 
+    /// Sets a response extension, for an interceptor that hands a value to
+    /// whatever is outside it, observers included.
+    ///
+    /// Crate-private: an extension has no wire form and so needs no
+    /// declaration, but each value set here is one the framework documents
+    /// where it is set.
+    pub(crate) fn insert_extension<T: Clone + Send + Sync + 'static>(&mut self, value: T) {
+        self.response.extensions_mut().insert(value);
+    }
+
     /// Removes a field the declared group `G` names.
     ///
     /// For a field the interceptor owns that has stopped being true, such as

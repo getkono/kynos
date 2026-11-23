@@ -705,15 +705,16 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// status alone, required only where every failure answering with that status
 /// sends it. `WithHeaders` stays for a group every status sends.
 ///
-/// A variant holding one field of another `ApiError` type may say
-/// `#[problem(transparent)]` instead of declaring a status, so failures many
-/// operations share are declared once:
+/// A variant holding one field of another `ApiError` type may answer as that
+/// error instead of declaring a status, so failures many operations share are
+/// declared once. `thiserror`'s `#[error(transparent)]` already says the
+/// variant is what it holds, so it makes the variant transparent here too, as
+/// `#[problem(transparent)]` does where no `#[error(transparent)]` is written:
 ///
 /// ```ignore
 /// #[derive(Debug, thiserror::Error, ApiError)]
 /// enum PauseError {
 ///     #[error(transparent)]
-///     #[problem(transparent)]
 ///     Lookup(#[from] LookupError),
 ///
 ///     #[error("the torrent is already paused")]
@@ -722,13 +723,20 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// Its problem is the held error's, `detail` and extension members included,
-/// its response is, header groups included, and that type's statuses and
-/// responses join the enum's; a status both declare is described once, naming
-/// every type that reaches it. It declares no `status`, `title` or `type` of
-/// its own, publishes no `extension`, sends no `headers` of its own, and
-/// its field's type cannot name the enum's generic parameters, since the
-/// statuses are a `const`.
+/// A transparent variant's problem is the held error's, `detail` and
+/// extension members included, its response is, header groups included, and
+/// that type's statuses and responses join the enum's; a status both declare
+/// is described once, naming every type that reaches it. It declares no
+/// `status`, `title` or `type` of its own, publishes no `extension`, sends no
+/// `headers` of its own, and its field's type cannot name the enum's generic
+/// parameters, since the statuses are a `const`.
+///
+/// A status opts an `#[error(transparent)]` variant out: one declaring
+/// `#[problem(status = ...)]` is a failure of its own, whose `detail` is its
+/// field's `Display`, and may hold any error. A `title`, `type` or
+/// `extension(...)` beside `#[error(transparent)]` without a status is
+/// refused, since the held error's would replace it. A held type that is no
+/// `ApiError` is reported as such, naming both ways out.
 ///
 /// An operation that fails only some of a derived enum's ways returns a
 /// subset of it, so it declares no status it cannot send:
@@ -751,6 +759,34 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// declares only its variants' statuses, each described as the wider enum
 /// describes the variants it keeps. The wider enum is a derived `ApiError`
 /// enum, a subset included, and cannot name the subset's generic parameters.
+///
+/// One variant shared with a wider enum, in an enum that also fails its own
+/// ways, says `#[problem(variant_of = Wide::Variant)]`:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum UnfencedLookup {
+///     #[error(transparent)]
+///     Lookup(#[from] Lookup),
+///
+///     #[error("{detail}")]
+///     #[problem(variant_of = ProfileProblem::ProfileUnavailable)]
+///     ProfileUnavailable { detail: String, profile_status: ProfileStatus },
+/// }
+///
+/// let narrowed = UnfencedLookup::try_from(ProfileProblem::vpn_down())?;
+/// ```
+///
+/// The variant answers as the wider variant does, by building it from its
+/// fields, matched by name or position, so its status, `type`, `title`,
+/// `detail` (the wider `Display`), extension members and headers are that
+/// variant's, and it is described as the wider enum describes it. It declares
+/// nothing of its own, no `#[problem(...)]` sits on its fields, and the wider
+/// enum is a derived `ApiError` enum that cannot name this one's generic
+/// parameters. The derive generates `TryFrom<Wide> for Self`, with
+/// `Error = Wide`, over every variant taken from `Wide` this way, handing any
+/// other wider value back unchanged; two variants taking one wider variant
+/// are refused.
 ///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.
@@ -813,9 +849,9 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::reply::expand_inner)
 }
 
-/// Makes a field-less enum a `kynos::schema::ParamValue`, emitting its
-/// `Display` and `FromStr` from the variant names the [`Schema`](macro@Schema)
-/// derive publishes.
+/// Makes a field-less enum or a newtype a `kynos::schema::ParamValue`,
+/// emitting its `Display` and `FromStr`: an enum's from the variant names the
+/// [`Schema`](macro@Schema) derive publishes, a newtype's through its field.
 ///
 /// ```ignore
 /// #[derive(Serialize, Deserialize, Schema, ParamValue)]
@@ -838,9 +874,28 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// Every serde attribute the `Schema` derive refuses is refused here too, so
 /// the names a decoder reads are never ones that derive would not publish.
 ///
+/// A newtype's text form is its field's, as serde writes it: on a one-field
+/// tuple struct, or a one-field struct under `#[serde(transparent)]`,
+/// `Display` and `FromStr` delegate to the field, whose type must itself be a
+/// `kynos::schema::ParamValue`, and `FromStr::Err` is the field's. Its
+/// `Schema` stays yours to derive or write, so a bound it declares on the
+/// field is described and checked as any other:
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Schema, ParamValue)]
+/// struct PageLimit(#[schema(maximum = 1000)] u32);
+/// ```
+///
+/// # Rejected, because a parameter is one value
+///
+/// - a struct with named fields, which serde writes as an object, unless it
+///   holds one under `#[serde(transparent)]`;
+/// - a tuple struct holding several fields or none, a unit struct and a union;
+/// - a newtype whose field's type is not a `ParamValue` itself.
+///
 /// # Rejected, because a parameter is one bare name
 ///
-/// - a struct or a union, and an enum with no variant;
+/// - an enum with no variant;
 /// - a variant carrying data, `A {}` and `A()` included, which serde writes as
 ///   an object;
 /// - `#[serde(tag = "...")]`, which writes each variant as an object;
@@ -877,7 +932,7 @@ pub fn derive_param_value(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(PathParams, attributes(param))]
+#[proc_macro_derive(PathParams, attributes(param, schema))]
 pub fn derive_path_params(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::path_params::expand_inner)
 }
@@ -908,18 +963,23 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
 ///
-/// A field's `#[schema(...)]` bounds, which the [`Schema`](macro@Schema)
-/// derive reads, are written into its parameter's schema, beside a named
-/// type's `$ref`, and checked on the value `FromStr` read, with the bounds its
-/// type declares: one it breaks is refused as `QueryRejection::Schema`, naming
-/// the parameter. The refusal answers with the problem the group's own
-/// `Schema::CONSTRAINT_PROBLEM` names, for every field it holds, else with
-/// the one the field's type names. The group's is read through its `Schema`,
-/// so a hand-written one counts as `#[schema(constraint_problem = ...)]`
-/// does, and the group answers through `Query` as through `QueryString`:
+/// The parameter derives read `#[schema(...)]` as the [`Schema`](macro@Schema)
+/// derive does, and register it themselves, so a group carries bounds with
+/// no `Schema` derive beside it; a malformed one is refused as that derive
+/// refuses it.
+///
+/// A field's `#[schema(...)]` bounds are written into its parameter's schema,
+/// beside a named type's `$ref`, and checked on the value `FromStr` read, with
+/// the bounds its type declares: one it breaks is refused as
+/// `QueryRejection::Schema`, naming the parameter. The refusal answers with
+/// the problem the group's own `#[schema(constraint_problem = ...)]` names,
+/// for every field it holds, else with the one the field's type names. The
+/// `Schema` derive reads the same attribute, so a group deriving both answers
+/// through `Query` as through `QueryString`. A group needs no `Schema` of its
+/// own, as no other parameter group does:
 ///
 /// ```ignore
-/// #[derive(kynos::Schema, kynos::QueryParams)]
+/// #[derive(kynos::QueryParams)]
 /// #[schema(constraint_problem = problems::VALIDATION_FAILED)]
 /// struct Page {
 ///     #[schema(minimum = 1, maximum = 1000)]
@@ -934,7 +994,7 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(QueryParams, attributes(param))]
+#[proc_macro_derive(QueryParams, attributes(param, schema))]
 pub fn derive_query_params(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::query_params::expand_inner)
 }
@@ -1011,7 +1071,7 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(HeaderParams, attributes(header))]
+#[proc_macro_derive(HeaderParams, attributes(header, schema))]
 pub fn derive_headers(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::headers::expand_inner)
 }
@@ -1052,7 +1112,7 @@ pub fn derive_headers(item: TokenStream) -> TokenStream {
 /// - serde's split `rename(serialize = ..., deserialize = ...)` on a field the
 ///   Kynos attribute does not name, and `rename_all(serialize = ...,
 ///   deserialize = ...)` on the struct.
-#[proc_macro_derive(CookieParams, attributes(cookie))]
+#[proc_macro_derive(CookieParams, attributes(cookie, schema))]
 pub fn derive_cookies(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::cookies::expand_inner)
 }

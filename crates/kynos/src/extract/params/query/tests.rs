@@ -1,8 +1,6 @@
 use super::{DecodeQuery, Query, QueryParams};
 use crate::{
-    error::rejection::QueryRejection,
-    extract::FromRequestParts,
-    schema::{Schema, registry::Registry},
+    error::rejection::QueryRejection, extract::FromRequestParts, schema::registry::Registry,
 };
 
 // Two `#[should_panic]` cases stood here, asserting that a group declaring
@@ -22,14 +20,12 @@ async fn a_group_that_declares_a_decoder_sees_the_query_it_was_given() {
     #[derive(Debug, PartialEq)]
     struct Recorded(Option<String>);
 
-    impl Schema for Recorded {
-        fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+    impl QueryParams for Recorded {
+        fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter> {
             let _ = registry;
-            kynos_openapi::Schema::any()
+            Vec::new()
         }
     }
-
-    impl QueryParams for Recorded {}
 
     impl DecodeQuery for Recorded {
         fn decode(query: Option<&str>) -> Result<Self, QueryRejection> {

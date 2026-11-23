@@ -1,5 +1,6 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
-//! URI prefix with, unions a transparent variant's statuses with, sends its
+//! URI prefix with, reads a transparent variant's held error through and
+//! unions its statuses with, sends its
 //! extension members through, declares a constant one by, and sends and
 //! declares a failure's
 //! `#[problem(headers)]` group with, and logs a 5xx failure through before its
@@ -45,6 +46,56 @@ pub fn headers<H: HeaderParams>(registry: &mut Registry) -> Map<RefOr<Header>> {
 /// one per failure answering with it, in declaration order.
 pub fn declare_headers(response: &mut Response, groups: &[Map<RefOr<Header>>]) {
     crate::response::headers::declare_per_failure(response, groups);
+}
+
+/// What a transparent variant answers as: a derived `ApiError` or a refusal
+/// Kynos ships, so `IntoProblem` and `ShortCircuit` both.
+///
+/// The expansion reaches the held error's statuses, problem, response and
+/// description through this one bound, so a field holding anything else is
+/// reported as no `ApiError`, naming the attribute that made the variant
+/// transparent and the status that opts it out, rather than once per trait
+/// each use needs under that trait's own wording.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not an `ApiError`, so a transparent variant cannot answer as it",
+    label = "not an `ApiError`",
+    note = "a variant marked `#[error(transparent)]` or `#[problem(transparent)]` answers with \
+            the problem, statuses and responses of the error it holds; derive \
+            `kynos::ApiError` for `{Self}`",
+    note = "a variant whose message is its field's but whose failure is its own declares \
+            `#[problem(status = ...)]`, which makes it no longer transparent"
+)]
+pub trait HeldError: Sized {
+    /// The statuses the held error answers with.
+    const STATUSES: &'static [u16];
+
+    /// The held error's problem.
+    fn into_problem(self) -> crate::error::problem::Problem;
+
+    /// The held error's response, its headers included.
+    fn into_response(self) -> crate::http::Response;
+
+    /// The responses the held error declares.
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses;
+}
+
+impl<E: crate::error::problem::IntoProblem + crate::response::ShortCircuit> HeldError for E {
+    const STATUSES: &'static [u16] = <E as crate::response::ShortCircuit>::STATUSES;
+
+    #[inline]
+    fn into_problem(self) -> crate::error::problem::Problem {
+        crate::error::problem::IntoProblem::into_problem(self)
+    }
+
+    #[inline]
+    fn into_response(self) -> crate::http::Response {
+        crate::response::IntoResponse::into_response(self)
+    }
+
+    #[inline]
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        <E as crate::response::Responses>::responses(registry)
+    }
 }
 
 /// Joins a transparent variant's `held` responses to the enum's, a status both

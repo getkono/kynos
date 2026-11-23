@@ -184,7 +184,9 @@ otherwise. A newtype whose
 `FromStr` refuses those values is the remedy.
 
 Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
-schema describes the one value its `Display` writes. A structured query, such
+schema describes the one value its `Display` writes, or with
+`#[derive(ParamValue)]`, which reads and writes a newtype through its field
+and a field-less enum by its variant names. A structured query, such
 as a search filter, is a whole `QueryString` under `openapi32` instead.
 
 ## Binary content
@@ -633,11 +635,9 @@ properties do. The `allOf` makes a closed object's closing keyword
 `unevaluatedProperties`, which sees the object's own `properties` as
 `additionalProperties` would.
 
-The default [`QueryParams::parameters`](../crates/kynos/src/extract/params/query.rs)
-makes each name of an aliased field its own optional query parameter, because
-a Parameter Object cannot express the `allOf` bounds above.
-`#[derive(QueryParams)]` refuses an aliased field at compile time instead of
-splitting it, as do the other parameter derives.
+A Parameter Object cannot express the `allOf` bounds above, so
+`#[derive(QueryParams)]` refuses an aliased field at compile time, as do the
+other parameter derives.
 
 ### On a variant
 
