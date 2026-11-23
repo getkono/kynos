@@ -6020,6 +6020,52 @@ impl core::marker::Unpin for kynos::error::Error
 impl core::marker::UnsafeUnpin for kynos::error::Error
 impl !core::panic::unwind_safe::RefUnwindSafe for kynos::error::Error
 impl !core::panic::unwind_safe::UnwindSafe for kynos::error::Error
+pub enum kynos::prelude::Nullable<T>
+pub kynos::prelude::Nullable::Absent
+pub kynos::prelude::Nullable::Null
+pub kynos::prelude::Nullable::Value(T)
+impl<T> kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::apply_to(self, &mut core::option::Option<T>)
+pub const fn kynos::schema::Nullable<T>::as_ref(&self) -> kynos::schema::Nullable<&T>
+pub const fn kynos::schema::Nullable<T>::as_value(&self) -> core::option::Option<&T>
+pub const fn kynos::schema::Nullable<T>::is_absent(&self) -> bool
+pub const fn kynos::schema::Nullable<T>::is_null(&self) -> bool
+pub fn kynos::schema::Nullable<T>::map<U>(self, impl core::ops::function::FnOnce(T) -> U) -> kynos::schema::Nullable<U>
+impl<'de, T: serde_core::de::Deserialize<'de>> serde_core::de::Deserialize<'de> for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+impl<T: core::clone::Clone> core::clone::Clone for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::clone(&self) -> kynos::schema::Nullable<T>
+impl<T: core::cmp::Eq> core::cmp::Eq for kynos::schema::Nullable<T>
+impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::eq(&self, &kynos::schema::Nullable<T>) -> bool
+impl<T: core::fmt::Debug> core::fmt::Debug for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: core::hash::Hash> core::hash::Hash for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<T: core::marker::Copy> core::marker::Copy for kynos::schema::Nullable<T>
+impl<T: kynos::schema::Schema> kynos::schema::Schema for kynos::schema::Nullable<T>
+pub const kynos::schema::Nullable<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::schema::Nullable<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn kynos::schema::Nullable<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn kynos::schema::Nullable<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::constraints::Items> kynos::schema::constraints::Items for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::item_count(&self) -> core::option::Option<usize>
+impl<T: kynos::schema::constraints::Numeric> kynos::schema::constraints::Numeric for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::number(&self) -> core::option::Option<f64>
+impl<T: kynos::schema::constraints::Textual> kynos::schema::constraints::Textual for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::text(&self) -> core::option::Option<&str>
+impl<T: kynos::schema::constraints::UniqueItems> kynos::schema::constraints::UniqueItems for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::has_unique_items(&self) -> core::option::Option<bool>
+impl<T> core::default::Default for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::default() -> kynos::schema::Nullable<T>
+impl<T> core::marker::StructuralPartialEq for kynos::schema::Nullable<T>
+impl<T> core::marker::Freeze for kynos::schema::Nullable<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for kynos::schema::Nullable<T> where T: core::marker::Send
+impl<T> core::marker::Sync for kynos::schema::Nullable<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for kynos::schema::Nullable<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for kynos::schema::Nullable<T> where T: core::marker::UnsafeUnpin
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::schema::Nullable<T> where T: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for kynos::schema::Nullable<T> where T: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::prelude::Accepted<T, L: kynos::response::status::AcceptedLocation>
 pub kynos::prelude::Accepted::body: T
 pub kynos::prelude::Accepted::location: L
@@ -7002,6 +7048,11 @@ pub const core::option::Option<T>::CONSTRAINT_PROBLEM: core::option::Option<kyno
 pub fn core::option::Option<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::option::Option<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::option::Option<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema> kynos::schema::Schema for kynos::schema::Nullable<T>
+pub const kynos::schema::Nullable<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::schema::Nullable<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn kynos::schema::Nullable<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn kynos::schema::Nullable<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T> kynos::schema::Schema for kynos::schema::unchecked::Unchecked<T>
 pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
@@ -9150,6 +9201,8 @@ impl<T: kynos::schema::constraints::Items + ?core::marker::Sized> kynos::schema:
 pub fn alloc::sync::Arc<T>::item_count(&self) -> core::option::Option<usize>
 impl<T: kynos::schema::constraints::Items> kynos::schema::constraints::Items for core::option::Option<T>
 pub fn core::option::Option<T>::item_count(&self) -> core::option::Option<usize>
+impl<T: kynos::schema::constraints::Items> kynos::schema::constraints::Items for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::item_count(&self) -> core::option::Option<usize>
 impl<T> kynos::schema::constraints::Items for [T]
 pub fn [T]::item_count(&self) -> core::option::Option<usize>
 impl<T> kynos::schema::constraints::Items for alloc::collections::btree::set::BTreeSet<T>
@@ -9186,6 +9239,8 @@ impl<T: kynos::schema::constraints::Numeric + ?core::marker::Sized> kynos::schem
 pub fn alloc::sync::Arc<T>::number(&self) -> core::option::Option<f64>
 impl<T: kynos::schema::constraints::Numeric> kynos::schema::constraints::Numeric for core::option::Option<T>
 pub fn core::option::Option<T>::number(&self) -> core::option::Option<f64>
+impl<T: kynos::schema::constraints::Numeric> kynos::schema::constraints::Numeric for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::number(&self) -> core::option::Option<f64>
 pub trait kynos::schema::constraints::Textual
 pub fn kynos::schema::constraints::Textual::text(&self) -> core::option::Option<&str>
 impl kynos::schema::constraints::Textual for alloc::string::String
@@ -9196,6 +9251,8 @@ impl<T: kynos::schema::constraints::Textual + ?core::marker::Sized> kynos::schem
 pub fn alloc::sync::Arc<T>::text(&self) -> core::option::Option<&str>
 impl<T: kynos::schema::constraints::Textual> kynos::schema::constraints::Textual for core::option::Option<T>
 pub fn core::option::Option<T>::text(&self) -> core::option::Option<&str>
+impl<T: kynos::schema::constraints::Textual> kynos::schema::constraints::Textual for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::text(&self) -> core::option::Option<&str>
 pub trait kynos::schema::constraints::UniqueItems
 pub fn kynos::schema::constraints::UniqueItems::has_unique_items(&self) -> core::option::Option<bool>
 impl<T, S> kynos::schema::constraints::UniqueItems for std::collections::hash::set::HashSet<T, S>
@@ -9214,6 +9271,8 @@ impl<T: kynos::schema::constraints::UniqueItems + ?core::marker::Sized> kynos::s
 pub fn alloc::sync::Arc<T>::has_unique_items(&self) -> core::option::Option<bool>
 impl<T: kynos::schema::constraints::UniqueItems> kynos::schema::constraints::UniqueItems for core::option::Option<T>
 pub fn core::option::Option<T>::has_unique_items(&self) -> core::option::Option<bool>
+impl<T: kynos::schema::constraints::UniqueItems> kynos::schema::constraints::UniqueItems for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::has_unique_items(&self) -> core::option::Option<bool>
 impl<T> kynos::schema::constraints::UniqueItems for alloc::collections::btree::set::BTreeSet<T>
 pub fn alloc::collections::btree::set::BTreeSet<T>::has_unique_items(&self) -> core::option::Option<bool>
 pub mod kynos::schema::flatten
@@ -9368,6 +9427,52 @@ impl<T> core::marker::Unpin for kynos::schema::unchecked::Unchecked<T> where T: 
 impl<T> core::marker::UnsafeUnpin for kynos::schema::unchecked::Unchecked<T> where T: core::marker::UnsafeUnpin
 impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::schema::unchecked::Unchecked<T> where T: core::panic::unwind_safe::RefUnwindSafe
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos::schema::unchecked::Unchecked<T> where T: core::panic::unwind_safe::UnwindSafe
+pub enum kynos::schema::Nullable<T>
+pub kynos::schema::Nullable::Absent
+pub kynos::schema::Nullable::Null
+pub kynos::schema::Nullable::Value(T)
+impl<T> kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::apply_to(self, &mut core::option::Option<T>)
+pub const fn kynos::schema::Nullable<T>::as_ref(&self) -> kynos::schema::Nullable<&T>
+pub const fn kynos::schema::Nullable<T>::as_value(&self) -> core::option::Option<&T>
+pub const fn kynos::schema::Nullable<T>::is_absent(&self) -> bool
+pub const fn kynos::schema::Nullable<T>::is_null(&self) -> bool
+pub fn kynos::schema::Nullable<T>::map<U>(self, impl core::ops::function::FnOnce(T) -> U) -> kynos::schema::Nullable<U>
+impl<'de, T: serde_core::de::Deserialize<'de>> serde_core::de::Deserialize<'de> for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::deserialize<D: serde_core::de::Deserializer<'de>>(D) -> core::result::Result<Self, <D as serde_core::de::Deserializer>::Error>
+impl<T: core::clone::Clone> core::clone::Clone for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::clone(&self) -> kynos::schema::Nullable<T>
+impl<T: core::cmp::Eq> core::cmp::Eq for kynos::schema::Nullable<T>
+impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::eq(&self, &kynos::schema::Nullable<T>) -> bool
+impl<T: core::fmt::Debug> core::fmt::Debug for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: core::hash::Hash> core::hash::Hash for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl<T: core::marker::Copy> core::marker::Copy for kynos::schema::Nullable<T>
+impl<T: kynos::schema::Schema> kynos::schema::Schema for kynos::schema::Nullable<T>
+pub const kynos::schema::Nullable<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::schema::Nullable<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn kynos::schema::Nullable<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn kynos::schema::Nullable<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::constraints::Items> kynos::schema::constraints::Items for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::item_count(&self) -> core::option::Option<usize>
+impl<T: kynos::schema::constraints::Numeric> kynos::schema::constraints::Numeric for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::number(&self) -> core::option::Option<f64>
+impl<T: kynos::schema::constraints::Textual> kynos::schema::constraints::Textual for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::text(&self) -> core::option::Option<&str>
+impl<T: kynos::schema::constraints::UniqueItems> kynos::schema::constraints::UniqueItems for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::has_unique_items(&self) -> core::option::Option<bool>
+impl<T> core::default::Default for kynos::schema::Nullable<T>
+pub fn kynos::schema::Nullable<T>::default() -> kynos::schema::Nullable<T>
+impl<T> core::marker::StructuralPartialEq for kynos::schema::Nullable<T>
+impl<T> core::marker::Freeze for kynos::schema::Nullable<T> where T: core::marker::Freeze
+impl<T> core::marker::Send for kynos::schema::Nullable<T> where T: core::marker::Send
+impl<T> core::marker::Sync for kynos::schema::Nullable<T> where T: core::marker::Sync
+impl<T> core::marker::Unpin for kynos::schema::Nullable<T> where T: core::marker::Unpin
+impl<T> core::marker::UnsafeUnpin for kynos::schema::Nullable<T> where T: core::marker::UnsafeUnpin
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::schema::Nullable<T> where T: core::panic::unwind_safe::RefUnwindSafe
+impl<T> core::panic::unwind_safe::UnwindSafe for kynos::schema::Nullable<T> where T: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::schema::UnknownVariant
 impl kynos::schema::UnknownVariant
 pub const fn kynos::schema::UnknownVariant::expected(&self) -> &'static [&'static str]
@@ -9780,6 +9885,11 @@ pub const core::option::Option<T>::CONSTRAINT_PROBLEM: core::option::Option<kyno
 pub fn core::option::Option<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn core::option::Option<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn core::option::Option<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+impl<T: kynos::schema::Schema> kynos::schema::Schema for kynos::schema::Nullable<T>
+pub const kynos::schema::Nullable<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::schema::Nullable<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
+pub fn kynos::schema::Nullable<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
+pub fn kynos::schema::Nullable<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
 impl<T> kynos::schema::Schema for kynos::schema::unchecked::Unchecked<T>
 pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::option::Option<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)

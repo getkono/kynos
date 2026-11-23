@@ -1421,6 +1421,38 @@ fn a_container_default_leaves_every_field_optional() {
     );
 }
 
+/// A merge patch: one member that may be cleared, and one that may not.
+#[derive(Schema, serde::Deserialize)]
+struct EntryPatch {
+    #[serde(default)]
+    #[schema(max_length = 4)]
+    notes: kynos::schema::Nullable<String>,
+    title: Option<String>,
+}
+
+/// A `Nullable` member is described as its `Option` is, its bound applying to
+/// the value, and the `default` the derive asks of it keeps it out of
+/// `required`: a patch naming nothing reads, as RFC 7396 says it may.
+#[test]
+fn a_nullable_member_is_optional_and_bounded_by_its_value() {
+    let schema = emitted::<EntryPatch>();
+    assert_eq!(schema.get("required"), None);
+    assert_eq!(
+        schema["properties"]["notes"],
+        serde_json::json!({ "type": ["string", "null"], "maxLength": 4 })
+    );
+
+    let patch: EntryPatch = serde_json::from_str("{}").expect("an empty patch reads");
+    assert!(patch.notes.is_absent());
+    let patch: EntryPatch = serde_json::from_str(r#"{"notes":"longer"}"#).expect("the patch reads");
+    let mut violations = kynos::schema::constraints::Violations::new();
+    patch.check_constraints(kynos::schema::constraints::Pointer::root(), &mut violations);
+    assert!(
+        !violations.is_empty(),
+        "a value past `max_length` breaks it"
+    );
+}
+
 // --- A named field serde skips in one direction -----------------------------
 //
 // serde reads a `skip_serializing` field and never writes it, so it is a

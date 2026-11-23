@@ -503,6 +503,18 @@ mod schema {
                 "reads the map empty",
             ),
             case(
+                "a `Nullable` field serde reads with no `default`, which serde reads left out \
+                 as `null`",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(default)]
+                        notes: Nullable<String>,
+                        title: Nullable<String>,
+                    }
+                ),
+                "this `Nullable` reads as `Nullable::Null` when the member is left out",
+            ),
+            case(
                 "a constraint written twice, across two lists, when the second would replace \
                  the first",
                 quote::quote!(
@@ -706,6 +718,133 @@ mod schema {
         );
     }
 
+    /// The `Nullable` refusal reaches an enum's struct variant as it does a
+    /// struct, and a member serde does read without a default whatever else
+    /// it carries.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and these prove where its edge is.
+    #[test]
+    fn an_undefaulted_nullable_is_refused_wherever_serde_reads_it_missing() {
+        let expects = "this `Nullable` reads as `Nullable::Null` when the member is left out";
+        each_case_is_refused(
+            vec![
+                case(
+                    "a `Nullable` in an enum's struct variant with no `default`",
+                    quote::quote!(
+                        enum Edit {
+                            Retitle { title: Nullable<String> },
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "a renamed `Nullable` with no `default`, whose other serde keys fill nothing",
+                    quote::quote!(
+                        struct EntryPatch {
+                            #[serde(rename = "note")]
+                            notes: Nullable<String>,
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "a `Nullable` reached through a path, with no `default`",
+                    quote::quote!(
+                        struct EntryPatch {
+                            notes: kynos::schema::Nullable<String>,
+                        }
+                    ),
+                    expects,
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A `Nullable` serde fills when it is missing, never reads, or never
+    /// reads as a missing member, is accepted.
+    #[test]
+    fn a_nullable_serde_never_reads_as_a_missing_null_is_accepted() {
+        for (description, declaration) in [
+            (
+                "a container `default`",
+                quote::quote!(
+                    #[serde(default)]
+                    struct EntryPatch {
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+            (
+                "a field `default` naming a function",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(default = "Nullable::default")]
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+            (
+                "an enum's struct variant whose field carries `default`",
+                quote::quote!(
+                    enum Edit {
+                        Retitle {
+                            #[serde(default)]
+                            title: Nullable<String>,
+                        },
+                    }
+                ),
+            ),
+            (
+                "an enum's tuple variant, read whole",
+                quote::quote!(
+                    enum Edit {
+                        Retitle(Nullable<String>),
+                    }
+                ),
+            ),
+            (
+                "a transparent struct, read whole",
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Notes {
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+            (
+                "a tuple struct, whose short array serde refuses",
+                quote::quote!(
+                    struct Pair(String, Nullable<String>);
+                ),
+            ),
+            (
+                "a flattened member, left to the `Flatten` bound",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(flatten)]
+                        notes: Nullable<Notes>,
+                    }
+                ),
+            ),
+            (
+                "a member serde never reads",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(skip_deserializing)]
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+        ] {
+            let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("{description} was refused: {error}");
+            }
+        }
+    }
+
     /// The row refusing a key written twice, which `attribute::Keys` raises.
     const IN_ATTRIBUTE: usize = 1;
 
@@ -720,6 +859,7 @@ mod schema {
                 include_str!("schema.rs"),
                 include_str!("schema/container.rs"),
                 include_str!("schema/refusals.rs"),
+                include_str!("schema/refusals/absence.rs"),
                 include_str!("schema/refusals/grammar.rs"),
                 include_str!("schema/refusals/naming.rs"),
                 include_str!("schema/refusals/object_keys.rs"),

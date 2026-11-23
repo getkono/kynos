@@ -271,7 +271,7 @@ pub mod prelude {
         router::{Router, group::Group},
         // Unaliased: rustc names a trait by its shortest visible path in
         // diagnostics. The derive shares the name from the macro namespace.
-        schema::{ParamValue, Schema},
+        schema::{Nullable, ParamValue, Schema},
         security::auth::{Auth, Scoped},
     };
 
