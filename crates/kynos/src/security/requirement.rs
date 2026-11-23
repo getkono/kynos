@@ -18,7 +18,7 @@
 //! three. A combinator takes [`Member`]s, never other combinators, so each
 //! shape has exactly one spelling.
 //!
-//! [`Scoped`](crate::security::auth::Scoped) demands its scope set of a
+//! [`Scoped`] demands its scope set of a
 //! scheme, or of every alternative of an [`AnyOf`] whose schemes share one
 //! [`SecurityScheme::Scope`]: [`Scopable`] is what admits the two. Written as
 //! a combinator's member, `Scoped<S, R>` demands its set of that member alone:
@@ -209,7 +209,7 @@ pub trait CheckedBy<C>: Requirement {
     ) -> impl Future<Output = Result<Option<Self::Credential>, AuthRejection>> + Send;
 }
 
-/// A [`Requirement`] a [`Scoped`](crate::security::auth::Scoped) guard can
+/// A [`Requirement`] a [`Scoped`] guard can
 /// demand a scope set of: a [`SecurityScheme`], or an [`AnyOf`] whose schemes
 /// share one [`SecurityScheme::Scope`].
 ///
@@ -706,7 +706,7 @@ fn is_absent<S: Carries, T>(presented: &Presented<T>) -> bool {
 ///
 /// `None` skips `authorize`, as a guard naming no scope set does for a scheme
 /// with no default scopes ([`owed_defaults`]); `Some` calls it even with an
-/// empty slice, as [`Scoped`](crate::security::auth::Scoped) does.
+/// empty slice, as [`Scoped`] does.
 async fn verify<S, C>(
     presented: Presented<S::Presented>,
     parts: &Parts,
