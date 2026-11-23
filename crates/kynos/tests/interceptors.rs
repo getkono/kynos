@@ -938,7 +938,7 @@ macro_rules! over {
 /// [`over!`] at each scope, under the scope's name, described and built.
 macro_rules! over_every_scope {
     ($outer:expr, $inner:expr) => {
-        [
+        vec![
             (
                 "router",
                 over!(router, $outer, $inner).openapi(),
@@ -963,17 +963,17 @@ macro_rules! over_every_scope {
     };
 }
 
+/// One scope's router, under the scope's name, described and built.
+type Scoped = (
+    &'static str,
+    kynos::Result<kynos::openapi::Document>,
+    kynos::Result<kynos::router::service::Service<App>>,
+);
+
 /// Holds each operation to covering exactly where `covers_head_only` says an
 /// operation reading the head alone is covered, in its description and in what
 /// it answers a request carrying a body.
-async fn assert_bodies_cover(
-    cases: [(
-        &'static str,
-        kynos::Result<kynos::openapi::Document>,
-        kynos::Result<kynos::router::service::Service<App>>,
-    ); 4],
-    covers_head_only: bool,
-) {
+async fn assert_bodies_cover(cases: Vec<Scoped>, covers_head_only: bool) {
     for (scope, document, service) in cases {
         let document = document.expect("a describable router");
         let service = service.expect("a describable router");

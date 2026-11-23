@@ -3494,6 +3494,7 @@ pub type kynos::middleware::cache::Cache<S, D>::Reads = ()
 pub type kynos::middleware::cache::Cache<S, D>::Short = core::convert::Infallible
 pub const kynos::middleware::cache::Cache<S, D>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cache::Cache<S, D>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::cache::Cache<S, D>::READS_BODY: bool
 pub fn kynos::middleware::cache::Cache<S, D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cache::CacheTagging>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<S: core::clone::Clone, D: core::clone::Clone> core::clone::Clone for kynos::middleware::cache::Cache<S, D>
 pub fn kynos::middleware::cache::Cache<S, D>::clone(&self) -> kynos::middleware::cache::Cache<S, D>
@@ -3787,6 +3788,7 @@ pub type kynos::middleware::compression::Compression<T>::Reads = ()
 pub type kynos::middleware::compression::Compression<T>::Short = kynos::middleware::compression::NotAcceptable<T>
 pub const kynos::middleware::compression::Compression<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::compression::Compression<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::compression::Compression<T>::READS_BODY: bool
 pub fn kynos::middleware::compression::Compression<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::compression::ContentEncoding>, kynos::middleware::compression::NotAcceptable<T>>> + core::marker::Send
 impl<T> core::clone::Clone for kynos::middleware::compression::Compression<T>
 pub fn kynos::middleware::compression::Compression<T>::clone(&self) -> Self
@@ -3873,6 +3875,7 @@ pub type kynos::middleware::conditional::Conditional::Reads = kynos::middleware:
 pub type kynos::middleware::conditional::Conditional::Short = kynos::middleware::conditional::NotModified
 pub const kynos::middleware::conditional::Conditional::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::conditional::Conditional::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::conditional::Conditional::READS_BODY: bool
 pub async fn kynos::middleware::conditional::Conditional::intercept(&self, kynos::http::Request, kynos::middleware::conditional::Preconditions, &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::conditional::NotModified>
 impl core::marker::Freeze for kynos::middleware::conditional::Conditional
 impl core::marker::Send for kynos::middleware::conditional::Conditional
@@ -4014,6 +4017,7 @@ pub type kynos::middleware::cookies::SetCookies<S>::Reads = ()
 pub type kynos::middleware::cookies::SetCookies<S>::Short = core::convert::Infallible
 pub const kynos::middleware::cookies::SetCookies<S>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cookies::SetCookies<S>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::cookies::SetCookies<S>::READS_BODY: bool
 pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::cookies::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
 impl<S: core::clone::Clone> core::clone::Clone for kynos::middleware::cookies::SetCookies<S>
 pub fn kynos::middleware::cookies::SetCookies<S>::clone(&self) -> kynos::middleware::cookies::SetCookies<S>
@@ -4054,6 +4058,7 @@ pub type kynos::middleware::cors::Cors<D>::Reads = ()
 pub type kynos::middleware::cors::Cors<D>::Short = core::convert::Infallible
 pub const kynos::middleware::cors::Cors<D>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cors::Cors<D>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::cors::Cors<D>::READS_BODY: bool
 pub fn kynos::middleware::cors::Cors<D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cors::CorsDocumentation>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<D: core::clone::Clone> core::clone::Clone for kynos::middleware::cors::Cors<D>
 pub fn kynos::middleware::cors::Cors<D>::clone(&self) -> kynos::middleware::cors::Cors<D>
@@ -4209,6 +4214,7 @@ pub type kynos::middleware::csrf::Csrf<T>::Reads = ()
 pub type kynos::middleware::csrf::Csrf<T>::Short = kynos::middleware::csrf::CrossSite<T>
 pub const kynos::middleware::csrf::Csrf<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::csrf::Csrf<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::csrf::Csrf<T>::READS_BODY: bool
 pub async fn kynos::middleware::csrf::Csrf<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<T> core::clone::Clone for kynos::middleware::csrf::Csrf<T>
 pub fn kynos::middleware::csrf::Csrf<T>::clone(&self) -> Self
@@ -4234,6 +4240,7 @@ pub type kynos::middleware::csrf::CsrfWhen<C, T>::Reads = ()
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Short = kynos::middleware::csrf::CrossSite<T>
 pub const kynos::middleware::csrf::CsrfWhen<C, T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::csrf::CsrfWhen<C, T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::csrf::CsrfWhen<C, T>::READS_BODY: bool
 pub async fn kynos::middleware::csrf::CsrfWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<C, T> core::marker::Freeze for kynos::middleware::csrf::CsrfWhen<C, T>
 impl<C, T> core::marker::Send for kynos::middleware::csrf::CsrfWhen<C, T>
@@ -4281,6 +4288,7 @@ pub type kynos::middleware::decompression::Decompression<U, M, L>::Reads = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Short = kynos::middleware::decompression::Undecodable<U, M, L>
 pub const kynos::middleware::decompression::Decompression<U, M, L>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::decompression::Decompression<U, M, L>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::decompression::Decompression<U, M, L>::READS_BODY: bool
 pub async fn kynos::middleware::decompression::Decompression<U, M, L>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::decompression::Undecodable<U, M, L>>
 impl<U, M, L> core::clone::Clone for kynos::middleware::decompression::Decompression<U, M, L>
 pub fn kynos::middleware::decompression::Decompression<U, M, L>::clone(&self) -> Self
@@ -4369,6 +4377,7 @@ pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::li
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Short = kynos::middleware::limits::body_size::BodyRefused<T, U>
 pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::READS_BODY: bool
 pub async fn kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodyRefused<T, U>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_size::BodySize<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::body_size::BodySize<T>::Adds = ()
@@ -4376,6 +4385,7 @@ pub type kynos::middleware::limits::body_size::BodySize<T>::Reads = ()
 pub type kynos::middleware::limits::body_size::BodySize<T>::Short = kynos::middleware::limits::body_size::BodySizeExceeded<T>
 pub const kynos::middleware::limits::body_size::BodySize<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::body_size::BodySize<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::body_size::BodySize<T>::READS_BODY: bool
 pub async fn kynos::middleware::limits::body_size::BodySize<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodySizeExceeded<T>>
 impl<T, D> core::clone::Clone for kynos::middleware::limits::body_size::BodySize<T, D> where D: core::marker::Copy
 pub fn kynos::middleware::limits::body_size::BodySize<T, D>::clone(&self) -> Self
@@ -4478,6 +4488,7 @@ pub type kynos::middleware::limits::body_timeout::BodyTimeout::Reads = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Short = core::convert::Infallible
 pub const kynos::middleware::limits::body_timeout::BodyTimeout::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::body_timeout::BodyTimeout::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::body_timeout::BodyTimeout::READS_BODY: bool
 pub async fn kynos::middleware::limits::body_timeout::BodyTimeout::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, core::convert::Infallible>
 impl core::marker::Freeze for kynos::middleware::limits::body_timeout::BodyTimeout
 impl core::marker::Send for kynos::middleware::limits::body_timeout::BodyTimeout
@@ -4529,6 +4540,7 @@ pub type kynos::middleware::limits::concurrency::Concurrency<T>::Reads = ()
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Short = kynos::middleware::limits::concurrency::AtCapacity<T>
 pub const kynos::middleware::limits::concurrency::Concurrency<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::concurrency::Concurrency<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::concurrency::Concurrency<T>::READS_BODY: bool
 pub async fn kynos::middleware::limits::concurrency::Concurrency<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::concurrency::AtCapacity<T>>
 impl<T> core::clone::Clone for kynos::middleware::limits::concurrency::Concurrency<T>
 pub fn kynos::middleware::limits::concurrency::Concurrency<T>::clone(&self) -> Self
@@ -4585,6 +4597,7 @@ pub type kynos::middleware::limits::timeout::Timeout<R>::Reads = ()
 pub type kynos::middleware::limits::timeout::Timeout<R>::Short = R
 pub const kynos::middleware::limits::timeout::Timeout<R>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::timeout::Timeout<R>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::timeout::Timeout<R>::READS_BODY: bool
 pub async fn kynos::middleware::limits::timeout::Timeout<R>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, R>
 impl<R> core::clone::Clone for kynos::middleware::limits::timeout::Timeout<R>
 pub fn kynos::middleware::limits::timeout::Timeout<R>::clone(&self) -> Self
@@ -5072,6 +5085,7 @@ pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Reads = ()
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Short = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Denied
 pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::READS_BODY: bool
 pub async fn kynos::middleware::rate_limit::RateLimit<P, D, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::rate_limit::RateLimitSpelling>::Headers>, <D as kynos::middleware::rate_limit::RateLimitSpelling>::Denied>
 impl<P, D, T> core::clone::Clone for kynos::middleware::rate_limit::RateLimit<P, D, T> where P: core::clone::Clone
 pub fn kynos::middleware::rate_limit::RateLimit<P, D, T>::clone(&self) -> Self
@@ -5188,6 +5202,7 @@ pub type kynos::middleware::request_id::RequestId<S, H>::Reads = ()
 pub type kynos::middleware::request_id::RequestId<S, H>::Short = core::convert::Infallible
 pub const kynos::middleware::request_id::RequestId<S, H>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::request_id::RequestId<S, H>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::request_id::RequestId<S, H>::READS_BODY: bool
 pub fn kynos::middleware::request_id::RequestId<S, H>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<H>, core::convert::Infallible>> + core::marker::Send
 impl<S: core::clone::Clone, H> core::clone::Clone for kynos::middleware::request_id::RequestId<S, H>
 pub fn kynos::middleware::request_id::RequestId<S, H>::clone(&self) -> Self
@@ -5278,6 +5293,7 @@ pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Short = core::convert::Infallible
 pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::READS_BODY: bool
 pub fn kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, core::convert::Infallible>> + core::marker::Send
 impl<const HSTS: bool, const DENY_FRAMING: bool> core::clone::Clone for kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>
 pub fn kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::clone(&self) -> kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>
@@ -5354,6 +5370,7 @@ pub type kynos::middleware::stack::When<M, N>::Reads = <N as kynos::middleware::
 pub type kynos::middleware::stack::When<M, N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
 pub const kynos::middleware::stack::When<M, N>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::stack::When<M, N>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::stack::When<M, N>::READS_BODY: bool
 pub fn kynos::middleware::stack::When<M, N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
 impl<M, N> core::fmt::Debug for kynos::middleware::stack::When<M, N>
 pub fn kynos::middleware::stack::When<M, N>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -5486,6 +5503,7 @@ pub type kynos::middleware::trace::TraceSpan<G>::Reads = ()
 pub type kynos::middleware::trace::TraceSpan<G>::Short = core::convert::Infallible
 pub const kynos::middleware::trace::TraceSpan<G>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::trace::TraceSpan<G>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::trace::TraceSpan<G>::READS_BODY: bool
 pub fn kynos::middleware::trace::TraceSpan<G>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued, core::convert::Infallible>> + core::marker::Send
 impl<G> core::clone::Clone for kynos::middleware::trace::TraceSpan<G>
 pub fn kynos::middleware::trace::TraceSpan<G>::clone(&self) -> Self
@@ -5544,6 +5562,7 @@ pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::READS_BODY: bool
 pub async fn kynos::middleware::trusted_hosts::TrustedHosts<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<T> core::clone::Clone for kynos::middleware::trusted_hosts::TrustedHosts<T>
 pub fn kynos::middleware::trusted_hosts::TrustedHosts<T>::clone(&self) -> Self
@@ -5569,6 +5588,7 @@ pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::READS_BODY: bool
 pub async fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<C, T> core::marker::Freeze for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
 impl<C, T> core::marker::Send for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>
@@ -5725,6 +5745,7 @@ pub type kynos::middleware::Interceptor::Reads: kynos::extract::params::header::
 pub type kynos::middleware::Interceptor::Short: kynos::response::ShortCircuit
 pub const kynos::middleware::Interceptor::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::Interceptor::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::Interceptor::READS_BODY: bool
 pub fn kynos::middleware::Interceptor::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
 impl<C, M, N> kynos::middleware::Interceptor<C> for kynos::middleware::stack::When<M, N> where C: core::marker::Sync + 'static, M: kynos::router::group::MethodSet, N: kynos::middleware::Interceptor<C>
 pub type kynos::middleware::stack::When<M, N>::Adds = <N as kynos::middleware::Interceptor<C>>::Adds
@@ -5732,6 +5753,7 @@ pub type kynos::middleware::stack::When<M, N>::Reads = <N as kynos::middleware::
 pub type kynos::middleware::stack::When<M, N>::Short = <N as kynos::middleware::Interceptor<C>>::Short
 pub const kynos::middleware::stack::When<M, N>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::stack::When<M, N>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::stack::When<M, N>::READS_BODY: bool
 pub fn kynos::middleware::stack::When<M, N>::intercept(&self, kynos::http::Request, Self::Reads, &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, Self::Short>> + core::marker::Send
 impl<C, P, D, T> kynos::middleware::Interceptor<C> for kynos::middleware::rate_limit::RateLimit<P, D, T> where C: core::marker::Sync + 'static, P: kynos::middleware::rate_limit::decision::RateLimitPolicy<C>, D: kynos::middleware::rate_limit::RateLimitSpelling<T>, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Adds = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Headers
@@ -5739,6 +5761,7 @@ pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Reads = ()
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Short = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Denied
 pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::rate_limit::RateLimit<P, D, T>::READS_BODY: bool
 pub async fn kynos::middleware::rate_limit::RateLimit<P, D, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::rate_limit::RateLimitSpelling>::Headers>, <D as kynos::middleware::rate_limit::RateLimitSpelling>::Denied>
 impl<C, R> kynos::middleware::Interceptor<C> for kynos::middleware::limits::timeout::Timeout<R> where C: core::marker::Sync + 'static, R: kynos::response::ShortCircuit + core::convert::From<core::time::Duration> + core::marker::Send + 'static
 pub type kynos::middleware::limits::timeout::Timeout<R>::Adds = ()
@@ -5746,6 +5769,7 @@ pub type kynos::middleware::limits::timeout::Timeout<R>::Reads = ()
 pub type kynos::middleware::limits::timeout::Timeout<R>::Short = R
 pub const kynos::middleware::limits::timeout::Timeout<R>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::timeout::Timeout<R>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::timeout::Timeout<R>::READS_BODY: bool
 pub async fn kynos::middleware::limits::timeout::Timeout<R>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, R>
 impl<C, S, D> kynos::middleware::Interceptor<C> for kynos::middleware::cache::Cache<S, D> where C: core::marker::Sync + 'static, S: kynos::middleware::cache::store::CacheStore<C>, D: kynos::middleware::cache::CacheTagging
 pub type kynos::middleware::cache::Cache<S, D>::Adds = <D as kynos::middleware::cache::CacheTagging>::Headers
@@ -5753,6 +5777,7 @@ pub type kynos::middleware::cache::Cache<S, D>::Reads = ()
 pub type kynos::middleware::cache::Cache<S, D>::Short = core::convert::Infallible
 pub const kynos::middleware::cache::Cache<S, D>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cache::Cache<S, D>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::cache::Cache<S, D>::READS_BODY: bool
 pub fn kynos::middleware::cache::Cache<S, D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cache::CacheTagging>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<C, S, H> kynos::middleware::Interceptor<C> for kynos::middleware::request_id::RequestId<S, H> where C: core::marker::Sync + 'static, S: kynos::middleware::request_id::RequestIdSource, H: kynos::middleware::request_id::CorrelationHeaders + core::marker::Send + core::marker::Sync + 'static
 pub type kynos::middleware::request_id::RequestId<S, H>::Adds = H
@@ -5760,6 +5785,7 @@ pub type kynos::middleware::request_id::RequestId<S, H>::Reads = ()
 pub type kynos::middleware::request_id::RequestId<S, H>::Short = core::convert::Infallible
 pub const kynos::middleware::request_id::RequestId<S, H>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::request_id::RequestId<S, H>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::request_id::RequestId<S, H>::READS_BODY: bool
 pub fn kynos::middleware::request_id::RequestId<S, H>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<H>, core::convert::Infallible>> + core::marker::Send
 impl<C, S> kynos::middleware::Interceptor<C> for kynos::middleware::cookies::SetCookies<S> where C: core::marker::Sync + 'static, S: kynos::middleware::cookies::CookieSource<C>
 pub type kynos::middleware::cookies::SetCookies<S>::Adds = kynos::middleware::cookies::SetCookieHeaders
@@ -5767,6 +5793,7 @@ pub type kynos::middleware::cookies::SetCookies<S>::Reads = ()
 pub type kynos::middleware::cookies::SetCookies<S>::Short = core::convert::Infallible
 pub const kynos::middleware::cookies::SetCookies<S>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cookies::SetCookies<S>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::cookies::SetCookies<S>::READS_BODY: bool
 pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::cookies::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
 impl<C, T, U> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType, U: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Adds = ()
@@ -5774,6 +5801,7 @@ pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::li
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Short = kynos::middleware::limits::body_size::BodyRefused<T, U>
 pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::READS_BODY: bool
 pub async fn kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodyRefused<T, U>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::compression::Compression<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::compression::Compression<T>::Adds = kynos::middleware::compression::ContentEncoding
@@ -5781,6 +5809,7 @@ pub type kynos::middleware::compression::Compression<T>::Reads = ()
 pub type kynos::middleware::compression::Compression<T>::Short = kynos::middleware::compression::NotAcceptable<T>
 pub const kynos::middleware::compression::Compression<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::compression::Compression<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::compression::Compression<T>::READS_BODY: bool
 pub fn kynos::middleware::compression::Compression<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::compression::ContentEncoding>, kynos::middleware::compression::NotAcceptable<T>>> + core::marker::Send
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::csrf::Csrf<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::csrf::Csrf<T>::Adds = ()
@@ -5788,6 +5817,7 @@ pub type kynos::middleware::csrf::Csrf<T>::Reads = ()
 pub type kynos::middleware::csrf::Csrf<T>::Short = kynos::middleware::csrf::CrossSite<T>
 pub const kynos::middleware::csrf::Csrf<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::csrf::Csrf<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::csrf::Csrf<T>::READS_BODY: bool
 pub async fn kynos::middleware::csrf::Csrf<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::csrf::CsrfWhen<C, T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Adds = ()
@@ -5795,6 +5825,7 @@ pub type kynos::middleware::csrf::CsrfWhen<C, T>::Reads = ()
 pub type kynos::middleware::csrf::CsrfWhen<C, T>::Short = kynos::middleware::csrf::CrossSite<T>
 pub const kynos::middleware::csrf::CsrfWhen<C, T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::csrf::CsrfWhen<C, T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::csrf::CsrfWhen<C, T>::READS_BODY: bool
 pub async fn kynos::middleware::csrf::CsrfWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::csrf::CrossSite<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_size::BodySize<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::body_size::BodySize<T>::Adds = ()
@@ -5802,6 +5833,7 @@ pub type kynos::middleware::limits::body_size::BodySize<T>::Reads = ()
 pub type kynos::middleware::limits::body_size::BodySize<T>::Short = kynos::middleware::limits::body_size::BodySizeExceeded<T>
 pub const kynos::middleware::limits::body_size::BodySize<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::body_size::BodySize<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::body_size::BodySize<T>::READS_BODY: bool
 pub async fn kynos::middleware::limits::body_size::BodySize<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::body_size::BodySizeExceeded<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::limits::concurrency::Concurrency<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Adds = ()
@@ -5809,6 +5841,7 @@ pub type kynos::middleware::limits::concurrency::Concurrency<T>::Reads = ()
 pub type kynos::middleware::limits::concurrency::Concurrency<T>::Short = kynos::middleware::limits::concurrency::AtCapacity<T>
 pub const kynos::middleware::limits::concurrency::Concurrency<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::concurrency::Concurrency<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::concurrency::Concurrency<T>::READS_BODY: bool
 pub async fn kynos::middleware::limits::concurrency::Concurrency<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::limits::concurrency::AtCapacity<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHosts<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Adds = ()
@@ -5816,6 +5849,7 @@ pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHosts<T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::trusted_hosts::TrustedHosts<T>::READS_BODY: bool
 pub async fn kynos::middleware::trusted_hosts::TrustedHosts<T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Adds = ()
@@ -5823,6 +5857,7 @@ pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Reads = ()
 pub type kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::Short = kynos::middleware::trusted_hosts::UntrustedHost<T>
 pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::READS_BODY: bool
 pub async fn kynos::middleware::trusted_hosts::TrustedHostsWhen<C, T>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::trusted_hosts::UntrustedHost<T>>
 impl<C, U, M, L> kynos::middleware::Interceptor<C> for kynos::middleware::decompression::Decompression<U, M, L> where C: core::marker::Sync + 'static, U: kynos::error::problem::ProblemType, M: kynos::error::problem::ProblemType, L: kynos::error::problem::ProblemType
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Adds = ()
@@ -5830,6 +5865,7 @@ pub type kynos::middleware::decompression::Decompression<U, M, L>::Reads = ()
 pub type kynos::middleware::decompression::Decompression<U, M, L>::Short = kynos::middleware::decompression::Undecodable<U, M, L>
 pub const kynos::middleware::decompression::Decompression<U, M, L>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::decompression::Decompression<U, M, L>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::decompression::Decompression<U, M, L>::READS_BODY: bool
 pub async fn kynos::middleware::decompression::Decompression<U, M, L>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::decompression::Undecodable<U, M, L>>
 impl<C, const HSTS: bool, const DENY_FRAMING: bool> kynos::middleware::Interceptor<C> for kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING> where C: core::marker::Sync + 'static
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Adds = kynos::middleware::security_headers::SecurityFields<HSTS, DENY_FRAMING>
@@ -5837,6 +5873,7 @@ pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING
 pub type kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::Short = core::convert::Infallible
 pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::READS_BODY: bool
 pub fn kynos::middleware::security_headers::SecurityHeaders<HSTS, DENY_FRAMING>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<Self::Adds>, core::convert::Infallible>> + core::marker::Send
 impl<C: core::marker::Sync + 'static, D: kynos::middleware::cors::CorsDocumentation> kynos::middleware::Interceptor<C> for kynos::middleware::cors::Cors<D>
 pub type kynos::middleware::cors::Cors<D>::Adds = <D as kynos::middleware::cors::CorsDocumentation>::Headers
@@ -5844,6 +5881,7 @@ pub type kynos::middleware::cors::Cors<D>::Reads = ()
 pub type kynos::middleware::cors::Cors<D>::Short = core::convert::Infallible
 pub const kynos::middleware::cors::Cors<D>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cors::Cors<D>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::cors::Cors<D>::READS_BODY: bool
 pub fn kynos::middleware::cors::Cors<D>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<<D as kynos::middleware::cors::CorsDocumentation>::Headers>, core::convert::Infallible>> + core::marker::Send
 impl<C: core::marker::Sync + 'static, G: 'static> kynos::middleware::Interceptor<C> for kynos::middleware::trace::TraceSpan<G>
 pub type kynos::middleware::trace::TraceSpan<G>::Adds = ()
@@ -5851,6 +5889,7 @@ pub type kynos::middleware::trace::TraceSpan<G>::Reads = ()
 pub type kynos::middleware::trace::TraceSpan<G>::Short = core::convert::Infallible
 pub const kynos::middleware::trace::TraceSpan<G>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::trace::TraceSpan<G>::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::trace::TraceSpan<G>::READS_BODY: bool
 pub fn kynos::middleware::trace::TraceSpan<G>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued, core::convert::Infallible>> + core::marker::Send
 impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::conditional::Conditional
 pub type kynos::middleware::conditional::Conditional::Adds = ()
@@ -5858,6 +5897,7 @@ pub type kynos::middleware::conditional::Conditional::Reads = kynos::middleware:
 pub type kynos::middleware::conditional::Conditional::Short = kynos::middleware::conditional::NotModified
 pub const kynos::middleware::conditional::Conditional::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::conditional::Conditional::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::conditional::Conditional::READS_BODY: bool
 pub async fn kynos::middleware::conditional::Conditional::intercept(&self, kynos::http::Request, kynos::middleware::conditional::Preconditions, &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, kynos::middleware::conditional::NotModified>
 impl<C: core::marker::Sync + 'static> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_timeout::BodyTimeout
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Adds = ()
@@ -5865,6 +5905,7 @@ pub type kynos::middleware::limits::body_timeout::BodyTimeout::Reads = ()
 pub type kynos::middleware::limits::body_timeout::BodyTimeout::Short = core::convert::Infallible
 pub const kynos::middleware::limits::body_timeout::BodyTimeout::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::limits::body_timeout::BodyTimeout::COVERS: kynos::middleware::Covers
+pub const kynos::middleware::limits::body_timeout::BodyTimeout::READS_BODY: bool
 pub async fn kynos::middleware::limits::body_timeout::BodyTimeout::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, core::convert::Infallible>
 pub trait kynos::middleware::Observer<C>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::middleware::Observer::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion)
