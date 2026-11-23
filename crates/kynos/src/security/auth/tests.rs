@@ -1413,6 +1413,237 @@ async fn scoped_any_of_challenges_as_the_combination() {
     );
 }
 
+/// A password, or a token holding `reports:read`: the set scopes the
+/// alternative it is written on and no other.
+type PasswordOrReader = Auth<AnyOf<(Basic<String>, Scoped<Bearer<String, Grant>, ReadReports>)>>;
+
+/// A scoped member declares its set on its own scheme, after that scheme's
+/// defaults, and leaves every other member as written, under each guard that
+/// takes a combination.
+#[test]
+fn a_scoped_member_declares_its_set_on_its_own_scheme_alone() {
+    let password = || bare::<Basic<String>>();
+    let reader = || {
+        SecurityRequirement::scoped(
+            component_name::<Bearer<String, Grant>>().as_str(),
+            ["reports:read"],
+        )
+    };
+
+    let (either, components) = described::<PasswordOrReader>();
+    assert_eq!(either.security, Some(vec![password(), reader()]));
+    for key in [
+        component_name::<Basic<String>>(),
+        component_name::<Bearer<String, Grant>>(),
+    ] {
+        assert!(
+            components.security_schemes.contains_key(key.as_str()),
+            "{key:?}"
+        );
+    }
+
+    let (maybe, _) = described::<
+        MaybeAuth<AnyOf<(Basic<String>, Scoped<Bearer<String, Grant>, ReadReports>)>>,
+    >();
+    assert_eq!(
+        maybe.security,
+        Some(vec![SecurityRequirement::anonymous(), password(), reader()])
+    );
+
+    let (both, _) =
+        described::<Auth<AllOf<(Scoped<Audited, EditReports>, MutualTls<String, Grant>)>>>();
+    let mut together = SecurityRequirement::scoped(
+        component_name::<Audited>().as_str(),
+        ["audit", "reports:read", "reports:write"],
+    );
+    together.0.extend(bare::<MutualTls<String, Grant>>().0);
+    assert_eq!(both.security, Some(vec![together]));
+
+    // One scheme scoped two ways is two alternatives, not one.
+    let (twice, _) = described::<
+        Auth<
+            AnyOf<(
+                Scoped<Bearer<String, Grant>, ReadReports>,
+                Scoped<Bearer<String, Grant>, EditReports>,
+            )>,
+        >,
+    >();
+    assert_eq!(
+        twice.security,
+        Some(vec![
+            reader(),
+            SecurityRequirement::scoped(
+                component_name::<Bearer<String, Grant>>().as_str(),
+                ["reports:read", "reports:write"],
+            ),
+        ])
+    );
+}
+
+/// A scoped member makes its guard one that may refuse a scope: the 403 is
+/// declared even beside schemes that never forbid, carries the member's
+/// challenge, and stays the un-narrowed `Problem` beside a bare member, whose
+/// refusals may carry any type.
+#[test]
+fn a_scoped_member_declares_the_403_a_scope_refusal_is() {
+    /// Names its refusal.
+    struct Named;
+
+    impl Scopes for Named {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+        const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/no-scope");
+    }
+
+    assert!(!declares_forbidden::<Auth<AnyOf<(Probe, Scrape)>>>());
+    assert!(declares_forbidden::<
+        Auth<AnyOf<(Probe, Scoped<Scrape, ReadReports>)>>,
+    >());
+    assert!(declares_forbidden::<
+        Auth<AllOf<(Probe, Scoped<Scrape, ReadReports>)>>,
+    >());
+
+    assert_eq!(
+        declared_scope_challenge::<Auth<AnyOf<(Basic<String>, Bearer<String, Grant>)>>>(),
+        None
+    );
+    let header = declared_scope_challenge::<PasswordOrReader>().expect("a declared challenge");
+    assert_eq!(
+        header["example"],
+        serde_json::json!(r#"Bearer error="insufficient_scope""#),
+        "{header}"
+    );
+
+    let body = |operation: kynos_openapi::Operation| {
+        serde_json::to_value(&operation.responses.responses["403"])
+            .expect("a serializable 403")["content"]
+            .take()
+    };
+    let (named, _) =
+        described::<Auth<AnyOf<(Basic<String>, Scoped<Bearer<String, Grant>, Named>)>>>();
+    let (unscoped, _) = described::<Auth<Bearer>>();
+    assert_eq!(body(named), body(unscoped));
+}
+
+/// Scoping every member by sets naming one refusal narrows the 403 as the
+/// `Scoped` guard does, so `Auth<AnyOf<(Scoped<A, R>, Scoped<B, R>)>>`
+/// describes exactly what `Scoped<AnyOf<(A, B)>, R>` does. Members naming
+/// different refusals, or a member naming none, leave it wide.
+#[test]
+fn members_naming_one_refusal_narrow_the_403_as_the_scoped_guard_does() {
+    /// Names its refusal.
+    struct Named;
+
+    impl Scopes for Named {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+        const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/no-scope");
+    }
+
+    /// Names another refusal.
+    struct Other;
+
+    impl Scopes for Other {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+        const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/other");
+    }
+
+    let (guard, _) = described::<Scoped<AnyOf<(Audited, Bearer<String, Grant>)>, Named>>();
+    let (members, _) =
+        described::<Auth<AnyOf<(Scoped<Audited, Named>, Scoped<Bearer<String, Grant>, Named>)>>>();
+    assert_eq!(members, guard);
+
+    // The body alone: `Auth<Bearer>` authorizes no scope, so it owes no
+    // `insufficient_scope` header the scoped guards declare.
+    let forbidden = |operation: kynos_openapi::Operation| {
+        serde_json::to_value(&operation.responses.responses["403"])
+            .expect("a serializable 403")["content"]
+            .take()
+    };
+    let (single, _) = described::<Scoped<Bearer<String, Grant>, Named>>();
+    let (together, _) =
+        described::<Auth<AllOf<(Scoped<Audited, Named>, Scoped<Bearer<String, Grant>, Named>)>>>();
+    assert_eq!(forbidden(together), forbidden(single));
+
+    let (wide, _) = described::<Auth<Bearer>>();
+    let (disagreeing, _) =
+        described::<Auth<AnyOf<(Scoped<Audited, Named>, Scoped<Bearer<String, Grant>, Other>)>>>();
+    assert_eq!(forbidden(disagreeing), forbidden(wide.clone()));
+    let (unnamed, _) = described::<
+        Auth<
+            AnyOf<(
+                Scoped<Audited, Named>,
+                Scoped<Bearer<String, Grant>, ReadReports>,
+            )>,
+        >,
+    >();
+    assert_eq!(forbidden(unnamed), forbidden(wide));
+}
+
+/// Each alternative is authorized for its own set: a scoped member for its
+/// defaults and its set together, and a bare member with no defaults not at
+/// all, so the member a refused set fails is passed over for the next.
+#[tokio::test]
+async fn any_of_authorizes_each_alternative_for_its_own_set() {
+    type EditorOrBearer = Auth<AnyOf<(Scoped<Audited, EditReports>, Bearer<String, Grant>)>>;
+
+    let refusing = Recording::refusing();
+    let admitted = <EditorOrBearer as Guard<_>>::guard(&presenting_a_token(), &refusing).await;
+    assert!(
+        matches!(
+            admitted.map(Auth::into_inner),
+            Ok(Either2::Second(caller)) if caller == "caller"
+        ),
+        "the bare alternative was not admitted"
+    );
+    assert_eq!(
+        refusing.0.authorized(),
+        [vec!["audit", "reports:read", "reports:write"]]
+    );
+
+    let admitting = Recording::admitting();
+    let admitted = <EditorOrBearer as Guard<_>>::guard(&presenting_a_token(), &admitting).await;
+    assert!(
+        matches!(admitted.map(Auth::into_inner), Ok(Either2::First(_))),
+        "the scoped alternative was not admitted"
+    );
+    assert_eq!(
+        admitting.0.authorized(),
+        [vec!["audit", "reports:read", "reports:write"]]
+    );
+
+    // A scoped member is authorized even for an empty set, as `Scoped` is.
+    let refusing = Recording::refusing();
+    let refused =
+        <Auth<AnyOf<(Scoped<Bearer<String, Grant>, NoScopes>, Basic<String>)>> as Guard<_>>::guard(
+            &presenting_a_token(),
+            &refusing,
+        )
+        .await;
+    assert_eq!(
+        refused.err().map(|r| r.status()),
+        Some(StatusCode::FORBIDDEN)
+    );
+    assert_eq!(refusing.0.authorized(), [Vec::<&str>::new()]);
+}
+
+/// `AllOf` authorizes each scheme for its own set, in tuple order, once every
+/// scheme has authenticated.
+#[tokio::test]
+async fn all_of_authorizes_each_scheme_for_its_own_set() {
+    let admitting = Recording::admitting();
+    let admitted = <Auth<AllOf<(Scoped<Bearer<String, Grant>, ReadReports>, Audited)>> as Guard<
+        _,
+    >>::guard(&presenting_a_token(), &admitting)
+    .await;
+    assert!(admitted.is_ok(), "both schemes were not admitted");
+    assert_eq!(
+        admitting.0.authorized(),
+        [vec!["reports:read"], vec!["audit", "reports:read"]]
+    );
+}
+
 /// The response guard `G` refuses `parts` with under `context`.
 async fn refused<C: Sync, G: Guard<C>>(parts: &Parts, context: &C) -> crate::http::Response {
     use crate::response::IntoResponse as _;

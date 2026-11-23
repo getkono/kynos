@@ -694,6 +694,42 @@ fn an_unchecked_route_repeating_a_described_operation_fails_every_entry_point() 
     );
 }
 
+/// A `GET` describing the HEAD it answers.
+#[kynos::get("/reports", head)]
+async fn get_reports() -> NoContent {
+    NoContent
+}
+
+/// The same `GET`, describing no HEAD.
+#[kynos::get("/reports")]
+async fn reports() -> NoContent {
+    NoContent
+}
+
+/// The HEAD a `GET` describes is a described operation like any other, so an
+/// unchecked HEAD on its path repeats it and is refused at it.
+#[test]
+fn an_unchecked_head_repeating_a_described_head_fails_every_entry_point() {
+    assert_eq!(
+        refusals(|| Router::<()>::new()
+            .mount(kynos::routes![get_reports])
+            .route_unchecked([Method::HEAD], "/reports", echo_path)),
+        [
+            "error at #/paths/~1reports/head: operation `HEAD /reports` is described more than \
+             once; a path item holds one operation per method"
+        ]
+    );
+
+    // The control: a `GET` describing no HEAD leaves it to the unchecked route.
+    assert!(
+        Router::<()>::new()
+            .mount(kynos::routes![reports])
+            .route_unchecked([Method::HEAD], "/reports", echo_path)
+            .build(())
+            .is_ok()
+    );
+}
+
 /// Two unchecked routes repeating one method and pattern leave the second
 /// unreachable just the same.
 #[test]

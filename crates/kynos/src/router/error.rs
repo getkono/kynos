@@ -30,6 +30,40 @@ pub enum RouterError {
         path: String,
     },
 
+    /// A `GET` describes the `HEAD` it answers on a path that also declares a
+    /// `HEAD` operation of its own.
+    ///
+    /// The declared `HEAD` answers that method, so the one the `GET` would
+    /// describe never would. Reported rather than settled by either winning:
+    /// both were asked for, and one of them is a mistake. Located at the
+    /// `head` operation.
+    #[error(
+        "`HEAD {path}` is declared as an operation and also described by its `GET`'s `head`; \
+         remove one of them"
+    )]
+    HeadDescribedTwice {
+        /// The `paths` key both are at.
+        path: String,
+    },
+
+    /// An operation that is not a `GET` describes a `HEAD`, which only a
+    /// `GET` answers (RFC 9110 section 9.3.2).
+    ///
+    /// Reachable only through
+    /// [`EndpointBuilder::describe_head`](crate::router::endpoint::builder::EndpointBuilder::describe_head),
+    /// whose method is a runtime value; the route attribute refuses its `head`
+    /// argument anywhere but on a `GET`.
+    #[error(
+        "operation `{method} {path}` describes a `HEAD`, which only a `GET` answers; remove \
+         `describe_head`"
+    )]
+    HeadWithoutGet {
+        /// The operation's method.
+        method: kynos_openapi::Method,
+        /// The `paths` key it is at.
+        path: String,
+    },
+
     /// An operation takes no guard while another operation of its
     /// [`Group`](crate::router::group::Group) takes one, and does not declare
     /// that it is public.

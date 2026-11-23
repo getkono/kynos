@@ -10,6 +10,7 @@
 
 mod build;
 mod describe;
+mod head;
 mod install;
 mod map;
 
