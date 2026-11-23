@@ -706,7 +706,7 @@ which [`tests/panics.rs`](../crates/kynos/tests/panics.rs) holds.
 | performance | Idle memory per connection ≤ TBD at 100k connections | Nightly load test measuring RSS delta | `kynos-bench` |
 | performance | The per-connection state Kynos itself holds inline stays within its recorded ceilings | [`extract/connection/tests.rs`](../crates/kynos/src/extract/connection/tests.rs), asserting `Connection` one pointer wide, narrower than `Inner`, and shared rather than copied on clone, `Inner` ≤ 192 from a measured 176 and `TlsIdentity` ≤ 128 from a measured 72; and [`server/tests.rs`](../crates/kynos/src/server/tests.rs), asserting the configuration cloned per accepted socket — `Http1Config` ≤ 64 from 40, `Http2Config` ≤ 128 from 96, `TransportConfig` ≤ 256 from 200. Every reading is a `size_of`, so what a certificate chain or a server name points at is counted by none of them | `enforced` for the ceilings; the relation to the smallest transport buffer is prose in the same doc comments, since it cannot fail while a ceiling holds |
 | compatibility | The I/O bound on `Server::serve_io` is the only public item naming a tokio type; a pre-bound listener is taken as the standard library's | `mise run api:check`, refusing a `tokio` path in any listed item but the one the `tokio` bullet of [`architecture.md`](architecture.md#what-an-upstream-fix-may-change)'s Public dependencies list names | `enforced` |
-| compatibility | Every `tokio` mention in a published crate outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly six rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
+| compatibility | Every `tokio` mention in a published crate outside `crates/kynos/src/server/` appears in the allowance table in [`architecture.md`](architecture.md#runtime-policy), and the table has exactly seven rows | `mise run containment:check`, which reads the table rather than restating it, over source stripped of comments, string literals and `#[cfg(test)]` modules | `enforced` |
 
 The last two rows are the enforcement of the tokio-only policy in
 [`architecture.md`](architecture.md#runtime-policy). There is no runtime
@@ -726,7 +726,7 @@ shape, which owes a size guard here and sends resident memory at scale to
 The containment row is written against the enumerated table in
 [`architecture.md`](architecture.md#runtime-policy) rather than against
 `server/` alone, which is checkable in this repository's exhaustiveness idiom:
-a seventh site fails the build. A count asserted only in prose is a count
+an eighth site fails the build. A count asserted only in prose is a count
 nobody is holding.
 
 The HTTP/2 flow-control row was once `blocked-on-dependency`, on the reading

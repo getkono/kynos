@@ -11,14 +11,19 @@
 //! remainder; a long one is cut to the span; an empty one fails the body with
 //! [`Truncated`].
 //!
-//! Nothing here names tokio; a source that reads a file names it in the
-//! application's own implementation.
+//! A file is the source most applications want, so
+//! [`file::FileSource`] ships behind `assets-fs`: it is the only part of this
+//! module that names tokio, whose blocking pool its reads run on. Every other
+//! source is the application's own implementation.
 
 use std::{future::Future, pin::Pin, task::Poll};
 
 use bytes::Bytes;
 
 use super::rangeable::clamped;
+
+#[cfg(feature = "assets-fs")]
+pub mod file;
 
 /// How much of a representation is read at a time.
 ///
