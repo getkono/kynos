@@ -2236,6 +2236,35 @@ async fn a_parked_clone_holds_up_no_other_clone() {
         .expect("the trigger forced");
 }
 
+/// A wait dropped before the trigger fires, as a per-request `select!` on
+/// `begun`, leaves no waker behind, so abandoned waits do not accumulate.
+#[tokio::test]
+async fn an_abandoned_wait_leaves_no_waker() {
+    let shutdown = crate::server::shutdown::Shutdown::on(std::future::pending());
+    for _ in 0..3 {
+        let task = shutdown.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                biased;
+                _ = task.begun() => panic!("the trigger never fires"),
+                () = std::future::ready(()) => {}
+            }
+        })
+        .await
+        .expect("waiting task joins");
+    }
+    let held = shutdown.clone();
+    let mut held_begun = Box::pin(held.begun());
+    tokio::select! {
+        biased;
+        _ = &mut held_begun => panic!("the trigger never fires"),
+        () = std::future::ready(()) => {}
+    }
+    assert_eq!(shutdown.waiting(), 1, "only the pending wait is registered");
+    drop(held_begun);
+    assert_eq!(shutdown.waiting(), 0, "a dropped wait deregisters");
+}
+
 /// A clone awaited with no server drives the trigger itself, a waiter dropped
 /// mid-wait hands the trigger to the next, and a begun trigger answers a
 /// clone made later at once.

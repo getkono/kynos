@@ -3,14 +3,14 @@
 mod signal;
 
 use std::{
+    collections::HashMap,
     fmt,
-    future::{Future, pending},
+    future::{Future, pending, poll_fn},
     io,
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Mutex, MutexGuard, PoisonError},
+    task::{Context, Poll, Wake, Waker},
 };
-
-use tokio::sync::{Mutex, watch};
 
 use crate::server::shutdown::signal::{platform_signals, repeatable_ctrl_c};
 
@@ -33,7 +33,8 @@ pub(in crate::server) type ShutdownFuture =
 /// shutdown for each server given a clone and each task awaiting
 /// [`begun`](Self::begun), and a second forces it for all of them. Whichever
 /// clone is awaited first installs the listeners, so a background task
-/// awaiting its clone hears the signal even where no server is serving.
+/// awaiting its clone hears the signal even where no server is serving, and a
+/// clone left pending but no longer polled holds up none of the others.
 ///
 /// ```no_run
 /// use kynos::{
@@ -72,12 +73,23 @@ pub struct Shutdown {
 }
 
 /// The one trigger every clone of a [`Shutdown`] observes.
+///
+/// Any polled clone advances the trigger, under a lock held only for that
+/// synchronous poll, and the trigger's future is polled with a waker that
+/// wakes every waiting clone. A clone whose task stops polling it therefore
+/// holds nothing, and whichever clone is polled next advances the trigger.
 struct Shared {
-    /// The trigger itself, advanced by whichever clone holds the lock while
-    /// the others watch [`phase`](Self::phase).
-    stage: Mutex<Stage>,
-    /// How far the trigger has advanced, written only under `stage`'s lock.
-    phase: watch::Sender<Phase>,
+    trigger: Mutex<Trigger>,
+    waiters: Arc<Waiters>,
+    /// Wakes every [`waiters`](Self::waiters) entry; the trigger's future is
+    /// always polled with it.
+    waker: Waker,
+}
+
+/// The future a trigger waits on next, and how far it has advanced.
+struct Trigger {
+    stage: Stage,
+    phase: Phase,
 }
 
 /// The future a trigger waits on next.
@@ -88,7 +100,6 @@ enum Stage {
 }
 
 /// What every clone of a trigger has seen it do.
-#[derive(Clone)]
 enum Phase {
     Waiting,
     Begun,
@@ -120,36 +131,108 @@ fn failure(error: &Arc<io::Error>) -> io::Error {
     io::Error::new(error.kind(), Arc::clone(error))
 }
 
-impl Shared {
-    /// Advances `stage` past the future it waits on.
-    async fn advance(&self, stage: &mut Stage) {
-        match stage {
-            Stage::Begin(begin) => match begin.await {
-                Ok(force) => {
-                    *stage = Stage::Force(force);
-                    self.phase.send_replace(Phase::Begun);
-                }
-                Err(error) => {
-                    *stage = Stage::Settled;
-                    self.phase.send_replace(Phase::Failed(Arc::new(error)));
-                }
-            },
-            Stage::Force(force) => {
-                force.await;
-                *stage = Stage::Settled;
-                self.phase.send_replace(Phase::Forced);
+/// The wakers of the waits pending on a trigger, keyed by wait.
+#[derive(Default)]
+struct Waiters(Mutex<WaiterSet>);
+
+#[derive(Default)]
+struct WaiterSet {
+    next: u64,
+    wakers: HashMap<u64, Waker>,
+}
+
+impl Waiters {
+    /// A key for a new wait, which [`Waiter`] releases when it is dropped.
+    fn key(&self) -> u64 {
+        let mut set = lock(&self.0);
+        set.next += 1;
+        set.next
+    }
+
+    fn register(&self, key: u64, waker: &Waker) {
+        let mut set = lock(&self.0);
+        match set.wakers.get_mut(&key) {
+            Some(known) if known.will_wake(waker) => {}
+            Some(known) => known.clone_from(waker),
+            None => {
+                set.wakers.insert(key, waker.clone());
             }
-            // Both settled phases answer every wait before it advances.
-            Stage::Settled => {}
         }
     }
 }
 
-// A panic in the trigger's future leaves its stage in place, so the next clone
-// to advance it panics too rather than reading a half-made transition: the
-// phase is only ever replaced whole, after the future it reports resolved.
-impl std::panic::UnwindSafe for Shutdown {}
-impl std::panic::RefUnwindSafe for Shutdown {}
+impl Wake for Waiters {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        // Copied out first, so a waker re-entering the set cannot deadlock.
+        let wakers: Vec<Waker> = lock(&self.0).wakers.values().cloned().collect();
+        for waker in wakers {
+            waker.wake();
+        }
+    }
+}
+
+/// One pending wait's place in [`Waiters`], released when the wait is
+/// dropped, so a wait abandoned before the trigger fires leaves nothing.
+struct Waiter<'a> {
+    waiters: &'a Waiters,
+    key: u64,
+}
+
+impl Drop for Waiter<'_> {
+    fn drop(&mut self) {
+        lock(&self.waiters.0).wakers.remove(&self.key);
+    }
+}
+
+/// Locks `mutex` through poisoning.
+///
+/// The waiter list is whole at every point a panic can leave it. A panic in
+/// the trigger's future leaves its stage in place, so the next clone to poll
+/// it panics too rather than reading a half-made transition: the phase is
+/// only ever replaced whole, after the future it reports resolved.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+impl Shared {
+    /// Polls the trigger until `reached` answers its phase, registering `cx`
+    /// to be woken whenever the trigger may have advanced.
+    fn poll_reach(
+        &self,
+        cx: &mut Context<'_>,
+        key: u64,
+        reached: fn(&Phase) -> Option<io::Result<()>>,
+    ) -> Poll<io::Result<()>> {
+        // Registered before the poll, so a wake during or after it reaches us.
+        self.waiters.register(key, cx.waker());
+        let mut trigger = lock(&self.trigger);
+        let mut shared = Context::from_waker(&self.waker);
+        loop {
+            if let Some(answer) = reached(&trigger.phase) {
+                return Poll::Ready(answer);
+            }
+            let (stage, phase) = match &mut trigger.stage {
+                Stage::Begin(begin) => match begin.as_mut().poll(&mut shared) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(Ok(force)) => (Stage::Force(force), Phase::Begun),
+                    Poll::Ready(Err(error)) => (Stage::Settled, Phase::Failed(Arc::new(error))),
+                },
+                Stage::Force(force) => match force.as_mut().poll(&mut shared) {
+                    Poll::Pending => return Poll::Pending,
+                    Poll::Ready(()) => (Stage::Settled, Phase::Forced),
+                },
+                Stage::Settled => unreachable!("a settled phase answers every wait"),
+            };
+            *trigger = Trigger { stage, phase };
+            // The other clones wait on this transition.
+            self.waker.wake_by_ref();
+        }
+    }
+}
 
 impl fmt::Debug for Shutdown {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -159,10 +242,15 @@ impl fmt::Debug for Shutdown {
 
 impl Shutdown {
     pub(in crate::server) fn new(future: ShutdownFuture) -> Self {
+        let waiters = Arc::new(Waiters::default());
         Self {
             shared: Arc::new(Shared {
-                stage: Mutex::new(Stage::Begin(future)),
-                phase: watch::Sender::new(Phase::Waiting),
+                trigger: Mutex::new(Trigger {
+                    stage: Stage::Begin(future),
+                    phase: Phase::Waiting,
+                }),
+                waker: Waker::from(Arc::clone(&waiters)),
+                waiters,
             }),
         }
     }
@@ -207,28 +295,20 @@ impl Shutdown {
         self.reach(Phase::forced).await
     }
 
+    /// How many waits are registered to be woken.
+    #[cfg(test)]
+    pub(in crate::server) fn waiting(&self) -> usize {
+        lock(&self.shared.waiters.0).wakers.len()
+    }
+
     /// Waits until `reached` answers the trigger's phase, advancing the
-    /// trigger whenever no other clone is.
+    /// trigger on every poll.
     async fn reach(&self, reached: fn(&Phase) -> Option<io::Result<()>>) -> io::Result<()> {
-        let mut phase = self.shared.phase.subscribe();
-        loop {
-            let answer = reached(&phase.borrow_and_update());
-            if let Some(answer) = answer {
-                return answer;
-            }
-            tokio::select! {
-                biased;
-                // `self` holds the sender, so the channel never closes.
-                _ = phase.changed() => {}
-                mut stage = self.shared.stage.lock() => {
-                    // The phase changes only under this lock, so it is current.
-                    let answer = reached(&self.shared.phase.borrow());
-                    if answer.is_none() {
-                        self.shared.advance(&mut stage).await;
-                    }
-                }
-            }
-        }
+        let waiter = Waiter {
+            waiters: &self.shared.waiters,
+            key: self.shared.waiters.key(),
+        };
+        poll_fn(|cx| self.shared.poll_reach(cx, waiter.key, reached)).await
     }
 
     /// Resolves on the first Ctrl-C and forces shutdown on the second.
