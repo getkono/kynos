@@ -381,7 +381,8 @@ fn routes_takes_more_than_sixteen_operations() {
 /// tuple's stacks combine as a flat one's do.
 #[test]
 fn a_member_past_the_sixteenth_keeps_its_interceptor() {
-    use kynos::middleware::limits::body_size::BodySize;
+    // A probe covering an operation whatever its handler reads.
+    use kynos::middleware::limits::concurrency::Concurrency;
 
     let router = Router::<()>::new().mount(kynos::routes![
         r00,
@@ -400,12 +401,64 @@ fn a_member_past_the_sixteenth_keeps_its_interceptor() {
         r13,
         r14,
         r15,
-        r16.intercept(BodySize::new(64)),
+        r16.intercept(Concurrency::new(std::num::NonZeroUsize::MIN)),
     ]);
     let document = router.openapi().expect("a describable router");
     let limited = document.paths.items["/r16"].get.as_ref().expect("a GET");
     let unlimited = document.paths.items["/r15"].get.as_ref().expect("a GET");
 
-    assert!(limited.responses.responses.contains_key("413"));
-    assert!(!unlimited.responses.responses.contains_key("413"));
+    assert!(limited.responses.responses.contains_key("503"));
+    assert!(!unlimited.responses.responses.contains_key("503"));
+}
+
+// --- Operations a function hands out ---------------------------------------
+
+use kynos::middleware::limits::{concurrency::Concurrency, timeout::Timeout};
+use kynos::router::endpoint::set::Endpoints;
+
+/// Three operations, two carrying an interceptor of their own, as a module
+/// returns them. The return type is the witness that the list reads in the
+/// order `routes!` names the members.
+fn collected() -> Endpoints<(), kynos::stack![Concurrency, Timeout]> {
+    Endpoints::from_routes(kynos::routes![
+        r00,
+        r01.intercept(Concurrency::new(std::num::NonZeroUsize::MIN)),
+        r02.intercept(Timeout::new(std::time::Duration::from_secs(1))),
+    ])
+}
+
+/// What `from_routes` collects is mounted as the `routes!` would have been:
+/// every operation, each with its own interceptor and no other.
+#[test]
+fn operations_collected_from_routes_keep_their_own_interceptors() {
+    let collected = collected();
+    assert_eq!(collected.len(), 3);
+
+    // The router's type carries the two, so the check runs where it is mounted.
+    let router = Router::<()>::new().group(Group::new("/").mount(collected));
+    let document = router.openapi().expect("a describable router");
+    let mut paths: Vec<String> = document.paths.items.keys().cloned().collect();
+    paths.sort_unstable();
+    assert_eq!(paths, numbered(3));
+
+    for (path, status) in [("/r00", None), ("/r01", Some("503")), ("/r02", Some("408"))] {
+        let operation = document.paths.items[path].get.as_ref().expect("a GET");
+        for declared in ["503", "408"] {
+            assert_eq!(
+                operation.responses.responses.contains_key(declared),
+                status == Some(declared),
+                "{path}: {declared}"
+            );
+        }
+    }
+}
+
+/// An interceptor-free set carries the empty list, so it is named
+/// `Endpoints<C>` and leaves a group's type as it was.
+#[test]
+fn operations_collected_without_interceptors_carry_none() {
+    let collected: Endpoints<()> = Endpoints::from_routes(kynos::routes![r00, r01]);
+    let group: Group<()> = Group::new("/").mount(collected);
+
+    assert_eq!(described(&Router::<()>::new().group(group)), numbered(2));
 }

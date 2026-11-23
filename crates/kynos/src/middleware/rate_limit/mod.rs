@@ -268,6 +268,8 @@ where
     type Adds = D::Headers;
     type Short = D::Denied;
 
+    const READS_BODY: bool = false;
+
     async fn intercept(
         &self,
         request: http::Request,

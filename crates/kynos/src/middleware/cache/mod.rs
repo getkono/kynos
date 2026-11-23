@@ -267,6 +267,8 @@ where
     type Adds = D::Headers;
     type Short = Infallible;
 
+    const READS_BODY: bool = false;
+
     // A block rather than an `async fn`, whose body rebinds each argument and
     // so keeps the request twice across the store's lookup.
     fn intercept(

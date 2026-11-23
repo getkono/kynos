@@ -121,6 +121,8 @@ impl<C: Sync + 'static> Interceptor<C> for BodyTimeout {
     // No status: the head is already gone when this fires.
     type Short = std::convert::Infallible;
 
+    const READS_BODY: bool = false;
+
     async fn intercept(
         &self,
         request: http::Request,

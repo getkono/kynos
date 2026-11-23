@@ -55,14 +55,14 @@
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, num::NonZeroUsize};
 
 use kynos::{
     ApiError, PathParams, Router, Schema,
     error::rejection::RangeRejection,
     extract::{body::binary::Binary, params::path::Path},
     http::media::OctetStream,
-    middleware::limits::{body_size::BodySize, timeout::Timeout},
+    middleware::limits::{concurrency::Concurrency, timeout::Timeout},
     openapi::Document,
     response::{
         range::{
@@ -108,6 +108,12 @@ fn paths(names: &[&str]) -> BTreeSet<String> {
     names.iter().map(|name| (*name).to_owned()).collect()
 }
 
+/// The probe the scope cases below mount: it covers every operation, whatever
+/// its handler reads, and declares a 503 nothing else here does.
+fn cap() -> Concurrency {
+    Concurrency::new(NonZeroUsize::MIN)
+}
+
 /// Router scope reaches every operation, including ones mounted afterwards.
 ///
 /// The order matters: an implementation collecting interceptors at `mount`
@@ -116,12 +122,12 @@ fn paths(names: &[&str]) -> BTreeSet<String> {
 fn a_router_scoped_interceptor_declares_on_every_operation_either_side_of_it() {
     let document = Router::<()>::new()
         .mount(kynos::routes![alpha])
-        .intercept(BodySize::new(1024))
+        .intercept(cap())
         .mount(kynos::routes![beta])
         .openapi()
         .expect("a describable router");
 
-    assert_eq!(declaring(&document, "413"), paths(&["/alpha", "/beta"]));
+    assert_eq!(declaring(&document, "503"), paths(&["/alpha", "/beta"]));
 }
 
 /// Group scope reaches the group and stops there.
@@ -131,13 +137,13 @@ fn a_group_scoped_interceptor_declares_on_its_group_alone() {
         .mount(kynos::routes![alpha])
         .group(
             Group::<()>::new("/inner")
-                .intercept(BodySize::new(1024))
+                .intercept(cap())
                 .mount(kynos::routes![beta]),
         )
         .openapi()
         .expect("a describable router");
 
-    assert_eq!(declaring(&document, "413"), paths(&["/inner/beta"]));
+    assert_eq!(declaring(&document, "503"), paths(&["/inner/beta"]));
 }
 
 /// Endpoint scope reaches one operation.
@@ -148,18 +154,18 @@ fn a_group_scoped_interceptor_declares_on_its_group_alone() {
 #[test]
 fn an_endpoint_scoped_interceptor_declares_on_its_endpoint_alone() {
     let document = Router::<()>::new()
-        .mount(kynos::routes![alpha, beta.intercept(BodySize::new(1024))])
+        .mount(kynos::routes![alpha, beta.intercept(cap())])
         .openapi()
         .expect("a describable router");
 
-    assert_eq!(declaring(&document, "413"), paths(&["/beta"]));
+    assert_eq!(declaring(&document, "503"), paths(&["/beta"]));
 }
 
 /// Two scopes compose: an operation under both declares both.
 #[test]
 fn an_operation_under_two_scopes_declares_what_each_contributes() {
     let document = Router::<()>::new()
-        .intercept(BodySize::new(1024))
+        .intercept(cap())
         .mount(kynos::routes![alpha])
         .group(
             Group::<()>::new("/inner")
@@ -172,7 +178,7 @@ fn an_operation_under_two_scopes_declares_what_each_contributes() {
 
     // The router's limit reaches all three.
     assert_eq!(
-        declaring(&document, "413"),
+        declaring(&document, "503"),
         paths(&["/alpha", "/inner/beta", "/gamma"])
     );
     // The group's reaches one, and the one it reaches has both.
@@ -188,7 +194,7 @@ fn an_operation_under_two_scopes_declares_what_each_contributes() {
 #[test]
 fn a_nested_routers_interceptor_stays_with_what_that_router_held() {
     let inner = Router::<()>::new()
-        .intercept(BodySize::new(1024))
+        .intercept(cap())
         .mount(kynos::routes![beta]);
 
     let document = Router::<()>::new()
@@ -197,14 +203,14 @@ fn a_nested_routers_interceptor_stays_with_what_that_router_held() {
         .openapi()
         .expect("a describable router");
 
-    assert_eq!(declaring(&document, "413"), paths(&["/v1/beta"]));
+    assert_eq!(declaring(&document, "503"), paths(&["/v1/beta"]));
 }
 
 /// The same, through `merge`, which absorbs without a prefix.
 #[test]
 fn a_merged_routers_interceptor_stays_with_what_that_router_held() {
     let other = Router::<()>::new()
-        .intercept(BodySize::new(1024))
+        .intercept(cap())
         .mount(kynos::routes![beta]);
 
     let document = Router::<()>::new()
@@ -213,7 +219,7 @@ fn a_merged_routers_interceptor_stays_with_what_that_router_held() {
         .openapi()
         .expect("a describable router");
 
-    assert_eq!(declaring(&document, "413"), paths(&["/beta"]));
+    assert_eq!(declaring(&document, "503"), paths(&["/beta"]));
 }
 
 /// The control for all of the above: with no interceptor anywhere, no operation
@@ -226,7 +232,7 @@ fn nothing_declares_a_limits_status_when_no_limit_is_mounted() {
         .openapi()
         .expect("a describable router");
 
-    assert!(declaring(&document, "413").is_empty());
+    assert!(declaring(&document, "503").is_empty());
     assert!(declaring(&document, "408").is_empty());
 }
 

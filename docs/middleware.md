@@ -117,8 +117,10 @@ matches scope in the router.
 **The root router's own interceptors also cover its fallbacks.** The 404, 308,
 405 and 501 the router answers when no operation does pass through them, so a
 request id or a header every response carries reaches those too. A group's and
-a nested router's do not: they cover operations, and a fallback is none.
-`Next::route` is `None` there, an interceptor keyed by the operation (`Cache`,
+a nested router's do not: they cover operations, and a fallback is none. One
+covering `Covers::BodyReading`, as `BodySize` does, covers a fallback only
+while a router interceptor beneath it may read the body (`READS_BODY`), since
+no handler reads that one. `Next::route` is `None` there, an interceptor keyed by the operation (`Cache`,
 `RateLimit`) hands the response on untouched, and nothing is added to the
 document — a fallback stays out of `paths`, as
 [`routing.md`](routing.md#why-fallbacks-are-not-routes) says.
@@ -1772,8 +1774,10 @@ where the second is mounted.
 
 Whole stacks meet at `group`, `nest`, `merge` and `mount`, and `CompatibleStack`
 checks that cross-product. `mount` is why `routes!` expands to a tuple rather
-than to an `Endpoints`: a collection cannot say what its members carry, so
-building one would erase the endpoint-scoped interceptors the check needs. Two
+than to an `Endpoints`: a collection filled one operation at a time cannot say
+what its members carry, so building one would erase the endpoint-scoped
+interceptors the check needs. `Endpoints::from_routes` is the exception,
+since it takes the whole tuple and keeps its stacks as a type parameter. Two
 *operations* are never checked against each other, since no request reaches
 both.
 
@@ -1818,10 +1822,12 @@ each with the control that fails if the check over-rejects instead.
 ### What the compile-time check still cannot see
 
 One, and it is the erasure the paragraph above already names.
-[`Endpoints`](../crates/kynos/src/router/endpoint/set.rs) declares
-`Stacks = ()` by construction, so an endpoint-scoped interceptor that reaches a
-router through a collection arrives with nothing to compare, and a router-level
-interceptor adding the same header compiles.
+An [`Endpoints`](../crates/kynos/src/router/endpoint/set.rs) filled with
+`push` declares `Stacks = ()` by construction, so an endpoint-scoped
+interceptor that reaches a router through it arrives with nothing to compare,
+and a router-level interceptor adding the same header compiles. One built by
+`Endpoints::from_routes` does not erase: it carries its members' interceptors
+as its `S`, and is checked as the `routes!` would have been.
 
 There is no build-time backstop for it, and that is a decision rather than an
 omission. A router's own chain and its groups' are visible where the document is

@@ -192,6 +192,16 @@ pub fn public(attribute: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// No other builder method is accepted; what else describes an operation is
 /// the route attribute's to declare.
+///
+/// It expands to a tuple, whose type no function can name. A module that hands
+/// its operations out collects them with `Endpoints::from_routes`, which keeps
+/// the interceptors each one carries in its type:
+///
+/// ```ignore
+/// pub fn routes() -> Endpoints<App, kynos::stack![BodySize]> {
+///     Endpoints::from_routes(routes![users::list, users::create.intercept(BodySize::new(64 * 1024))])
+/// }
+/// ```
 #[proc_macro]
 pub fn routes(input: TokenStream) -> TokenStream {
     route::routes::expand_routes(input)

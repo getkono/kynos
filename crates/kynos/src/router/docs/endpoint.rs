@@ -127,6 +127,10 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsEndpoint {
             Half::Description => answer(self.state.description(), JSON),
         }
     }
+
+    fn __reads_body(&self) -> bool {
+        false
+    }
 }
 
 /// One payload rendered from the finished document, with the media type it was

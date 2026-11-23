@@ -24,15 +24,16 @@ use kynos::{
         body::text::Text,
         params::header::{EncodeHeaders, HeaderParams, Headers, UnencodableHeader},
     },
-    http::{HeaderName, HeaderValue, Method, StatusCode},
+    http::{HeaderName, HeaderValue, Method, Request, StatusCode},
     middleware::{
-        Observer,
+        Continued, Covers, Interceptor, Next, Observer,
         catch_panic::Propagate,
         cors::Cors,
-        limits::body_size::BodySize,
+        limits::body_size::{BodySize, BodySizeExceeded},
         request_id::{AssignedId, CorrelationHeaders, RequestId, RequestIdSource, XRequestId},
     },
     openapi::Method as OperationMethod,
+    response::status::NoContent,
     router::{
         group::{Group, MethodSet, Methods, SafeMethods, UnsafeMethods},
         operation::Route,
@@ -643,7 +644,8 @@ async fn interceptors_scoped_to_disjoint_methods_never_meet_on_an_operation() {
 }
 
 /// What a scoped interceptor declares lands on the operations it covers and on
-/// no other: the `413` its `Short` answers, and the header it `Adds`.
+/// no other: the `413` its `Short` answers, where its `Covers` reaches the
+/// operation too, and the header it `Adds`.
 #[test]
 fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
     let document = serde_json::to_value(
@@ -653,11 +655,13 @@ fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
     )
     .expect("a serializable document");
 
-    for (path, method, covered) in [
-        ("/users/{id}", "get", false),
-        ("/users", "get", false),
-        ("/users", "post", true),
-        ("/users/{id}", "delete", true),
+    // `BodySize` covers only an operation reading a body, which the `DELETE`
+    // is not.
+    for (path, method, covered, reads_a_body) in [
+        ("/users/{id}", "get", false, false),
+        ("/users", "get", false, false),
+        ("/users", "post", true, true),
+        ("/users/{id}", "delete", true, false),
     ] {
         let responses = &document["paths"][path][method]["responses"];
         let declares_413 = responses.get("413").is_some();
@@ -667,8 +671,385 @@ fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
             .values()
             .any(|response| response["headers"].get("X-Request-Id").is_some());
 
-        assert_eq!(declares_413, covered, "{method} {path}: the 413");
+        assert_eq!(
+            declares_413,
+            covered && reads_a_body,
+            "{method} {path}: the 413"
+        );
         assert_eq!(declares_header, covered, "{method} {path}: X-Request-Id");
+    }
+}
+
+// --- An interceptor covering only the operations that read a body ----------
+
+/// Refuses every request it covers with a 413, and covers only the operations
+/// that read a body.
+struct Bodies;
+
+impl<C: Sync + 'static> Interceptor<C> for Bodies {
+    type Reads = ();
+    type Adds = ();
+    type Short = BodySizeExceeded;
+
+    const COVERS: Covers = Covers::BodyReading;
+
+    async fn intercept(
+        &self,
+        _: Request,
+        (): (),
+        _: &C,
+        _: Next<'_, C>,
+    ) -> Result<Continued, BodySizeExceeded> {
+        Err(BodySizeExceeded::new(0))
+    }
+}
+
+/// Takes nothing at all, so it reads no body.
+#[kynos::get("/ping")]
+async fn ping() -> NoContent {
+    NoContent
+}
+
+/// The support operations and `ping` under a `RequestId`, with [`Bodies`]
+/// mounted at `scope`: a body read by `create_user` alone, and each other one
+/// reading the head through a different handler shape.
+macro_rules! bodies_at {
+    (router) => {
+        Router::<App>::new()
+            .mount(kynos::routes![
+                support::get_user,
+                support::list_users,
+                support::create_user,
+                support::delete_user,
+                ping,
+            ])
+            .intercept(RequestId::new())
+            .intercept(Bodies)
+    };
+    (group) => {
+        Router::<App>::new()
+            .group(Group::new("/").intercept(Bodies).mount(kynos::routes![
+                support::get_user,
+                support::list_users,
+                support::create_user,
+                support::delete_user,
+                ping,
+            ]))
+            .intercept(RequestId::new())
+    };
+    // `merge` and `nest` absorb a router through one path, at a prefix or none.
+    (merged) => {
+        Router::<App>::new()
+            .merge(
+                Router::<App>::new()
+                    .mount(kynos::routes![
+                        support::get_user,
+                        support::list_users,
+                        support::create_user,
+                        support::delete_user,
+                        ping,
+                    ])
+                    .intercept(Bodies),
+            )
+            .intercept(RequestId::new())
+    };
+    (endpoint) => {
+        Router::<App>::new()
+            .mount(kynos::routes![
+                support::get_user.intercept(Bodies),
+                support::list_users.intercept(Bodies),
+                support::create_user.intercept(Bodies),
+                support::delete_user.intercept(Bodies),
+                ping.intercept(Bodies),
+            ])
+            .intercept(RequestId::new())
+    };
+}
+
+/// [`bodies_at!`] at each scope, under the scope's name.
+fn bodies_at_every_scope() -> [(&'static str, kynos::Result<kynos::openapi::Document>); 4] {
+    [
+        ("router", bodies_at!(router).openapi()),
+        ("group", bodies_at!(group).openapi()),
+        ("merged", bodies_at!(merged).openapi()),
+        ("endpoint", bodies_at!(endpoint).openapi()),
+    ]
+}
+
+/// At every scope, the interceptor is declared on the one operation reading a
+/// body and on none reading the head alone, whatever its handler's shape.
+#[test]
+fn an_interceptor_covering_bodies_is_declared_only_where_a_body_is_read() {
+    for (scope, document) in bodies_at_every_scope() {
+        let document = document.expect("a describable router");
+
+        let mut operations = 0;
+        for (path, item) in &document.paths.items {
+            for (method, operation) in item.operations() {
+                operations += 1;
+                assert_eq!(
+                    operation.responses.responses.contains_key("413"),
+                    operation.request_body.is_some(),
+                    "{scope}: {method:?} {path}"
+                );
+            }
+        }
+        assert_eq!(operations, 5, "{scope}");
+    }
+}
+
+/// At every scope, the interceptor runs on the operation reading a body and
+/// on none reading the head alone, while the interceptors beside it still run
+/// on each.
+#[tokio::test]
+async fn an_interceptor_covering_bodies_runs_only_where_a_body_is_read() {
+    for (scope, service) in [
+        ("router", bodies_at!(router).build(App::new())),
+        ("group", bodies_at!(group).build(App::new())),
+        ("merged", bodies_at!(merged).build(App::new())),
+        ("endpoint", bodies_at!(endpoint).build(App::new())),
+    ] {
+        let service = service.expect("a describable router");
+
+        let created = post(&service, "/users")
+            .header("content-type", "application/json")
+            .body(r#"{"id":2,"name":"a"}"#)
+            .call()
+            .await;
+        assert_eq!(created.status, StatusCode::PAYLOAD_TOO_LARGE, "{scope}");
+
+        for (method, target, status) in [
+            (Method::GET, "/users/1", StatusCode::OK),
+            (Method::GET, "/users", StatusCode::OK),
+            (Method::DELETE, "/users/1", StatusCode::NO_CONTENT),
+            (Method::GET, "/ping", StatusCode::NO_CONTENT),
+        ] {
+            let reply = support::send(&service, method.clone(), target)
+                .header("content-length", "4")
+                .body(&b"left"[..])
+                .call()
+                .await;
+            assert_eq!(reply.status, status, "{scope}: {method} {target}");
+            assert!(
+                reply.field("x-request-id").is_some(),
+                "{scope}: {method} {target}"
+            );
+        }
+    }
+}
+
+/// A router's own interceptor covering bodies leaves its fallbacks alone, as
+/// it leaves an operation reading no body: no operation reads that one.
+#[tokio::test]
+async fn a_router_interceptor_covering_bodies_leaves_its_fallbacks_alone() {
+    let service = bodies_at!(router)
+        .build(App::new())
+        .expect("a describable router");
+
+    let unmatched = post(&service, "/nothing-here")
+        .header("content-type", "application/json")
+        .body(r#"{"id":2,"name":"a"}"#)
+        .call()
+        .await;
+
+    assert_eq!(unmatched.status, StatusCode::NOT_FOUND);
+    assert!(unmatched.field("x-request-id").is_some());
+}
+
+/// Reads every body to the end and hands the same bytes on, as a request
+/// printer does, leaving its `READS_BODY` at the default.
+struct Buffers;
+
+impl<C: Sync + 'static> Interceptor<C> for Buffers {
+    type Reads = ();
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        _: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued, std::convert::Infallible> {
+        let (parts, body) = request.into_parts();
+        let bytes = http_body_util::BodyExt::collect(body)
+            .await
+            .map(http_body_util::Collected::to_bytes)
+            .unwrap_or_default();
+        Ok(next
+            .run(Request::from_parts(
+                parts,
+                kynos::http::body::Body::from_bytes(bytes),
+            ))
+            .await)
+    }
+}
+
+/// Touches the head alone, and says so.
+struct Heads;
+
+impl<C: Sync + 'static> Interceptor<C> for Heads {
+    type Reads = ();
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    const READS_BODY: bool = false;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        _: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued, std::convert::Infallible> {
+        Ok(next.run(request).await)
+    }
+}
+
+/// The support operations with `$outer` mounted above `$inner` at `scope`.
+macro_rules! over {
+    (router, $outer:expr, $inner:expr) => {
+        support::router().intercept($outer).intercept($inner)
+    };
+    (group, $outer:expr, $inner:expr) => {
+        Router::<App>::new().group(Group::new("/").intercept($outer).intercept($inner).mount(
+            kynos::routes![
+                support::get_user,
+                support::list_users,
+                support::create_user,
+                support::delete_user,
+            ],
+        ))
+    };
+    (merged, $outer:expr, $inner:expr) => {
+        Router::<App>::new().merge(support::router().intercept($outer).intercept($inner))
+    };
+    (endpoint, $outer:expr, $inner:expr) => {
+        Router::<App>::new().mount(kynos::routes![
+            support::get_user.intercept($outer).intercept($inner),
+            support::list_users.intercept($outer).intercept($inner),
+            support::create_user.intercept($outer).intercept($inner),
+            support::delete_user.intercept($outer).intercept($inner),
+        ])
+    };
+}
+
+/// [`over!`] at each scope, under the scope's name, described and built.
+macro_rules! over_every_scope {
+    ($outer:expr, $inner:expr) => {
+        vec![
+            (
+                "router",
+                over!(router, $outer, $inner).openapi(),
+                over!(router, $outer, $inner).build(App::new()),
+            ),
+            (
+                "group",
+                over!(group, $outer, $inner).openapi(),
+                over!(group, $outer, $inner).build(App::new()),
+            ),
+            (
+                "merged",
+                over!(merged, $outer, $inner).openapi(),
+                over!(merged, $outer, $inner).build(App::new()),
+            ),
+            (
+                "endpoint",
+                over!(endpoint, $outer, $inner).openapi(),
+                over!(endpoint, $outer, $inner).build(App::new()),
+            ),
+        ]
+    };
+}
+
+/// One scope's router, under the scope's name, described and built.
+type Scoped = (
+    &'static str,
+    kynos::Result<kynos::openapi::Document>,
+    kynos::Result<kynos::router::service::Service<App>>,
+);
+
+/// Holds each operation to covering exactly where `covers_head_only` says an
+/// operation reading the head alone is covered, in its description and in what
+/// it answers a request carrying a body.
+async fn assert_bodies_cover(cases: Vec<Scoped>, covers_head_only: bool) {
+    for (scope, document, service) in cases {
+        let document = document.expect("a describable router");
+        let service = service.expect("a describable router");
+
+        for (path, item) in &document.paths.items {
+            for (method, operation) in item.operations() {
+                assert_eq!(
+                    operation.responses.responses.contains_key("413"),
+                    covers_head_only || operation.request_body.is_some(),
+                    "{scope}: {method:?} {path}"
+                );
+            }
+        }
+
+        let listed = support::send(&service, Method::GET, "/users")
+            .header("content-length", "4")
+            .body(&b"left"[..])
+            .call()
+            .await;
+        let expected = if covers_head_only {
+            StatusCode::PAYLOAD_TOO_LARGE
+        } else {
+            StatusCode::OK
+        };
+        assert_eq!(listed.status, expected, "{scope}");
+    }
+}
+
+/// An interceptor beneath one covering bodies that may read the body keeps
+/// every operation it runs on covered, since the body it reads is a body read
+/// whether or not the handler reads one: so a limit above a request printer
+/// still bounds what the printer buffers.
+#[tokio::test]
+async fn a_body_an_interceptor_beneath_may_read_keeps_its_operation_covered() {
+    assert_bodies_cover(over_every_scope!(Bodies, Buffers), true).await;
+}
+
+/// The control: one that touches the head alone, and says so, leaves an
+/// operation reading no body uncovered.
+#[tokio::test]
+async fn a_head_only_interceptor_beneath_leaves_its_operation_uncovered() {
+    assert_bodies_cover(over_every_scope!(Bodies, Heads), false).await;
+}
+
+/// Only what runs beneath counts: an interceptor above one covering bodies
+/// reads the body before it is reached, so it covers nothing more.
+#[tokio::test]
+async fn a_body_read_above_an_interceptor_covering_bodies_widens_nothing() {
+    assert_bodies_cover(over_every_scope!(Buffers, Bodies), false).await;
+}
+
+/// A router's interceptor covering bodies covers its fallbacks while a router
+/// interceptor beneath it may read the body, and leaves them alone otherwise.
+#[tokio::test]
+async fn a_router_interceptor_covering_bodies_covers_a_fallback_whose_body_is_read() {
+    for (beneath, service, status) in [
+        (
+            "Buffers",
+            over!(router, Bodies, Buffers).build(App::new()),
+            StatusCode::PAYLOAD_TOO_LARGE,
+        ),
+        (
+            "Heads",
+            over!(router, Bodies, Heads).build(App::new()),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let service = service.expect("a describable router");
+
+        let unmatched = post(&service, "/nothing-here")
+            .header("content-type", "application/json")
+            .body(r#"{"id":2,"name":"a"}"#)
+            .call()
+            .await;
+
+        assert_eq!(unmatched.status, status, "{beneath}");
     }
 }
 

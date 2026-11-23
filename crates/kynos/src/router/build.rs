@@ -136,7 +136,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             paths,
             context,
             observers: self.observers,
-            interceptors: self.interceptors,
+            interceptors: unrouted(self.interceptors),
             catch_panics: catches::<P>(),
             not_found: self.not_found.unwrap_or_default(),
             method_not_allowed,
@@ -161,7 +161,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
 /// Every interceptor covering `mounted`, outermost first: the router's own,
 /// then the enclosing scopes', with the endpoint's guard among them where a
-/// scope asked for it first and the handler takes one.
+/// scope asked for it first and the handler takes one, and without each whose
+/// [`Covers`](crate::middleware::Covers) leaves out what reads the body
+/// beneath it.
 fn covering<C: Send + Sync + 'static>(
     router: &[Arc<dyn ErasedInterceptor<C>>],
     router_guard: Option<usize>,
@@ -170,12 +172,22 @@ fn covering<C: Send + Sync + 'static>(
     let mut interceptors = router.to_vec();
     interceptors.extend(mounted.interceptors.iter().cloned());
 
+    // The guard's point counts every interceptor, so it is placed first.
     if let Some(at) = super::guard_point(router_guard, router.len(), mounted.guard_at) {
         if let Some(guard) = Arc::clone(&mounted.endpoint).guard_ahead() {
             interceptors.insert(at, guard);
         }
     }
-    interceptors
+
+    super::covered(interceptors, mounted.endpoint.reads_body())
+}
+
+/// The root router's interceptors that run around a fallback: those covering
+/// a request whose body only they may read, since no handler reads this one.
+fn unrouted<C: 'static>(
+    router: Vec<Arc<dyn ErasedInterceptor<C>>>,
+) -> Vec<Arc<dyn ErasedInterceptor<C>>> {
+    super::covered(router, false)
 }
 
 /// Adds the routes no path template expresses to the match table.

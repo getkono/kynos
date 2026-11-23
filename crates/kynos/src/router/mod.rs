@@ -92,6 +92,46 @@ pub(crate) struct Mounted<C> {
     pub(crate) docs: Option<docs::state::Role>,
 }
 
+impl<C: 'static> Mounted<C> {
+    /// What of `router`'s interceptors and the enclosing scopes' covers this
+    /// operation, outermost first, as [`covered`] keeps them: what `describe`
+    /// declares and `build` runs.
+    fn covered_by<'a>(
+        &'a self,
+        router: &'a [Arc<dyn ErasedInterceptor<C>>],
+    ) -> Vec<&'a Arc<dyn ErasedInterceptor<C>>> {
+        covered(
+            router.iter().chain(&self.interceptors).collect(),
+            self.endpoint.reads_body(),
+        )
+    }
+}
+
+/// The interceptors of `chain`, outermost first, that cover an operation whose
+/// handler reads its body where `handler_reads`.
+///
+/// Walked from the handler outwards, since whether an interceptor's
+/// [`Covers`](crate::middleware::Covers) reaches the operation depends on
+/// whether anything it keeps beneath it reads the body: the handler, or an
+/// interceptor it runs over whose
+/// [`READS_BODY`](crate::middleware::Interceptor::READS_BODY) says it may.
+fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
+    chain: Vec<T>,
+    handler_reads: bool,
+) -> Vec<T> {
+    let mut read = handler_reads;
+    let mut kept = Vec::with_capacity(chain.len());
+    for interceptor in chain.into_iter().rev() {
+        let erased = interceptor.as_ref();
+        if erased.covers().reaches(read) {
+            read |= erased.reads_body();
+            kept.push(interceptor);
+        }
+    }
+    kept.reverse();
+    kept
+}
+
 /// The root of an API.
 ///
 /// `C` is the application context type: the application's own struct, which
@@ -709,7 +749,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// On the root router it also runs around the 404, 308, 405 and 501 the
     /// router answers when no operation does, where
     /// [`Next::route`](crate::middleware::Next::route) is `None`; the
-    /// description is unchanged, since a fallback has no `paths` entry. On a
+    /// description is unchanged, since a fallback has no `paths` entry. One
+    /// covering [`Covers::BodyReading`](crate::middleware::Covers::BodyReading)
+    /// leaves the fallbacks alone, since none of them reads a body. On a
     /// router that is nested or merged into another it covers that router's
     /// operations alone, as a group's interceptor does.
     ///

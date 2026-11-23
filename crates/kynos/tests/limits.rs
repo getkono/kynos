@@ -143,22 +143,103 @@ async fn a_body_exactly_at_the_limit_reaches_its_operation() {
 }
 
 /// Every covered operation declares the 413, because configuring a limit and
-/// documenting it are the same action.
+/// documenting it are the same action; and a limit covers exactly the
+/// operations reading a body, so one reading none declares neither its 413 nor
+/// its deadline's 408, at every scope it is mounted at.
 #[test]
-fn a_body_limit_declares_its_status_on_every_operation_it_covers() {
-    let document = support::router()
-        .intercept(BodySize::new(4096))
-        .openapi()
-        .expect("a describable router");
+fn a_body_limit_declares_its_statuses_on_every_operation_reading_a_body() {
+    let limit = || {
+        BodySize::new(4096)
+            .deadline(Duration::from_secs(30))
+            .problem_type::<TooLarge>()
+    };
+    let routed = || {
+        kynos::routes![
+            support::get_user,
+            support::list_users,
+            create_user,
+            support::delete_user
+        ]
+    };
 
-    for (path, item) in &document.paths.items {
-        for (method, operation) in item.operations() {
-            assert!(
-                operation.responses.responses.contains_key("413"),
-                "{method} {path} is covered by a body limit and does not declare its 413"
+    for (scope, document) in [
+        ("router", support::router().intercept(limit()).openapi()),
+        (
+            "group",
+            Router::<App>::new()
+                .group(
+                    kynos::router::group::Group::new("/")
+                        .intercept(limit())
+                        .mount(routed()),
+                )
+                .openapi(),
+        ),
+        (
+            "endpoint",
+            Router::<App>::new()
+                .mount(kynos::routes![
+                    support::get_user.intercept(limit()),
+                    support::list_users.intercept(limit()),
+                    create_user.intercept(limit()),
+                    support::delete_user.intercept(limit()),
+                ])
+                .openapi(),
+        ),
+    ] {
+        let document = serde_json::to_value(document.expect("a describable router"))
+            .expect("a serializable document");
+
+        for (path, method, reads_a_body) in [
+            ("/users/{id}", "get", false),
+            ("/users", "get", false),
+            ("/users", "post", true),
+            ("/users/{id}", "delete", false),
+        ] {
+            let responses = &document["paths"][path][method]["responses"];
+            let names_the_limit = responses
+                .get("413")
+                .is_some_and(|response| response.to_string().contains("payload-too-large"));
+
+            assert_eq!(
+                names_the_limit, reads_a_body,
+                "{scope}: {method} {path}: {responses}"
             );
+            assert_eq!(
+                responses.get("413").is_some(),
+                reads_a_body,
+                "{scope}: {method} {path}"
+            );
+            // The router's stall 408 is declared where a body is read, too.
+            if !reads_a_body {
+                assert!(responses.get("408").is_none(), "{scope}: {method} {path}");
+            }
         }
     }
+}
+
+/// An operation reading no body is served as if no limit covered it, however
+/// long a body its request declares: the limit runs only where a body is read.
+#[tokio::test]
+async fn a_body_limit_leaves_an_operation_reading_no_body_alone() {
+    let service = support::router()
+        .intercept(BodySize::new(8))
+        .build(App::new())
+        .expect("a describable router");
+
+    let removed = send(&service, Method::DELETE, "/users/1")
+        .header("content-length", "64")
+        .body(vec![b'x'; 64])
+        .call()
+        .await;
+    assert_eq!(removed.status, StatusCode::NO_CONTENT);
+
+    let created = support::post(&service, "/users")
+        .header("content-type", "application/json")
+        .header("content-length", "64")
+        .body(vec![b' '; 64])
+        .call()
+        .await;
+    assert_eq!(created.status, StatusCode::PAYLOAD_TOO_LARGE);
 }
 
 // --- Timeout: 408 --------------------------------------------------------
@@ -288,15 +369,15 @@ async fn a_slot_is_held_until_the_response_body_is_done() {
     );
 }
 
-/// A router's own limit covers its fallback too, so an oversized body to a
-/// path no operation declares is refused 413 before the 404 is reached; the
-/// same limit on a group covers only that group's operations, and the same
-/// request is the router's 404.
+/// A body limit covers only operations reading a body, and a fallback is no
+/// operation and reads none: an oversized body to a path no operation declares
+/// is the router's 404, whether the limit is the router's own or a group's,
+/// while the router's other interceptors still run around it.
 #[tokio::test]
-async fn a_router_limit_covers_its_fallback_and_a_group_limit_does_not() {
+async fn a_body_limit_leaves_the_fallbacks_alone_at_either_scope() {
     let oversized = vec![b'x'; 8192];
     let rooted = support::router()
-        .intercept(Timeout::new(Duration::from_secs(30)))
+        .intercept(kynos::middleware::request_id::RequestId::new())
         .intercept(BodySize::new(4096))
         .build(App::new())
         .expect("a describable router");
@@ -314,17 +395,18 @@ async fn a_router_limit_covers_its_fallback_and_a_group_limit_does_not() {
         .build(App::new())
         .expect("a describable router");
 
-    let refused = send(&rooted, Method::POST, "/nothing-here")
+    let rooted = send(&rooted, Method::POST, "/nothing-here")
         .body(oversized.clone())
         .call()
         .await;
-    let unmatched = send(&grouped, Method::POST, "/nothing-here")
+    let grouped = send(&grouped, Method::POST, "/nothing-here")
         .body(oversized)
         .call()
         .await;
 
-    assert_eq!(refused.status, StatusCode::PAYLOAD_TOO_LARGE);
-    assert_eq!(unmatched.status, StatusCode::NOT_FOUND);
+    assert_eq!(rooted.status, StatusCode::NOT_FOUND);
+    assert!(rooted.field("x-request-id").is_some());
+    assert_eq!(grouped.status, StatusCode::NOT_FOUND);
 }
 
 // --- What applies when nothing is mounted --------------------------------
@@ -917,7 +999,7 @@ mod body_deadline {
     };
 
     use super::{
-        DEFAULT_LIMIT, TooLarge, narrowed_type,
+        DEFAULT_LIMIT, TooLarge,
         support::{self, App, User},
         user_of_length,
     };
@@ -1182,18 +1264,17 @@ mod body_deadline {
             .expect("a describable router");
         let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
 
-        assert_eq!(
-            narrowed_type(&declared, "/users/{id}", "delete", 408),
-            TooSlow::TYPE_URI.expect("a URI")
-        );
-        assert_eq!(
-            narrowed_type(&declared, "/users/{id}", "delete", 413),
-            TooLarge::TYPE_URI.expect("a URI")
-        );
-        assert_eq!(
-            declared["paths"]["/users/{id}"]["delete"]["responses"]["408"]["description"],
-            "the request body did not arrive within the configured limit"
-        );
+        let responses = &declared["paths"]["/users"]["post"]["responses"];
+        for (status, uri) in [
+            ("408", TooSlow::TYPE_URI.expect("a URI")),
+            ("413", TooLarge::TYPE_URI.expect("a URI")),
+        ] {
+            assert!(
+                responses[status].to_string().contains(uri),
+                "the {status} does not name {uri}: {}",
+                responses[status]
+            );
+        }
 
         paced(service, "/users", Duration::from_millis(20), false)
             .await
@@ -2085,15 +2166,18 @@ async fn a_named_body_limit_publishes_one_type_on_both_halves() {
 
     let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
 
-    // An operation reading no body declares the limit's 413 alone.
-    assert_eq!(
-        narrowed_type(&declared, "/users/{id}", "delete", 413),
-        URI,
-        "the declared 413 does not narrow to the type the wire sent: {declared}"
+    // An operation reading no body declares no 413 at all, the limit's or
+    // the default cap's.
+    assert!(
+        declared["paths"]["/users/{id}"]["delete"]["responses"]
+            .get("413")
+            .is_none(),
+        "{declared}"
     );
 
-    // One reading a body also declares the default cap's `about:blank`, which
-    // `BodyRejection` states for every operation it covers: a choice that still
+    // One reading a body declares the limit's 413 beside the default cap's
+    // `about:blank`, which `BodyRejection` states for every operation it
+    // covers: a choice that still
     // admits what the wire sent, and over-declares rather than omits.
     let choice = &declared["paths"]["/users"]["post"]["responses"]["413"]["content"]["application/problem+json"]
         ["schema"]["oneOf"];

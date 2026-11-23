@@ -421,6 +421,8 @@ where
     type Adds = ();
     type Short = UntrustedHost<T>;
 
+    const READS_BODY: bool = false;
+
     async fn intercept(
         &self,
         request: http::Request,
@@ -458,6 +460,8 @@ where
     type Reads = ();
     type Adds = ();
     type Short = UntrustedHost<T>;
+
+    const READS_BODY: bool = false;
 
     async fn intercept(
         &self,

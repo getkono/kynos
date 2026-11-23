@@ -194,12 +194,16 @@ async fn main() -> kynos::Result<()> {
         // Above `Print`, so the limit applies to what `Print` will buffer. Order
         // is not a detail here: a body-size cap mounted underneath would let the
         // interceptor that buffers run first, which is the whole failure it is
-        // there to prevent.
+        // there to prevent. `Print` leaves `Interceptor::READS_BODY` at its
+        // default, `true`, so the limit covers every request `Print` reads, a
+        // `GET` and an unmatched path included, and not only the operations
+        // whose handler reads a body.
         .intercept(BodySize::new(64 * 1_024))
         .intercept(Print)
         .mount(kynos::routes![create_user, list_users]);
 
-    // Every operation carries 413 from `BodySize` and 400 and 500 from `Print`,
+    // Every operation carries 413 from `BodySize`, since `Print` reads every
+    // body beneath it, and 400 and 500 from `Print`,
     // and no handler signature mentions any of them. That is the trade this
     // file is about: middleware may do more than the handler declared, provided
     // the description gains what it did.

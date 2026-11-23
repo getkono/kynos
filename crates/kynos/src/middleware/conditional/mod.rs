@@ -210,6 +210,8 @@ impl<C: Sync + 'static> Interceptor<C> for Conditional {
     type Adds = ();
     type Short = NotModified;
 
+    const READS_BODY: bool = false;
+
     async fn intercept(
         &self,
         request: http::Request,
