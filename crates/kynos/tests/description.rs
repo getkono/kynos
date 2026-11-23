@@ -3220,8 +3220,9 @@ fn object_and_its_head() -> impl kynos::router::endpoint::set::IntoEndpoints<(),
 }
 
 /// The HEAD a `GET` describes is that `GET` under its own name with no
-/// response carrying content (RFC 9110 section 9.3.2), every field the `GET`
-/// declares still declared; a `GET` that describes none leaves its HEAD out.
+/// response carrying content (RFC 9110 section 9.3.2) and no range handling,
+/// every other field the `GET` declares still declared; a `GET` that describes
+/// none leaves its HEAD out.
 #[test]
 fn a_described_head_is_its_get_without_content() {
     let document = Router::<()>::new()
@@ -3246,8 +3247,22 @@ fn a_described_head_is_its_get_without_content() {
     };
     assert!(!ok.content.is_empty() && ok.headers.contains_key("ETag"));
 
+    // Not vacuous either: the GET declares range handling, which a HEAD lacks
+    // (RFC 9110 section 14.2), so its HEAD declares none.
+    let ranged = |parameter: &kynos::openapi::RefOr<kynos::openapi::Parameter>| {
+        parameter
+            .as_item()
+            .is_some_and(|parameter| ["Range", "If-Range"].contains(&parameter.name.as_str()))
+    };
+    assert!(get.parameters.iter().any(ranged));
+    assert!(get.responses.responses.contains_key("206"));
+    assert!(get.responses.responses.contains_key("416"));
+
     let mut expected = get.clone();
     expected.operation_id = Some("head_object".to_owned());
+    expected.parameters.retain(|parameter| !ranged(parameter));
+    expected.responses.responses.shift_remove("206");
+    expected.responses.responses.shift_remove("416");
     for response in expected.responses.responses.values_mut() {
         let kynos::openapi::RefOr::Item(response) = response else {
             panic!("an inline response");

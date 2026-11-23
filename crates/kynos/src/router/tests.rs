@@ -912,7 +912,7 @@ mod mixed_guards {
 /// content to remove.
 mod derived_head {
     use kynos_openapi::{
-        Components, Header, MediaType, Operation, Ref, RefOr, Response, Schema,
+        Components, Header, MediaType, Operation, Parameter, Ref, RefOr, Response, Schema,
         model::schema::types::SchemaType,
     };
 
@@ -952,7 +952,7 @@ mod derived_head {
         for (status, response) in [
             ("200", RefOr::Item(carrying("The thing."))),
             ("203", RefOr::Ref(Ref::new("#/components/responses/Found"))),
-            ("206", RefOr::Ref(overridden)),
+            ("204", RefOr::Ref(overridden)),
             ("410", RefOr::Ref(Ref::new("#/components/responses/Gone"))),
             (
                 "451",
@@ -970,7 +970,7 @@ mod derived_head {
         for (status, response) in [
             ("200", stripped(carrying("The thing."))),
             ("203", stripped(carrying("A found thing."))),
-            ("206", stripped(carrying("Found here."))),
+            ("204", stripped(carrying("Found here."))),
         ] {
             expected
                 .responses
@@ -978,6 +978,55 @@ mod derived_head {
                 .insert(status.to_owned(), RefOr::Item(response));
         }
         assert_eq!(head, expected);
+    }
+
+    /// Range handling is defined for `GET` alone (RFC 9110 section 14.2): the
+    /// router ignores `Range` on a `HEAD`, so its described HEAD declares
+    /// neither that field nor the `If-Range` it conditions, inline or
+    /// referenced, nor a 206 or 416. Every other parameter and response stays.
+    #[test]
+    fn a_derived_head_declares_no_range_handling() {
+        let string = || Schema::of_type(SchemaType::String);
+        let mut components = Components::default();
+        components.parameters.insert(
+            "ByteRange".to_owned(),
+            RefOr::Item(Parameter::header("Range", string())),
+        );
+        components.parameters.insert(
+            "Trace".to_owned(),
+            RefOr::Item(Parameter::header("X-Trace", string())),
+        );
+
+        let mut get = Operation {
+            operation_id: Some("get_file".to_owned()),
+            ..Operation::default()
+        };
+        let kept = [
+            RefOr::Item(Parameter::query("Range", string())),
+            RefOr::Item(Parameter::header("If-Match", string())),
+            RefOr::Ref(Ref::new("#/components/parameters/Trace")),
+        ];
+        get.parameters = vec![
+            RefOr::Item(Parameter::header("range", string())),
+            kept[0].clone(),
+            RefOr::Ref(Ref::new("#/components/parameters/ByteRange")),
+            kept[1].clone(),
+            RefOr::Item(Parameter::header("If-Range", string())),
+            kept[2].clone(),
+        ];
+        for status in ["200", "206", "304", "416"] {
+            get.responses
+                .responses
+                .insert(status.to_owned(), RefOr::Item(Response::new("A status.")));
+        }
+
+        let head = derived_head(get, "head_file", &components);
+
+        assert_eq!(head.parameters, kept);
+        assert_eq!(
+            head.responses.responses.keys().collect::<Vec<_>>(),
+            ["200", "304"]
+        );
     }
 }
 
