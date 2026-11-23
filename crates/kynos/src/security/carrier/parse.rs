@@ -1,9 +1,7 @@
 //! Reading the `Authorization` field, per RFC 9110 section 11.6.2.
 
-use crate::{
-    error::rejection::AuthRejection,
-    http::{Parts, header::AUTHORIZATION},
-};
+use super::presented::{Malformed, MalformedReason, Presented};
+use crate::http::{Parts, header::AUTHORIZATION};
 
 /// The two halves of an `Authorization` field value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -17,24 +15,25 @@ pub(super) struct Authorization<'r> {
 
 /// Reads the request's `Authorization` field.
 ///
-/// `Ok(None)` when there is none. `Err` when there is one and it is not a
+/// [`Absent`](Presented::Absent) when there is none.
+/// [`Malformed`](Presented::Malformed) when there is one and it is not a
 /// credential: two fields, bytes no `&str` can hold, or an empty scheme.
-pub(super) fn authorization(parts: &Parts) -> Result<Option<Authorization<'_>>, AuthRejection> {
+pub(super) fn authorization(parts: &Parts) -> Presented<Authorization<'_>> {
     let mut fields = parts.headers.get_all(AUTHORIZATION).into_iter();
 
     let Some(field) = fields.next() else {
-        return Ok(None);
+        return Presented::Absent;
     };
 
     // RFC 9110 section 5.3: `Authorization` is a singleton field; choosing
     // between two would let an appending proxy pick the credential.
     if fields.next().is_some() {
-        return Err(AuthRejection::unauthenticated());
+        return Presented::Malformed(Malformed::new(MalformedReason::Repeated));
     }
 
-    let value = field
-        .to_str()
-        .map_err(|_| AuthRejection::unauthenticated())?;
+    let Ok(value) = field.to_str() else {
+        return Presented::Malformed(Malformed::new(MalformedReason::NotText));
+    };
 
     // RFC 9110 section 11.4: `auth-scheme [ 1*SP ( token68 / #auth-param ) ]`,
     // and the scheme is a token so it holds no space. A scheme alone carries
@@ -42,14 +41,14 @@ pub(super) fn authorization(parts: &Parts) -> Result<Option<Authorization<'_>>, 
     let (scheme, credentials) = value.split_once(' ').unwrap_or((value, ""));
 
     if scheme.is_empty() {
-        return Err(AuthRejection::unauthenticated());
+        return Presented::Malformed(Malformed::new(MalformedReason::NoScheme));
     }
 
-    Ok(Some(Authorization {
+    Presented::Present(Authorization {
         scheme,
         // RFC 9110 section 11.6.2 permits bad whitespace after the scheme.
         credentials: credentials.trim_start_matches(' '),
-    }))
+    })
 }
 
 /// Whether `presented` names `expected`.

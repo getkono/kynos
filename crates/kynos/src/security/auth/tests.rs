@@ -10,8 +10,8 @@ use crate::{
     router::operation::OperationCx,
     schema::registry::Registry,
     security::{
-        Authenticates, Authenticator, Authorizer, Guard, Scope, SecurityScheme,
-        carrier::{self, BearerToken, Carries, Credentials},
+        Authenticates, Authenticator, Authorizer, Guard, Head, Scope, SecurityScheme,
+        carrier::{self, BearerToken, Carries, Credentials, presented::Presented},
         requirement::{AllOf, AnyOf, Either2, component_name},
         schemes::{Basic, Bearer, MutualTls},
     },
@@ -84,7 +84,7 @@ impl SecurityScheme for Audited {
 impl Carries for Audited {
     type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<BearerToken> {
         carrier::bearer(parts)
     }
 }
@@ -121,7 +121,17 @@ where
     S: Carries<Credential = String>,
     C: Sync,
 {
-    async fn authenticate(&self, _: S::Presented, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        presented: Presented<S::Presented>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
+        // Refuses a malformed credential as an authenticator wanting the
+        // guard's old answer does, and admits the rest.
+        if let Presented::Malformed(malformed) = presented {
+            return Err(malformed.into_rejection());
+        }
         Ok("caller".to_owned())
     }
 }
@@ -191,7 +201,7 @@ impl SecurityScheme for Revoked {
 impl Carries for Revoked {
     type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<BearerToken> {
         carrier::bearer(parts)
     }
 }
@@ -200,7 +210,12 @@ impl Carries for Revoked {
 struct Rejecting;
 
 impl<C: Sync> Authenticator<Revoked, C> for Rejecting {
-    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        _: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
         Err(AuthRejection::unauthenticated())
     }
 }
@@ -666,7 +681,7 @@ async fn all_of_authenticates_every_scheme_before_authorizing_any() {
 }
 
 /// A scheme whose carrier is optional, as `carrier = optional` writes one:
-/// absence reaches the authenticator as `Some(None)`.
+/// absence reaches the authenticator as `Presented::Absent`.
 struct OptionalBearer;
 
 impl SecurityScheme for OptionalBearer {
@@ -680,10 +695,12 @@ impl SecurityScheme for OptionalBearer {
 }
 
 impl Carries for OptionalBearer {
-    type Presented = Option<BearerToken>;
+    type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<Option<BearerToken>>, AuthRejection> {
-        carrier::bearer(parts).map(Some)
+    const OPTIONAL: bool = true;
+
+    fn present(parts: &Parts) -> Presented<BearerToken> {
+        carrier::bearer(parts)
     }
 }
 
@@ -823,7 +840,7 @@ impl SecurityScheme for Spliced {
 impl Carries for Spliced {
     type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<BearerToken> {
         carrier::bearer(parts)
     }
 }
@@ -947,7 +964,12 @@ impl Authenticates<Basic<String, Grant>> for Recording {
 struct Suspending;
 
 impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Suspending {
-    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        _: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
         Err(AuthRejection::forbidden())
     }
 }
@@ -1128,7 +1150,7 @@ impl SecurityScheme for Outage {
 impl Carries for Outage {
     type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<BearerToken> {
         carrier::bearer(parts)
     }
 }
@@ -1137,7 +1159,12 @@ impl Carries for Outage {
 struct Down;
 
 impl<C: Sync> Authenticator<Outage, C> for Down {
-    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        _: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
         Err(AuthRejection::unavailable::<Outage>().with_retry_after(Duration::from_millis(1_500)))
     }
 }
@@ -1452,7 +1479,7 @@ impl SecurityScheme for Scrape {
 impl Carries for Scrape {
     type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<BearerToken> {
         carrier::bearer(parts)
     }
 }
@@ -1474,7 +1501,7 @@ impl SecurityScheme for Probe {
 impl Carries for Probe {
     type Presented = BearerToken;
 
-    fn present(parts: &Parts) -> Result<Option<BearerToken>, AuthRejection> {
+    fn present(parts: &Parts) -> Presented<BearerToken> {
         carrier::bearer(parts)
     }
 }
@@ -1544,4 +1571,301 @@ fn a_guard_value_prints_compares_and_clones_its_credential_alone() {
     assert_eq!(format!("{scoped:?}"), r#"Scoped("alice")"#);
     assert_eq!(scoped.clone(), scoped);
     assert_ne!(scoped, Scoped::new("bob".to_owned()));
+}
+
+/// A bearer scheme whose authenticator reports what reached it, handing
+/// absence on where `OPTIONAL` is set.
+struct Witnessed<const OPTIONAL: bool>;
+
+impl<const OPTIONAL: bool> SecurityScheme for Witnessed<OPTIONAL> {
+    const NAME: &'static str = "Witnessed";
+    type Credential = String;
+    type Scope = crate::security::Unscoped;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::bearer(None)
+    }
+}
+
+impl<const OPTIONAL: bool> Carries for Witnessed<OPTIONAL> {
+    type Presented = BearerToken;
+
+    const OPTIONAL: bool = OPTIONAL;
+
+    fn present(parts: &Parts) -> Presented<BearerToken> {
+        carrier::bearer(parts)
+    }
+}
+
+/// Admits whatever reaches it, as a credential naming what that was and the
+/// request line it arrived on.
+struct Witness;
+
+impl<const OPTIONAL: bool> Authenticator<Witnessed<OPTIONAL>, Witness> for Witness {
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        head: Head<'_>,
+        _: &Witness,
+    ) -> Result<String, AuthRejection> {
+        let found = match presented {
+            Presented::Absent => "absent".to_owned(),
+            Presented::Malformed(malformed) => format!("malformed {}", malformed.reason().as_str()),
+            Presented::Present(token) => format!("present {}", token.as_str()),
+        };
+        Ok(format!("{found} on {} {}", head.method(), head.uri()))
+    }
+}
+
+impl<const OPTIONAL: bool> Authenticates<Witnessed<OPTIONAL>> for Witness {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+/// A `POST /reports` head carrying `authorization`, if any.
+fn posting(authorization: Option<&'static str>) -> Parts {
+    let mut request = Request::new(Body::empty());
+    *request.method_mut() = crate::http::Method::POST;
+    *request.uri_mut() = crate::http::Uri::from_static("/reports");
+    if let Some(authorization) = authorization {
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, HeaderValue::from_static(authorization));
+    }
+    request.into_parts().0
+}
+
+/// A malformed credential is the authenticator's to judge under every guard,
+/// `MaybeAuth` included, and arrives classified, beside the request head.
+#[tokio::test]
+async fn a_malformed_credential_reaches_the_authenticator_with_its_reason() {
+    let other_scheme = posting(Some("Basic dTpw"));
+    let expected = "malformed other_scheme on POST /reports";
+
+    let auth = <Auth<Witnessed<false>> as Guard<_>>::guard(&other_scheme, &Witness).await;
+    assert_eq!(auth.ok().map(Auth::into_inner).as_deref(), Some(expected));
+
+    let maybe = <MaybeAuth<Witnessed<false>> as Guard<_>>::guard(&other_scheme, &Witness).await;
+    assert_eq!(
+        maybe.ok().and_then(|maybe| maybe.0).as_deref(),
+        Some(expected)
+    );
+}
+
+/// A well-formed credential arrives with the head of the request it arrived
+/// on.
+#[tokio::test]
+async fn a_present_credential_reaches_the_authenticator_beside_the_request_head() {
+    let guarded =
+        <Auth<Witnessed<false>> as Guard<_>>::guard(&posting(Some("Bearer t")), &Witness).await;
+    assert_eq!(
+        guarded.ok().map(Auth::into_inner).as_deref(),
+        Some("present t on POST /reports")
+    );
+}
+
+/// Absence is the guard's to answer, so the authenticator never sees it,
+/// unless the scheme is optional, when it sees nothing else.
+#[tokio::test]
+async fn absence_reaches_the_authenticator_only_from_an_optional_carrier() {
+    let bare = posting(None);
+
+    let refused = <Auth<Witnessed<false>> as Guard<_>>::guard(&bare, &Witness).await;
+    assert_eq!(
+        refused.err().map(|rejection| rejection.status()),
+        Some(StatusCode::UNAUTHORIZED)
+    );
+    let anonymous = <MaybeAuth<Witnessed<false>> as Guard<_>>::guard(&bare, &Witness).await;
+    assert!(matches!(anonymous, Ok(MaybeAuth(None))));
+
+    let expected = "absent on POST /reports";
+    let auth = <Auth<Witnessed<true>> as Guard<_>>::guard(&bare, &Witness).await;
+    assert_eq!(auth.ok().map(Auth::into_inner).as_deref(), Some(expected));
+    let maybe = <MaybeAuth<Witnessed<true>> as Guard<_>>::guard(&bare, &Witness).await;
+    assert_eq!(
+        maybe.ok().and_then(|maybe| maybe.0).as_deref(),
+        Some(expected)
+    );
+}
+
+/// An API-key scheme reading `x-key`, beside which `Witnessed` reads the
+/// bearer token, so one request can present each in a different state.
+struct Keyed;
+
+impl SecurityScheme for Keyed {
+    const NAME: &'static str = "Keyed";
+    type Credential = String;
+    type Scope = crate::security::Unscoped;
+
+    fn describe() -> kynos_openapi::SecurityScheme {
+        kynos_openapi::SecurityScheme::api_key_header("x-key")
+    }
+}
+
+impl Carries for Keyed {
+    type Presented = carrier::ApiKey;
+
+    fn present(parts: &Parts) -> Presented<carrier::ApiKey> {
+        carrier::api_key(parts, carrier::KeyLocation::Header, "x-key")
+    }
+}
+
+/// Keeps what reached each authenticator, in call order, and admits it, but
+/// for a key reading `refused`.
+#[derive(Default)]
+struct Ledger(Mutex<Vec<String>>);
+
+impl Ledger {
+    /// What reached the authenticators so far.
+    fn seen(&self) -> Vec<String> {
+        self.0.lock().expect("an unpoisoned lock").clone()
+    }
+
+    /// Records that `presented`, shown by `show`, reached scheme `S`.
+    fn record<S: SecurityScheme, T>(
+        &self,
+        presented: &Presented<T>,
+        show: impl Fn(&T) -> &str,
+    ) -> String {
+        let found = match presented {
+            Presented::Absent => "absent".to_owned(),
+            Presented::Malformed(malformed) => format!("malformed {}", malformed.reason().as_str()),
+            Presented::Present(credential) => format!("present {}", show(credential)),
+        };
+        let seen = format!("{} {found}", S::NAME);
+        self.0
+            .lock()
+            .expect("an unpoisoned lock")
+            .push(seen.clone());
+        seen
+    }
+}
+
+impl Authenticator<Witnessed<false>, Ledger> for Ledger {
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Ledger,
+    ) -> Result<String, AuthRejection> {
+        Ok(self.record::<Witnessed<false>, _>(&presented, BearerToken::as_str))
+    }
+}
+
+impl Authenticator<Keyed, Ledger> for Ledger {
+    async fn authenticate(
+        &self,
+        presented: Presented<carrier::ApiKey>,
+        _: Head<'_>,
+        _: &Ledger,
+    ) -> Result<String, AuthRejection> {
+        let seen = self.record::<Keyed, _>(&presented, carrier::ApiKey::as_str);
+        match presented {
+            Presented::Present(key) if key.as_str() == "refused" => {
+                Err(AuthRejection::unauthenticated())
+            }
+            _ => Ok(seen),
+        }
+    }
+}
+
+impl Authenticates<Witnessed<false>> for Ledger {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+impl Authenticates<Keyed> for Ledger {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+/// A head presenting `authorization`, if any, and each of `keys` as an `x-key`
+/// field.
+fn presenting(authorization: Option<&'static str>, keys: &[&'static str]) -> Parts {
+    let mut request = Request::new(Body::empty());
+    if let Some(authorization) = authorization {
+        request
+            .headers_mut()
+            .insert(AUTHORIZATION, HeaderValue::from_static(authorization));
+    }
+    for key in keys {
+        request
+            .headers_mut()
+            .append("x-key", HeaderValue::from_static(key));
+    }
+    request.into_parts().0
+}
+
+/// With every credential of an `AllOf` presented, a malformed one reaches its
+/// authenticator in tuple order, wherever it stands, and none after a refusal
+/// is asked.
+#[tokio::test]
+async fn all_of_hands_a_malformed_credential_to_its_authenticator_in_tuple_order() {
+    let malformed_token = presenting(Some("Basic dTpw"), &["k"]);
+
+    let ledger = Ledger::default();
+    let first =
+        <Auth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(&malformed_token, &ledger)
+            .await;
+    assert!(first.is_ok());
+    assert_eq!(
+        ledger.seen(),
+        ["Witnessed malformed other_scheme", "Keyed present k"]
+    );
+
+    let ledger = Ledger::default();
+    let second =
+        <Auth<AllOf<(Keyed, Witnessed<false>)>> as Guard<_>>::guard(&malformed_token, &ledger)
+            .await;
+    assert!(second.is_ok());
+    assert_eq!(
+        ledger.seen(),
+        ["Keyed present k", "Witnessed malformed other_scheme"]
+    );
+
+    let ledger = Ledger::default();
+    let refused = <Auth<AllOf<(Keyed, Witnessed<false>)>> as Guard<_>>::guard(
+        &presenting(Some("Basic dTpw"), &["refused"]),
+        &ledger,
+    )
+    .await;
+    assert_eq!(
+        refused.err().map(|rejection| rejection.status()),
+        Some(StatusCode::UNAUTHORIZED)
+    );
+    assert_eq!(ledger.seen(), ["Keyed present refused"]);
+}
+
+/// A malformed credential beside an absent one is a partial set, so the 401
+/// comes before any authenticator runs, under `MaybeAuth` too.
+#[tokio::test]
+async fn all_of_refuses_a_malformed_credential_beside_an_absent_one_unasked() {
+    let malformed_key = presenting(None, &["a", "b"]);
+    let malformed_token = presenting(Some("Basic dTpw"), &[]);
+
+    for parts in [&malformed_key, &malformed_token] {
+        let ledger = Ledger::default();
+        let auth =
+            <Auth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(parts, &ledger).await;
+        assert_eq!(
+            auth.err().map(|rejection| rejection.status()),
+            Some(StatusCode::UNAUTHORIZED)
+        );
+        let maybe =
+            <MaybeAuth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(parts, &ledger).await;
+        assert_eq!(
+            maybe.err().map(|rejection| rejection.status()),
+            Some(StatusCode::UNAUTHORIZED)
+        );
+        assert!(ledger.seen().is_empty());
+    }
 }

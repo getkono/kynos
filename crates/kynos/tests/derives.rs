@@ -38,7 +38,10 @@ use kynos::{
     schema::{ParamValue as ParamValueTrait, Schema as SchemaTrait, UnknownVariant},
     security::{
         SecurityScheme as SecuritySchemeTrait,
-        carrier::{ApiKey, BearerToken, Carries, Credentials, PeerCertificates, SchemeCredentials},
+        carrier::{
+            ApiKey, BearerToken, Carries, Credentials, PeerCertificates, SchemeCredentials,
+            presented::{MalformedReason, Presented},
+        },
     },
 };
 
@@ -363,7 +366,8 @@ struct ProvenancedBearer;
 fn presents<S: Carries<Presented = P>, P>() {}
 
 /// Each scheme kind is read back as its own credential type, so a kind that
-/// fell through to the bearer reader would stop compiling here.
+/// fell through to the bearer reader would stop compiling here; an optional
+/// carrier reads the same type and hands absence on instead.
 #[test]
 fn each_scheme_kind_presents_its_own_credential() {
     presents::<BearerAuth, BearerToken>();
@@ -371,9 +375,16 @@ fn each_scheme_kind_presents_its_own_credential() {
     presents::<BasicLogin, Credentials>();
     presents::<DigestLogin, SchemeCredentials>();
     presents::<PartnerCertificate, PeerCertificates>();
-    presents::<OptionalBearer, Option<BearerToken>>();
+    presents::<OptionalBearer, BearerToken>();
     presents::<SignedRequest, (BearerToken, RequestSignature)>();
-    presents::<OptionalSignedRequest, Option<(BearerToken, RequestSignature)>>();
+    presents::<OptionalSignedRequest, (BearerToken, RequestSignature)>();
+
+    const {
+        assert!(!<BearerAuth as Carries>::OPTIONAL);
+        assert!(!<SignedRequest as Carries>::OPTIONAL);
+        assert!(<OptionalBearer as Carries>::OPTIONAL);
+        assert!(<OptionalSignedRequest as Carries>::OPTIONAL);
+    }
 }
 
 /// The head of a request carrying `fields`.
@@ -387,38 +398,51 @@ fn request_parts(fields: &[(&str, &str)]) -> kynos::http::Parts {
     request.into_parts().0
 }
 
-/// A derived carrier with `reads` decodes the group only beside a presented
+/// The reason `presented` is malformed, if it is.
+fn malformed_for<T>(presented: Presented<T>) -> Option<MalformedReason> {
+    match presented {
+        Presented::Malformed(malformed) => Some(malformed.reason()),
+        Presented::Absent | Presented::Present(_) => None,
+    }
+}
+
+/// A derived carrier with `reads` decodes the group only beside a well-formed
 /// credential: an anonymous request is absent whatever else it carries, and a
-/// credential whose group does not decode is refused as malformed.
+/// credential whose group does not decode is malformed.
 #[test]
 fn a_derived_carrier_reads_its_group_beside_the_credential() {
     let signed = request_parts(&[("authorization", "Bearer t-1"), ("signature", "s-1")]);
     let (token, read) = SignedRequest::present(&signed)
-        .expect("a signed request is read")
-        .expect("a credential was presented");
+        .require()
+        .expect("a signed request is read");
     assert_eq!(token.as_str(), "t-1");
     assert_eq!(read.signature, "s-1");
 
     for anonymous in [request_parts(&[]), request_parts(&[("signature", "s-1")])] {
-        assert!(matches!(SignedRequest::present(&anonymous), Ok(None)));
+        assert!(matches!(
+            SignedRequest::present(&anonymous),
+            Presented::Absent
+        ));
         assert!(matches!(
             OptionalSignedRequest::present(&anonymous),
-            Ok(Some(None))
+            Presented::Absent
         ));
     }
 
     let unsigned = request_parts(&[("authorization", "Bearer t-1")]);
-    for refused in [
-        SignedRequest::present(&unsigned).err(),
-        OptionalSignedRequest::present(&unsigned).err(),
+    for read in [
+        malformed_for(SignedRequest::present(&unsigned)),
+        malformed_for(OptionalSignedRequest::present(&unsigned)),
     ] {
-        let refused = refused.expect("a credential missing its signature is refused");
-        assert_eq!(refused.status(), kynos::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(read, Some(MalformedReason::AccompanyingHeaders));
     }
 
-    // A malformed credential is refused before the group is read.
+    // A malformed credential keeps its own reason; the group is not read.
     let malformed = request_parts(&[("authorization", "Basic dTpw"), ("signature", "s-1")]);
-    assert!(SignedRequest::present(&malformed).is_err());
+    assert_eq!(
+        malformed_for(SignedRequest::present(&malformed)),
+        Some(MalformedReason::OtherScheme)
+    );
 }
 
 /// The header names `S` declares it reads beside its credential, each with

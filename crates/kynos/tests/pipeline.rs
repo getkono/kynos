@@ -22,7 +22,12 @@ use kynos::{
     handler::Handler,
     response::status::{Created, NoContent},
     router::endpoint::set::{Endpoints, IntoEndpoints},
-    security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+    security::{
+        Authenticates, Authenticator, Head,
+        auth::Auth,
+        carrier::{BearerToken, presented::Presented},
+        schemes::Bearer,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -275,10 +280,23 @@ const VALID_TOKEN: &str = "valid";
 
 /// Accepts `VALID_TOKEN` and refuses every other: the witnesses below need only
 /// a context that can check one, and the ordering case a token that passes.
+///
+/// Only on a head carrying the router's `Forwarded` resolution, which every
+/// request the router routes does, so the ordering case's control also
+/// witnesses that the head an authenticator receives is the routed one.
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer, C> for Tokens {
-    async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        head: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
+        let token = presented.require()?;
+        if head.forwarded().is_none() {
+            return Err(AuthRejection::forbidden());
+        }
         if token.as_str() == VALID_TOKEN {
             Ok(token.into_inner())
         } else {
@@ -444,6 +462,24 @@ async fn the_guard_refuses_before_the_body_is_read() {
     let control = send_malformed(Some(&format!("Bearer {VALID_TOKEN}"))).await;
     assert_eq!(control.status(), StatusCode::BAD_REQUEST);
     assert_eq!(control.headers().get(header::WWW_AUTHENTICATE), None);
+}
+
+/// A malformed credential reaches the authenticator, and the refusal it
+/// answers with is sent as any refusal is: a 401 carrying the scheme's
+/// challenge, ahead of the body.
+#[tokio::test]
+async fn an_authenticators_refusal_of_a_malformed_credential_carries_the_challenge() {
+    use kynos::http::{StatusCode, header};
+
+    let refused = send_malformed(Some("Basic dTpw")).await;
+    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        refused
+            .headers()
+            .get(header::WWW_AUTHENTICATE)
+            .map(|value| value.to_str().expect("a visible challenge")),
+        Some("Bearer"),
+    );
 }
 
 /// The witnessed top arity, counted against the list that produces it.

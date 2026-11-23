@@ -152,10 +152,12 @@ where
 /// the empty requirement leads `S`'s own alternatives, so
 /// `MaybeAuth<AnyOf<(A, B)>>` declares `[{}, {A: []}, {B: []}]`.
 ///
-/// A credential that is present and wrong is still a 401. Only *absence* is
-/// anonymity — and a scheme derived with `carrier = optional` reports none, so
-/// under it the authenticator decides every request and what it admits is
-/// always `Some`.
+/// A credential that is present and wrong, or malformed, is still refused:
+/// the authenticator decides it as it decides under [`Auth`]. Only *absence*
+/// is anonymity — and a scheme setting
+/// [`Carries::OPTIONAL`](crate::security::carrier::Carries::OPTIONAL) reports
+/// none, so under it the authenticator decides every request and what it
+/// admits is always `Some`.
 ///
 /// ```no_run
 /// # use kynos::security::auth::MaybeAuth;
@@ -206,7 +208,7 @@ where
     type Rejection = AuthRejection;
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
-        // Absent is anonymity, malformed is a 401, and present is a check.
+        // Absent is anonymity; malformed and present are the authenticator's.
         S::check(parts, context)
             .await
             .map(Self)

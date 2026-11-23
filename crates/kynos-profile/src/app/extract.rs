@@ -11,8 +11,8 @@ use kynos::{
     http::media,
     prelude::*,
     security::{
-        Authenticates, Authenticator,
-        carrier::{ApiKey, BearerToken, Credentials},
+        Authenticates, Authenticator, Head,
+        carrier::{ApiKey, BearerToken, Credentials, presented::Presented},
         constant_time_eq,
         schemes::{Basic, Bearer},
     },
@@ -54,11 +54,12 @@ pub(crate) struct Keys;
 impl Authenticator<Bearer<Caller>, App> for Keys {
     async fn authenticate(
         &self,
-        presented: BearerToken,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
         context: &App,
     ) -> Result<Caller, AuthRejection> {
         let _ = context;
-        constant_time_eq(presented.as_str().as_bytes(), SECRET)
+        constant_time_eq(presented.require()?.as_str().as_bytes(), SECRET)
             .then_some(Caller)
             .ok_or_else(AuthRejection::unauthenticated)
     }
@@ -67,10 +68,12 @@ impl Authenticator<Bearer<Caller>, App> for Keys {
 impl Authenticator<Basic<Caller>, App> for Keys {
     async fn authenticate(
         &self,
-        presented: Credentials,
+        presented: Presented<Credentials>,
+        _: Head<'_>,
         context: &App,
     ) -> Result<Caller, AuthRejection> {
         let _ = context;
+        let presented = presented.require()?;
         (constant_time_eq(presented.username().as_bytes(), b"ada")
             & constant_time_eq(presented.password().as_bytes(), b"lovelace"))
         .then_some(Caller)
@@ -81,11 +84,12 @@ impl Authenticator<Basic<Caller>, App> for Keys {
 impl Authenticator<ServiceKey, App> for Keys {
     async fn authenticate(
         &self,
-        presented: ApiKey,
+        presented: Presented<ApiKey>,
+        _: Head<'_>,
         context: &App,
     ) -> Result<Caller, AuthRejection> {
         let _ = context;
-        constant_time_eq(presented.as_str().as_bytes(), API_KEY.as_bytes())
+        constant_time_eq(presented.require()?.as_str().as_bytes(), API_KEY.as_bytes())
             .then_some(Caller)
             .ok_or_else(AuthRejection::unauthenticated)
     }

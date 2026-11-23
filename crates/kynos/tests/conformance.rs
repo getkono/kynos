@@ -429,10 +429,14 @@ struct Scrape;
 impl kynos::security::Authenticator<ScrapeToken, ()> for Scrape {
     async fn authenticate(
         &self,
-        presented: Option<kynos::security::carrier::BearerToken>,
+        presented: kynos::security::carrier::presented::Presented<
+            kynos::security::carrier::BearerToken,
+        >,
+        _: kynos::security::Head<'_>,
         (): &(),
     ) -> Result<(), kynos::error::rejection::AuthRejection> {
         match presented
+            .into_result()?
             .as_ref()
             .map(kynos::security::carrier::BearerToken::as_str)
         {

@@ -7,7 +7,10 @@
 use kynos::{
     error::rejection::AuthRejection,
     response::status::NoContent,
-    security::{Authenticates, Authenticator, auth::Auth, carrier::Carries, schemes::Bearer},
+    security::{
+        Authenticates, Authenticator, Head, auth::Auth, carrier::Carries,
+        carrier::presented::Presented, schemes::Bearer,
+    },
 };
 
 #[derive(kynos::SecurityScheme)]
@@ -18,7 +21,12 @@ struct ServiceKey;
 struct Verifier;
 
 impl<S: Carries<Credential = String>, C: Sync> Authenticator<S, C> for Verifier {
-    async fn authenticate(&self, _: S::Presented, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        _: Presented<S::Presented>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
         Err(AuthRejection::unauthenticated())
     }
 }

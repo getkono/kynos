@@ -512,8 +512,23 @@ impl Forwarded {
     /// interceptors to run around it, and is otherwise `None`.
     #[must_use]
     pub fn of(request: &crate::http::Request) -> Option<&Self> {
-        request
-            .extensions()
+        Self::in_extensions(request.extensions())
+    }
+
+    /// What the router resolved for the request `parts` is the head of,
+    /// borrowed.
+    ///
+    /// [`of`](Self::of) for code handed a request head rather than a whole
+    /// request: a hand-written [`Carries`](crate::security::carrier::Carries),
+    /// or anything else reading `&Parts`. `None` exactly where `of` is.
+    #[must_use]
+    pub fn of_parts(parts: &crate::http::Parts) -> Option<&Self> {
+        Self::in_extensions(&parts.extensions)
+    }
+
+    /// The resolution the router recorded in `extensions`.
+    fn in_extensions(extensions: &crate::http::Extensions) -> Option<&Self> {
+        extensions
             .get::<crate::router::dispatch::Routed>()
             .map(|routed| &routed.forwarded)
     }

@@ -39,7 +39,12 @@ use kynos::{
     response::status::NoContent,
     router::{error::RouterError, group::Group, service::Service},
     schema::constraints::{ConstraintDetail, ConstraintProblem},
-    security::{Authenticates, Authenticator, auth::Auth, carrier::BearerToken, schemes::Bearer},
+    security::{
+        Authenticates, Authenticator, Head,
+        auth::Auth,
+        carrier::{BearerToken, presented::Presented},
+        schemes::Bearer,
+    },
     test::TestClient,
 };
 use serde::{Deserialize, Serialize};
@@ -109,7 +114,13 @@ async fn me(Auth(subject): Auth<Bearer>) -> Json<Item> {
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer, C> for Tokens {
-    async fn authenticate(&self, token: BearerToken, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
+        let token = presented.require()?;
         match token.as_str() {
             "tok_ok" => Ok(token.into_inner()),
             "tok_banned" => Err(AuthRejection::forbidden()),

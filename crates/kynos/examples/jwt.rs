@@ -19,11 +19,13 @@
 //!
 //! * **Nothing here finds the token.** `#[security(bearer(format = "JWT"))]`
 //!   already said where a bearer token travels, so the carrier is emitted from
-//!   that same attribute and `authenticate` receives a [`BearerToken`]. There
-//!   is no `strip_prefix("Bearer ")` to write, and no way to accidentally read
-//!   a field the description does not advertise. RFC 9110 makes the scheme name
+//!   that same attribute and `authenticate` receives a [`BearerToken`], read
+//!   from the field the description advertises. There is no
+//!   `strip_prefix("Bearer ")` to write. RFC 9110 makes the scheme name
 //!   case-insensitive and RFC 6750 permits extra whitespace after it; a
-//!   hand-rolled finder usually honours neither.
+//!   hand-rolled finder usually honours neither. A header that is not a bearer
+//!   credential arrives as `Presented::Malformed`, and `require` refuses it
+//!   with the 401 a forgery earns.
 //! * **`bearerFormat` is documentation, not parsing.** A bearer token is opaque
 //!   by definition. `format = "JWT"` tells a human reading the description what
 //!   to expect; Kynos never looks inside.
@@ -74,9 +76,9 @@ use kynos::{
     prelude::*,
     router::service::Service,
     security::{
-        Authenticates, Authenticator, Authorizer, Scope,
+        Authenticates, Authenticator, Authorizer, Head, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
-        carrier::{BearerToken, Credentials},
+        carrier::{BearerToken, Credentials, presented::Presented},
         constant_time_eq,
         schemes::Basic,
     },
@@ -257,10 +259,15 @@ impl Keys {
 impl<C: Sync> Authenticator<AccessToken, C> for Keys {
     async fn authenticate(
         &self,
-        presented: BearerToken,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
         context: &C,
     ) -> Result<Claims, AuthRejection> {
         let _ = context;
+
+        // A header that is no bearer credential is refused like a forgery:
+        // the same 401, whichever rule it broke.
+        let presented = presented.require()?;
 
         // The `kid` says which key signed this, which is the whole of rotation.
         // Reading the header is not trusting it: nothing below the signature
@@ -335,10 +342,12 @@ struct Passwords;
 impl<C: Sync> Authenticator<Basic<Credentials>, C> for Passwords {
     async fn authenticate(
         &self,
-        presented: Credentials,
+        presented: Presented<Credentials>,
+        _: Head<'_>,
         context: &C,
     ) -> Result<Credentials, AuthRejection> {
         let _ = context;
+        let presented = presented.require()?;
 
         // A real service compares against a password *hash* — argon2 or scrypt
         // — and Kynos ships neither, for the reason it ships no JWT verifier.

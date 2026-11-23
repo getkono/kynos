@@ -6841,11 +6841,11 @@ mod security_scheme {
         }
     }
 
-    /// `carrier = optional` wraps the kind's own reader rather than replacing
-    /// it, so a malformed credential is still the reader's `Err` and only
-    /// absence becomes a value; `carrier = manual` writes no carrier at all.
+    /// `carrier = optional` keeps the kind's own reader and its credential
+    /// type, and only sets `OPTIONAL`, so who answers absence is all that
+    /// differs; `carrier = manual` writes no carrier at all.
     #[test]
-    fn an_optional_carrier_wraps_the_kind_reader_in_some() {
+    fn an_optional_carrier_keeps_the_kind_reader_and_hands_absence_on() {
         let carrier = |mode: Option<&str>| {
             let mode = mode.map(|mode| syn::Ident::new(mode, proc_macro2::Span::call_site()));
             let setting = mode.map(|mode| quote::quote!(#[security(carrier = #mode)]));
@@ -6870,28 +6870,19 @@ mod security_scheme {
             })
         };
 
+        let presented = "type Presented = :: kynos :: security :: carrier :: BearerToken ;";
+        let reader = ":: kynos :: security :: carrier :: bearer (parts) }";
+        let optional_flag = "const OPTIONAL : bool = true ;";
+
         let derived = carrier(None).expect("a derived carrier");
-        assert!(
-            derived.contains("type Presented = :: kynos :: security :: carrier :: BearerToken ;"),
-            "{derived}"
-        );
-        assert!(!derived.contains("Option :: Some"), "{derived}");
+        assert!(derived.contains(presented), "{derived}");
+        assert!(derived.contains(reader), "{derived}");
+        assert!(!derived.contains("OPTIONAL"), "{derived}");
 
         let optional = carrier(Some("optional")).expect("an optional carrier");
-        assert!(
-            optional.contains(
-                "type Presented = :: core :: option :: Option < :: kynos :: security :: carrier :: \
-                 BearerToken > ;"
-            ),
-            "{optional}"
-        );
-        assert!(
-            optional.contains(
-                ":: kynos :: security :: carrier :: bearer (parts) . map (:: core :: option :: \
-                 Option :: Some)"
-            ),
-            "{optional}"
-        );
+        assert!(optional.contains(presented), "{optional}");
+        assert!(optional.contains(reader), "{optional}");
+        assert!(optional.contains(optional_flag), "{optional}");
 
         assert_eq!(carrier(Some("manual")), None);
     }

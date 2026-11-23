@@ -5,7 +5,8 @@
 use kynos::{
     error::rejection::AuthRejection,
     security::{
-        Authenticates, Authenticator, Authorizer, Scope, carrier::BearerToken, schemes::Bearer,
+        Authenticates, Authenticator, Authorizer, Head, Scope, carrier::BearerToken,
+        carrier::presented::Presented, schemes::Bearer,
     },
 };
 
@@ -25,7 +26,12 @@ impl Scope for Grant {
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Tokens {
-    async fn authenticate(&self, _: BearerToken, _: &C) -> Result<String, AuthRejection> {
+    async fn authenticate(
+        &self,
+        _: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &C,
+    ) -> Result<String, AuthRejection> {
         Err(AuthRejection::unauthenticated())
     }
 }
