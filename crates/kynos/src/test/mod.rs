@@ -186,16 +186,14 @@ impl<C> TestClient<C> {
     /// Panics, naming `setter`, on a client built
     /// [`connect`](Self::connect), whose requests leave from their own
     /// socket's address.
+    #[cfg(feature = "server")]
     fn refuse_peer_over_a_socket(&self, setter: &str) {
-        #[cfg(feature = "server")]
         if let Transport::Connected { .. } = self.transport {
             panic!(
                 "a client built `connect` sends from its own socket's address, \
                  which `{setter}` cannot set; use `through_server` to test a peer"
             );
         }
-        #[cfg(not(feature = "server"))]
-        let _ = setter;
     }
 
     /// Records every response this client receives into `coverage` as well.
@@ -222,6 +220,7 @@ impl<C> TestClient<C> {
     /// leave from their own socket's address.
     #[must_use]
     pub fn with_peer(mut self, peer: std::net::SocketAddr) -> Self {
+        #[cfg(feature = "server")]
         self.refuse_peer_over_a_socket("with_peer");
         self.peer = Some(peer);
         self
@@ -958,6 +957,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// requests leave from their own socket's address.
     #[must_use]
     pub fn peer(mut self, address: std::net::SocketAddr) -> Self {
+        #[cfg(feature = "server")]
         self.client.refuse_peer_over_a_socket("peer");
         self.peer = Some(address);
         self
