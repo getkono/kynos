@@ -288,6 +288,7 @@ impl Trace {
             callsite: SpanCallsite::interned(self.level, fields),
             trace: self,
             parent: None,
+            on_open: None,
         }
     }
 
@@ -397,6 +398,8 @@ pub struct TraceSpan<G = ()> {
     /// Called just before the span is created; what it returns is dropped
     /// right after.
     parent: Option<fn(&http::Request) -> G>,
+    /// Called inside the span once it is open, before the chain runs.
+    on_open: Option<fn(&http::Request)>,
 }
 
 // By hand, since a derive would ask `G: Clone` of a type only a function
@@ -407,6 +410,7 @@ impl<G> Clone for TraceSpan<G> {
             trace: self.trace.clone(),
             callsite: self.callsite,
             parent: self.parent,
+            on_open: self.on_open,
         }
     }
 }
@@ -418,6 +422,7 @@ impl<G> std::fmt::Debug for TraceSpan<G> {
             .field("trace", &self.trace)
             .field("fields", &self.callsite.declared)
             .field("parent_from", &self.parent.is_some())
+            .field("on_open", &self.on_open.is_some())
             .finish()
     }
 }
@@ -483,7 +488,39 @@ impl<G> TraceSpan<G> {
             trace: self.trace,
             callsite: self.callsite,
             parent: Some(attach),
+            on_open: self.on_open,
         }
+    }
+
+    /// Calls `hook` with the request inside each span once it is open, before
+    /// anything mounted inside it runs.
+    ///
+    /// For what a span can take only once it exists: a field recorded with
+    /// `tracing::Span::current().record(..)`, or a parent set after creation
+    /// by a layer that accepts one then. A field must be declared by
+    /// [`span`](Trace::span)'s list for a record to land.
+    ///
+    /// Like [`parent_from`](TraceSpan::parent_from)'s function, it is called
+    /// only where the span is created. Called again, the last hook wins.
+    ///
+    /// ```
+    /// use kynos::middleware::trace::Trace;
+    ///
+    /// let span = Trace::new().span(&["tenant"]).on_open(|request| {
+    ///     if let Some(tenant) = request
+    ///         .headers()
+    ///         .get("x-tenant")
+    ///         .and_then(|value| value.to_str().ok())
+    ///     {
+    ///         tracing::Span::current().record("tenant", tenant);
+    ///     }
+    /// });
+    /// # let _ = span;
+    /// ```
+    #[must_use]
+    pub fn on_open(mut self, hook: fn(&http::Request)) -> Self {
+        self.on_open = Some(hook);
+        self
     }
 }
 
@@ -710,7 +747,15 @@ impl<C: Sync + 'static, G: 'static> super::Interceptor<C> for TraceSpan<G> {
         let _ = (reads, context);
         let started = std::time::Instant::now();
         let span = self.open(&request, next.route());
-        let run = span.in_scope(|| next.run(request)).instrument(span);
+        let on_open = self.on_open.filter(|_| !span.is_disabled());
+        let run = span
+            .in_scope(|| {
+                if let Some(hook) = on_open {
+                    hook(&request);
+                }
+                next.run(request)
+            })
+            .instrument(span);
 
         async move {
             let mut run = std::pin::pin!(run);

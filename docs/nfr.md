@@ -1060,7 +1060,8 @@ reason of its own.
 span, whose callsite is built at run time because its fields are the
 application's. The span is `Trace`'s configuration read the other way round,
 through the same header and identifier readers, so the two are one concern:
-how a request is logged. A private module for the callsite alone would cost no
+how a request is logged. Issue #1373's `parent_from` and `on_open` are that
+span's configuration too, and stay beside it. A private module for the callsite alone would cost no
 path, but would be a second site under `middleware/` naming `tracing`, which
 the dependency rows below allow nowhere under `middleware/` but this file.
 

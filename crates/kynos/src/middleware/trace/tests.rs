@@ -755,6 +755,64 @@ fn a_filtered_span_attaches_no_parent() {
     );
 }
 
+/// `on_open` runs inside the span, before the handler, and what it records
+/// lands on the span the handler's event inherits.
+#[test]
+fn the_open_hook_runs_inside_the_span_before_the_chain() {
+    let span = Trace::new().span(&["tenant"]).on_open(|request| {
+        let tenant = request.headers()["x-tenant"]
+            .to_str()
+            .expect("a printable field");
+        tracing::Span::current().record("tenant", tenant);
+        tracing::info!("opened");
+    });
+
+    let lines = captured(|| {
+        served(
+            &[Arc::new(span)],
+            Some(get_user()),
+            request(&[("x-tenant", "acme")]),
+        );
+    });
+    let mut lines = lines.lines().map(str::trim_start);
+
+    let opened = lines.next().expect("the hook's event");
+    assert!(opened.starts_with("INFO request{"), "{opened}");
+    assert!(opened.ends_with(": opened"), "{opened}");
+    let handled = lines.next().expect("the handler's event");
+    assert!(handled.contains(" tenant=\"acme\"}: "), "{handled}");
+    assert!(handled.ends_with(": handled"), "{handled}");
+}
+
+/// The parent's guard is gone by the time the hook runs, and a filtered
+/// span runs no hook; the control is the same hook at an admitted level.
+#[test]
+fn the_open_hook_runs_after_the_guard_and_only_for_a_created_span() {
+    let admitted = Trace::new()
+        .span(&[])
+        .parent_from(Attached::attach)
+        .on_open(|request| {
+            let _ = request;
+            tracing::info!("opened");
+        });
+    let filtered = Trace::new()
+        .level(Level::Debug)
+        .span(&[])
+        .on_open(|request| {
+            let _ = request;
+            panic!("hooked a span that is not created")
+        });
+
+    assert_eq!(
+        witnessed(tracing::Level::INFO, &[Arc::new(admitted)]),
+        [("request", true), ("event", false), ("event", false)]
+    );
+    assert_eq!(
+        witnessed(tracing::Level::INFO, &[Arc::new(filtered)]),
+        [("event", false)]
+    );
+}
+
 /// The request's headers as an OpenTelemetry propagator reads them.
 struct Carrier<'a>(&'a HeaderMap);
 

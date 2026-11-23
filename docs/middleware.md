@@ -1367,6 +1367,14 @@ never held across an `.await`, so a `!Send` one fits. The span's type records
 the guard's, `TraceSpan<G>`, rather than boxing it per request; `TraceSpan`
 alone still names the span without one.
 
+`TraceSpan::on_open` is the other moment: called with the request inside the
+open span, after the guard is dropped and before anything mounted inside runs.
+It records a field the request alone determines, or sets a parent through a
+layer that accepts one after creation. It too runs only for a created span.
+Both hooks exist so that joining a trace never means re-implementing the span
+in an interceptor of one's own, losing the fields, the level and the
+`status` and `latency_ms` this one records.
+
 ## Trusted hosts
 
 `TrustedHosts` refuses a request whose authority — the target's, else `Host`,

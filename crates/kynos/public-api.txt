@@ -5455,6 +5455,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::trace::Trace
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::trace::Trace
 pub struct kynos::middleware::trace::TraceSpan<G>
 impl<G> kynos::middleware::trace::TraceSpan<G>
+pub fn kynos::middleware::trace::TraceSpan<G>::on_open(self, fn(&kynos::http::Request)) -> Self
 pub fn kynos::middleware::trace::TraceSpan<G>::parent_from<H: 'static>(self, fn(&kynos::http::Request) -> H) -> kynos::middleware::trace::TraceSpan<H>
 impl<C: core::marker::Sync + 'static, G: 'static> kynos::middleware::Interceptor<C> for kynos::middleware::trace::TraceSpan<G>
 pub type kynos::middleware::trace::TraceSpan<G>::Adds = ()
