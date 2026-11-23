@@ -199,7 +199,8 @@ impl<C> TestClient<C> {
     /// Records every response this client receives into `coverage` as well.
     ///
     /// The client's own assertions still read only what it received; the
-    /// shared record is read by [`Coverage::assert_declared_responses_covered`].
+    /// shared record is read by [`Coverage::assert_declared_responses_covered`]
+    /// or [`Coverage::assert_covered`].
     /// A second call replaces the first.
     #[must_use]
     pub fn with_coverage(mut self, coverage: &Coverage) -> Self {
@@ -714,21 +715,41 @@ const IN_PROCESS: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::Sock
 /// [`with_coverage`](TestClient::with_coverage) over the same `Coverage`, and
 /// the declared responses are asserted once, after all of them ran, against
 /// the description that declares them all.
-#[derive(Debug, Default)]
+///
+/// A clone is the same record, not a copy of it: what one clone's clients
+/// record, every clone reads, and every clone is bound to the same document.
+#[derive(Clone, Debug, Default)]
 pub struct Coverage {
     exchanges: Arc<Mutex<Vec<Exchange>>>,
+    document: Option<Arc<Document>>,
 }
 
 impl Coverage {
-    /// A record no client has written to yet.
+    /// A record no client has written to yet, bound to no document: it is
+    /// asserted with
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// A record no client has written to yet, bound to `document`: it is
+    /// asserted with [`assert_covered`](Self::assert_covered).
+    ///
+    /// `document` is usually the one the application publishes, built with
+    /// every optional part present. An [`Arc<Document>`] is shared rather
+    /// than copied.
+    #[must_use]
+    pub fn for_document(document: impl Into<Arc<Document>>) -> Self {
+        Self {
+            exchanges: Arc::default(),
+            document: Some(document.into()),
+        }
+    }
+
     /// Records one exchange made outside a [`TestClient`], for
     /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
-    /// to count.
+    /// or [`assert_covered`](Self::assert_covered) to count.
     ///
     /// `path` is the concrete request target, matched against the
     /// description when asserted, as a client's own exchanges are.
@@ -763,6 +784,31 @@ impl Coverage {
     ///
     /// Panics listing every declared response that was never seen.
     pub fn assert_declared_responses_covered(&self, document: &Document) {
+        self.assert_against(document);
+    }
+
+    /// Asserts that every response the document given to
+    /// [`for_document`](Self::for_document) declares was exercised by at
+    /// least one client recording here, as
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// does for an explicit document.
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), and otherwise listing every
+    /// declared response that was never seen.
+    pub fn assert_covered(&self) {
+        let document = self.document.as_deref().expect(
+            "a Coverage built without a document has nothing to assert against; \
+             build it with `Coverage::for_document`, or name the document with \
+             `assert_declared_responses_covered`",
+        );
+        self.assert_against(document);
+    }
+
+    /// Asserts the recorded exchanges cover what `document` declares.
+    fn assert_against(&self, document: &Document) {
         let exchanges = self
             .exchanges
             .lock()

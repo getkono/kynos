@@ -28,6 +28,7 @@ the section for the release that ships it.
 | `#[error(transparent)]` and `#[problem(transparent)]` on one `ApiError` variant | `#[error(transparent)]` alone; a `#[problem(status = ...)]` beside it opts out | #1378 |
 | A variant copied from another `ApiError` enum, and a `match` or `let ... else { unreachable!() }` moving a value across | `#[problem(variant_of = Other::Variant)]` on the variant, and `Narrow::try_from(other)` | #1378 |
 | `TcpListener::bind`, `tokio::spawn(server.listener(..).serve())`, a hand-formatted request head and a status-line parser, to test what only a listener answers | `test::TestClient::connect(&running)` over `server::BoundServer::spawn`'s handle, then `running.shutdown()` | #1389 |
+| A `test::Coverage` newtype behind an `Arc`, whose only method calls `assert_declared_responses_covered(&my_document())` | `test::Coverage::for_document(my_document())`, a `.clone()` of it to each harness, and `assert_covered()` once | #1388 |
 
 ## 0.5 to 0.6
 
