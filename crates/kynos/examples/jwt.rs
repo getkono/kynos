@@ -65,6 +65,7 @@
 use std::{
     collections::HashMap,
     net::Ipv4Addr,
+    sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -76,7 +77,7 @@ use kynos::{
     prelude::*,
     router::service::Service,
     security::{
-        Authenticates, Authenticator, Authorizer, Head, Scope,
+        Authenticator, Authorizer, Head, Scope,
         auth::{Auth, MaybeAuth, Scoped, Scopes},
         carrier::{BearerToken, Credentials, presented::Presented},
         constant_time_eq,
@@ -196,10 +197,15 @@ struct Key {
 /// starts signing while the previous one keeps verifying until every token it
 /// signed has expired. A framework that owned this would have to own the store
 /// the keys come from.
+///
+/// A handle: `sign_in` takes it as a dependency, and `Provides` hands out an
+/// owned value per request, so a clone shares the one store rather than
+/// copying it.
+#[derive(Clone)]
 struct Keys {
     /// The key new tokens are signed with.
-    current: String,
-    by_id: HashMap<String, Key>,
+    current: Arc<str>,
+    by_id: Arc<HashMap<String, Key>>,
 }
 
 impl Keys {
@@ -219,8 +225,8 @@ impl Keys {
             );
         }
         Self {
-            current: "k2".to_owned(),
-            by_id,
+            current: "k2".into(),
+            by_id: Arc::new(by_id),
         }
     }
 
@@ -237,7 +243,7 @@ impl Keys {
             .as_secs();
 
         let mut header = Header::new(Algorithm::HS256);
-        header.kid = Some(self.current.clone());
+        header.kid = Some(self.current.to_string());
 
         let claims = Claims {
             sub: subject.to_owned(),
@@ -250,7 +256,7 @@ impl Keys {
 
         let key = self
             .by_id
-            .get(&self.current)
+            .get(&*self.current)
             .expect("the current key is one this store holds");
         encode(&header, &claims, &key.encoding).expect("HMAC signing does not fail")
     }
@@ -374,34 +380,15 @@ impl<C: Sync> Authenticator<Basic<Credentials>, C> for Passwords {
 /// A router guarding a scheme this context cannot verify does not compile —
 /// which is a different guarantee from a middleware that is simply absent at
 /// run time.
+#[derive(Provider)]
 struct App {
-    keys: std::sync::Arc<Keys>,
+    /// The authenticator for `AccessToken`, and handed out as well, since
+    /// `sign_in` mints with it: `provided` opts it back in.
+    #[provide(authenticates = AccessToken, provided)]
+    keys: Keys,
+    /// Only ever borrowed as the authenticator, so it need not be `Clone`.
+    #[provide(authenticates = Basic<Credentials>)]
     passwords: Passwords,
-}
-
-/// The key store reaches `sign_in` as a dependency and the authenticator as a
-/// borrow, which is why it is behind an `Arc`: `Provides` hands out an owned
-/// value, and one store is one store.
-impl kynos::di::Provides<std::sync::Arc<Keys>> for App {
-    fn provide(&self) -> std::sync::Arc<Keys> {
-        std::sync::Arc::clone(&self.keys)
-    }
-}
-
-impl Authenticates<AccessToken> for App {
-    type Authenticator = Keys;
-
-    fn authenticator(&self) -> &Self::Authenticator {
-        &self.keys
-    }
-}
-
-impl Authenticates<Basic<Credentials>> for App {
-    type Authenticator = Passwords;
-
-    fn authenticator(&self) -> &Self::Authenticator {
-        &self.passwords
-    }
 }
 
 // --- The operations -------------------------------------------------------
@@ -414,7 +401,7 @@ impl Authenticates<Basic<Credentials>> for App {
 #[kynos::post("/session")]
 async fn sign_in(
     Auth(credentials): Auth<Basic<Credentials>>,
-    Inject(keys): Inject<std::sync::Arc<Keys>>,
+    Inject(keys): Inject<Keys>,
 ) -> Json<Token> {
     // The scopes a caller gets are the service's decision, not the caller's.
     let scopes = if credentials.username() == "reporter" {
@@ -491,7 +478,7 @@ fn service() -> kynos::Result<Service<App>> {
         .mount(kynos::routes![me, reports, feed]);
 
     let context = App {
-        keys: std::sync::Arc::new(Keys::seeded()),
+        keys: Keys::seeded(),
         passwords: Passwords,
     };
 

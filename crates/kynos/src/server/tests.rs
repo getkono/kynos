@@ -1242,6 +1242,61 @@ fn a_failed_listener_is_named_as_its_transport_writes_it() {
     }
 }
 
+/// `io_error` is the variant's own `io::Error`, the one `source` reaches by
+/// downcast, for exactly the five variants holding one; every other variant
+/// answers `None`.
+#[test]
+fn io_error_is_the_source_of_exactly_the_variants_holding_one() {
+    use std::error::Error as _;
+
+    use crate::server::error::ServerError;
+
+    let failure = || std::io::Error::from_raw_os_error(98);
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
+    let carrying = [
+        ServerError::Resolve {
+            address: "localhost:8080".into(),
+            source: failure(),
+        },
+        ServerError::Bind {
+            address,
+            source: failure(),
+        },
+        ServerError::Listener(failure()),
+        ServerError::Accept {
+            address: address.into(),
+            source: failure(),
+        },
+        ServerError::Signal(failure()),
+    ];
+    for error in &carrying {
+        let carried = error.io_error().expect("this variant holds an I/O error");
+        let source = error
+            .source()
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .expect("its source is that I/O error");
+        assert!(std::ptr::eq(carried, source), "{error:?}");
+        assert_eq!(carried.raw_os_error(), Some(98), "{error:?}");
+    }
+
+    let bare = [
+        ServerError::NoListeners,
+        ServerError::InvalidConfiguration("invalid"),
+        ServerError::AcceptLoop { panicked: true },
+        ServerError::ShutdownTimeout {
+            timeout: std::time::Duration::ZERO,
+        },
+        ServerError::ShutdownForced,
+        #[cfg(feature = "tls")]
+        ServerError::MutualTlsConflict,
+        #[cfg(feature = "tls")]
+        ServerError::Tls(crate::server::tls::error::TlsError::TicketCipher),
+    ];
+    for error in &bare {
+        assert!(error.io_error().is_none(), "{error:?}");
+    }
+}
+
 /// A listener tokio already owns is handed over through its own `into_std`.
 #[tokio::test]
 async fn prepare_accepts_a_tokio_listener_through_into_std() {
@@ -2246,6 +2301,35 @@ async fn a_spawned_server_reports_its_shutdown_timeout() {
         "{error:?}"
     );
     client.await.expect("client task joins");
+}
+
+/// The handle lends the service it serves, so its description is reachable
+/// once the server is spawned.
+#[tokio::test]
+async fn a_spawned_server_lends_the_service_it_serves() {
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Spawned", "7"),
+    );
+    let service = crate::router::service::Service::<()>::new(document, |_| async {
+        crate::http::Response::new(crate::http::body::Body::empty())
+    });
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+
+    let info = &running.service().openapi().info;
+    assert_eq!(
+        (info.title.as_str(), info.version.as_str()),
+        ("Spawned", "7")
+    );
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
 }
 
 /// Dropping the handle begins shutdown without anyone waiting for it.

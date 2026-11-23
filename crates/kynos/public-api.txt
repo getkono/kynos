@@ -10538,6 +10538,7 @@ pub kynos::server::error::ServerError::ShutdownTimeout::timeout: core::time::Dur
 pub kynos::server::error::ServerError::Signal(std::io::error::Error)
 pub kynos::server::error::ServerError::Tls(kynos::server::tls::error::TlsError)
 impl kynos::server::error::ServerError
+pub const fn kynos::server::error::ServerError::io_error(&self) -> core::option::Option<&std::io::error::Error>
 pub const fn kynos::server::error::ServerError::is_requested_shutdown(&self) -> bool
 impl core::convert::From<kynos::server::error::ServerError> for kynos::error::Error
 pub fn kynos::error::Error::from(kynos::server::error::ServerError) -> Self
@@ -10870,7 +10871,7 @@ pub struct kynos::server::BoundServer<C>
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
 pub async fn kynos::server::BoundServer<C>::serve(self) -> kynos::error::Result<()>
-pub fn kynos::server::BoundServer<C>::spawn(self) -> kynos::server::Running
+pub fn kynos::server::BoundServer<C>::spawn(self) -> kynos::server::Running<C>
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::openapi(&self) -> &kynos_openapi::model::document::Document
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::BoundServer<C>
@@ -10882,20 +10883,21 @@ impl<C> core::marker::Unpin for kynos::server::BoundServer<C>
 impl<C> core::marker::UnsafeUnpin for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::BoundServer<C>
 impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::BoundServer<C>
-pub struct kynos::server::Running
-impl kynos::server::Running
-pub fn kynos::server::Running::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
-pub fn kynos::server::Running::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
-pub async fn kynos::server::Running::shutdown(self) -> kynos::error::Result<()>
-impl core::fmt::Debug for kynos::server::Running
-pub fn kynos::server::Running::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::Freeze for kynos::server::Running
-impl core::marker::Send for kynos::server::Running
-impl core::marker::Sync for kynos::server::Running
-impl core::marker::Unpin for kynos::server::Running
-impl core::marker::UnsafeUnpin for kynos::server::Running
-impl !core::panic::unwind_safe::RefUnwindSafe for kynos::server::Running
-impl !core::panic::unwind_safe::UnwindSafe for kynos::server::Running
+pub struct kynos::server::Running<C>
+impl<C> kynos::server::Running<C>
+pub fn kynos::server::Running<C>::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
+pub fn kynos::server::Running<C>::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
+pub fn kynos::server::Running<C>::service(&self) -> &kynos::router::service::Service<C>
+pub async fn kynos::server::Running<C>::shutdown(self) -> kynos::error::Result<()>
+impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::Running<C>
+pub fn kynos::server::Running<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C> core::marker::Freeze for kynos::server::Running<C>
+impl<C> core::marker::Send for kynos::server::Running<C>
+impl<C> core::marker::Sync for kynos::server::Running<C>
+impl<C> core::marker::Unpin for kynos::server::Running<C>
+impl<C> core::marker::UnsafeUnpin for kynos::server::Running<C>
+impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::server::Running<C>
+impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::server::Running<C>
 pub struct kynos::server::Server<C>
 impl kynos::server::Server<()>
 pub const kynos::server::Server<()>::DEFAULT_LISTEN_BACKLOG: core::num::nonzero::NonZeroU32
@@ -10950,6 +10952,7 @@ impl core::panic::unwind_safe::RefUnwindSafe for kynos::test::Coverage
 impl core::panic::unwind_safe::UnwindSafe for kynos::test::Coverage
 pub struct kynos::test::TestClient<C>
 impl<C: 'static> kynos::test::TestClient<C>
+pub fn kynos::test::TestClient<C>::connect(&kynos::server::Running<C>) -> Self
 pub fn kynos::test::TestClient<C>::through_server(kynos::server::Server<C>) -> Self
 impl<C> kynos::test::TestClient<C>
 pub fn kynos::test::TestClient<C>::assert_conformance(&self)
