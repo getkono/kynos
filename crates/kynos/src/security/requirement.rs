@@ -15,12 +15,18 @@
 //! default scopes, [`SecurityScheme::scopes`], where it has any.
 //!
 //! [`MaybeAuth`](crate::security::auth::MaybeAuth) prepends `{}` to any of the
-//! three. A combinator takes schemes and not other combinators, so each shape
-//! has exactly one spelling.
+//! three. A combinator takes [`Member`]s, never other combinators, so each
+//! shape has exactly one spelling.
 //!
 //! [`Scoped`](crate::security::auth::Scoped) demands its scope set of a
 //! scheme, or of every alternative of an [`AnyOf`] whose schemes share one
-//! [`SecurityScheme::Scope`]: [`Scopable`] is what admits the two.
+//! [`SecurityScheme::Scope`]: [`Scopable`] is what admits the two. Written as
+//! a combinator's member, `Scoped<S, R>` demands its set of that member alone:
+//!
+//! | Parameter | `security` |
+//! | --- | --- |
+//! | `AnyOf<(A, Scoped<B, R>)>` | `[{A}, {B: R}]` |
+//! | `AllOf<(A, Scoped<B, R>)>` | `[{A, B: R}]` |
 
 use std::{borrow::Cow, future::Future, marker::PhantomData};
 
@@ -33,6 +39,7 @@ use crate::{
     schema::registry::Registry,
     security::{
         Authenticates, Authenticator, Authorizer, Head, Scope, SecurityScheme,
+        auth::{Scoped, Scopes},
         carrier::{Carries, presented::Presented},
     },
 };
@@ -89,6 +96,101 @@ pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// An [`AnyOf`]'s are not required, since no one alternative is; an
     /// [`AllOf`]'s keep what each scheme declared, since every one is read.
     fn reads(registry: &mut Registry) -> Vec<Parameter>;
+}
+
+/// One scheme as an [`AnyOf`] or an [`AllOf`] names it: bare, demanding its
+/// default scopes, or as [`Scoped<S, R>`](Scoped), demanding `R` of `S` alone.
+///
+/// `Scoped<S, R>` here is the member, not the guard: it scopes one alternative
+/// of an `AnyOf`, or one scheme of an `AllOf`, and leaves the others as they
+/// are written. `AnyOf<(Session, Scoped<ApiToken, Write>)>` declares
+/// `[{Session: []}, {ApiToken: [write]}]` and authorizes each alternative for
+/// its own set.
+///
+/// ```no_run
+/// # use kynos::security::{Scope, auth::{Auth, Scoped, Scopes}, requirement::AnyOf};
+/// # use kynos::security::schemes::{Basic, Bearer};
+/// # #[derive(Clone, Copy)]
+/// # enum Grant { Write }
+/// # impl Scope for Grant {
+/// #     fn name(&self) -> &'static str { "write" }
+/// # }
+/// struct Write;
+///
+/// impl Scopes for Write {
+///     type Scope = Grant;
+///     const REQUIRED: &'static [Grant] = &[Grant::Write];
+/// }
+///
+/// /// Any password, or a token granted `write`.
+/// async fn publish(caller: Auth<AnyOf<(Basic, Scoped<Bearer<String, Grant>, Write>)>>) {}
+///
+/// /// A token granted `write`, through the guard rather than a member.
+/// async fn edit(caller: Scoped<Bearer<String, Grant>, Write>) {}
+///
+/// /// A password or a token, each granted `write`, through the guard.
+/// async fn delete(caller: Scoped<AnyOf<(Basic<String, Grant>, Bearer<String, Grant>)>, Write>) {}
+/// ```
+///
+/// Only inside a combinator is `Scoped` a member: it is not a [`Requirement`],
+/// so `Auth<Scoped<S, R>>` does not compile where the guard `Scoped<S, R>` is
+/// meant, and an `AnyOf` holding a scoped member is not [`Scopable`], so a set
+/// is never demanded of one scheme from two places.
+///
+/// ```compile_fail,E0277
+/// # use kynos::security::{Scope, auth::{Auth, Scoped, Scopes}, schemes::Bearer};
+/// # #[derive(Clone, Copy)]
+/// # enum Grant { Write }
+/// # impl Scope for Grant {
+/// #     fn name(&self) -> &'static str { "write" }
+/// # }
+/// # struct Write;
+/// # impl Scopes for Write {
+/// #     type Scope = Grant;
+/// #     const REQUIRED: &'static [Grant] = &[Grant::Write];
+/// # }
+/// async fn publish(caller: Auth<Scoped<Bearer<String, Grant>, Write>>) {}
+/// ```
+///
+/// ```compile_fail,E0277
+/// # use kynos::security::{Scope, auth::{Scoped, Scopes}, requirement::AnyOf};
+/// # use kynos::security::schemes::{Basic, Bearer};
+/// # #[derive(Clone, Copy)]
+/// # enum Grant { Write }
+/// # impl Scope for Grant {
+/// #     fn name(&self) -> &'static str { "write" }
+/// # }
+/// # struct Write;
+/// # impl Scopes for Write {
+/// #     type Scope = Grant;
+/// #     const REQUIRED: &'static [Grant] = &[Grant::Write];
+/// # }
+/// async fn publish(
+///     caller: Scoped<AnyOf<(Basic<String, Grant>, Scoped<Bearer<String, Grant>, Write>)>, Write>,
+/// ) {
+/// }
+/// ```
+///
+/// Sealed, as [`Requirement`] is.
+pub trait Member: sealed::Sealed + 'static {
+    /// The scheme named, whose carrier reads the credential and whose
+    /// authenticator verifies it.
+    type Scheme: SecurityScheme;
+
+    /// Whether this member's guard may answer 403: the scheme's
+    /// [`SecurityScheme::FORBIDS`] when bare, and always when scoped, since a
+    /// demanded scope set may be refused.
+    const FORBIDS: bool;
+
+    /// The scopes the scheme is authorized for once it authenticates: its
+    /// default scopes when bare, `None` where it has none, so it is never
+    /// authorized; when scoped, its defaults and then each of `R::REQUIRED`
+    /// they do not name, authorized even when empty.
+    fn scopes() -> Option<Cow<'static, [<Self::Scheme as SecurityScheme>::Scope]>>;
+
+    /// The names of the scopes the requirement naming this member lists:
+    /// those [`scopes`](Self::scopes) authorizes.
+    fn scope_names() -> Vec<&'static str>;
 }
 
 /// A [`Requirement`] the context `C` can check against a request.
@@ -188,7 +290,46 @@ where
     C: Authenticates<S>,
 {
     async fn check(parts: &Parts, context: &C) -> Result<Option<S::Credential>, AuthRejection> {
-        present_and_verify::<S, C>(parts, context, || owed_defaults::<S>().map(Cow::Borrowed)).await
+        check_member::<S, C>(parts, context).await
+    }
+}
+
+impl<S: SecurityScheme> Member for S {
+    type Scheme = S;
+
+    const FORBIDS: bool = <S as SecurityScheme>::FORBIDS;
+
+    fn scopes() -> Option<Cow<'static, [<S as SecurityScheme>::Scope]>> {
+        owed_defaults::<S>().map(Cow::Borrowed)
+    }
+
+    fn scope_names() -> Vec<&'static str> {
+        defaults::<S>()
+    }
+}
+
+impl<S, R> sealed::Sealed for Scoped<S, R>
+where
+    S: SecurityScheme,
+    R: Scopes<Scope = <S as SecurityScheme>::Scope>,
+{
+}
+
+impl<S, R> Member for Scoped<S, R>
+where
+    S: SecurityScheme,
+    R: Scopes<Scope = <S as SecurityScheme>::Scope>,
+{
+    type Scheme = S;
+
+    const FORBIDS: bool = true;
+
+    fn scopes() -> Option<Cow<'static, [<S as SecurityScheme>::Scope]>> {
+        Some(demanded::<S>(R::REQUIRED))
+    }
+
+    fn scope_names() -> Vec<&'static str> {
+        demanded_names::<S>(R::REQUIRED)
     }
 }
 
@@ -225,11 +366,12 @@ where
 ///
 /// Declares one requirement per scheme, `[{A}, {B}]`, which is OpenAPI's
 /// "either". The first scheme that authenticates, and is authorized for its
-/// default scopes, wins; a scheme whose credential is absent is skipped. When
-/// none is satisfied, the first refusal in declaration order is the answer,
-/// and when nothing was presented at all the requirement is absent.
+/// [`Member::scopes`], wins; a scheme whose credential is absent is skipped.
+/// When none is satisfied, the first refusal in declaration order is the
+/// answer, and when nothing was presented at all the requirement is absent.
 ///
-/// Implemented for tuples of two to four schemes. The credential is an
+/// Implemented for tuples of two to four [`Member`]s, so an alternative written
+/// [`Scoped<S, R>`](Scoped) demands `R` of itself alone. The credential is an
 /// [`Either2`], [`Either3`] or [`Either4`] naming which one authenticated.
 ///
 /// ```no_run
@@ -249,12 +391,13 @@ pub struct AnyOf<T>(PhantomData<fn() -> T>);
 /// OpenAPI's "both". Every credential is read before any is verified: when none
 /// was presented the requirement is absent, and when only some were it is a
 /// 401, because a partial set is not an anonymous request. Every scheme is
-/// authenticated before any is authorized for its default scopes, so a
+/// authenticated before any is authorized for its [`Member::scopes`], so a
 /// credential that fails to authenticate is a 401 whatever another scheme's
 /// scopes would have answered.
 ///
-/// Implemented for tuples of two to four schemes. The credential is the tuple
-/// of theirs, in the same order.
+/// Implemented for tuples of two to four [`Member`]s, so a scheme written
+/// [`Scoped<S, R>`](Scoped) demands `R` of itself alone. The credential is the
+/// tuple of theirs, in the same order.
 ///
 /// ```no_run
 /// # use kynos::security::{auth::Auth, requirement::AllOf, schemes::{Bearer, MutualTls}};
@@ -341,18 +484,18 @@ fn satisfied<T>(
 /// be bound to its.
 macro_rules! any_of {
     ($either:ident; $first:ident; $($scheme:ident => $variant:ident),+; $($rest:ident),+) => {
-        impl<$($scheme: SecurityScheme),+> sealed::Sealed for AnyOf<($($scheme,)+)> {}
+        impl<$($scheme: Member),+> sealed::Sealed for AnyOf<($($scheme,)+)> {}
 
-        impl<$($scheme: SecurityScheme),+> Requirement for AnyOf<($($scheme,)+)> {
-            type Credential = $either<$(<$scheme as SecurityScheme>::Credential),+>;
+        impl<$($scheme: Member),+> Requirement for AnyOf<($($scheme,)+)> {
+            type Credential = $either<$(CredentialOf<$scheme>),+>;
 
             const MAY_BE_UNAVAILABLE: bool =
-                false $(|| <$scheme as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
+                false $(|| <SchemeOf<$scheme> as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
 
-            const FORBIDS: bool = false $(|| <$scheme as SecurityScheme>::FORBIDS)+;
+            const FORBIDS: bool = false $(|| <$scheme as Member>::FORBIDS)+;
 
             fn challenge() -> Option<&'static str> {
-                first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])
+                first_challenge(&[$(<SchemeOf<$scheme> as SecurityScheme>::challenge),+])
             }
 
             fn insufficient_scope_challenge() -> Option<&'static str> {
@@ -362,25 +505,22 @@ macro_rules! any_of {
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
                 let mut alternatives = Vec::new();
                 $(
-                    alternative(
-                        &mut alternatives,
-                        require::<$scheme>(operation, defaults::<$scheme>()),
-                    );
+                    alternative(&mut alternatives, require_member::<$scheme>(operation));
                 )+
                 alternatives
             }
 
             fn reads(registry: &mut Registry) -> Vec<Parameter> {
                 let mut reads = Vec::new();
-                $( reads.extend(<$scheme as SecurityScheme>::reads(registry)); )+
+                $( reads.extend(<SchemeOf<$scheme> as SecurityScheme>::reads(registry)); )+
                 optional(reads)
             }
         }
 
         impl<C, $($scheme),+> CheckedBy<C> for AnyOf<($($scheme,)+)>
         where
-            $($scheme: Carries,)+
-            $(C: Authenticates<$scheme>,)+
+            $($scheme: Member<Scheme: Carries>,)+
+            $(C: Authenticates<SchemeOf<$scheme>>,)+
         {
             async fn check(
                 parts: &Parts,
@@ -388,7 +528,7 @@ macro_rules! any_of {
             ) -> Result<Option<Self::Credential>, AuthRejection> {
                 let mut refused = None;
                 $(
-                    let checked = <$scheme as CheckedBy<C>>::check(parts, context).await;
+                    let checked = check_member::<$scheme, C>(parts, context).await;
                     if let Some(credential) = satisfied(checked, &mut refused) {
                         return Ok(Some($either::$variant(credential)));
                     }
@@ -454,18 +594,18 @@ macro_rules! any_of {
 /// Implements [`Requirement`] and [`CheckedBy`] for one [`AllOf`] arity.
 macro_rules! all_of {
     ($($scheme:ident),+) => {
-        impl<$($scheme: SecurityScheme),+> sealed::Sealed for AllOf<($($scheme,)+)> {}
+        impl<$($scheme: Member),+> sealed::Sealed for AllOf<($($scheme,)+)> {}
 
-        impl<$($scheme: SecurityScheme),+> Requirement for AllOf<($($scheme,)+)> {
-            type Credential = ($(<$scheme as SecurityScheme>::Credential,)+);
+        impl<$($scheme: Member),+> Requirement for AllOf<($($scheme,)+)> {
+            type Credential = ($(CredentialOf<$scheme>,)+);
 
             const MAY_BE_UNAVAILABLE: bool =
-                false $(|| <$scheme as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
+                false $(|| <SchemeOf<$scheme> as SecurityScheme>::MAY_BE_UNAVAILABLE)+;
 
-            const FORBIDS: bool = false $(|| <$scheme as SecurityScheme>::FORBIDS)+;
+            const FORBIDS: bool = false $(|| <$scheme as Member>::FORBIDS)+;
 
             fn challenge() -> Option<&'static str> {
-                first_challenge(&[$(<$scheme as SecurityScheme>::challenge),+])
+                first_challenge(&[$(<SchemeOf<$scheme> as SecurityScheme>::challenge),+])
             }
 
             fn insufficient_scope_challenge() -> Option<&'static str> {
@@ -474,25 +614,21 @@ macro_rules! all_of {
 
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
                 let mut together = SecurityRequirement::anonymous();
-                $(
-                    together
-                        .0
-                        .extend(require::<$scheme>(operation, defaults::<$scheme>()).0);
-                )+
+                $( together.0.extend(require_member::<$scheme>(operation).0); )+
                 vec![together]
             }
 
             fn reads(registry: &mut Registry) -> Vec<Parameter> {
                 let mut reads = Vec::new();
-                $( reads.extend(<$scheme as SecurityScheme>::reads(registry)); )+
+                $( reads.extend(<SchemeOf<$scheme> as SecurityScheme>::reads(registry)); )+
                 reads
             }
         }
 
         impl<C, $($scheme),+> CheckedBy<C> for AllOf<($($scheme,)+)>
         where
-            $($scheme: Carries,)+
-            $(C: Authenticates<$scheme>,)+
+            $($scheme: Member<Scheme: Carries>,)+
+            $(C: Authenticates<SchemeOf<$scheme>>,)+
         {
             #[allow(non_snake_case)]
             async fn check(
@@ -501,8 +637,8 @@ macro_rules! all_of {
             ) -> Result<Option<Self::Credential>, AuthRejection> {
                 // Every carrier before any verifier, so a missing credential
                 // costs no verification of the others.
-                $( let $scheme = <$scheme as Carries>::present(parts); )+
-                let absent = [$(is_absent::<$scheme, _>(&$scheme)),+];
+                $( let $scheme = <SchemeOf<$scheme> as Carries>::present(parts); )+
+                let absent = [$(is_absent::<SchemeOf<$scheme>, _>(&$scheme)),+];
                 if absent.iter().all(|absent| *absent) {
                     return Ok(None);
                 }
@@ -514,12 +650,15 @@ macro_rules! all_of {
                 // never authorized.
                 $(
                     let $scheme =
-                        authenticate::<$scheme, C>($scheme, parts, context).await?;
+                        authenticate::<SchemeOf<$scheme>, C>($scheme, parts, context).await?;
                 )+
                 $(
-                    let $scheme =
-                        authorize::<$scheme, C>($scheme, owed_defaults::<$scheme>(), context)
-                            .await?;
+                    let $scheme = authorize::<SchemeOf<$scheme>, C>(
+                        $scheme,
+                        <$scheme as Member>::scopes().as_deref(),
+                        context,
+                    )
+                    .await?;
                 )+
                 Ok(Some(($($scheme,)+)))
             }
@@ -641,11 +780,36 @@ fn owed_defaults<S: SecurityScheme>() -> Option<&'static [S::Scope]> {
     Some(S::scopes()).filter(|scopes| !scopes.is_empty())
 }
 
-/// The challenge a guard naming no scope set may send on a 403 for scheme
-/// `S`: its insufficient-scope challenge, where [`owed_defaults`] authorizes
-/// it at all.
-fn owed_scope_challenge<S: SecurityScheme>() -> Option<&'static str> {
-    owed_defaults::<S>().and_then(|_| S::insufficient_scope_challenge())
+/// The challenge a guard naming no scope set may send on a 403 for member
+/// `M`: its scheme's insufficient-scope challenge, where [`Member::scopes`]
+/// authorizes it at all.
+fn owed_scope_challenge<M: Member>() -> Option<&'static str> {
+    M::scopes().and_then(|_| <M::Scheme as SecurityScheme>::insufficient_scope_challenge())
+}
+
+/// The scheme member `M` names.
+type SchemeOf<M> = <M as Member>::Scheme;
+
+/// What satisfying member `M` yields: its scheme's credential.
+type CredentialOf<M> = <SchemeOf<M> as SecurityScheme>::Credential;
+
+/// Reads member `M`'s credential and, unless it is absent, verifies it and
+/// authorizes it for [`Member::scopes`].
+async fn check_member<M, C>(
+    parts: &Parts,
+    context: &C,
+) -> Result<Option<CredentialOf<M>>, AuthRejection>
+where
+    M: Member<Scheme: Carries>,
+    C: Authenticates<M::Scheme>,
+{
+    present_and_verify::<M::Scheme, C>(parts, context, M::scopes).await
+}
+
+/// Registers member `M`'s scheme and returns the requirement naming it with
+/// [`Member::scope_names`].
+fn require_member<M: Member>(operation: &mut OperationCx<'_>) -> SecurityRequirement {
+    require::<M::Scheme>(operation, M::scope_names())
 }
 
 /// Registers scheme `S` and returns the requirement naming it with `scopes`.

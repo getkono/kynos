@@ -312,6 +312,12 @@ pub trait Scopes: Send + Sync + 'static {
 /// alternative authenticates and declares it on each: `[{A: [r]}, {B: [r]}]`.
 /// [`Scopable`] is what admits the two.
 ///
+/// Written inside a combinator instead, `Scoped<S, R>` is a
+/// [`Member`](crate::security::requirement::Member), and demands `R` of that
+/// one scheme: `Auth<AnyOf<(A, Scoped<B, R>)>>` declares `[{A: []}, {B: [r]}]`.
+/// A guard over it is [`Auth`] or [`MaybeAuth`], so its 403 is not narrowed to
+/// [`Scopes::FORBIDDEN_TYPE`].
+///
 /// The scope set is a type implementing [`Scopes`], since a slice is not a
 /// permitted const parameter type, and its [`Scope`](Scopes::Scope) must be
 /// `S`'s. The marker field is private, so outside this crate a handler cannot

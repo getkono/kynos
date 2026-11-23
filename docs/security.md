@@ -33,6 +33,8 @@ spelling and the `security` the guard emits is the whole list, set once:
 | `MaybeAuth<…>` | `[{}, …]` | the same, or nothing presented at all |
 | `Scoped<S, R>` | `[{S: S::scopes() + R::REQUIRED}]` | `S`, then both scope lists |
 | `Scoped<AnyOf<(A, B)>, R>` | `[{A: A::scopes() + R::REQUIRED}, {B: …}]` | the first of `A`, `B` that is satisfied, each holding both lists |
+| `Auth<AnyOf<(A, Scoped<B, R>)>>` | `[{A}, {B: B::scopes() + R::REQUIRED}]` | the first of `A`, `B` that is satisfied, `B` holding both lists |
+| `Auth<AllOf<(A, Scoped<B, R>)>>` | `[{A, B: B::scopes() + R::REQUIRED}]` | both, `B` holding both lists |
 
 Each `{S}` above carries `S::scopes()`, the scheme's default scopes, and
 satisfying it means authenticating *and* holding them: see
@@ -64,9 +66,19 @@ satisfying it means authenticating *and* holding them: see
 - **A combinator takes schemes, from two to four**, never another combinator.
   Nesting would give one shape two spellings.
 - **`Scoped` takes a scheme or an `AnyOf`**, whose schemes share one scope type
-  (`Scopable`), and never sits inside a combinator: a scope set over "either"
-  is written once, not once per alternative. An `AllOf` is refused, since its
-  set would be demanded of every scheme in it, mutual TLS's included.
+  (`Scopable`): a scope set over "either" is written once, not once per
+  alternative. An `AllOf` is refused, since its set would be demanded of every
+  scheme in it, mutual TLS's included.
+- **Inside a combinator, `Scoped<S, R>` scopes one member.** A combinator takes
+  `Member`s: a bare scheme, demanding its defaults, or `Scoped<S, R>`,
+  demanding `R` of `S` alone. "A session, or a token holding `write`" is
+  `Auth<AnyOf<(Session, Scoped<ApiToken, Write>)>>`, one scheme per carrier.
+  The guard is still `Auth` or `MaybeAuth`, so its 403 is the un-narrowed
+  `Problem` whatever `R::FORBIDDEN_TYPE` says, and it declares the 403 and the
+  member's `insufficient_scope` challenge because a demanded set may be
+  refused. `Scoped` is no `Requirement`, so `Auth<Scoped<S, R>>` does not
+  compile, and an `AnyOf` holding a scoped member is not `Scopable`, so no
+  scheme is demanded a set from two places.
 
 ### A scope may run the guard before its interceptors
 
@@ -410,6 +422,7 @@ or combined, so its 403 is `authenticate`'s alone.
 | `AllOf` | each scheme's own, after every scheme authenticates |
 | `Scoped<S, R>` | `S::scopes()`, then each of `R::REQUIRED` they do not name, in one call |
 | `Scoped<AnyOf<…>, R>` | the same, per alternative tried, with that alternative's defaults |
+| `Scoped<S, R>` as a member | what `Scoped<S, R>` receives, for that member alone |
 
 An `AnyOf` alternative whose defaults are refused is not satisfied, so the next
 one is tried, and the refusal is the answer only when none is. `AllOf`
@@ -724,6 +737,23 @@ second guard when the router is built leaves a handler that compiles and is
 then rejected. A fixed slot rejects it at the signature, and moving the
 combination into the type parameter makes the description a function of the
 one type the guard runs.
+
+### Why a scope set may sit on one alternative
+
+`Scoped<AnyOf<…>, R>` demands `R` of every alternative, so "a session, or a
+token holding `write`" could only be said by giving the token scheme default
+scopes: one scheme type per scope set on the same carrier, each repeating the
+description, and one set of authenticator impls per type. OpenAPI's Security
+Requirement Object lists scopes per scheme within each alternative, under 3.1
+and 3.2 alike, so the set belongs to the alternative.
+
+A scope parameter on a derived scheme, `ApiToken<Write>`, was the other
+candidate, and was rejected: the scheme is a carrier and a verifier, and making
+its identity depend on what one operation demands would put a demand into the
+one type every operation shares. `Scoped<S, R>` already reads as "`S` holding
+`R`", so the member spells the same thing with the word a reader knows. It is
+a member and not a `Requirement`, so a guard keeps one spelling: `Scoped<S, R>`,
+never `Auth<Scoped<S, R>>`.
 
 ### Why a group does not declare its operations' guard
 
