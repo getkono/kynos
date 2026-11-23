@@ -6540,6 +6540,7 @@ pub type kynos::security::auth::Scoped<S, R>::Rejection = kynos::error::rejectio
 pub async fn kynos::security::auth::Scoped<S, R>::guard(&kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 impl<S, R> kynos::security::requirement::Member for kynos::security::auth::Scoped<S, R> where S: kynos::security::SecurityScheme, R: kynos::security::auth::Scopes<Scope = <S as kynos::security::SecurityScheme>::Scope>
 pub type kynos::security::auth::Scoped<S, R>::Scheme = S
+pub const kynos::security::auth::Scoped<S, R>::FORBIDDEN_TYPE: core::option::Option<&'static str>
 pub const kynos::security::auth::Scoped<S, R>::FORBIDS: bool
 pub fn kynos::security::auth::Scoped<S, R>::scope_names() -> alloc::vec::Vec<&'static str>
 pub fn kynos::security::auth::Scoped<S, R>::scopes() -> core::option::Option<alloc::borrow::Cow<'static, [<S as kynos::security::SecurityScheme>::Scope]>>
@@ -9832,6 +9833,7 @@ pub type kynos::security::auth::Scoped<S, R>::Rejection = kynos::error::rejectio
 pub async fn kynos::security::auth::Scoped<S, R>::guard(&kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 impl<S, R> kynos::security::requirement::Member for kynos::security::auth::Scoped<S, R> where S: kynos::security::SecurityScheme, R: kynos::security::auth::Scopes<Scope = <S as kynos::security::SecurityScheme>::Scope>
 pub type kynos::security::auth::Scoped<S, R>::Scheme = S
+pub const kynos::security::auth::Scoped<S, R>::FORBIDDEN_TYPE: core::option::Option<&'static str>
 pub const kynos::security::auth::Scoped<S, R>::FORBIDS: bool
 pub fn kynos::security::auth::Scoped<S, R>::scope_names() -> alloc::vec::Vec<&'static str>
 pub fn kynos::security::auth::Scoped<S, R>::scopes() -> core::option::Option<alloc::borrow::Cow<'static, [<S as kynos::security::SecurityScheme>::Scope]>>
@@ -10150,6 +10152,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D, E)>::FORBIDS: bool
 pub const kynos::security::requirement::AllOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member, D: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D)>
@@ -10158,6 +10161,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D)>::FORBIDS: bool
 pub const kynos::security::requirement::AllOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AllOf<(A, B, D)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B)>
@@ -10166,6 +10170,7 @@ pub const kynos::security::requirement::AllOf<(A, B)>::FORBIDS: bool
 pub const kynos::security::requirement::AllOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AllOf<(A, B)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<C, A, B, D, E> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AllOf<(A, B, D, E)> where A: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, B: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, D: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, E: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, C: kynos::security::Authenticates<<A as kynos::security::requirement::Member>::Scheme> + kynos::security::Authenticates<<B as kynos::security::requirement::Member>::Scheme> + kynos::security::Authenticates<<D as kynos::security::requirement::Member>::Scheme> + kynos::security::Authenticates<<E as kynos::security::requirement::Member>::Scheme>
@@ -10216,6 +10221,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::FORBIDS: bool
 pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member, D: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D)>
@@ -10224,6 +10230,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D)>::FORBIDS: bool
 pub const kynos::security::requirement::AnyOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AnyOf<(A, B, D)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B)>
@@ -10232,6 +10239,7 @@ pub const kynos::security::requirement::AnyOf<(A, B)>::FORBIDS: bool
 pub const kynos::security::requirement::AnyOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AnyOf<(A, B)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<C, A, B, D, E> kynos::security::requirement::CheckedBy<C> for kynos::security::requirement::AnyOf<(A, B, D, E)> where A: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, B: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, D: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, E: kynos::security::requirement::Member<Schemekynos::security::carrier::Carries>, C: kynos::security::Authenticates<<A as kynos::security::requirement::Member>::Scheme> + kynos::security::Authenticates<<B as kynos::security::requirement::Member>::Scheme> + kynos::security::Authenticates<<D as kynos::security::requirement::Member>::Scheme> + kynos::security::Authenticates<<E as kynos::security::requirement::Member>::Scheme>
@@ -10287,16 +10295,19 @@ impl<C, S> kynos::security::requirement::CheckedBy<C> for S where S: kynos::secu
 pub async fn S::check(&http::request::Parts, &C) -> core::result::Result<core::option::Option<<S as kynos::security::SecurityScheme>::Credential>, kynos::error::rejection::AuthRejection>
 pub trait kynos::security::requirement::Member: kynos::security::requirement::sealed::Sealed + 'static
 pub type kynos::security::requirement::Member::Scheme: kynos::security::SecurityScheme
+pub const kynos::security::requirement::Member::FORBIDDEN_TYPE: core::option::Option<&'static str>
 pub const kynos::security::requirement::Member::FORBIDS: bool
 pub fn kynos::security::requirement::Member::scope_names() -> alloc::vec::Vec<&'static str>
 pub fn kynos::security::requirement::Member::scopes() -> core::option::Option<alloc::borrow::Cow<'static, [<Self::Scheme as kynos::security::SecurityScheme>::Scope]>>
 impl<S, R> kynos::security::requirement::Member for kynos::security::auth::Scoped<S, R> where S: kynos::security::SecurityScheme, R: kynos::security::auth::Scopes<Scope = <S as kynos::security::SecurityScheme>::Scope>
 pub type kynos::security::auth::Scoped<S, R>::Scheme = S
+pub const kynos::security::auth::Scoped<S, R>::FORBIDDEN_TYPE: core::option::Option<&'static str>
 pub const kynos::security::auth::Scoped<S, R>::FORBIDS: bool
 pub fn kynos::security::auth::Scoped<S, R>::scope_names() -> alloc::vec::Vec<&'static str>
 pub fn kynos::security::auth::Scoped<S, R>::scopes() -> core::option::Option<alloc::borrow::Cow<'static, [<S as kynos::security::SecurityScheme>::Scope]>>
 impl<S: kynos::security::SecurityScheme> kynos::security::requirement::Member for S
 pub type S::Scheme = S
+pub const S::FORBIDDEN_TYPE: core::option::Option<&'static str>
 pub const S::FORBIDS: bool
 pub fn S::scope_names() -> alloc::vec::Vec<&'static str>
 pub fn S::scopes() -> core::option::Option<alloc::borrow::Cow<'static, [<S as kynos::security::SecurityScheme>::Scope]>>
@@ -10306,6 +10317,7 @@ pub const kynos::security::requirement::Requirement::FORBIDS: bool
 pub const kynos::security::requirement::Requirement::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::Requirement::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::Requirement::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::Requirement::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::Requirement::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::Requirement::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member, D: kynos::security::requirement::Member, E: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D, E)>
@@ -10314,6 +10326,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D, E)>::FORBIDS: bool
 pub const kynos::security::requirement::AllOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member, D: kynos::security::requirement::Member, E: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D, E)>
@@ -10322,6 +10335,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::FORBIDS: bool
 pub const kynos::security::requirement::AnyOf<(A, B, D, E)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D, E)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member, D: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B, D)>
@@ -10330,6 +10344,7 @@ pub const kynos::security::requirement::AllOf<(A, B, D)>::FORBIDS: bool
 pub const kynos::security::requirement::AllOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AllOf<(A, B, D)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member, D: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B, D)>
@@ -10338,6 +10353,7 @@ pub const kynos::security::requirement::AnyOf<(A, B, D)>::FORBIDS: bool
 pub const kynos::security::requirement::AnyOf<(A, B, D)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AnyOf<(A, B, D)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B, D)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AllOf<(A, B)>
@@ -10346,6 +10362,7 @@ pub const kynos::security::requirement::AllOf<(A, B)>::FORBIDS: bool
 pub const kynos::security::requirement::AllOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AllOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AllOf<(A, B)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AllOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<A: kynos::security::requirement::Member, B: kynos::security::requirement::Member> kynos::security::requirement::Requirement for kynos::security::requirement::AnyOf<(A, B)>
@@ -10354,6 +10371,7 @@ pub const kynos::security::requirement::AnyOf<(A, B)>::FORBIDS: bool
 pub const kynos::security::requirement::AnyOf<(A, B)>::MAY_BE_UNAVAILABLE: bool
 pub fn kynos::security::requirement::AnyOf<(A, B)>::challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn kynos::security::requirement::AnyOf<(A, B)>::forbidden_type() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn kynos::security::requirement::AnyOf<(A, B)>::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 impl<S: kynos::security::SecurityScheme> kynos::security::requirement::Requirement for S
@@ -10362,6 +10380,7 @@ pub const S::FORBIDS: bool
 pub const S::MAY_BE_UNAVAILABLE: bool
 pub fn S::challenge() -> core::option::Option<&'static str>
 pub fn S::declare(&mut kynos::router::operation::OperationCx<'_>) -> alloc::vec::Vec<kynos_openapi::model::security::requirement::SecurityRequirement>
+pub fn S::forbidden_type() -> core::option::Option<&'static str>
 pub fn S::insufficient_scope_challenge() -> core::option::Option<&'static str>
 pub fn S::reads(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub trait kynos::security::requirement::Scopable: kynos::security::requirement::Requirement

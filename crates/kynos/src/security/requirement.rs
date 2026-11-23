@@ -11,12 +11,13 @@
 //! | [`AnyOf<(A, B)>`](AnyOf) | `[{A}, {B}]` | `A`, then `B`; the first that is satisfied wins |
 //! | [`AllOf<(A, B)>`](AllOf) | `[{A, B}]` | both, and both must be satisfied |
 //!
-//! A scheme is satisfied once it authenticates and is authorized for its
-//! default scopes, [`SecurityScheme::scopes`], where it has any.
+//! A member is satisfied once its scheme authenticates and is authorized for
+//! [`Member::scopes`]: a bare scheme for its default scopes,
+//! [`SecurityScheme::scopes`], where it has any, and a scoped one always.
 //!
 //! [`MaybeAuth`](crate::security::auth::MaybeAuth) prepends `{}` to any of the
-//! three. A combinator takes [`Member`]s, never other combinators, so each
-//! shape has exactly one spelling.
+//! three. A combinator takes [`Member`]s, never other combinators, so no shape
+//! is spelled by nesting.
 //!
 //! [`Scoped`] demands its scope set of a
 //! scheme, or of every alternative of an [`AnyOf`] whose schemes share one
@@ -27,6 +28,16 @@
 //! | --- | --- |
 //! | `AnyOf<(A, Scoped<B, R>)>` | `[{A}, {B: R}]` |
 //! | `AllOf<(A, Scoped<B, R>)>` | `[{A, B: R}]` |
+//!
+//! A scoped member always forbids, since its set may be refused, and always
+//! owes its scheme's
+//! [`insufficient_scope_challenge`](SecurityScheme::insufficient_scope_challenge).
+//!
+//! One shape has two spellings, by design: the guard
+//! `Scoped<AnyOf<(A, B)>, R>` is shorthand for
+//! `Auth<AnyOf<(Scoped<A, R>, Scoped<B, R>)>>`, and the two declare, authorize
+//! and narrow their 403 alike. The shorthand is the one to write where every
+//! alternative demands one set; the members, where the sets differ.
 
 use std::{borrow::Cow, future::Future, marker::PhantomData};
 
@@ -66,9 +77,10 @@ pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// is consulted.
     const MAY_BE_UNAVAILABLE: bool;
 
-    /// Whether a guard over this requirement may answer 403: any scheme's
-    /// [`SecurityScheme::FORBIDS`], since each one's authenticator is
-    /// consulted.
+    /// Whether a guard over this requirement may answer 403: any member's
+    /// [`Member::FORBIDS`], which is its scheme's [`SecurityScheme::FORBIDS`]
+    /// when bare and always holds when scoped, since each one's authenticator
+    /// is consulted and a demanded scope set may be refused.
     const FORBIDS: bool;
 
     /// The `WWW-Authenticate` challenge a 401 refusing this requirement sends.
@@ -77,14 +89,26 @@ pub trait Requirement: sealed::Sealed + Send + Sync + 'static {
     /// one challenge a client can answer.
     fn challenge() -> Option<&'static str>;
 
-    /// The `WWW-Authenticate` challenge a 403 refusing this requirement's
-    /// default scopes may send.
+    /// The `WWW-Authenticate` challenge a 403 refusing a scope this
+    /// requirement demands may send.
     ///
-    /// The first scheme's that has default scopes and an
-    /// [`insufficient_scope_challenge`](SecurityScheme::insufficient_scope_challenge),
-    /// in declaration order: a scheme with no defaults is never authorized by
-    /// a guard naming no scope set, so it never refuses a scope.
+    /// The first scheme's
+    /// [`insufficient_scope_challenge`](SecurityScheme::insufficient_scope_challenge)
+    /// among the members [`Member::scopes`] authorizes, in declaration order: a
+    /// scoped member always, and a bare one only where its scheme has default
+    /// scopes, since a bare scheme with none is never authorized, so it never
+    /// refuses a scope.
     fn insufficient_scope_challenge() -> Option<&'static str>;
+
+    /// The problem `type` every 403 a guard over this requirement sends
+    /// carries beside `about:blank`, which narrows the 403 it declares.
+    ///
+    /// The one [`Member::FORBIDDEN_TYPE`] every member names, so
+    /// `AnyOf<(Scoped<A, R>, Scoped<B, R>)>` narrows as
+    /// [`Scoped<AnyOf<(A, B)>, R>`](Scoped) does. `None`, leaving the 403
+    /// wide, for a bare scheme, and where any member names none or two name
+    /// different ones: a refusal may then carry any type.
+    fn forbidden_type() -> Option<&'static str>;
 
     /// Registers every scheme named, and returns the alternatives in the order
     /// the operation's `security` lists them.
@@ -182,6 +206,11 @@ pub trait Member: sealed::Sealed + 'static {
     /// demanded scope set may be refused.
     const FORBIDS: bool;
 
+    /// The problem `type` this member's refusals carry beside `about:blank`:
+    /// `R`'s [`Scopes::FORBIDDEN_TYPE`] when scoped, and `None`, any type, when
+    /// bare.
+    const FORBIDDEN_TYPE: Option<&'static str>;
+
     /// The scopes the scheme is authorized for once it authenticates: its
     /// default scopes when bare, `None` where it has none, so it is never
     /// authorized; when scoped, its defaults and then each of `R::REQUIRED`
@@ -275,6 +304,10 @@ impl<S: SecurityScheme> Requirement for S {
         owed_scope_challenge::<S>()
     }
 
+    fn forbidden_type() -> Option<&'static str> {
+        None
+    }
+
     fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
         vec![require::<S>(operation, defaults::<S>())]
     }
@@ -298,6 +331,8 @@ impl<S: SecurityScheme> Member for S {
     type Scheme = S;
 
     const FORBIDS: bool = <S as SecurityScheme>::FORBIDS;
+
+    const FORBIDDEN_TYPE: Option<&'static str> = None;
 
     fn scopes() -> Option<Cow<'static, [<S as SecurityScheme>::Scope]>> {
         owed_defaults::<S>().map(Cow::Borrowed)
@@ -323,6 +358,8 @@ where
     type Scheme = S;
 
     const FORBIDS: bool = true;
+
+    const FORBIDDEN_TYPE: Option<&'static str> = R::FORBIDDEN_TYPE;
 
     fn scopes() -> Option<Cow<'static, [<S as SecurityScheme>::Scope]>> {
         Some(demanded::<S>(R::REQUIRED))
@@ -447,6 +484,16 @@ fn first_challenge(challenges: &[fn() -> Option<&'static str>]) -> Option<&'stat
     challenges.iter().find_map(|challenge| challenge())
 }
 
+/// The one problem type every member's refusals name, or `None` where one
+/// names none or two disagree.
+fn agreed_forbidden_type(named: &[Option<&'static str>]) -> Option<&'static str> {
+    let (first, rest) = named.split_first()?;
+    let agreed = (*first)?;
+    rest.iter()
+        .all(|other| *other == Some(agreed))
+        .then_some(agreed)
+}
+
 /// Appends `requirement` to an [`AnyOf`]'s `alternatives` unless it is there:
 /// two schemes registered under one key are one alternative.
 fn alternative(alternatives: &mut Vec<SecurityRequirement>, requirement: SecurityRequirement) {
@@ -500,6 +547,10 @@ macro_rules! any_of {
 
             fn insufficient_scope_challenge() -> Option<&'static str> {
                 first_challenge(&[$(owed_scope_challenge::<$scheme>),+])
+            }
+
+            fn forbidden_type() -> Option<&'static str> {
+                agreed_forbidden_type(&[$(<$scheme as Member>::FORBIDDEN_TYPE),+])
             }
 
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {
@@ -610,6 +661,10 @@ macro_rules! all_of {
 
             fn insufficient_scope_challenge() -> Option<&'static str> {
                 first_challenge(&[$(owed_scope_challenge::<$scheme>),+])
+            }
+
+            fn forbidden_type() -> Option<&'static str> {
+                agreed_forbidden_type(&[$(<$scheme as Member>::FORBIDDEN_TYPE),+])
             }
 
             fn declare(operation: &mut OperationCx<'_>) -> Vec<SecurityRequirement> {

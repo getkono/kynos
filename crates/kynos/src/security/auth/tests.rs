@@ -1482,8 +1482,8 @@ fn a_scoped_member_declares_its_set_on_its_own_scheme_alone() {
 
 /// A scoped member makes its guard one that may refuse a scope: the 403 is
 /// declared even beside schemes that never forbid, carries the member's
-/// challenge, and stays the un-narrowed `Problem`, since `Auth` raises no
-/// `ScopedRejection` to narrow it by.
+/// challenge, and stays the un-narrowed `Problem` beside a bare member, whose
+/// refusals may carry any type.
 #[test]
 fn a_scoped_member_declares_the_403_a_scope_refusal_is() {
     /// Names its refusal.
@@ -1554,8 +1554,12 @@ fn members_naming_one_refusal_narrow_the_403_as_the_scoped_guard_does() {
         described::<Auth<AnyOf<(Scoped<Audited, Named>, Scoped<Bearer<String, Grant>, Named>)>>>();
     assert_eq!(members, guard);
 
+    // The body alone: `Auth<Bearer>` authorizes no scope, so it owes no
+    // `insufficient_scope` header the scoped guards declare.
     let forbidden = |operation: kynos_openapi::Operation| {
-        serde_json::to_value(&operation.responses.responses["403"]).expect("a serializable 403")
+        serde_json::to_value(&operation.responses.responses["403"])
+            .expect("a serializable 403")["content"]
+            .take()
     };
     let (single, _) = described::<Scoped<Bearer<String, Grant>, Named>>();
     let (together, _) =
