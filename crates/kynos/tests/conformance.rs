@@ -378,6 +378,54 @@ fn a_predicate_selecting_no_operation_is_refused() {
     });
 }
 
+/// Every client recording into one coverage is checked for conformance by
+/// one assertion, against the bound document or a named one; an exchange
+/// recorded by hand carries no response, so nothing of it is checked.
+#[tokio::test(start_paused = true)]
+async fn a_coverage_checks_every_client_recording_into_it_for_conformance() {
+    let document = service().expect("a describable router").openapi().clone();
+    let coverage = Coverage::for_document(document.clone());
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+    let writes = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+    exercise_writes(&writes).await;
+    coverage.record(&kynos::http::Method::GET, "/nowhere", StatusCode::NOT_FOUND);
+
+    coverage.assert_conformance();
+    coverage.assert_conformance_to(&document);
+}
+
+/// A response one client received is reported by the shared coverage, though
+/// that client's own conformance was never asserted.
+#[tokio::test]
+#[should_panic(expected = "1 response did not conform to the description:\n  \
+                           GET /nowhere -> 404: no declared path matches this request")]
+async fn a_coverage_reports_the_response_a_client_never_checked() {
+    let coverage =
+        Coverage::for_document(service().expect("a describable router").openapi().clone());
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+    let strays = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+    strays
+        .get("/nowhere")
+        .send()
+        .await
+        .assert_status(StatusCode::NOT_FOUND);
+
+    reads.assert_conformance();
+    coverage.assert_conformance();
+}
+
+/// A coverage built with no document has nothing for `assert_conformance` to
+/// check against, which is refused rather than passed vacuously.
+#[test]
+#[should_panic(expected = "name the document with `assert_conformance_to`")]
+fn an_unbound_coverage_refuses_to_assert_conformance() {
+    Coverage::new().assert_conformance();
+}
+
 /// Naming a document asserts against that document even on a bound record:
 /// bound to one declaring nothing, the record still reports what the named
 /// document declares and nobody exercised.
