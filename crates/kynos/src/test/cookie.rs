@@ -154,6 +154,7 @@ impl TestResponse {
     ///
     /// Panics when no `Set-Cookie` names `name`, naming those that were set,
     /// and when the one [`set_cookie`](Self::set_cookie) reads is a removal.
+    #[track_caller]
     pub fn assert_cookie_set(&self, name: &str) -> &Self {
         let (field, cookie) = self.expect_named(name);
         assert!(
@@ -171,6 +172,7 @@ impl TestResponse {
     /// Panics when no `Set-Cookie` names `name`, naming those that were set,
     /// and when the one [`set_cookie`](Self::set_cookie) reads is not a
     /// removal.
+    #[track_caller]
     pub fn assert_cookie_cleared(&self, name: &str) -> &Self {
         let (field, cookie) = self.expect_named(name);
         assert!(
@@ -191,18 +193,20 @@ impl TestResponse {
     }
 
     /// [`named`](Self::named), or a panic naming every cookie that was set.
+    #[track_caller]
     fn expect_named(&self, name: &str) -> (&str, TestSetCookie<'_>) {
-        self.named(name).unwrap_or_else(|| {
-            let set: Vec<&str> = self
-                .headers("set-cookie")
-                .into_iter()
-                .filter_map(|field| Some(TestSetCookie::parse(field)?.name))
-                .collect();
-            panic!(
-                "{}: no `Set-Cookie` names `{name}`; the response set {set:?}",
-                self.exchange()
-            )
-        })
+        if let Some(named) = self.named(name) {
+            return named;
+        }
+        let set: Vec<&str> = self
+            .headers("set-cookie")
+            .into_iter()
+            .filter_map(|field| Some(TestSetCookie::parse(field)?.name))
+            .collect();
+        panic!(
+            "{}: no `Set-Cookie` names `{name}`; the response set {set:?}",
+            self.exchange()
+        )
     }
 }
 

@@ -501,6 +501,7 @@ impl<C> TestClient<C> {
     }
 
     /// Reads back what has been observed so far.
+    #[track_caller]
     fn recorded(&self) -> std::sync::MutexGuard<'_, Vec<Observed>> {
         self.observed
             .lock()
@@ -525,6 +526,7 @@ impl<C> TestClient<C> {
     /// # Panics
     ///
     /// Panics listing every response that did not conform.
+    #[track_caller]
     pub fn assert_conformance(&self) {
         let document = self.service().openapi();
         let mut failures = Vec::new();
@@ -557,6 +559,7 @@ impl<C> TestClient<C> {
     /// # Panics
     ///
     /// Panics listing every declared response that was never seen.
+    #[track_caller]
     pub fn assert_declared_responses_covered(&self) {
         let recorded = self.recorded();
         assert_covered(
@@ -926,6 +929,7 @@ impl Coverage {
     /// # Panics
     ///
     /// Panics listing every declared response that was never seen.
+    #[track_caller]
     pub fn assert_declared_responses_covered(&self, document: &Document) {
         self.assert_against(document);
     }
@@ -941,6 +945,7 @@ impl Coverage {
     /// Panics when this record was not built
     /// [`for_document`](Self::for_document), and otherwise listing every
     /// declared response that was never seen.
+    #[track_caller]
     pub fn assert_covered(&self) {
         let document = self.document.as_deref().expect(
             "a Coverage built without a document has nothing to assert against; \
@@ -951,6 +956,7 @@ impl Coverage {
     }
 
     /// Asserts the recorded exchanges cover what `document` declares.
+    #[track_caller]
     fn assert_against(&self, document: &Document) {
         let exchanges = self
             .exchanges
@@ -983,6 +989,7 @@ fn push(exchanges: &Mutex<Vec<Exchange>>, exchange: Exchange) {
 }
 
 /// Asserts that every response `document` declares is among `received`.
+#[track_caller]
 fn assert_covered<'r>(
     document: &Document,
     received: impl Iterator<Item = (&'r HttpMethod, &'r Uri, StatusCode)>,
@@ -1824,6 +1831,7 @@ impl TestResponse {
     ///
     /// Panics, with the body included, when the status differs, and when a
     /// number is outside 100 to 999, which no status can be.
+    #[track_caller]
     pub fn assert_status(&self, expected: impl IntoStatus) -> &Self {
         self.check_status(expected, None)
     }
@@ -1847,6 +1855,7 @@ impl TestResponse {
     ///
     /// Panics as [`assert_status`](Self::assert_status) does, naming
     /// `reason`.
+    #[track_caller]
     pub fn assert_status_because(
         &self,
         expected: impl IntoStatus,
@@ -1856,6 +1865,7 @@ impl TestResponse {
     }
 
     /// Asserts the status, `reason` leading the failure where there is one.
+    #[track_caller]
     fn check_status(
         &self,
         expected: impl IntoStatus,
@@ -1865,9 +1875,10 @@ impl TestResponse {
             Some(reason) => format!("{}: {reason}", self.exchange()),
             None => self.exchange(),
         };
-        let expected = expected.status().unwrap_or_else(|code| {
-            panic!("{head}: `{code}` is not a status code, which is 100 to 999")
-        });
+        let expected = match expected.status() {
+            Ok(expected) => expected,
+            Err(code) => panic!("{head}: `{code}` is not a status code, which is 100 to 999"),
+        };
         let actual = self.status();
         assert!(
             actual == expected,
@@ -1896,6 +1907,7 @@ impl TestResponse {
     ///
     /// Panics as [`assert_status`](Self::assert_status) does.
     #[must_use = "a response nothing reads again is asserted with `assert_status`"]
+    #[track_caller]
     pub fn expect_status(self, expected: impl IntoStatus) -> Self {
         self.assert_status(expected);
         self
@@ -1911,27 +1923,29 @@ impl TestResponse {
     /// # Panics
     ///
     /// Panics when the body is not a problem document, or its `type` differs.
+    #[track_caller]
     pub fn assert_problem_type(&self, expected: &str) -> &Self {
         let expected = self.problem_type(expected);
         let expected = expected.as_ref();
-        let document: Value = serde_json::from_slice(&self.body).unwrap_or_else(|error| {
-            panic!(
+        let document: Value = match serde_json::from_slice(&self.body) {
+            Ok(document) => document,
+            Err(error) => panic!(
                 "{}: the body is not a problem document: {error}\n{}",
                 self.exchange(),
                 self.rendered_body()
-            )
-        });
+            ),
+        };
 
-        let actual = document
+        let Some(actual) = document
             .get("type")
             .map_or(Some("about:blank"), Value::as_str)
-            .unwrap_or_else(|| {
-                panic!(
-                    "{}: the problem document's `type` is not a string\n{}",
-                    self.exchange(),
-                    self.rendered_body()
-                )
-            });
+        else {
+            panic!(
+                "{}: the problem document's `type` is not a string\n{}",
+                self.exchange(),
+                self.rendered_body()
+            )
+        };
 
         assert!(
             actual == expected,
@@ -1971,6 +1985,7 @@ impl TestResponse {
     /// is absent or another media type; when the body is not a problem
     /// document, as [`problem`](Self::problem) reads one; when its `type`
     /// differs; and when its `status` member disagrees with the status line.
+    #[track_caller]
     pub fn assert_problem(&self, status: impl IntoStatus, type_uri: &str) -> &Self {
         self.assert_status(status);
 
@@ -2042,6 +2057,7 @@ impl TestResponse {
     /// ignores such a member, which in a test would hide the defect that
     /// produced it.
     #[must_use]
+    #[track_caller]
     pub fn problem(&self) -> TestProblem {
         let mut members = match serde_json::from_slice(&self.body) {
             Ok(Value::Object(members)) => members,
@@ -2057,33 +2073,28 @@ impl TestResponse {
             ),
         };
 
-        let mut string = |name: &str| match members.remove(name) {
-            None => None,
-            Some(Value::String(value)) => Some(value),
-            Some(_) => panic!(
-                "{}: the problem document's `{name}` is not a string\n{}",
-                self.exchange(),
-                self.rendered_body()
-            ),
-        };
-        let type_uri = string("type").unwrap_or_else(|| "about:blank".to_owned());
-        let title = string("title");
-        let detail = string("detail");
-        let instance = string("instance");
+        let type_uri = self
+            .problem_string(&mut members, "type")
+            .unwrap_or_else(|| "about:blank".to_owned());
+        let title = self.problem_string(&mut members, "title");
+        let detail = self.problem_string(&mut members, "detail");
+        let instance = self.problem_string(&mut members, "instance");
 
-        let status = members.remove("status").map(|value| {
-            value
+        let status = match members.remove("status") {
+            None => None,
+            Some(value) => match value
                 .as_u64()
                 .and_then(|number| u16::try_from(number).ok())
                 .filter(|number| StatusCode::from_u16(*number).is_ok())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{}: the problem document's `status` is not a status code\n{}",
-                        self.exchange(),
-                        self.rendered_body()
-                    )
-                })
-        });
+            {
+                Some(status) => Some(status),
+                None => panic!(
+                    "{}: the problem document's `status` is not a status code\n{}",
+                    self.exchange(),
+                    self.rendered_body()
+                ),
+            },
+        };
 
         TestProblem {
             type_uri,
@@ -2171,6 +2182,7 @@ impl TestResponse {
     /// # Panics
     ///
     /// Panics when the field is absent or carries something else.
+    #[track_caller]
     pub fn assert_header(&self, name: &str, expected: &str) -> &Self {
         match self.header(name) {
             Some(actual) => assert!(
@@ -2190,9 +2202,11 @@ impl TestResponse {
     /// Panics when `name` is not a header name, which no response could carry
     /// and so would pass whatever was sent, and when the response carries the
     /// field, naming every value it carries.
+    #[track_caller]
     pub fn assert_no_header(&self, name: &str) -> &Self {
-        let field = HeaderName::from_bytes(name.as_bytes())
-            .unwrap_or_else(|_| panic!("{}: `{name}` is not a header name", self.exchange()));
+        let Ok(field) = HeaderName::from_bytes(name.as_bytes()) else {
+            panic!("{}: `{name}` is not a header name", self.exchange())
+        };
         let values: Vec<String> = self
             .response
             .headers()
@@ -2214,6 +2228,7 @@ impl TestResponse {
     /// # Panics
     ///
     /// Panics when no `Set-Cookie` names `name`, or it carries something else.
+    #[track_caller]
     pub fn assert_cookie(&self, name: &str, expected: &str) -> &Self {
         let cookies = self.cookies();
         match cookies.iter().find(|(set, _)| *set == name) {
@@ -2237,6 +2252,7 @@ impl TestResponse {
     ///
     /// Panics when the status is not a redirect, or `Location` names something
     /// else.
+    #[track_caller]
     pub fn assert_redirect(&self, location: &str) -> &Self {
         assert!(
             self.status().is_redirection(),
@@ -2258,6 +2274,7 @@ impl TestResponse {
     /// Panics when `last` precedes `first`, which names no octets; when the
     /// status is not 206, the field is absent or names another span, or the
     /// body is not the length the field claims.
+    #[track_caller]
     pub fn assert_part(&self, first: u64, last: u64, complete_length: u64) -> &Self {
         assert!(
             first <= last,
@@ -2316,6 +2333,20 @@ impl TestResponse {
 
     /// `type_uri` joined to the problem base where it is a slug, and as
     /// given where it has a scheme or the client set no base.
+    /// Takes the string member `name` out of a problem document's `members`.
+    #[track_caller]
+    fn problem_string(&self, members: &mut Map<String, Value>, name: &str) -> Option<String> {
+        match members.remove(name) {
+            None => None,
+            Some(Value::String(value)) => Some(value),
+            Some(_) => panic!(
+                "{}: the problem document's `{name}` is not a string\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
+    }
+
     fn problem_type<'t>(&self, type_uri: &'t str) -> std::borrow::Cow<'t, str> {
         match &self.problem_base {
             Some(base) if !has_scheme(type_uri) => format!("{base}{type_uri}").into(),

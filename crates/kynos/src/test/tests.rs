@@ -1385,6 +1385,109 @@ mod assertions {
             setting(&[]).assert_cookie_cleared("sid");
         }
     }
+
+    /// Each assertion's failure points at the line of the test that made it,
+    /// which an editor and a backtrace-free report jump to, rather than into
+    /// this module.
+    mod located {
+        use std::{cell::Cell, panic};
+
+        use super::{PROBLEM, received};
+        use crate::{http::StatusCode, router::service::Service, test::Coverage};
+
+        thread_local! {
+            static LOCATION: Cell<Option<(String, u32)>> = const { Cell::new(None) };
+        }
+
+        /// The file and line `fail` panicked at, as the panic hook reads them.
+        fn location(fail: impl FnOnce()) -> (String, u32) {
+            let hook = panic::take_hook();
+            panic::set_hook(Box::new(|info| {
+                let location = info.location().expect("a panic raised here has a location");
+                LOCATION.set(Some((location.file().to_owned(), location.line())));
+            }));
+            let outcome = panic::catch_unwind(panic::AssertUnwindSafe(fail));
+            panic::set_hook(hook);
+            assert!(outcome.is_err(), "the assertion passed");
+            LOCATION.take().expect("the hook read the panic")
+        }
+
+        /// Asserts the statement fails, reported at the line it is written on.
+        macro_rules! fails_here {
+            ($($statement:tt)*) => {
+                assert_eq!(
+                    location(|| { $($statement)*; }),
+                    (file!().to_owned(), line!()),
+                    "`{}` reports another location",
+                    stringify!($($statement)*)
+                )
+            };
+        }
+
+        #[test]
+        fn a_failed_response_assertion_points_at_its_caller() {
+            let missing = received(StatusCode::NOT_FOUND, &[], b"not here");
+            fails_here!(missing.assert_status(200));
+            fails_here!(missing.assert_status(StatusCode::OK));
+            fails_here!(missing.assert_status(99));
+            fails_here!(missing.assert_status_because(200, "listed"));
+            fails_here!(let _ = received(StatusCode::NOT_FOUND, &[], b"").expect_status(200));
+            fails_here!(missing.assert_problem_type("about:blank"));
+            fails_here!(missing.assert_problem(404, "about:blank"));
+            fails_here!(let _ = missing.problem());
+            fails_here!(missing.assert_header("location", "/"));
+            fails_here!(missing.assert_no_header("a b"));
+            fails_here!(missing.assert_cookie("sid", "1"));
+            fails_here!(missing.assert_redirect("/"));
+            fails_here!(missing.assert_part(0, 1, 2));
+
+            let typed = received(
+                StatusCode::NOT_FOUND,
+                &[PROBLEM],
+                br#"{"type":1,"status":1}"#,
+            );
+            fails_here!(typed.assert_problem_type("about:blank"));
+            fails_here!(let _ = typed.problem());
+            let numbered = received(StatusCode::NOT_FOUND, &[PROBLEM], br#"{"status":1}"#);
+            fails_here!(let _ = numbered.problem());
+        }
+
+        #[cfg(feature = "cookie")]
+        #[test]
+        fn a_failed_cookie_assertion_points_at_its_caller() {
+            let cleared = received(StatusCode::OK, &[("set-cookie", "sid=; Max-Age=0")], b"");
+            fails_here!(cleared.assert_cookie_set("sid"));
+            fails_here!(cleared.assert_cookie_set("theme"));
+            fails_here!(cleared.assert_cookie_cleared("theme"));
+        }
+
+        /// A client and a coverage record fail where they are asserted on,
+        /// not where they recorded.
+        #[tokio::test]
+        async fn a_failed_description_assertion_points_at_its_caller() {
+            let document: kynos_openapi::Document = serde_json::from_value(serde_json::json!({
+                "openapi": "3.1.0",
+                "info": { "title": "Test", "version": "1" },
+                "paths": { "/things": { "get": { "responses": { "200": { "description": "" } } } } }
+            }))
+            .expect("a description");
+            let service = Service::<()>::new(document.clone(), |_| async {
+                let mut response = crate::http::Response::new(crate::http::body::Body::empty());
+                *response.status_mut() = StatusCode::NOT_FOUND;
+                response
+            });
+            let coverage = Coverage::new();
+            let client = crate::test::TestClient::new(service).with_coverage(&coverage);
+            client.get("/things").send().await;
+
+            fails_here!(client.assert_conformance());
+            fails_here!(client.assert_declared_responses_covered());
+            fails_here!(coverage.assert_declared_responses_covered(&document));
+            fails_here!(coverage.assert_covered());
+            let bound = Coverage::for_document(document);
+            fails_here!(bound.assert_covered());
+        }
+    }
 }
 
 /// What `TestClient::method` reads a method from: a name as the method it
