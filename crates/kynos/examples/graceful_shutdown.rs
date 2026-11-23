@@ -12,7 +12,7 @@
 //! finishes, and the process exits after it. Interrupt a second time and the
 //! drain stops where it stands.
 //!
-//! Five things are worth noticing:
+//! Six things are worth noticing:
 //!
 //! * **A trigger is a value, not a callback.** `Shutdown` is constructed and
 //!   handed over, so which one a process uses is a deployment decision made in
@@ -23,6 +23,10 @@
 //!   `ctrl_c` keep listening through the drain, so a second signal abandons it
 //!   immediately. `Shutdown::on` has no such escalation — the deadline is its
 //!   only bound, which is the reason a custom trigger deserves a shorter one.
+//! * **A clone is the same trigger.** The background worker below holds a
+//!   clone and stops at the very signal that begins the server's drain, so
+//!   nothing in the process installs a second set of signal handlers. Another
+//!   server given a clone would drain, and be forced, alongside this one.
 //! * **The deadline is bounded by default, and the default is chosen.** 25
 //!   seconds sits under the 30-second termination window orchestrators
 //!   conventionally allow. Raising it past that window buys nothing: the process
@@ -87,12 +91,36 @@ fn shutdown_trigger() -> Shutdown {
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let service = Router::<()>::new().mount(kynos::routes![slow]).build(())?;
+    let shutdown = shutdown_trigger();
+
+    // Work outside any request, which must stop taking more when shutdown
+    // begins rather than when the server's drain ends. Should the server stop
+    // for any other reason, the runtime ends this task with `main`.
+    tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move {
+            let mut ticks = tokio::time::interval(Duration::from_secs(1));
+            loop {
+                tokio::select! {
+                    begun = shutdown.begun() => {
+                        // The same failure to listen also ends `serve`.
+                        if let Err(error) = begun {
+                            eprintln!("the worker cannot hear a signal: {error}");
+                        }
+                        break;
+                    }
+                    _ = ticks.tick() => {}
+                }
+            }
+            println!("the worker stopped taking work");
+        }
+    });
 
     let bound = Server::new(service)
         // Port zero would be just as valid here; `local_addrs` below is what
         // makes it usable.
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
-        .graceful_shutdown(shutdown_trigger())
+        .graceful_shutdown(shutdown)
         // Ten rather than the default twenty-five, because the slowest
         // operation this service has takes five seconds. A drain deadline is
         // only useful when it is longer than the work and shorter than whatever
