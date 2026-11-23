@@ -611,6 +611,11 @@ impl<C: 'static> Server<C> {
     ///   [`ServerError::Bind`] when a supplied listener, an address, or a
     ///   resolved address fails; every listener already bound is dropped.
     /// - [`ServerError::NoListeners`] when nothing was configured to listen on.
+    ///
+    /// With TLS and `docs`, `Error::DescriptionShared` when a required client
+    /// certificate would change the description of a service whose router
+    /// mounts a docs reference and a clone of which is still alive, checked
+    /// before anything is bound.
     pub async fn prepare(self) -> Result<BoundServer<C>> {
         self.validate()?;
         validate_tcp_keepalive(self.tcp_keepalive)?;

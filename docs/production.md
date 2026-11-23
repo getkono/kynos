@@ -58,6 +58,15 @@ the worker. `begun` resolves at the signal, before any deregistration delay.
 [`graceful_shutdown`](../crates/kynos/examples/graceful_shutdown.rs) shows each
 trigger, and one shared by a server and a worker.
 
+A built `router::service::Service` is cheap to clone, and its clones are one
+router: one handler, one context, one set of mounted docs references. So a
+second listener, or a `TestClient` beside the server, takes a clone rather than
+building the router again, which would build its context and run every
+`observe` a second time. Each clone's `openapi()` is its own, while a reference
+serves one set of bytes for all of them, so an edit that would render it again
+(mutual TLS, `into_tower_unchecked`) is refused with `Error::DescriptionShared`
+while another clone lives. A router mounting no reference is never refused.
+
 ## What to do, and why
 
 Each entry here follows from a bound stated above, the deployment's own
