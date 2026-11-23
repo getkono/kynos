@@ -102,28 +102,6 @@
               }
             }
           },
-          "408": {
-            "description": "Request Timeout",
-            "content": {
-              "application/problem+json": {
-                "schema": {
-                  "allOf": [
-                    {
-                      "$ref": "#/components/schemas/Problem"
-                    },
-                    {
-                      "properties": {
-                        "type": {
-                          "type": "string",
-                          "const": "about:blank"
-                        }
-                      }
-                    }
-                  ]
-                }
-              }
-            }
-          },
           "413": {
             "description": "Payload Too Large",
             "content": {
@@ -227,6 +205,28 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Reading"
+                }
+              }
+            }
+          },
+          "408": {
+            "description": "Request Timeout",
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/Problem"
+                    },
+                    {
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "const": "about:blank"
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             }

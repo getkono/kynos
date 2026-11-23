@@ -894,8 +894,18 @@ it carries the interceptors' headers (a request id among them); its problem is
 stream alone. A handler reading its body itself sees the `BodyStalled` and
 decides what to answer. A response the handler had already returned before its
 read stalled stands, since by then its head may be on the wire. `None` waits
-indefinitely, and leaves the 408 declared: the router cannot see the server's
-setting, and a declared status nothing sends is the lesser error.
+indefinitely.
+
+The router declares the 408 without seeing the server, so the two are held to
+agree instead: `Router::declare_body_stall`, on by default as the timer is,
+says whether each operation a body extractor reads declares it, and
+`Server::prepare` and `serve_io` refuse a timer that disagrees: `None` beside
+a router declaring the 408, or a timeout beside one built with
+`declare_body_stall(false)`. A switch the router followed silently would
+publish a 408 nothing sends, or omit one the server does. The 408 is declared
+after every other contributor to the operation, so a 408 the operation's error
+type or an interceptor declares keeps its description and its place, and gains
+only the stall's `about:blank` among the types its schema publishes.
 
 The server applies the timer rather than an extractor or an interceptor because
 only the server has a peer to wait on, and it wraps the body once, before the

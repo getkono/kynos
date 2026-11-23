@@ -74,6 +74,10 @@ pub struct OperationCx<'a> {
     /// Response headers whose placement reads the finished set of responses,
     /// filed by [`finish`](Self::finish) in the order they were placed.
     placed: Vec<(Deferred, String, kynos_openapi::Header)>,
+    /// Whether [`read_request_body`](Self::read_request_body) set the request
+    /// body, so a stall can answer it with `BodyRejection::Stalled`'s 408.
+    #[cfg(feature = "server")]
+    reads_body: bool,
 }
 
 impl<'a> OperationCx<'a> {
@@ -86,6 +90,8 @@ impl<'a> OperationCx<'a> {
             tags: Vec::new(),
             links: Vec::new(),
             placed: Vec::new(),
+            #[cfg(feature = "server")]
+            reads_body: false,
         }
     }
 
@@ -141,6 +147,12 @@ impl OperationCx<'_> {
 
     /// Sets the operation's request body.
     ///
+    /// Declares no 408 for a stalled body. An extractor whose rejection
+    /// carries a stall through as
+    /// [`BodyRejection::Stalled`](crate::error::rejection::BodyRejection)'s
+    /// 408 calls [`read_request_body`](Self::read_request_body) instead, or
+    /// the 408 it sends goes undeclared.
+    ///
     /// # Panics
     ///
     /// Panics if a request body was already set. The trait bounds make this
@@ -192,6 +204,61 @@ impl OperationCx<'_> {
     /// where both require it.
     pub fn add_responses(&mut self, responses: &kynos_openapi::Responses) {
         crate::response::headers::union_from(&mut self.operation.responses, responses);
+    }
+
+    /// [`set_request_body`](Self::set_request_body), for a body whose stall
+    /// this extractor answers with
+    /// [`BodyRejection::Stalled`](crate::error::rejection::BodyRejection)'s 408,
+    /// so the operation declares that 408 as
+    /// [`Router::declare_body_stall`](crate::Router::declare_body_stall) says.
+    ///
+    /// Every built-in body extractor describes itself with it. A hand-written
+    /// one whose rejection carries a stall through as that 408 — one reading
+    /// through a built-in extractor's `from_request`, say — calls this rather
+    /// than `set_request_body`, or the 408 it sends goes undeclared; one that
+    /// answers a stall otherwise calls `set_request_body`.
+    ///
+    /// # Panics
+    ///
+    /// As [`set_request_body`](Self::set_request_body).
+    pub fn read_request_body(&mut self, body: kynos_openapi::RequestBody) {
+        self.set_request_body(body);
+        #[cfg(feature = "server")]
+        {
+            self.reads_body = true;
+        }
+    }
+
+    /// Declares the 408 a stalled body is answered with, where a Kynos body
+    /// extractor reads the body and `router_declares` it, as
+    /// [`Router::declare_body_stall`](crate::Router::declare_body_stall)
+    /// sets. Called once every other contributor is described, so the order
+    /// they were described in decides nothing.
+    ///
+    /// A 408 the operation already declares is the application's account of
+    /// that status, so it keeps its description and its place, and only its
+    /// schema and headers are unioned with the stall's, as
+    /// [`add_responses`](Self::add_responses) unions them. Otherwise the 408
+    /// is added after every other status.
+    #[cfg(feature = "server")]
+    pub(crate) fn declare_body_stall(&mut self, router_declares: bool) {
+        if !(router_declares && self.reads_body) {
+            return;
+        }
+        let stalled = crate::error::rejection::BodyRejection::stalled_responses(self.registry);
+        let key = StatusPattern::Code(408).to_string();
+        let written = match self.operation.responses.responses.get(&key) {
+            Some(RefOr::Item(response)) => Some(response.description.clone()),
+            _ => None,
+        };
+
+        self.add_responses(&stalled);
+
+        if let (Some(description), Some(RefOr::Item(response))) =
+            (written, self.operation.responses.responses.get_mut(&key))
+        {
+            response.description = description;
+        }
     }
 
     /// Declares a header this input causes the operation to send.

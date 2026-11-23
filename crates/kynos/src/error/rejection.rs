@@ -586,8 +586,10 @@ pub enum BodyRejection {
     /// Answered through the router like every other rejection, so it keeps
     /// what the interceptors add; the server then adds `Connection: close`
     /// over HTTP/1 (RFC 9110 §15.5.9). Exists only with the `server` feature,
-    /// the one thing that makes a body stall, so only there is the 408
-    /// declared.
+    /// the one thing that makes a body stall. The router, not this type's
+    /// [`Responses`], declares the 408, on each operation a body extractor
+    /// reads, as [`Router::declare_body_stall`](crate::Router::declare_body_stall)
+    /// says.
     #[cfg(feature = "server")]
     #[error("the request body stalled")]
     Stalled {
@@ -718,11 +720,33 @@ impl IntoResponse for BodyRejection {
     }
 }
 
+impl BodyRejection {
+    /// What its [`Responses`] declares: every status but
+    /// [`Stalled`](Self::Stalled)'s 408, which the router declares once every
+    /// other contributor to the operation is described.
+    const DECLARED: &[StatusCode] = &[
+        StatusCode::BAD_REQUEST,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        StatusCode::UNSUPPORTED_MEDIA_TYPE,
+        StatusCode::UNPROCESSABLE_ENTITY,
+    ];
+
+    /// The 408 a stalled body is answered with, as the router declares it on
+    /// an operation a body extractor reads.
+    #[cfg(feature = "server")]
+    pub(crate) fn stalled_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        problem_responses(registry, &[StatusCode::REQUEST_TIMEOUT], None, true)
+    }
+}
+
+/// Every status [`IntoProblem::statuses`] lists but the 408: whether a body
+/// can stall is the server's setting, so the router declares it, as
+/// `Router::declare_body_stall` (with `server`) says.
 impl Responses for BodyRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         problem_responses(
             registry,
-            <Self as IntoProblem>::statuses(),
+            Self::DECLARED,
             Some((StatusCode::UNPROCESSABLE_ENTITY, true)),
             false,
         )
@@ -731,7 +755,7 @@ impl Responses for BodyRejection {
     fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
         problem_responses(
             registry,
-            <Self as IntoProblem>::statuses(),
+            Self::DECLARED,
             Some((StatusCode::UNPROCESSABLE_ENTITY, true)),
             true,
         )

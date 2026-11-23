@@ -165,6 +165,10 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
     /// What [`problem_members`](Router::problem_members) installed.
     pub(crate) problem_members: Option<crate::error::members::Hook>,
+    /// What [`declare_body_stall`](Router::declare_body_stall) set; declared
+    /// until it is.
+    #[cfg(feature = "server")]
+    pub(crate) body_stall: Option<bool>,
     pub(crate) deny_unchecked_schemas: bool,
     /// Each [`map_openapi`](Router::map_openapi) edit, in call order.
     pub(crate) document_edits: Vec<DocumentEdit>,
@@ -226,6 +230,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
             trailing_slashes: None,
             trusted_proxies: None,
             problem_members: None,
+            #[cfg(feature = "server")]
+            body_stall: None,
             deny_unchecked_schemas: false,
             document_edits: Vec::new(),
             #[cfg(feature = "unchecked")]
@@ -259,6 +265,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
             problem_members: self.problem_members,
+            #[cfg(feature = "server")]
+            body_stall: self.body_stall,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
             document_edits: self.document_edits,
             #[cfg(feature = "unchecked")]
@@ -379,6 +387,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.trailing_slashes.is_some(), "trailing_slashes"),
             (other.trusted_proxies.is_some(), "trusted_proxies"),
             (other.problem_members.is_some(), "problem_members"),
+            // The server's timer is one per service, so its declaration is too.
+            #[cfg(feature = "server")]
+            (other.body_stall.is_some(), "declare_body_stall"),
             // An edit sees the whole document, which only the root assembles.
             (!other.document_edits.is_empty(), "map_openapi"),
         ] {
@@ -820,6 +831,53 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     #[must_use]
     pub fn trusted_proxies(mut self, trusted: crate::http::forwarded::TrustedProxies) -> Self {
         self.trusted_proxies = Some(trusted);
+        self
+    }
+
+    /// Sets whether each operation a Kynos body extractor reads declares the
+    /// `408 Request Timeout` a stalled body is answered with,
+    /// [`BodyRejection::Stalled`].
+    ///
+    /// An extractor says it reads one through
+    /// [`OperationCx::read_request_body`](crate::router::operation::OperationCx::read_request_body),
+    /// which every built-in body extractor calls, and which a hand-written one
+    /// whose rejection carries a stall through as that 408 calls too.
+    ///
+    /// On by default, as
+    /// [`Server::request_body_idle_timeout`](crate::server::Server::request_body_idle_timeout)
+    /// is, and the two must agree: a server refuses to serve a service whose
+    /// router declares the 408 its timer never sends, or omits the one it
+    /// does. A server with no idle timer pairs with `declare_body_stall(false)`.
+    ///
+    /// The 408 is declared after every other contributor to the operation. A
+    /// 408 the operation already declares, from its error type or an
+    /// interceptor, keeps its description and its place, and only gains the
+    /// stall's `about:blank` among the problem types its schema publishes.
+    ///
+    /// One application-level policy, as the server's timer is one per
+    /// service, so it is set on the root router: on a router that is then
+    /// nested or merged, it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    ///
+    /// ```no_run
+    /// # async fn run() -> Result<(), kynos::Error> {
+    /// use kynos::{Router, server::Server};
+    ///
+    /// // Each body bounded by deadlines of the application's own.
+    /// let service = Router::<()>::new().declare_body_stall(false).build(())?;
+    /// Server::new(service)
+    ///     .request_body_idle_timeout(None)
+    ///     .bind(("0.0.0.0", 3000))
+    ///     .serve()
+    ///     .await
+    /// # }
+    /// ```
+    ///
+    /// [`BodyRejection::Stalled`]: crate::error::rejection::BodyRejection::Stalled
+    #[cfg(feature = "server")]
+    #[must_use]
+    pub fn declare_body_stall(mut self, declare: bool) -> Self {
+        self.body_stall = Some(declare);
         self
     }
 

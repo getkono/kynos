@@ -41,6 +41,24 @@ pub(crate) fn validate_request_body_idle_timeout(
     )
 }
 
+/// Refuses an idle `timeout` that disagrees with whether the service's router
+/// `declared` the 408 it answers a stall with: a document that promises a
+/// 408 nothing sends, or omits one the server does.
+pub(crate) fn validate_body_stall(
+    declared: bool,
+    timeout: Option<Duration>,
+) -> std::result::Result<(), ServerError> {
+    match (declared, timeout) {
+        (true, None) => Err(ServerError::InvalidConfiguration(
+            "request_body_idle_timeout is off, so the router must not declare its 408: build it with declare_body_stall(false)",
+        )),
+        (false, Some(_)) => Err(ServerError::InvalidConfiguration(
+            "the router was built with declare_body_stall(false), so the 408 request_body_idle_timeout answers with is undeclared: set request_body_idle_timeout(None)",
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// `body`, failing with [`BodyStalled`] once its reader has waited `limit` for
 /// a frame, and the stall that [`answer`] reads back after the chain has
 /// returned.

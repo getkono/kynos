@@ -153,6 +153,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         });
         #[cfg(feature = "docs")]
         let service = service.with_published(published);
+        #[cfg(feature = "server")]
+        let service = service.with_body_stall(self.body_stall != Some(false));
         Ok(service)
     }
 }

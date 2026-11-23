@@ -104,7 +104,7 @@ use crate::{
         error::ServerError,
         lifecycle::{Drain, Lifecycle},
         protocol::validate_protocol_config,
-        request_body::validate_request_body_idle_timeout,
+        request_body::{validate_body_stall, validate_request_body_idle_timeout},
         shutdown::{ForceFuture, Shutdown, ShutdownFuture},
         tcp::{SocketOptions, TcpKeepAlive, validate_tcp_keepalive},
     },
@@ -570,11 +570,16 @@ impl<C: 'static> Server<C> {
     /// A response the handler had already returned before the stall stands
     /// unchanged.
     ///
-    /// Turning the timer off leaves the 408 declared.
+    /// The router declares that 408 unless built with
+    /// [`declare_body_stall(false)`](crate::Router::declare_body_stall), and
+    /// the two must agree, so a service's document never promises a 408 the
+    /// server does not send or omits one it does.
     ///
     /// [`BodyRejection::Stalled`]: crate::error::rejection::BodyRejection::Stalled
     ///
-    /// [`prepare`](Self::prepare) refuses `Some(Duration::ZERO)`.
+    /// [`prepare`](Self::prepare) refuses `Some(Duration::ZERO)`, `None` for
+    /// a service whose router declares the 408, and a timeout for one whose
+    /// router does not.
     #[must_use]
     pub fn request_body_idle_timeout(mut self, timeout: Option<Duration>) -> Self {
         self.request_body_idle_timeout = timeout;
@@ -848,6 +853,10 @@ impl<C: 'static> Server<C> {
             self.http2,
         )?;
         validate_request_body_idle_timeout(self.request_body_idle_timeout)?;
+        validate_body_stall(
+            self.service.declares_body_stall(),
+            self.request_body_idle_timeout,
+        )?;
         Ok(())
     }
 }

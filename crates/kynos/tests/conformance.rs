@@ -290,10 +290,10 @@ async fn coverage_shared_by_two_clients_covers_what_both_exercised() {
 #[cfg_attr(
     feature = "server",
     should_panic(expected = "7 responses declared but never exercised:\n  \
-                             POST /users -> 400\n  POST /users -> 408\n  \
-                             POST /users -> 413\n  POST /users -> 415\n  \
-                             POST /users -> 422\n  POST /users -> 201\n  \
-                             POST /users -> 409")
+                             POST /users -> 400\n  POST /users -> 413\n  \
+                             POST /users -> 415\n  POST /users -> 422\n  \
+                             POST /users -> 201\n  POST /users -> 409\n  \
+                             POST /users -> 408")
 )]
 #[cfg_attr(
     not(feature = "server"),
