@@ -149,7 +149,7 @@ fn described_refusal<T: ProblemType>(
     group: kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
 ) -> kynos_openapi::Responses {
     let response = group.into_iter().fold(
-        refusal_response::<T>(registry, 429, "the client has exceeded its request rate")
+        refusal_response::<T>(registry, "the client has exceeded its request rate")
             .with_header("Retry-After", retry_after_header()),
         |response, (name, header)| match header {
             kynos_openapi::RefOr::Item(header) => response.with_header(name, header),

@@ -46,7 +46,7 @@
 //! [`QueryRejection`]: kynos::error::rejection::QueryRejection
 //! [`BodyRejection`]: kynos::error::rejection::BodyRejection
 
-use std::net::Ipv4Addr;
+use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
     http,
@@ -133,14 +133,6 @@ struct Invalid {
     field: String,
 }
 
-/// How long a client should wait before trying again.
-#[derive(Debug, HeaderParams)]
-struct RetryAfter {
-    /// Seconds until the store accepts writes again.
-    #[header(rename = "Retry-After")]
-    retry_after: u64,
-}
-
 /// What the API says when the store cannot do what was asked.
 ///
 /// One variant per failure a consumer should be able to tell apart. The
@@ -193,12 +185,14 @@ enum StoreError {
     },
 
     /// Sends `Retry-After`, which the description declares on the 429 alone:
-    /// no other status sends it, so no other status says it might.
-    #[error("the store is busy; retry in {}s", retry.retry_after)]
+    /// no other status sends it, so no other status says it might. The field
+    /// is the wait itself, sent in whole seconds rounded up, as Kynos's own
+    /// `RateLimit` sends it.
+    #[error("the store is busy")]
     #[problem(status = 429, title = "Store busy")]
     Busy {
-        #[problem(headers)]
-        retry: RetryAfter,
+        #[problem(retry_after)]
+        wait: Duration,
     },
 }
 
@@ -212,7 +206,7 @@ enum StoreError {
 #[derive(Debug, ApiError)]
 #[problem(subset_of = StoreError)]
 enum ListError {
-    Busy { retry: RetryAfter },
+    Busy { wait: Duration },
 }
 
 /// What resolving a user behind the store fails with: the store's own `Busy`,
@@ -228,7 +222,7 @@ enum ListError {
 enum ResolveError {
     #[error("the store is busy")]
     #[problem(variant_of = StoreError::Busy)]
-    Busy { retry: RetryAfter },
+    Busy { wait: Duration },
 
     #[error("that user was deleted")]
     #[problem(status = 410)]
@@ -307,7 +301,7 @@ async fn get_user(Path(path): Path<UserPath>) -> Result<Json<User>, StoreError> 
 async fn list_users(Query(page): Query<Page>) -> Result<Json<Vec<User>>, ListError> {
     if page.limit > 50 {
         return Err(ListError::Busy {
-            retry: RetryAfter { retry_after: 1 },
+            wait: Duration::from_millis(500),
         });
     }
     Ok(Json(Vec::new()))
@@ -345,7 +339,7 @@ fn insert(user: User) -> Result<User, StoreError> {
 
     if user.id == 1 {
         return Err(StoreError::Busy {
-            retry: RetryAfter { retry_after: 5 },
+            wait: Duration::from_secs(5),
         });
     }
 

@@ -1,0 +1,11 @@
+error[E0080]: evaluation panicked: a failure's `#[problem(retry_after)]` field sends `Retry-After`, so the `#[problem(headers)]` group beside it cannot name it too
+  --> tests/ui/macros/api_error_retry_after_beside_its_group.rs:23:17
+   |
+23 |     throttling: Throttling,
+   |                 ^^^^^^^^^^ evaluation of `<Throttled as kynos::response::IntoResponse>::into_response::{constant#0}` failed here
+
+note: erroneous constant encountered
+  --> tests/ui/macros/api_error_retry_after_beside_its_group.rs:23:17
+   |
+23 |     throttling: Throttling,
+   |                 ^^^^^^^^^^

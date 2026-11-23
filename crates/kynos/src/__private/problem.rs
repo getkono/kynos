@@ -3,8 +3,8 @@
 //! unions its statuses with, sends its
 //! extension members through, declares a constant one by, and sends and
 //! declares a failure's
-//! `#[problem(headers)]` group with, and logs a 5xx failure through before its
-//! problem consumes it.
+//! `#[problem(headers)]` group and `#[problem(retry_after)]` delay with, and
+//! logs a 5xx failure through before its problem consumes it.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built, and the header helpers to
@@ -13,10 +13,13 @@
 //! event is emitted by `middleware::trace::reported`, next to the request
 //! log, so the logging facade stays named where the runtime allowance lists.
 
+use std::time::Duration;
+
 use kynos_openapi::{Header, Map, RefOr, Response, Schema as OpenApiSchema};
 
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
+    http::retry_after::RetryAfter,
     schema::registry::Registry,
 };
 
@@ -109,6 +112,92 @@ pub fn union_responses(responses: &mut kynos_openapi::Responses, held: &kynos_op
 /// 500 in its place.
 pub fn write_headers<H: EncodeHeaders>(response: &mut crate::http::Response, group: &H) {
     crate::response::headers::write_or_refuse(response, group);
+}
+
+/// What a `#[problem(retry_after)]` field holds: a delay every occurrence
+/// sends, or one sent only when it holds a value.
+#[diagnostic::on_unimplemented(
+    message = "`#[problem(retry_after)]` marks a `Duration` or an `Option<Duration>`, not \
+               `{Self}`",
+    label = "not a delay",
+    note = "the derive sends the delay in whole seconds rounded up, as \
+            `kynos::http::retry_after::RetryAfter` does; a field holding a header group of its \
+            own says `#[problem(headers)]`"
+)]
+pub trait RetryAfterField {
+    /// Whether every occurrence sends the field, so its declaration is
+    /// required.
+    const ALWAYS: bool;
+
+    /// The delay to send, if any.
+    fn delay(&self) -> Option<Duration>;
+}
+
+impl RetryAfterField for Duration {
+    const ALWAYS: bool = true;
+
+    #[inline]
+    fn delay(&self) -> Option<Duration> {
+        Some(*self)
+    }
+}
+
+impl RetryAfterField for Option<Duration> {
+    const ALWAYS: bool = false;
+
+    #[inline]
+    fn delay(&self) -> Option<Duration> {
+        *self
+    }
+}
+
+/// Writes a failure's `#[problem(retry_after)]` field onto the problem
+/// response it answers with, as [`RetryAfter`] sends it; nothing where the
+/// field holds no delay.
+pub fn write_retry_after<F: RetryAfterField>(response: &mut crate::http::Response, field: &F) {
+    if let Some(delay) = field.delay() {
+        write_headers(response, &RetryAfter::new(delay));
+    }
+}
+
+/// Adds to one failure's `group`, as [`headers`] read it, the `Retry-After`
+/// its `#[problem(retry_after)]` field sends, described as [`RetryAfter`]
+/// describes it and required only where every occurrence sends it.
+pub fn with_retry_after<F: RetryAfterField>(
+    registry: &mut Registry,
+    group: &mut Map<RefOr<Header>>,
+) {
+    for (name, mut header) in headers::<RetryAfter>(registry) {
+        match &mut header {
+            RefOr::Item(header) if !F::ALWAYS => header.required = None,
+            _ => {}
+        }
+        group.insert(name, header);
+    }
+}
+
+/// Whether a header group's `names` hold `Retry-After`, which a failure's
+/// `#[problem(retry_after)]` field already sends; compared as RFC 9110
+/// section 5.1 compares field names, in a `const`.
+#[must_use]
+pub const fn names_retry_after(names: &[&str]) -> bool {
+    const RETRY_AFTER: &[u8] = b"retry-after";
+
+    let mut at = 0;
+    while at < names.len() {
+        let name = names[at].as_bytes();
+        if name.len() == RETRY_AFTER.len() {
+            let mut byte = 0;
+            while byte < name.len() && name[byte].eq_ignore_ascii_case(&RETRY_AFTER[byte]) {
+                byte += 1;
+            }
+            if byte == name.len() {
+                return true;
+            }
+        }
+        at += 1;
+    }
+    false
 }
 
 /// An extension member as its type serializes it, so the wire follows the

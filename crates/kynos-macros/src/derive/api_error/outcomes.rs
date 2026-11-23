@@ -9,11 +9,12 @@ use syn::{
 };
 
 use super::{
-    Extension, Failure, HeaderField, Outcome, Transparent, TypeUri,
+    Extension, Failure, Outcome, Transparent, TypeUri,
     args::{
         Base, Constant, Markers, Position, ProblemArgs, check_field_markers, error_transparent,
         parse_problem,
     },
+    fields::{header_field, retry_after_field},
 };
 use crate::doc::doc_string;
 
@@ -96,6 +97,7 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                         constants: constants(std::mem::take(&mut args.constants), &extensions)?,
                         extensions,
                         headers: header_field(&variant.fields, &markers)?,
+                        retry_after: retry_after_field(&variant.fields, &markers)?,
                         status,
                         type_uri: type_uri(&args, base, &variant.ident),
                         title: args.title,
@@ -124,6 +126,7 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                 constants: constants(args.constants.clone(), &extensions)?,
                 extensions,
                 headers: header_field(&data.fields, &markers)?,
+                retry_after: retry_after_field(&data.fields, &markers)?,
                 status,
                 type_uri: type_uri(args, base, &input.ident),
                 title: args.title.clone(),
@@ -187,6 +190,14 @@ fn transparent(
             span,
             "a transparent variant sends the headers of the error it holds, which is not a \
              header group itself",
+        ));
+    }
+
+    if let Some(span) = marked.retry_after {
+        return Err(syn::Error::new(
+            span,
+            "a transparent variant sends the `Retry-After` of the error it holds, which is not a \
+             delay itself",
         ));
     }
 
@@ -344,49 +355,4 @@ fn constants(constants: Vec<Constant>, extensions: &[Extension]) -> syn::Result<
         }
     }
     Ok(constants)
-}
-
-/// The one field marked `#[problem(headers)]`, by its `markers`, refusing a
-/// second and one also published as an extension member.
-fn header_field(fields: &Fields, markers: &[Markers]) -> syn::Result<Option<Box<HeaderField>>> {
-    let mut found: Option<(HeaderField, String)> = None;
-
-    for (index, (field, marked)) in fields.iter().zip(markers).enumerate() {
-        let Some(span) = marked.headers else {
-            continue;
-        };
-
-        if marked.extension.is_some() {
-            return Err(syn::Error::new(
-                span,
-                "a header group is sent as response fields, not published in the body. Mark this \
-                 field `extension` or `headers`, not both",
-            ));
-        }
-
-        let member = field
-            .ident
-            .clone()
-            .map_or_else(|| Member::Unnamed(Index::from(index)), Member::Named);
-        if let Some((_, first)) = &found {
-            return Err(syn::Error::new(
-                span,
-                format!(
-                    "this failure already sends the header group in `{first}`; one group holds \
-                     every header it sends"
-                ),
-            ));
-        }
-
-        let name = member.to_token_stream().to_string();
-        found = Some((
-            HeaderField {
-                member,
-                ty: field.ty.clone(),
-            },
-            name,
-        ));
-    }
-
-    Ok(found.map(|(field, _)| Box::new(field)))
 }

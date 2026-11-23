@@ -6847,6 +6847,107 @@ fn a_status_shared_with_a_transparent_variant_declares_both_sides_headers() {
     }
 }
 
+// --- A failure sends and declares `Retry-After` from a delay ----------------
+//
+// `#[problem(retry_after)]` on a `Duration` sends and declares what
+// `RetryAfter` does, alone or beside a group; on an `Option<Duration>`, only
+// when it holds one, and required nowhere.
+
+/// A group naming another field, sent beside a delay.
+#[derive(Debug, HeaderParams)]
+struct QueuePolicy {
+    #[header(rename = "RateLimit-Policy")]
+    policy: String,
+}
+
+/// One status every failure sends a delay on, and one some do: from an
+/// `Option`, from a tuple field, and beside a group.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum LoginThrottle {
+    #[error("too many login attempts")]
+    #[problem(status = 429, title = "Too many login attempts")]
+    Throttled {
+        #[problem(retry_after)]
+        wait: std::time::Duration,
+    },
+
+    #[error("logins are paused")]
+    #[problem(status = 503)]
+    Paused(#[problem(retry_after)] Option<std::time::Duration>),
+
+    #[error("the login queue is full")]
+    #[problem(status = 503)]
+    Full {
+        #[problem(retry_after)]
+        wait: std::time::Duration,
+        #[problem(headers)]
+        quota: QueuePolicy,
+    },
+}
+
+/// A delay is sent as `RetryAfter` sends it, rounded up; an `Option` holding
+/// none sends nothing, and a group beside a delay sends its own field too.
+#[test]
+fn a_failure_sends_its_delay_as_retry_after_rounded_up() {
+    use std::time::Duration;
+
+    let throttled = LoginThrottle::Throttled {
+        wait: Duration::from_millis(1_200),
+    };
+    assert_eq!(
+        retry_after(&throttled.into_response()),
+        (429, Some("2".to_owned()))
+    );
+
+    assert_eq!(
+        retry_after(&LoginThrottle::Paused(None).into_response()),
+        (503, None)
+    );
+    assert_eq!(
+        retry_after(&LoginThrottle::Paused(Some(Duration::from_secs(30))).into_response()),
+        (503, Some("30".to_owned()))
+    );
+
+    let full = LoginThrottle::Full {
+        wait: Duration::ZERO,
+        quota: QueuePolicy {
+            policy: "burst".to_owned(),
+        },
+    }
+    .into_response();
+    assert_eq!(retry_after(&full), (503, Some("0".to_owned())));
+    assert_eq!(full.headers()["ratelimit-policy"], "burst");
+}
+
+/// A delay is declared as `RetryAfter` declares it, required only where
+/// every failure answering with the status sends one, beside the group a
+/// failure also sends.
+#[test]
+fn a_delay_is_declared_as_retry_after_declares_it() {
+    let declared = |required: bool| {
+        let mut header = serde_json::to_value(
+            <kynos::http::retry_after::RetryAfter as HeaderParams>::response_headers(
+                &mut kynos::schema::registry::Registry::new(),
+            ),
+        )
+        .expect("a header serializes");
+        if !required {
+            header["Retry-After"]
+                .as_object_mut()
+                .expect("a header object")
+                .remove("required");
+        }
+        header
+    };
+    let responses = emitted_responses::<LoginThrottle>();
+
+    assert_eq!(responses["429"]["headers"], declared(true), "{responses}");
+
+    let mut expected = declared(false);
+    expected["RateLimit-Policy"] = serde_json::json!({"schema": emitted::<String>()});
+    assert_eq!(responses["503"]["headers"], expected, "{responses}");
+}
+
 // --- A member is named as serde names it ------------------------------------
 //
 // serde names a raw identifier without its `r#`, and uses each side of a split

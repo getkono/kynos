@@ -7,13 +7,15 @@
 //!
 //! [`body`] holds the one type Kynos defines; [`cookie`] and [`etag`] read
 //! their fields' grammar; [`forwarded`] resolves the client behind trusted
-//! proxies; [`media`] names media types in the type system.
+//! proxies; [`media`] names media types in the type system; [`retry_after`]
+//! sends a delay as Kynos's own refusals do.
 
 pub mod body;
 pub mod cookie;
 pub mod etag;
 pub mod forwarded;
 pub mod media;
+pub mod retry_after;
 
 // Private: the router derives it from the description; no handler builds one.
 #[cfg(feature = "openapi32")]
@@ -299,11 +301,13 @@ pub(crate) fn retry_after_header() -> kynos_openapi::Header {
     .with_description("How long to wait before retrying, in seconds or as an HTTP-date")
 }
 
-/// Sets `Retry-After` on `response` to `delay` in [`whole_seconds`].
+/// Sets `Retry-After` on `response` to `delay`, as
+/// [`RetryAfter`](retry_after::RetryAfter) sends it.
 pub(crate) fn set_retry_after(response: &mut Response, delay: std::time::Duration) {
-    response
-        .headers_mut()
-        .insert(header::RETRY_AFTER, HeaderValue::from(whole_seconds(delay)));
+    response.headers_mut().insert(
+        header::RETRY_AFTER,
+        HeaderValue::from(retry_after::RetryAfter::new(delay).seconds()),
+    );
 }
 
 /// Merges `names` into whatever `Vary` a response already carries.

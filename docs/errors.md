@@ -42,6 +42,12 @@ not a value, and why the marker goes on the *refusal* rather than on the
 interceptor: a type answering with three statuses carries three markers, which
 is what `middleware::decompression::Undecodable` does.
 
+The two are public, so an interceptor an application writes refuses the way
+every built-in one does rather than copying a built-in refusal's description
+and rewriting it. `refusal_response` takes no status: its `summary` is the
+whole description, and `Responses::with` already keys the status, so a second
+spelling could only disagree with the first.
+
 **Two shapes for one idea, and the difference is whether a type is already
 there.** `Scopes::FORBIDDEN_TYPE` is a `const` on a trait the *application*
 already implements for its own scope set, so a URI has somewhere to hang and a
@@ -134,6 +140,7 @@ enum StoreError {
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
+| field | `retry_after` | send this field, a `Duration` or an `Option<Duration>`, as `Retry-After` on this failure's response, as `http::retry_after::RetryAfter` sends and declares it |
 
 **`title` is read twice, and its absence is answered differently each time.**
 On the wire it is the problem's `title`, and a variant that declares none
@@ -218,13 +225,41 @@ name is refused where RFC 9457 defines the member (`type`, `title`, `status`,
 `detail`, `instance`) and where a field on the same failure is already
 published under it, since one name holds one value.
 
-**A header one failure sends is that failure's.** `Retry-After` on a 429 is
+**A header one failure sends is that failure's.** A header on a 429 is
 `#[problem(headers)]` on a field of the 429's variant, holding a group deriving
 `HeaderParams`. `WithHeaders<E, H>` would declare it on every status `E`
 describes and make every other failure build a value for it. A status several
 failures share declares each group any of them sends, required only where all
 of them require it, and a transparent variant's held error sends and declares
 its own the same way. `WithHeaders` stays for a group every status sends.
+
+**`Retry-After` is the delay, not a number of seconds.** It is
+`#[problem(retry_after)]` on the `Duration` the failure waits for:
+
+```rust
+#[error("{detail}")]
+#[problem(status = 429, title = "Too many login attempts")]
+LoginThrottled {
+    detail: &'static str,
+    #[problem(retry_after)]
+    wait: Duration,
+},
+```
+
+It is sent and declared as `http::retry_after::RetryAfter` is, which is how
+`RateLimit`'s 429 and `Concurrency`'s 503 send it: in whole seconds rounded
+up, so 1.2 s is `2` rather than a retry into the same refusal, and described as
+a string, since RFC 9110 section 10.2.3 admits an HTTP-date there, so one
+document describes the field one way whoever sends it. A hand-written group
+holding a `u64` gets neither: its schema says `integer` beside Kynos's
+`string`, and every construction site rounds for itself. An
+`Option<Duration>` sends nothing when it holds nothing and is required
+nowhere. The field joins the failure's `headers` group, if it has one; a group
+naming `Retry-After` beside it is a compile error, since one would overwrite
+the other. The marker publishes no extension member, and is refused beside
+`extension`: a `Duration` serializes as serde's `{secs, nanos}`, which no
+client wants. A failure that states the wait in its body too publishes
+`RetryAfter::seconds` from an extension field, so the two agree.
 
 **One namespace is one `const`.** Several error types sharing a prefix name it
 as `#[problem(base = crate::PROBLEM_BASE)]` rather than repeating the literal,
@@ -311,11 +346,15 @@ no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an
 no `status`, over
 other than one field, over a field marked `extension`, over a field naming the
 enum's generic parameters or holding no `ApiError`, a `headers` field whose
-type is no header group, and a type with no
+type is no header group, a `retry_after` field whose type is no delay, a
+`headers` group naming `Retry-After` beside a `retry_after` field, and a type
+with no
 `Display` are all compile errors, each with a case
 in [`tests/ui/macros`](../crates/kynos/tests/ui/macros). So are `headers` on a
 variant or type, beside `extension` on one field, twice on one failure, and
-over a transparent variant's field, and `extension` on a field named like a
+over a transparent variant's field; `retry_after` on a variant or type, beside
+`extension` or `headers` on one field, twice on one failure, and over a
+transparent variant's field; and `extension` on a field named like a
 member RFC 9457 defines, raw prefix aside, each with a case in the derive's own
 diagnostic ledger. So is an `extension(...)` list on an enum or a transparent
 variant, naming no member, naming one by a path, by a registered member's name

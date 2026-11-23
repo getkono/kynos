@@ -254,6 +254,8 @@ pub trait kynos::error::problem::ProblemType: 'static
 pub const kynos::error::problem::ProblemType::TYPE_URI: core::option::Option<&'static str>
 impl kynos::error::problem::ProblemType for ()
 pub const ()::TYPE_URI: core::option::Option<&'static str>
+pub fn kynos::error::problem::refusal_problem<T: kynos::error::problem::ProblemType>(http::status::StatusCode) -> kynos::error::problem::Problem
+pub fn kynos::error::problem::refusal_response<T: kynos::error::problem::ProblemType>(&mut kynos::schema::registry::Registry, &'static str) -> kynos_openapi::model::response::Response
 pub mod kynos::error::rejection
 #[non_exhaustive] pub enum kynos::error::rejection::AuthRejection
 pub kynos::error::rejection::AuthRejection::Forbidden
@@ -2318,6 +2320,8 @@ impl kynos::extract::params::header::EncodeHeaders for ()
 pub fn ()::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::http::etag::ETag
 pub fn kynos::http::etag::ETag::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
+impl kynos::extract::params::header::EncodeHeaders for kynos::http::retry_after::RetryAfter
+pub fn kynos::http::retry_after::RetryAfter::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::compression::ContentEncoding
 pub fn kynos::middleware::compression::ContentEncoding::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::cookies::SetCookieHeaders
@@ -2366,6 +2370,14 @@ pub const kynos::http::etag::ETag::VARIES: &'static [&'static str]
 pub fn kynos::http::etag::ETag::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::http::etag::ETag::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::http::etag::ETag::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
+impl kynos::extract::params::header::HeaderParams for kynos::http::retry_after::RetryAfter
+pub const kynos::http::retry_after::RetryAfter::DESCRIBED: bool
+pub const kynos::http::retry_after::RetryAfter::NAMES: &'static [&'static str]
+pub const kynos::http::retry_after::RetryAfter::REPEATABLE: bool
+pub const kynos::http::retry_after::RetryAfter::VARIES: &'static [&'static str]
+pub fn kynos::http::retry_after::RetryAfter::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::http::retry_after::RetryAfter::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+pub fn kynos::http::retry_after::RetryAfter::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::compression::ContentEncoding
 pub const kynos::middleware::compression::ContentEncoding::DESCRIBED: bool
 pub const kynos::middleware::compression::ContentEncoding::NAMES: &'static [&'static str]
@@ -3370,6 +3382,42 @@ impl kynos::http::media::MediaType for kynos::http::media::Pdf
 pub const kynos::http::media::Pdf::MEDIA_TYPE: &'static str
 impl kynos::http::media::MediaType for kynos::http::media::Png
 pub const kynos::http::media::Png::MEDIA_TYPE: &'static str
+pub mod kynos::http::retry_after
+pub struct kynos::http::retry_after::RetryAfter
+impl kynos::http::retry_after::RetryAfter
+pub const fn kynos::http::retry_after::RetryAfter::delay(self) -> core::time::Duration
+pub const fn kynos::http::retry_after::RetryAfter::new(core::time::Duration) -> Self
+pub fn kynos::http::retry_after::RetryAfter::seconds(self) -> u64
+impl core::clone::Clone for kynos::http::retry_after::RetryAfter
+pub fn kynos::http::retry_after::RetryAfter::clone(&self) -> kynos::http::retry_after::RetryAfter
+impl core::cmp::Eq for kynos::http::retry_after::RetryAfter
+impl core::cmp::PartialEq for kynos::http::retry_after::RetryAfter
+pub fn kynos::http::retry_after::RetryAfter::eq(&self, &kynos::http::retry_after::RetryAfter) -> bool
+impl core::convert::From<core::time::Duration> for kynos::http::retry_after::RetryAfter
+pub fn kynos::http::retry_after::RetryAfter::from(core::time::Duration) -> Self
+impl core::fmt::Debug for kynos::http::retry_after::RetryAfter
+pub fn kynos::http::retry_after::RetryAfter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::http::retry_after::RetryAfter
+pub fn kynos::http::retry_after::RetryAfter::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::http::retry_after::RetryAfter
+impl core::marker::StructuralPartialEq for kynos::http::retry_after::RetryAfter
+impl kynos::extract::params::header::EncodeHeaders for kynos::http::retry_after::RetryAfter
+pub fn kynos::http::retry_after::RetryAfter::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
+impl kynos::extract::params::header::HeaderParams for kynos::http::retry_after::RetryAfter
+pub const kynos::http::retry_after::RetryAfter::DESCRIBED: bool
+pub const kynos::http::retry_after::RetryAfter::NAMES: &'static [&'static str]
+pub const kynos::http::retry_after::RetryAfter::REPEATABLE: bool
+pub const kynos::http::retry_after::RetryAfter::VARIES: &'static [&'static str]
+pub fn kynos::http::retry_after::RetryAfter::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::http::retry_after::RetryAfter::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+pub fn kynos::http::retry_after::RetryAfter::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
+impl core::marker::Freeze for kynos::http::retry_after::RetryAfter
+impl core::marker::Send for kynos::http::retry_after::RetryAfter
+impl core::marker::Sync for kynos::http::retry_after::RetryAfter
+impl core::marker::Unpin for kynos::http::retry_after::RetryAfter
+impl core::marker::UnsafeUnpin for kynos::http::retry_after::RetryAfter
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::http::retry_after::RetryAfter
+impl core::panic::unwind_safe::UnwindSafe for kynos::http::retry_after::RetryAfter
 pub type kynos::http::Parts = http::request::Parts
 pub type kynos::http::Request = http::request::Request<kynos::http::body::Body>
 pub type kynos::http::Response = http::response::Response<kynos::http::body::Body>

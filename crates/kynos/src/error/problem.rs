@@ -428,9 +428,34 @@ impl ProblemType for () {
 
 /// The problem a refusal puts on the wire, carrying the type `T` names.
 ///
-/// The single constructor for every short circuit. The `title` stays the
-/// status code's reason phrase either way (RFC 9457 section 3.1.3).
-pub(crate) fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
+/// The constructor every short circuit Kynos ships builds its body with, for
+/// an [`Interceptor`](crate::middleware::Interceptor) of an application's own
+/// to refuse the same way. The `title` stays the status code's reason phrase
+/// either way (RFC 9457 section 3.1.3); add a `detail` with
+/// [`with_detail`](Problem::with_detail). [`refusal_response`] declares it.
+///
+/// ```
+/// use kynos::{
+///     error::problem::{ProblemType, refusal_problem},
+///     http::StatusCode,
+/// };
+///
+/// struct Oversized;
+///
+/// impl ProblemType for Oversized {
+///     const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/oversized");
+/// }
+///
+/// let problem = refusal_problem::<Oversized>(StatusCode::BAD_REQUEST)
+///     .with_detail("the upload exceeds its declared size");
+/// assert_eq!(problem.type_uri, "https://errors.example.com/oversized");
+/// assert_eq!(problem.title, "Bad Request");
+///
+/// // Naming no type leaves `about:blank`.
+/// assert_eq!(refusal_problem::<()>(StatusCode::BAD_REQUEST).type_uri, "about:blank");
+/// ```
+#[must_use]
+pub fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
     let mut problem = Problem::new(status);
 
     if let Some(uri) = T::TYPE_URI {
@@ -440,20 +465,43 @@ pub(crate) fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
     problem
 }
 
-/// The response a refusal declares for one status, narrowed to the type `T`
-/// names.
+/// The response a refusal declares, narrowed to the type `T` names and
+/// described by `summary`.
 ///
-/// The other half of [`refusal_problem`], reading the same `const`. Narrowed
-/// rather than exemplified, since conformance checks validate the schema and
-/// never read an `example`; naming no type narrows to `about:blank`.
-pub(crate) fn refusal_response<T: ProblemType>(
+/// The other half of [`refusal_problem`], reading the same `const`, for a
+/// [`Responses`](crate::response::Responses) implementation to declare under
+/// the status that problem carries. Narrowed rather than exemplified, since
+/// conformance checks validate the schema and never read an `example`; naming
+/// no type narrows to `about:blank`. Chain
+/// [`with_header`](kynos_openapi::Response::with_header) onto it for a field
+/// the refusal sends.
+///
+/// ```
+/// use kynos::{
+///     error::problem::refusal_response, openapi::Responses, schema::registry::Registry,
+/// };
+///
+/// let mut registry = Registry::default();
+/// let response = refusal_response::<()>(&mut registry, "the upload exceeds its declared size");
+/// assert_eq!(
+///     response.description.as_deref(),
+///     Some("the upload exceeds its declared size")
+/// );
+///
+/// let responses = Responses::new().with(400, response);
+/// ```
+#[must_use]
+pub fn refusal_response<T: ProblemType>(
     registry: &mut Registry,
-    status: u16,
     summary: &'static str,
 ) -> Response {
     let problem = registry.resolve::<Problem>();
 
-    narrowed_response(&problem, status, &[(T::TYPE_URI, Some(summary), &[])])
+    described_response(
+        &problem,
+        summary.to_owned(),
+        &[(T::TYPE_URI, Some(summary), &[])],
+    )
 }
 
 // --- What one status declares --------------------------------------------
@@ -485,7 +533,15 @@ pub(crate) fn narrowed_response(
     branches: &[Branch<'_>],
 ) -> Response {
     // From every branch, not the deduplicated ones: prose has no exactly-one rule.
-    let description = description(status, branches);
+    described_response(problem, description(status, branches), branches)
+}
+
+/// [`narrowed_response`] under a `description` already written.
+fn described_response(
+    problem: &OpenApiSchema,
+    description: String,
+    branches: &[Branch<'_>],
+) -> Response {
     let distinct = distinct(branches);
 
     let schema = match distinct.as_slice() {

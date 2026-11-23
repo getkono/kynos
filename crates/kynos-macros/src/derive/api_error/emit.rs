@@ -5,7 +5,10 @@ use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
 use syn::{Ident, Lifetime, Type, spanned::Spanned};
 
-use super::{Failure, HEADERS_BINDING, Outcome, Transparent};
+use super::{
+    Failure, Outcome, Transparent,
+    fields::{HEADERS_BINDING, RETRY_AFTER_BINDING},
+};
 
 /// The statuses as a `&'static [u16]` expression, in declaration order without
 /// repeats.
@@ -85,10 +88,10 @@ pub(super) fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) ->
 }
 
 /// The `into_response` body: the problem rendered, then the failure's header
-/// group written onto it, and a transparent variant answering as its field
-/// answers, so the headers that error sends are sent.
+/// group and delay written onto it, and a transparent variant answering as its
+/// field answers, so the headers that error sends are sent.
 ///
-/// Where nothing sends a header group, the problem rendered alone.
+/// Where nothing sends a header group or a delay, the problem rendered alone.
 pub(super) fn into_response(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
     let report = report(failures, delegates);
     let respond = respond(failures, delegates);
@@ -142,7 +145,7 @@ fn report(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
 
 /// [`into_response`] after the failure is logged.
 fn respond(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
-    if delegates.is_empty() && failures.iter().all(|failure| failure.headers.is_none()) {
+    if delegates.is_empty() && !failures.iter().any(|failure| failure.sends_headers()) {
         return quote! {
             ::kynos::response::IntoResponse::into_response(
                 ::kynos::error::problem::IntoProblem::into_problem(self),
@@ -152,23 +155,58 @@ fn respond(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
 
     let arms = failures.iter().map(|failure| {
         let problem = problem(failure);
-        let Some(field) = &failure.headers else {
+        if !failure.sends_headers() {
             let pattern = failure.pattern();
             return quote! {
                 #pattern => ::kynos::response::IntoResponse::into_response(#problem),
             };
-        };
+        }
 
         let pattern = failure.response_pattern();
-        let ty = &field.ty;
-        let binding = Ident::new(HEADERS_BINDING, Span::call_site());
-        // Spanned to the field, so a type that is no header group is reported
-        // where it is named.
-        let write = quote_spanned!(ty.span()=> ::kynos::__private::problem::write_headers::<#ty>);
+        // Each spanned to its field, so a type that is no header group, or no
+        // delay, is reported where it is named.
+        let group = failure.headers.as_ref().map(|field| {
+            let ty = &field.ty;
+            let binding = Ident::new(HEADERS_BINDING, Span::call_site());
+            let write =
+                quote_spanned!(ty.span()=> ::kynos::__private::problem::write_headers::<#ty>);
+            quote!(#write(&mut response, &#binding);)
+        });
+        let delay = failure.retry_after.as_ref().map(|field| {
+            let ty = &field.ty;
+            let binding = Ident::new(RETRY_AFTER_BINDING, Span::call_site());
+            let write =
+                quote_spanned!(ty.span()=> ::kynos::__private::problem::write_retry_after::<#ty>);
+            quote!(#write(&mut response, &#binding);)
+        });
+        // A group beside the delay naming `Retry-After` would overwrite it, or
+        // be overwritten; refused where both are known, in a `const` block,
+        // since the group's type may name the type's generic parameters.
+        let distinct = failure
+            .headers
+            .as_ref()
+            .zip(failure.retry_after.as_ref())
+            .map(|(group, _)| {
+                let ty = &group.ty;
+                // Spanned to the group's type, so the refusal points at it.
+                quote_spanned! {ty.span()=>
+                    const {
+                        ::core::assert!(
+                            !::kynos::__private::problem::names_retry_after(
+                                <#ty as ::kynos::extract::params::header::HeaderParams>::NAMES,
+                            ),
+                            "a failure's `#[problem(retry_after)]` field sends `Retry-After`, so \
+                             the `#[problem(headers)]` group beside it cannot name it too",
+                        );
+                    }
+                }
+            });
         quote! {
             #pattern => {
+                #distinct
                 let mut response = ::kynos::response::IntoResponse::into_response(#problem);
-                #write(&mut response, &#binding);
+                #group
+                #delay
                 response
             }
         }

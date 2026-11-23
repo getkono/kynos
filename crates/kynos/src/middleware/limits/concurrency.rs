@@ -68,7 +68,7 @@ impl<T: ProblemType> Responses for AtCapacity<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         kynos_openapi::Responses::new().with(
             503,
-            refusal_response::<T>(registry, 503, "the service is at its concurrency limit")
+            refusal_response::<T>(registry, "the service is at its concurrency limit")
                 .with_header("Retry-After", retry_after_header()),
         )
     }

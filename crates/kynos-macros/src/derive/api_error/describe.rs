@@ -98,6 +98,41 @@ impl Transparent {
     }
 }
 
+impl Failure {
+    /// The headers this failure declares, as an expression reading
+    /// `registry`: its group, `()` where it has none, joined by its delay.
+    fn group(&self) -> TokenStream2 {
+        let group = self.headers.as_ref().map_or_else(
+            || quote!(::kynos::__private::problem::headers::<()>(registry)),
+            |field| {
+                let ty = &field.ty;
+                // Only the path is spanned to the field: `registry` keeps the
+                // derive's hygiene context, wherever the type's tokens came
+                // from.
+                let headers = quote_spanned!(ty.span()=>
+                    ::kynos::__private::problem::headers::<#ty>
+                );
+                quote!(#headers(registry))
+            },
+        );
+
+        // The delay joins the failure's own group, so it is required where
+        // every failure answering with the status sends it.
+        let Some(field) = &self.retry_after else {
+            return group;
+        };
+        let ty = &field.ty;
+        let with = quote_spanned!(ty.span()=>
+            ::kynos::__private::problem::with_retry_after::<#ty>
+        );
+        quote! {{
+            let mut __kynos_group = #group;
+            #with(registry, &mut __kynos_group);
+            __kynos_group
+        }}
+    }
+}
+
 /// The statement describing `status`, answered by `declaring`, each described
 /// where its expression in `kept` holds, and the status only where one does.
 fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenStream2 {
@@ -149,28 +184,12 @@ fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenSt
         ::kynos::__private::problem::response(__kynos_schema, #status, &__kynos_branches)
     };
 
-    let describe = if declaring.iter().all(|failure| failure.headers.is_none()) {
-        quote! {
-            responses = responses.with(#status, #response);
-        }
-    } else {
+    let describe = if declaring.iter().any(|failure| failure.sends_headers()) {
         // One group per kept failure, `()` where it sends none, so a
         // header only some of them send is declared without being
         // required.
         let groups = declaring.iter().zip(kept).map(|(failure, kept)| {
-            let group = failure.headers.as_ref().map_or_else(
-                || quote!(::kynos::__private::problem::headers::<()>(registry)),
-                |field| {
-                    let ty = &field.ty;
-                    // Only the path is spanned to the field: `registry`
-                    // keeps the derive's hygiene context, wherever the
-                    // type's tokens came from.
-                    let headers = quote_spanned!(ty.span()=>
-                        ::kynos::__private::problem::headers::<#ty>
-                    );
-                    quote!(#headers(registry))
-                },
-            );
+            let group = failure.group();
             quote! {
                 if #kept {
                     __kynos_groups.push(#group);
@@ -186,6 +205,10 @@ fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenSt
                 ::kynos::__private::problem::declare_headers(&mut response, &__kynos_groups);
                 response
             });
+        }
+    } else {
+        quote! {
+            responses = responses.with(#status, #response);
         }
     };
 

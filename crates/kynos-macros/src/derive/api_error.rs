@@ -11,6 +11,7 @@
 //! #[problem( variant_of = <path>::<variant> )]     on a variant, alone, instead
 //! #[problem(extension)]                            on a named field, optional
 //! #[problem(headers)]                              on one field, optional
+//! #[problem(retry_after)]                          on one field, optional
 //!
 //! prefix := "<URI prefix>"
 //!         | <path to a `const` of type `&str`>
@@ -50,6 +51,13 @@
 //! `EncodeHeaders`: `into_response` writes it onto that failure's problem, and
 //! `Responses` declares it under that failure's status alone.
 //!
+//! A `retry_after` field holds a delay, its type implementing
+//! `kynos::__private::problem::RetryAfterField`: a `Duration`, or an
+//! `Option<Duration>` sent only when it holds one. It is written and declared
+//! as `kynos::http::retry_after::RetryAfter`, joined to the failure's
+//! `headers` group where it has one, and a group naming `Retry-After` beside
+//! it is refused in a `const` block of that arm.
+//!
 //! A transparent variant answers as the `ApiError` it holds: its problem is
 //! that type's, and its statuses and responses join the enum's, the statuses
 //! in `const` items of the expansion's own. Its response is that type's too,
@@ -71,17 +79,19 @@
 mod args;
 mod describe;
 mod emit;
+mod fields;
 mod outcomes;
 mod subset;
 mod variant_of;
 
-use proc_macro2::{Span, TokenStream as TokenStream2};
+use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, ext::IdentExt, spanned::Spanned};
 
 use args::{Constant, Position, parse_problem};
 use describe::responses;
 use emit::{codes, distinct_statuses, into_problem, into_response};
+use fields::HeaderField;
 use outcomes::outcomes;
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
@@ -291,6 +301,9 @@ struct Failure {
     /// The `#[problem(headers)]` field, if this failure sends a header group.
     headers: Option<Box<HeaderField>>,
 
+    /// The `#[problem(retry_after)]` field, if this failure sends a delay.
+    retry_after: Option<Box<HeaderField>>,
+
     status: u16,
     type_uri: Option<TypeUri>,
     title: Option<String>,
@@ -320,15 +333,6 @@ impl Extension {
     }
 }
 
-/// A `#[problem(headers)]` field: where the group sits, and its type.
-struct HeaderField {
-    member: Member,
-    ty: Type,
-}
-
-/// What `into_response` binds a failure's header group to.
-const HEADERS_BINDING: &str = "__kynos_problem_headers";
-
 impl Failure {
     /// Whether the failure sends any extension member, a constant or a field.
     fn sends_members(&self) -> bool {
@@ -340,18 +344,6 @@ impl Failure {
         let path = &self.path;
         let bindings = self.extensions.iter().map(|extension| &extension.name);
         quote!(#path { #(#bindings,)* .. })
-    }
-
-    /// [`pattern`](Self::pattern), binding the header group too.
-    fn response_pattern(&self) -> TokenStream2 {
-        let path = &self.path;
-        let bindings = self.extensions.iter().map(|extension| &extension.name);
-        let headers = self.headers.as_ref().map(|field| {
-            let member = &field.member;
-            let binding = Ident::new(HEADERS_BINDING, Span::call_site());
-            quote!(#member: #binding,)
-        });
-        quote!(#path { #(#bindings,)* #headers .. })
     }
 }
 

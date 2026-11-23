@@ -120,7 +120,6 @@ impl<T: ProblemType> crate::response::Responses for NotAcceptable<T> {
             406,
             crate::error::problem::refusal_response::<T>(
                 registry,
-                406,
                 "no representation has a content coding the request accepts",
             ),
         )

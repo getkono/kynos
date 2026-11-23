@@ -173,23 +173,17 @@ where
                 400,
                 refusal_response::<M>(
                     registry,
-                    400,
                     "the request body did not decode as the coding it declared",
                 ),
             )
             .with(
                 413,
-                refusal_response::<L>(
-                    registry,
-                    413,
-                    "the request body exceeds the configured limit",
-                ),
+                refusal_response::<L>(registry, "the request body exceeds the configured limit"),
             )
             .with(
                 415,
                 refusal_response::<U>(
                     registry,
-                    415,
                     "the request body's content coding is not one this server decodes",
                 )
                 .with_header("Accept-Encoding", accepted_encoding_header()),

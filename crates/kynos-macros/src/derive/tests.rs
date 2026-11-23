@@ -5228,6 +5228,16 @@ mod api_error {
                     ),
                     "`headers` is a bare marker and takes no value",
                 ),
+                case(
+                    "a retry_after marker given a value",
+                    quote::quote!(
+                        struct StoreError {
+                            #[problem(retry_after = 5)]
+                            wait: Duration,
+                        }
+                    ),
+                    "`retry_after` is a bare marker and takes no value",
+                ),
             ],
             expand_inner,
         );
@@ -5383,6 +5393,96 @@ mod api_error {
                 "sends the headers of the error it holds",
             ),
         ]
+    }
+
+    /// The refusals of `#[problem(retry_after)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn retry_after_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`retry_after` on a variant, rather than on the field holding the delay",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 429, retry_after)]
+                        Throttled { wait: Duration },
+                    }
+                ),
+                "belongs on that field, a `Duration`",
+            ),
+            case(
+                "a field marked both a delay and a header group",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 429)]
+                        Throttled {
+                            #[problem(headers, retry_after)]
+                            wait: Duration,
+                        },
+                    }
+                ),
+                "neither an extension member nor a header group",
+            ),
+            case(
+                "a second delay on one failure",
+                quote::quote!(
+                    #[problem(status = 429)]
+                    struct Throttled {
+                        #[problem(retry_after)]
+                        wait: Duration,
+                        #[problem(retry_after)]
+                        again: Duration,
+                    }
+                ),
+                "already sends `Retry-After` from `wait`",
+            ),
+            case(
+                "a delay on a transparent variant's field",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup(#[problem(retry_after)] LookupError),
+                    }
+                ),
+                "sends the `Retry-After` of the error it holds",
+            ),
+        ]
+    }
+
+    /// The marks a delay refuses beside it, and a delay on a `variant_of`
+    /// variant, each raised by a site the ledger's rows already reach.
+    #[test]
+    fn a_delay_refuses_every_other_mark_beside_it() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a field marked both a delay and an extension member",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(status = 429)]
+                            Throttled {
+                                #[problem(extension, retry_after)]
+                                wait: Duration,
+                            },
+                        }
+                    ),
+                    "neither an extension member nor a header group",
+                ),
+                case(
+                    "a delay on a `variant_of` variant's field",
+                    quote::quote!(
+                        enum Narrow {
+                            #[problem(variant_of = Wide::Throttled)]
+                            Throttled {
+                                #[problem(retry_after)]
+                                wait: Duration,
+                            },
+                        }
+                    ),
+                    "whose field markers it takes",
+                ),
+            ],
+            expand_inner,
+        );
     }
 
     /// A second function rather than more rows in the first, for the reason
@@ -5728,6 +5828,7 @@ mod api_error {
         each_case_is_refused(subset_ledger(), expand_inner);
         each_case_is_refused(variant_of_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
+        each_case_is_refused(retry_after_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
         each_case_is_refused(field_names_ledger(), expand_inner);
@@ -5778,6 +5879,7 @@ mod api_error {
                 include_str!("api_error.rs"),
                 include_str!("api_error/args.rs"),
                 include_str!("api_error/emit.rs"),
+                include_str!("api_error/fields.rs"),
                 include_str!("api_error/outcomes.rs"),
                 include_str!("api_error/subset.rs"),
                 include_str!("api_error/variant_of.rs"),
@@ -5788,6 +5890,7 @@ mod api_error {
                 + subset_ledger().len()
                 + variant_of_ledger().len()
                 + headers_ledger().len()
+                + retry_after_ledger().len()
                 + keys_ledger().len()
                 + constants_ledger().len()
                 + field_names_ledger().len()

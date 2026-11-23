@@ -1,0 +1,29 @@
+error: `retry_after` marks the field holding the delay a failure sends as `Retry-After`, so it belongs on that field, a `Duration`
+  --> tests/ui/macros/api_error_retry_after_refusals.rs:16:29
+   |
+16 |     #[problem(status = 429, retry_after)]
+   |                             ^^^^^^^^^^^
+
+error: `retry_after` is a bare marker and takes no value; write `#[problem(retry_after)]`
+  --> tests/ui/macros/api_error_retry_after_refusals.rs:24:15
+   |
+24 |     #[problem(retry_after = 5)]
+   |               ^^^^^^^^^^^
+
+error: a `retry_after` field holds the delay `Retry-After` sends, so it is neither an extension member nor a header group. Mark it `retry_after` alone
+  --> tests/ui/macros/api_error_retry_after_refusals.rs:32:5
+   |
+32 |     #[problem(extension, retry_after)]
+   |     ^
+
+error: this failure already sends `Retry-After` from `wait`; one field holds the delay
+  --> tests/ui/macros/api_error_retry_after_refusals.rs:42:5
+   |
+42 |     #[problem(retry_after)]
+   |     ^
+
+error: a transparent variant sends the `Retry-After` of the error it holds, which is not a delay itself
+  --> tests/ui/macros/api_error_retry_after_refusals.rs:55:12
+   |
+55 |     Lookup(#[problem(retry_after)] LookupError),
+   |            ^
