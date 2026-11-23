@@ -7,16 +7,19 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Map,
     model::{
-        components::Components,
+        components::{Component, Components},
         extensions::Extensions,
         external_docs::ExternalDocumentation,
         info::Info,
-        paths::{Paths, item::PathItem},
-        schema::dialect::OAS_DIALECT,
+        paths::{Paths, item::PathItem, operation::Operation},
+        reference::{RefOr, UnresolvedRef, literal_component_name},
+        schema::{Schema, dialect::OAS_DIALECT},
         security::requirement::SecurityRequirement,
         server::Server,
         tag::Tag,
     },
+    pointer::At,
+    visit::{self, Visit},
 };
 
 /// The version of the OpenAPI Specification a document targets.
@@ -222,6 +225,165 @@ impl Document {
     pub fn with_security(mut self, requirement: SecurityRequirement) -> Self {
         self.security.push(requirement);
         self
+    }
+
+    /// Every operation this document writes, each where it is written.
+    ///
+    /// That is every Path Item under `paths`, then `webhooks`, then
+    /// `components.pathItems`, then those of each callback under
+    /// `components.callbacks`, with the callbacks an operation declares
+    /// reached after its Path Item's own operations. Within a Path Item, the
+    /// fixed methods come in [`Method::all`](crate::Method::all) order, then
+    /// the 3.2 `additionalOperations` in insertion order.
+    ///
+    /// A `$ref` is not followed, so an operation is yielded once, where it is
+    /// defined: a Path Item under `paths` given by reference yields nothing
+    /// there, and its operations come from `components.pathItems`, with no
+    /// [`path`](OperationAt::path).
+    ///
+    /// ```
+    /// use kynos_openapi::{Document, Info, Method, Operation, PathItem, SpecVersion};
+    ///
+    /// let mut doc = Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0"));
+    /// doc.paths.items.insert(
+    ///     "/orders".to_owned(),
+    ///     PathItem::new().with_operation(Method::Get, Operation::new("listOrders")),
+    /// );
+    ///
+    /// let found: Vec<_> = doc.operations().map(|op| (op.method, op.path, op.pointer)).collect();
+    /// assert_eq!(found, [("GET", Some("/orders"), "#/paths/~1orders/get".to_owned())]);
+    /// ```
+    pub fn operations(&self) -> impl Iterator<Item = OperationAt<'_>> {
+        let mut found = Operations(Vec::new());
+        visit::document(self, &mut found);
+        found.0.into_iter()
+    }
+
+    /// The object `entry` stands for: itself where it is inline, otherwise
+    /// what its `$ref` names in this document's [`components`](Self::components),
+    /// followed through chains of references.
+    ///
+    /// Only a same-document pointer to a component of `T`'s own section,
+    /// such as `#/components/parameters/Limit`, is followed. A reference's
+    /// own `summary` and `description` are not applied to what it names.
+    ///
+    /// # Errors
+    ///
+    /// [`UnresolvedRef`] where a reference in the chain points anywhere else,
+    /// names a component that is not declared, or returns to one already
+    /// passed.
+    ///
+    /// ```
+    /// use kynos_openapi::{Document, Info, Parameter, ParameterIn, Ref, RefOr, Schema, SpecVersion};
+    ///
+    /// let mut doc = Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0"));
+    /// let limit = Parameter::new("limit", ParameterIn::Query, Schema::default());
+    /// doc.components.parameters.insert("Limit".to_owned(), RefOr::Item(limit.clone()));
+    ///
+    /// let entry = RefOr::Ref(Ref::parameter("Limit"));
+    /// assert_eq!(doc.resolve(&entry), Ok(&limit));
+    /// ```
+    pub fn resolve<'d, T: Component>(
+        &'d self,
+        entry: &'d RefOr<T>,
+    ) -> Result<&'d T, UnresolvedRef> {
+        self.components.resolve(entry)
+    }
+
+    /// The schema `schema` stands for: itself where it has no `$ref`,
+    /// otherwise what its `$ref` names under `components.schemas`, followed
+    /// through chains of references.
+    ///
+    /// Only a pointer to a whole component, such as
+    /// `#/components/schemas/Order`, is followed, read against this document
+    /// rather than any enclosing `$id`. The keywords written beside a `$ref`
+    /// apply too, per JSON Schema, but are not merged into what is returned:
+    /// read them from `schema` itself. A `$dynamicRef` is not followed.
+    ///
+    /// # Errors
+    ///
+    /// [`UnresolvedRef`] where a `$ref` in the chain points anywhere else,
+    /// names a schema that is not declared, or returns to one already passed.
+    ///
+    /// ```
+    /// use kynos_openapi::{Document, Info, Schema, SchemaType, SpecVersion};
+    ///
+    /// let mut doc = Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0"));
+    /// let order = Schema::of_type(SchemaType::Object);
+    /// doc.components.schemas.insert("Order".to_owned(), order.clone());
+    ///
+    /// assert_eq!(doc.resolve_schema(&Schema::component("Order")), Ok(&order));
+    /// ```
+    pub fn resolve_schema<'d>(&'d self, schema: &'d Schema) -> Result<&'d Schema, UnresolvedRef> {
+        let schemas = &self.components.schemas;
+        let mut current = schema;
+        // As in `Components::resolve`: one hop more than there are schemas
+        // proves a cycle.
+        for _ in 0..=schemas.len() {
+            let Some(reference) = current
+                .as_object()
+                .and_then(|object| object.reference.as_deref())
+            else {
+                return Ok(current);
+            };
+            let name =
+                literal_component_name(reference, "schemas").ok_or(UnresolvedRef::NotLocal)?;
+            current = schemas.get(name).ok_or(UnresolvedRef::Missing)?;
+        }
+        Err(UnresolvedRef::Cycle)
+    }
+}
+
+/// One operation a [`Document`] writes, where it is written, as
+/// [`Document::operations`] yields it.
+#[non_exhaustive]
+#[derive(Clone, Debug)]
+pub struct OperationAt<'d> {
+    /// The JSON Pointer the operation is written at, such as
+    /// `#/paths/~1orders/get`.
+    pub pointer: String,
+    /// The path template keying its Path Item under `paths`, or `None` where
+    /// the Path Item is a webhook's, a component's or a callback's.
+    pub path: Option<&'d str>,
+    /// The method token a request for it carries: `GET` for the `get` field,
+    /// and the key itself for an `additionalOperations` entry.
+    pub method: &'d str,
+    /// The Path Item holding it, whose parameters and servers apply to it.
+    pub item: &'d PathItem,
+    /// The operation.
+    pub operation: &'d Operation,
+}
+
+/// Collects each Path Item's operations as [`visit::document`] reaches it.
+struct Operations<'d>(Vec<OperationAt<'d>>);
+
+impl<'d> Visit<'d> for Operations<'d> {
+    fn path_item(&mut self, at: At<'_>, item: &'d PathItem, path: Option<&'d str>) -> bool {
+        for (method, operation) in item.operations() {
+            self.0.push(OperationAt {
+                pointer: at.key(method.field_name()).pointer(),
+                path,
+                method: method.as_wire_str(),
+                item,
+                operation,
+            });
+        }
+
+        #[cfg(feature = "openapi32")]
+        {
+            let section = at.key("additionalOperations");
+            for (method, operation) in &item.additional_operations {
+                self.0.push(OperationAt {
+                    pointer: section.key(method).pointer(),
+                    path,
+                    method,
+                    item,
+                    operation,
+                });
+            }
+        }
+
+        true
     }
 }
 
