@@ -2544,7 +2544,7 @@ pub trait kynos::extract::params::query::DecodeQuery: kynos::extract::params::qu
 pub fn kynos::extract::params::query::DecodeQuery::decode(core::option::Option<&str>) -> core::result::Result<Self, kynos::error::rejection::QueryRejection>
 pub trait kynos::extract::params::query::EncodeQuery: kynos::extract::params::query::QueryParams
 pub fn kynos::extract::params::query::EncodeQuery::encode(&self) -> alloc::string::String
-pub trait kynos::extract::params::query::QueryParams: core::marker::Sized + kynos::schema::Schema
+pub trait kynos::extract::params::query::QueryParams: core::marker::Sized
 pub fn kynos::extract::params::query::QueryParams::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::extract::params::query::QueryParams::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub mod kynos::extract::params::querystring

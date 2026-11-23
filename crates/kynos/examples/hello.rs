@@ -40,7 +40,7 @@ struct UserPath {
 
 /// How a listing is paged.
 #[allow(dead_code)]
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct Page {
     /// Which page to return, counting from one.
     page: u32,

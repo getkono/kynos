@@ -26,7 +26,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let names_item = names_const(&names);
 
-    let group = group_problem(input);
+    let group = group_problem(input)?;
     let params = Param::pair(fields, &names, group.as_ref());
     let rejection = quote!(::kynos::error::rejection::CookieRejection);
 

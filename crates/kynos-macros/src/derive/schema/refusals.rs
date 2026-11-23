@@ -40,3 +40,9 @@ pub(super) fn check(input: &DeriveInput, container: &Container) -> syn::Result<(
     grammar::check_constraints(input, container)?;
     recursion::reject_recursive_generic(input, container)
 }
+
+/// The `#[schema(...)]` grammar alone, for a parameter derive that reads the
+/// attribute beside this one or without it.
+pub(super) fn check_grammar(input: &DeriveInput, container: &Container) -> syn::Result<()> {
+    grammar::check_constraints(input, container)
+}

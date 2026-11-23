@@ -21,11 +21,11 @@ use syn::{
 use super::{args::ProblemArgs, emit::union, impls, outcomes::generic_named_in};
 
 /// The function a derived enum describes the variants a caller keeps with.
-const RESPONSES: &str = "__kynos_problem_responses";
+pub(super) const RESPONSES: &str = "__kynos_problem_responses";
 
 /// The `const` holding the statuses `variant` answers with, spanned to the
 /// variant, so a subset naming one the wider enum lacks is told so there.
-fn statuses_of(variant: &Ident) -> Ident {
+pub(super) fn statuses_of(variant: &Ident) -> Ident {
     format_ident!(
         "__KYNOS_PROBLEM_STATUSES_{}",
         variant,
@@ -228,7 +228,7 @@ fn conversion<'a>(
 /// one; `Self`, the wider enum in the conversion, where it is not a plain
 /// path, since a struct expression cannot name a variant through a qualified
 /// one.
-fn expression_path(wide: &Type) -> TokenStream2 {
+pub(super) fn expression_path(wide: &Type) -> TokenStream2 {
     let Type::Path(TypePath {
         qself: None, path, ..
     }) = wide
