@@ -147,6 +147,12 @@ impl OperationCx<'_> {
 
     /// Sets the operation's request body.
     ///
+    /// Declares no 408 for a stalled body. An extractor whose rejection
+    /// carries a stall through as
+    /// [`BodyRejection::Stalled`](crate::error::rejection::BodyRejection)'s
+    /// 408 calls [`read_request_body`](Self::read_request_body) instead, or
+    /// the 408 it sends goes undeclared.
+    ///
     /// # Panics
     ///
     /// Panics if a request body was already set. The trait bounds make this
