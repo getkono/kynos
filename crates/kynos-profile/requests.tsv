@@ -71,7 +71,7 @@ interceptors.set_cookies	5360	18	2426
 interceptors.timeout	4425	12	2330
 interceptors.unchecked_layer	4238	14	2546
 rate_limit.rate_limit	9204	27	3702
-realistic.stack_typical	19041	32	6912
+realistic.stack_typical	19047	32	6912
 request_id_random.request_id_random	6233	20	3030
 respond.binary_full	5054	13	2704
 respond.conditional_304	5053	12	2806
@@ -104,10 +104,10 @@ scope.catch_panics_router	3612	12	2210
 scope.endpoint_layers_4	4468	16	3674
 scope.group_layers_4	4222	15	3354
 scope.observer_noop	4059	12	1922
-scope.trace_nosub	4110	12	1922
+scope.trace_nosub	4116	12	1922
 scope.trace_span_nosub	3957	12	2018
 scope.trace_span_sub	4670	12	2018
-scope.trace_sub	4448	12	1922
+scope.trace_sub	4450	12	1922
 statics.assets_hit	4591	13	2108
 statics.docs_json	2439	8	1692
 stream.binary_stream_16	3777	9	1740
