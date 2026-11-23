@@ -6557,7 +6557,7 @@ pub fn kynos::server::Server<C>::tls(self, kynos::server::tls::TlsConfig) -> Sel
 pub fn kynos::server::Server<C>::unix_listener(self, impl core::convert::Into<std::os::unix::net::listener::UnixListener>) -> Self
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::Server<C>
 pub fn kynos::server::Server<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C> !core::marker::Freeze for kynos::server::Server<C>
+impl<C> core::marker::Freeze for kynos::server::Server<C>
 impl<C> core::marker::Send for kynos::server::Server<C>
 impl<C> core::marker::Sync for kynos::server::Server<C>
 impl<C> core::marker::Unpin for kynos::server::Server<C>
@@ -10850,12 +10850,16 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::server::protocol::http2::Ht
 pub mod kynos::server::shutdown
 pub struct kynos::server::shutdown::Shutdown
 impl kynos::server::shutdown::Shutdown
+pub async fn kynos::server::shutdown::Shutdown::begun(&self) -> std::io::error::Result<()>
 pub fn kynos::server::shutdown::Shutdown::ctrl_c() -> Self
+pub async fn kynos::server::shutdown::Shutdown::forced(&self) -> std::io::error::Result<()>
 pub fn kynos::server::shutdown::Shutdown::on(impl core::future::future::Future<Output = ()> + core::marker::Send + 'static) -> Self
 pub fn kynos::server::shutdown::Shutdown::signals() -> Self
+impl core::clone::Clone for kynos::server::shutdown::Shutdown
+pub fn kynos::server::shutdown::Shutdown::clone(&self) -> kynos::server::shutdown::Shutdown
 impl core::fmt::Debug for kynos::server::shutdown::Shutdown
 pub fn kynos::server::shutdown::Shutdown::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl !core::marker::Freeze for kynos::server::shutdown::Shutdown
+impl core::marker::Freeze for kynos::server::shutdown::Shutdown
 impl core::marker::Send for kynos::server::shutdown::Shutdown
 impl core::marker::Sync for kynos::server::shutdown::Shutdown
 impl core::marker::Unpin for kynos::server::shutdown::Shutdown
@@ -11013,7 +11017,7 @@ impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::openapi(&self) -> &kynos_openapi::model::document::Document
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C> !core::marker::Freeze for kynos::server::BoundServer<C>
+impl<C> core::marker::Freeze for kynos::server::BoundServer<C>
 impl<C> core::marker::Send for kynos::server::BoundServer<C>
 impl<C> core::marker::Sync for kynos::server::BoundServer<C>
 impl<C> core::marker::Unpin for kynos::server::BoundServer<C>
@@ -11063,7 +11067,7 @@ pub fn kynos::server::Server<C>::tls(self, kynos::server::tls::TlsConfig) -> Sel
 pub fn kynos::server::Server<C>::unix_listener(self, impl core::convert::Into<std::os::unix::net::listener::UnixListener>) -> Self
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::Server<C>
 pub fn kynos::server::Server<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<C> !core::marker::Freeze for kynos::server::Server<C>
+impl<C> core::marker::Freeze for kynos::server::Server<C>
 impl<C> core::marker::Send for kynos::server::Server<C>
 impl<C> core::marker::Sync for kynos::server::Server<C>
 impl<C> core::marker::Unpin for kynos::server::Server<C>

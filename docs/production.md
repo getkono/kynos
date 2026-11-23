@@ -51,8 +51,12 @@ the instance leaves rotation before any connection is refused; the delay and
 the deadline add up. A long-lived response
 ends itself on the `server::lifecycle::Draining` extractor, which
 `response::stream::sse::Sse::end_on_shutdown` does for an event stream under `openapi32`.
+A trigger's clones are that one trigger, so a second listener or a background
+worker shares the process's signal rather than installing its own: give each
+server a clone, and await `Shutdown::begun` (or `Shutdown::forced`) on one in
+the worker. `begun` resolves at the signal, before any deregistration delay.
 [`graceful_shutdown`](../crates/kynos/examples/graceful_shutdown.rs) shows each
-trigger.
+trigger, and one shared by a server and a worker.
 
 ## What to do, and why
 
