@@ -838,6 +838,11 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// `408 Request Timeout` a stalled body is answered with,
     /// [`BodyRejection::Stalled`].
     ///
+    /// An extractor says it reads one through
+    /// [`OperationCx::read_request_body`](crate::router::operation::OperationCx::read_request_body),
+    /// which every built-in body extractor calls, and which a hand-written one
+    /// whose rejection carries a stall through as that 408 calls too.
+    ///
     /// On by default, as
     /// [`Server::request_body_idle_timeout`](crate::server::Server::request_body_idle_timeout)
     /// is, and the two must agree: a server refuses to serve a service whose

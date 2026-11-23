@@ -8595,6 +8595,7 @@ pub fn kynos::router::operation::OperationCx<'_>::add_response_header(&mut self,
 pub fn kynos::router::operation::OperationCx<'_>::add_responses(&mut self, &kynos_openapi::model::response::Responses)
 pub fn kynos::router::operation::OperationCx<'_>::add_security_scheme(&mut self, kynos_openapi::model::components::ComponentName, kynos_openapi::model::security::SecurityScheme)
 pub fn kynos::router::operation::OperationCx<'_>::add_tag(&mut self, kynos::router::operation::DeclaredTag)
+pub fn kynos::router::operation::OperationCx<'_>::read_request_body(&mut self, kynos_openapi::model::body::RequestBody)
 pub fn kynos::router::operation::OperationCx<'_>::registry(&mut self) -> &mut kynos::schema::registry::Registry
 pub fn kynos::router::operation::OperationCx<'_>::set_deprecated(&mut self, bool)
 pub fn kynos::router::operation::OperationCx<'_>::set_description(&mut self, impl core::convert::Into<alloc::string::String>)

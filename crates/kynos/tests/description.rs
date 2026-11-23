@@ -1919,6 +1919,95 @@ fn a_router_declaring_no_stall_leaves_every_408_to_the_application() {
     );
 }
 
+/// An optional body is read by the same extractor as a required one, so it
+/// answers a stall with the same 408 and declares it as the router says.
+#[cfg(feature = "server")]
+#[test]
+fn an_optional_body_declares_the_stall_as_the_router_says() {
+    #[kynos::post("/maybe")]
+    async fn maybe(draft: Option<kynos::extract::body::json::Json<Draft>>) -> NoContent {
+        let _ = draft.map(|kynos::extract::body::json::Json(draft)| draft);
+        NoContent
+    }
+
+    let declares = |router: Router<()>| {
+        let document = router
+            .mount(kynos::routes![maybe])
+            .openapi()
+            .expect("a describable router");
+        operation(&document, "/maybe")
+            .responses
+            .responses
+            .contains_key("408")
+    };
+    assert!(declares(Router::new()));
+    assert!(!declares(Router::new().declare_body_stall(false)));
+}
+
+/// A hand-written extractor reading through `Json`, which carries a stall
+/// through as `BodyRejection::Stalled`'s 408.
+#[cfg(feature = "server")]
+struct Relayed<const READS: bool>;
+
+#[cfg(feature = "server")]
+impl<const READS: bool> kynos::extract::describe::Describe for Relayed<READS> {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        let body = kynos::openapi::RequestBody::json(kynos::openapi::Schema::any());
+        if READS {
+            operation.read_request_body(body);
+        } else {
+            operation.set_request_body(body);
+        }
+    }
+}
+
+#[cfg(feature = "server")]
+impl<C: Sync, const READS: bool> kynos::extract::FromRequest<C> for Relayed<READS> {
+    type Rejection = kynos::error::rejection::BodyRejection;
+
+    async fn from_request(
+        parts: &mut kynos::http::Parts,
+        body: kynos::http::body::Body,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let kynos::extract::body::json::Json(draft) = <kynos::extract::body::json::Json<Draft> as kynos::extract::FromRequest<C>>::from_request(parts, body, context).await?;
+        let _ = draft;
+        Ok(Self)
+    }
+}
+
+/// A hand-written extractor declares the stall's 408 only by saying, through
+/// `read_request_body`, that its rejection carries one: `set_request_body`
+/// is for a body whose stall it answers otherwise.
+#[cfg(feature = "server")]
+#[test]
+fn a_hand_written_extractor_declares_the_stall_through_read_request_body() {
+    #[kynos::post("/read")]
+    async fn read(relayed: Relayed<true>) -> NoContent {
+        let _ = relayed;
+        NoContent
+    }
+
+    #[kynos::post("/set")]
+    async fn set(relayed: Relayed<false>) -> NoContent {
+        let _ = relayed;
+        NoContent
+    }
+
+    let document = Router::<()>::new()
+        .mount(kynos::routes![read, set])
+        .openapi()
+        .expect("a describable router");
+    let declares = |path| {
+        operation(&document, path)
+            .responses
+            .responses
+            .contains_key("408")
+    };
+    assert!(declares("/read"));
+    assert!(!declares("/set"));
+}
+
 // --- Scope in what a 403 publishes ------------------------------------------
 //
 // `AuthRejection::forbidden_as` puts an application's own problem type on a 403

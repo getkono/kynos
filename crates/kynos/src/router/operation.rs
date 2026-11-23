@@ -74,8 +74,8 @@ pub struct OperationCx<'a> {
     /// Response headers whose placement reads the finished set of responses,
     /// filed by [`finish`](Self::finish) in the order they were placed.
     placed: Vec<(Deferred, String, kynos_openapi::Header)>,
-    /// Whether a Kynos body extractor reads the request body, so a stall
-    /// can answer it with `BodyRejection::Stalled`'s 408.
+    /// Whether [`read_request_body`](Self::read_request_body) set the request
+    /// body, so a stall can answer it with `BodyRejection::Stalled`'s 408.
     #[cfg(feature = "server")]
     reads_body: bool,
 }
@@ -200,10 +200,22 @@ impl OperationCx<'_> {
         crate::response::headers::union_from(&mut self.operation.responses, responses);
     }
 
-    /// [`set_request_body`](Self::set_request_body), for a body a Kynos body
-    /// extractor reads: one a stall answers with `BodyRejection::Stalled`'s
-    /// 408, which [`declare_body_stall`](Self::declare_body_stall) declares.
-    pub(crate) fn read_request_body(&mut self, body: kynos_openapi::RequestBody) {
+    /// [`set_request_body`](Self::set_request_body), for a body whose stall
+    /// this extractor answers with
+    /// [`BodyRejection::Stalled`](crate::error::rejection::BodyRejection)'s 408,
+    /// so the operation declares that 408 as
+    /// [`Router::declare_body_stall`](crate::Router::declare_body_stall) says.
+    ///
+    /// Every built-in body extractor describes itself with it. A hand-written
+    /// one whose rejection carries a stall through as that 408 — one reading
+    /// through a built-in extractor's `from_request`, say — calls this rather
+    /// than `set_request_body`, or the 408 it sends goes undeclared; one that
+    /// answers a stall otherwise calls `set_request_body`.
+    ///
+    /// # Panics
+    ///
+    /// As [`set_request_body`](Self::set_request_body).
+    pub fn read_request_body(&mut self, body: kynos_openapi::RequestBody) {
         self.set_request_body(body);
         #[cfg(feature = "server")]
         {
