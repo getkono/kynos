@@ -424,48 +424,29 @@ impl<C: Sync> Authorizer<DelegatedAccess, C, Grant> for Rejects {
 
 /// The application context.
 ///
-/// Two fields, eight implementations. A context declares what it can verify, so
-/// the set of schemes an application supports is visible in one place rather
-/// than spread across the handlers that happen to require them.
-struct App {
-    tokens: Tokens,
-    verifier: Rejects,
-}
-
-/// The one scheme with a real verifier, wired by hand.
+/// A context declares what it can verify, so the set of schemes an application
+/// supports is visible in one place rather than spread across the handlers that
+/// happen to require them. Each `authenticates` emits one `Authenticates`
+/// implementation borrowing its field; neither field is handed out to a
+/// handler, since an authenticator is borrowed rather than injected.
 ///
 /// The association is per scheme, so `AccessToken` reaching `Tokens` while
-/// everything else reaches `Rejects` costs one implementation rather than a
-/// branch anywhere.
-impl Authenticates<AccessToken> for App {
-    type Authenticator = Tokens;
-
-    fn authenticator(&self) -> &Self::Authenticator {
-        &self.tokens
-    }
+/// everything else reaches `Rejects` costs one key rather than a branch
+/// anywhere. `SessionCookie` and `PeerToken` are wired by hand above, the
+/// way to borrow an authenticator the context does not hold as a field.
+#[derive(Provider)]
+struct App {
+    #[provide(authenticates = AccessToken)]
+    tokens: Tokens,
+    #[provide(
+        authenticates = ServiceKey,
+        authenticates = AdminLogin,
+        authenticates = PartnerCertificate,
+        authenticates = DelegatedAccess,
+        authenticates = Federated,
+    )]
+    verifier: Rejects,
 }
-
-macro_rules! verifies {
-    ($($scheme:ty),+ $(,)?) => {
-        $(
-            impl Authenticates<$scheme> for App {
-                type Authenticator = Rejects;
-
-                fn authenticator(&self) -> &Self::Authenticator {
-                    &self.verifier
-                }
-            }
-        )+
-    };
-}
-
-verifies!(
-    ServiceKey,
-    AdminLogin,
-    PartnerCertificate,
-    DelegatedAccess,
-    Federated,
-);
 
 /// Reads the caller's own profile.
 ///
