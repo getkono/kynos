@@ -1624,6 +1624,8 @@ pub kynos_openapi::model::schema::object::SchemaObject::unique_items: core::opti
 pub kynos_openapi::model::schema::object::SchemaObject::unknown_keywords: kynos_openapi::Map<serde_json::value::Value>
 pub kynos_openapi::model::schema::object::SchemaObject::write_only: core::option::Option<bool>
 pub kynos_openapi::model::schema::object::SchemaObject::xml: core::option::Option<kynos_openapi::model::schema::xml::Xml>
+impl kynos_openapi::model::schema::object::SchemaObject
+pub fn kynos_openapi::model::schema::object::SchemaObject::subschemas(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &kynos_openapi::model::schema::Schema)>
 impl core::clone::Clone for kynos_openapi::model::schema::object::SchemaObject
 pub fn kynos_openapi::model::schema::object::SchemaObject::clone(&self) -> kynos_openapi::model::schema::object::SchemaObject
 impl core::cmp::PartialEq for kynos_openapi::model::schema::object::SchemaObject
@@ -1788,6 +1790,7 @@ pub fn kynos_openapi::model::schema::Schema::never() -> Self
 pub fn kynos_openapi::model::schema::Schema::nullable(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::of_type(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::reference(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kynos_openapi::model::schema::Schema::walk(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &Self)>
 pub fn kynos_openapi::model::schema::Schema::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::clone(&self) -> kynos_openapi::model::schema::Schema
@@ -2625,6 +2628,7 @@ pub fn kynos_openapi::model::schema::Schema::never() -> Self
 pub fn kynos_openapi::model::schema::Schema::nullable(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::of_type(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::reference(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kynos_openapi::model::schema::Schema::walk(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &Self)>
 pub fn kynos_openapi::model::schema::Schema::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::clone(&self) -> kynos_openapi::model::schema::Schema
@@ -4165,6 +4169,8 @@ pub kynos_openapi::SchemaObject::unique_items: core::option::Option<bool>
 pub kynos_openapi::SchemaObject::unknown_keywords: kynos_openapi::Map<serde_json::value::Value>
 pub kynos_openapi::SchemaObject::write_only: core::option::Option<bool>
 pub kynos_openapi::SchemaObject::xml: core::option::Option<kynos_openapi::model::schema::xml::Xml>
+impl kynos_openapi::model::schema::object::SchemaObject
+pub fn kynos_openapi::model::schema::object::SchemaObject::subschemas(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &kynos_openapi::model::schema::Schema)>
 impl core::clone::Clone for kynos_openapi::model::schema::object::SchemaObject
 pub fn kynos_openapi::model::schema::object::SchemaObject::clone(&self) -> kynos_openapi::model::schema::object::SchemaObject
 impl core::cmp::PartialEq for kynos_openapi::model::schema::object::SchemaObject

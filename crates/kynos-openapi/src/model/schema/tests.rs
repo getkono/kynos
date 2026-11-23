@@ -80,3 +80,75 @@ fn a_boolean_schema_has_no_keywords_to_edit() {
     assert!(Schema::never().as_object_mut().is_none());
     assert!(Schema::default().as_object_mut().is_some());
 }
+
+fn parsed(json: serde_json::Value) -> Schema {
+    serde_json::from_value(json).expect("schema")
+}
+
+/// Each pointer `schemas` yields, with the `description` at it.
+fn described<'s>(
+    schemas: impl Iterator<Item = (String, &'s Schema)>,
+) -> Vec<(String, Option<&'s str>)> {
+    schemas
+        .map(|(pointer, schema)| {
+            let description = schema
+                .as_object()
+                .and_then(|object| object.description.as_deref());
+            (pointer, description)
+        })
+        .collect()
+}
+
+#[test]
+fn subschemas_are_the_direct_ones_at_relative_escaped_pointers_in_keyword_order() {
+    let schema = parsed(serde_json::json!({
+        "properties": {
+            "a/b~c": { "description": "property", "items": { "description": "deeper" } }
+        },
+        "items": { "description": "items" },
+        "oneOf": [true, { "description": "second" }],
+        "$defs": { "Inner": { "description": "def" } }
+    }));
+
+    let object = schema.as_object().expect("keywords");
+    assert_eq!(
+        described(object.subschemas()),
+        [
+            ("/$defs/Inner".to_owned(), Some("def")),
+            ("/oneOf/0".to_owned(), None),
+            ("/oneOf/1".to_owned(), Some("second")),
+            ("/items".to_owned(), Some("items")),
+            ("/properties/a~1b~0c".to_owned(), Some("property")),
+        ]
+    );
+}
+
+#[test]
+fn a_walk_is_depth_first_each_schema_before_what_it_holds_and_stops_at_a_ref() {
+    let schema = parsed(serde_json::json!({
+        "description": "root",
+        "allOf": [
+            { "description": "first", "not": { "description": "below first" } },
+            { "$ref": "#/components/schemas/Other", "description": "a ref" }
+        ],
+        "additionalProperties": false
+    }));
+
+    assert_eq!(
+        described(schema.walk()),
+        [
+            (String::new(), Some("root")),
+            ("/allOf/0".to_owned(), Some("first")),
+            ("/allOf/0/not".to_owned(), Some("below first")),
+            ("/allOf/1".to_owned(), Some("a ref")),
+            ("/additionalProperties".to_owned(), None),
+        ]
+    );
+}
+
+#[test]
+fn a_boolean_schema_walks_to_itself_alone() {
+    let schema = Schema::never();
+    let walked: Vec<_> = schema.walk().collect();
+    assert_eq!(walked, [(String::new(), &schema)]);
+}

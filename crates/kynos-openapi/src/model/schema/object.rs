@@ -426,6 +426,35 @@ pub struct SchemaObject {
 }
 
 impl SchemaObject {
+    /// Each subschema this schema holds directly, in the order the keywords
+    /// are declared, with the JSON Pointer it sits at relative to this
+    /// schema, escaped per RFC 6901: `/properties/name`, `/items`, `/oneOf/0`.
+    ///
+    /// Every keyword holding a schema is reached, `$defs` and
+    /// `dependentSchemas` included. A `$ref` is not followed; see
+    /// [`Schema::walk`] for every schema below this one.
+    ///
+    /// ```
+    /// use kynos_openapi::{Schema, SchemaObject, SchemaType};
+    ///
+    /// let mut object = SchemaObject::default();
+    /// object.properties.insert("a/b".to_owned(), Schema::of_type(SchemaType::String));
+    /// object.items = Some(Box::new(Schema::any()));
+    ///
+    /// let pointers: Vec<String> = object.subschemas().map(|(pointer, _)| pointer).collect();
+    /// assert_eq!(pointers, ["/items", "/properties/a~1b"]);
+    /// ```
+    pub fn subschemas(&self) -> impl Iterator<Item = (String, &Schema)> {
+        let mut found = Vec::new();
+        self.for_each_subschema(At::ROOT, |at, schema| {
+            let mut pointer = at.pointer();
+            // Drop the `#` the root renders, leaving the relative pointer.
+            pointer.remove(0);
+            found.push((pointer, schema));
+        });
+        found.into_iter()
+    }
+
     /// Visits each subschema this schema holds directly, at its pointer below
     /// `at`, in the order the keywords are declared.
     ///
