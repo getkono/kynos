@@ -1334,6 +1334,21 @@ the names and the trust setting that event reads an inbound identifier by. A
 `Trace::span` mounted inside `RequestId` opens with the `AssignedId`; mounted
 outside, with what the client sent.
 
+## The level a request is logged at
+
+`Trace::level` sets one level for both events and the span. `level_for` lets
+the status choose the closing event's level instead, so a 5xx can be logged at
+`ERROR` and found by an error filter, without an observer of its own that
+logs the line again. Only the closing event reads it, since the opening
+event and the span begin before any status exists. It works the same in
+either call order: `level` never replaces the rule.
+
+It takes a `fn(StatusCode) -> Level` and not a closure, so `Trace` stays one
+type that clones and prints with `Debug`. A rule fixed in the framework,
+such as "5xx at one level", could not log a 429 or a 503 at its own. The rule
+reads only the status, which is what says whether an exchange failed; a rule
+that needs the response's headers belongs in an `Observer`.
+
 ## Trusted hosts
 
 `TrustedHosts` refuses a request whose authority — the target's, else `Host`,

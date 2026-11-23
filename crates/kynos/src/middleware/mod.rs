@@ -611,7 +611,12 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 /// `route` is `None` when no operation matched.
 pub trait Observer<C>: Send + Sync + 'static {
     /// Called when a request arrives, before any interceptor.
-    fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &C);
+    ///
+    /// Does nothing unless implemented, so an observer that only reads
+    /// responses implements [`on_response`](Observer::on_response) alone.
+    fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &C) {
+        let _ = (request, route, context);
+    }
 
     /// Called when a response is about to be written.
     ///
