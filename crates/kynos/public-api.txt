@@ -7873,6 +7873,8 @@ pub kynos::response::stream::sse::Event::data: T
 pub kynos::response::stream::sse::Event::event: core::option::Option<alloc::string::String>
 pub kynos::response::stream::sse::Event::id: core::option::Option<alloc::string::String>
 pub kynos::response::stream::sse::Event::retry: core::option::Option<core::time::Duration>
+impl<T: serde_core::ser::Serialize + kynos::schema::Schema> kynos::response::stream::sse::Event<T>
+pub fn kynos::response::stream::sse::Event<T>::tagged(T) -> Self
 impl<T> kynos::response::stream::sse::Event<T>
 pub fn kynos::response::stream::sse::Event<T>::comment(self, impl core::convert::Into<alloc::string::String>) -> Self
 pub fn kynos::response::stream::sse::Event<T>::event(self, impl core::convert::Into<alloc::string::String>) -> Self
@@ -7889,6 +7891,10 @@ pub fn kynos::response::stream::sse::Event<T>::default() -> kynos::response::str
 impl<T: core::fmt::Debug> core::fmt::Debug for kynos::response::stream::sse::Event<T>
 pub fn kynos::response::stream::sse::Event<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<T> core::marker::StructuralPartialEq for kynos::response::stream::sse::Event<T>
+impl<T> kynos::response::stream::sse::SseItem for kynos::response::stream::sse::Event<T>
+pub type kynos::response::stream::sse::Event<T>::Data = T
+pub type kynos::response::stream::sse::Event<T>::Error = core::convert::Infallible
+pub fn kynos::response::stream::sse::Event<T>::into_event(self) -> core::result::Result<kynos::response::stream::sse::Event<T>, Self::Error>
 impl<T> core::marker::Freeze for kynos::response::stream::sse::Event<T> where T: core::marker::Freeze
 impl<T> core::marker::Send for kynos::response::stream::sse::Event<T> where T: core::marker::Send
 impl<T> core::marker::Sync for kynos::response::stream::sse::Event<T> where T: core::marker::Sync
@@ -7924,12 +7930,12 @@ impl<S> kynos::response::stream::sse::Sse<S>
 pub fn kynos::response::stream::sse::Sse<S>::end_on_shutdown(self, kynos::server::lifecycle::Draining) -> Self
 pub fn kynos::response::stream::sse::Sse<S>::keep_alive(self, kynos::response::stream::sse::KeepAlive) -> Self
 pub fn kynos::response::stream::sse::Sse<S>::new(S) -> Self
-impl<S, T, E> kynos::response::IntoResponse for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream<Item = core::result::Result<kynos::response::stream::sse::Event<T>, E>> + core::marker::Send + 'static, T: serde_core::ser::Serialize, E: core::convert::Into<kynos::http::body::BoxError> + 'static
-pub fn kynos::response::stream::sse::Sse<S>::into_response(self) -> kynos::http::Response
-impl<S, T, E> kynos::response::Responses for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream<Item = core::result::Result<kynos::response::stream::sse::Event<T>, E>>, T: kynos::schema::Schema
-pub fn kynos::response::stream::sse::Sse<S>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<S: core::fmt::Debug> core::fmt::Debug for kynos::response::stream::sse::Sse<S>
 pub fn kynos::response::stream::sse::Sse<S>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<S> kynos::response::IntoResponse for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream + core::marker::Send + 'static, <S as futures_core::stream::Stream>::Item: kynos::response::stream::sse::SseItem, <<S as futures_core::stream::Stream>::Item as kynos::response::stream::sse::SseItem>::Data: serde_core::ser::Serialize
+pub fn kynos::response::stream::sse::Sse<S>::into_response(self) -> kynos::http::Response
+impl<S> kynos::response::Responses for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream, <S as futures_core::stream::Stream>::Item: kynos::response::stream::sse::SseItem, <<S as futures_core::stream::Stream>::Item as kynos::response::stream::sse::SseItem>::Data: kynos::schema::Schema
+pub fn kynos::response::stream::sse::Sse<S>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<S> core::marker::Freeze for kynos::response::stream::sse::Sse<S> where S: core::marker::Freeze
 impl<S> core::marker::Send for kynos::response::stream::sse::Sse<S> where S: core::marker::Send
 impl<S> core::marker::Sync for kynos::response::stream::sse::Sse<S> where S: core::marker::Sync
@@ -7937,6 +7943,18 @@ impl<S> core::marker::Unpin for kynos::response::stream::sse::Sse<S> where S: co
 impl<S> core::marker::UnsafeUnpin for kynos::response::stream::sse::Sse<S> where S: core::marker::UnsafeUnpin
 impl<S> core::panic::unwind_safe::RefUnwindSafe for kynos::response::stream::sse::Sse<S> where S: core::panic::unwind_safe::RefUnwindSafe
 impl<S> core::panic::unwind_safe::UnwindSafe for kynos::response::stream::sse::Sse<S> where S: core::panic::unwind_safe::UnwindSafe
+pub trait kynos::response::stream::sse::SseItem: kynos::response::stream::sse::sealed::Sealed
+pub type kynos::response::stream::sse::SseItem::Data
+pub type kynos::response::stream::sse::SseItem::Error: core::convert::Into<kynos::http::body::BoxError>
+pub fn kynos::response::stream::sse::SseItem::into_event(self) -> core::result::Result<kynos::response::stream::sse::Event<Self::Data>, Self::Error>
+impl<T, E: core::convert::Into<kynos::http::body::BoxError>> kynos::response::stream::sse::SseItem for core::result::Result<kynos::response::stream::sse::Event<T>, E>
+pub type core::result::Result<kynos::response::stream::sse::Event<T>, E>::Data = T
+pub type core::result::Result<kynos::response::stream::sse::Event<T>, E>::Error = E
+pub fn core::result::Result<kynos::response::stream::sse::Event<T>, E>::into_event(self) -> Self
+impl<T> kynos::response::stream::sse::SseItem for kynos::response::stream::sse::Event<T>
+pub type kynos::response::stream::sse::Event<T>::Data = T
+pub type kynos::response::stream::sse::Event<T>::Error = core::convert::Infallible
+pub fn kynos::response::stream::sse::Event<T>::into_event(self) -> core::result::Result<kynos::response::stream::sse::Event<T>, Self::Error>
 pub trait kynos::response::IntoResponse
 pub fn kynos::response::IntoResponse::into_response(self) -> kynos::http::Response
 impl kynos::response::IntoResponse for ()
@@ -7983,12 +8001,12 @@ impl<R: kynos::security::auth::Scopes> kynos::response::IntoResponse for kynos::
 pub fn kynos::error::rejection::ScopedRejection<R>::into_response(self) -> kynos::http::Response
 impl<S, M, E> kynos::response::IntoResponse for kynos::response::stream::binary::BinaryStream<S, M> where S: futures_core::stream::Stream<Item = core::result::Result<bytes::bytes::Bytes, E>> + core::marker::Send + 'static, M: kynos::http::media::MediaType, E: core::convert::Into<alloc::boxed::Box<(dyn core::error::Error + core::marker::Send + core::marker::Sync)>> + 'static
 pub fn kynos::response::stream::binary::BinaryStream<S, M>::into_response(self) -> kynos::http::Response
-impl<S, T, E> kynos::response::IntoResponse for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream<Item = core::result::Result<kynos::response::stream::sse::Event<T>, E>> + core::marker::Send + 'static, T: serde_core::ser::Serialize, E: core::convert::Into<kynos::http::body::BoxError> + 'static
-pub fn kynos::response::stream::sse::Sse<S>::into_response(self) -> kynos::http::Response
 impl<S> kynos::response::IntoResponse for kynos::extract::body::json_lines::JsonLines<S> where S: futures_core::stream::Stream + core::marker::Send + 'static, <S as futures_core::stream::Stream>::Item: serde_core::ser::Serialize
 pub fn kynos::extract::body::json_lines::JsonLines<S>::into_response(self) -> kynos::http::Response
 impl<S> kynos::response::IntoResponse for kynos::extract::body::json_lines::JsonSeq<S> where S: futures_core::stream::Stream + core::marker::Send + 'static, <S as futures_core::stream::Stream>::Item: serde_core::ser::Serialize
 pub fn kynos::extract::body::json_lines::JsonSeq<S>::into_response(self) -> kynos::http::Response
+impl<S> kynos::response::IntoResponse for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream + core::marker::Send + 'static, <S as futures_core::stream::Stream>::Item: kynos::response::stream::sse::SseItem, <<S as futures_core::stream::Stream>::Item as kynos::response::stream::sse::SseItem>::Data: serde_core::ser::Serialize
+pub fn kynos::response::stream::sse::Sse<S>::into_response(self) -> kynos::http::Response
 impl<T, E> kynos::response::IntoResponse for core::result::Result<T, E> where T: kynos::response::IntoResponse, E: kynos::response::IntoResponse
 pub fn core::result::Result<T, E>::into_response(self) -> kynos::http::Response
 impl<T, H> kynos::response::IntoResponse for kynos::response::headers::WithHeaders<T, H> where T: kynos::response::IntoResponse, H: kynos::extract::params::header::EncodeHeaders
@@ -8083,12 +8101,12 @@ impl<R: kynos::security::auth::Scopes> kynos::response::Responses for kynos::err
 pub fn kynos::error::rejection::ScopedRejection<R>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<S, M> kynos::response::Responses for kynos::response::stream::binary::BinaryStream<S, M> where S: futures_core::stream::Stream, M: kynos::http::media::MediaType
 pub fn kynos::response::stream::binary::BinaryStream<S, M>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
-impl<S, T, E> kynos::response::Responses for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream<Item = core::result::Result<kynos::response::stream::sse::Event<T>, E>>, T: kynos::schema::Schema
-pub fn kynos::response::stream::sse::Sse<S>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<S> kynos::response::Responses for kynos::extract::body::json_lines::JsonLines<S> where S: futures_core::stream::Stream, <S as futures_core::stream::Stream>::Item: kynos::schema::Schema
 pub fn kynos::extract::body::json_lines::JsonLines<S>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<S> kynos::response::Responses for kynos::extract::body::json_lines::JsonSeq<S> where S: futures_core::stream::Stream, <S as futures_core::stream::Stream>::Item: kynos::schema::Schema
 pub fn kynos::extract::body::json_lines::JsonSeq<S>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
+impl<S> kynos::response::Responses for kynos::response::stream::sse::Sse<S> where S: futures_core::stream::Stream, <S as futures_core::stream::Stream>::Item: kynos::response::stream::sse::SseItem, <<S as futures_core::stream::Stream>::Item as kynos::response::stream::sse::SseItem>::Data: kynos::schema::Schema
+pub fn kynos::response::stream::sse::Sse<S>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T, E> kynos::response::Responses for core::result::Result<T, E> where T: kynos::response::Responses, E: kynos::response::Responses
 pub fn core::result::Result<T, E>::responses(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::response::Responses
 impl<T, H> kynos::response::Responses for kynos::response::headers::WithHeaders<T, H> where T: kynos::response::Responses, H: kynos::extract::params::header::HeaderParams
@@ -10538,6 +10556,7 @@ pub kynos::server::error::ServerError::ShutdownTimeout::timeout: core::time::Dur
 pub kynos::server::error::ServerError::Signal(std::io::error::Error)
 pub kynos::server::error::ServerError::Tls(kynos::server::tls::error::TlsError)
 impl kynos::server::error::ServerError
+pub const fn kynos::server::error::ServerError::io_error(&self) -> core::option::Option<&std::io::error::Error>
 pub const fn kynos::server::error::ServerError::is_requested_shutdown(&self) -> bool
 impl core::convert::From<kynos::server::error::ServerError> for kynos::error::Error
 pub fn kynos::error::Error::from(kynos::server::error::ServerError) -> Self
