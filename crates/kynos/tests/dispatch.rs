@@ -290,6 +290,88 @@ async fn a_derived_head_is_reported_as_the_get_operation() {
     assert_eq!(head_route, Some(get_route));
 }
 
+/// Records the operation each request reached as an endpoint's own
+/// interceptor is told it, which the endpoint names rather than the router.
+#[derive(Clone, Default)]
+struct Inside(Arc<Mutex<Vec<(openapi::Method, String)>>>);
+
+impl Interceptor<App> for Inside {
+    type Reads = ();
+    type Adds = ();
+    type Short = Infallible;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        _: &App,
+        next: Next<'_, App>,
+    ) -> Result<Continued<()>, Infallible> {
+        if let Some(route) = next.route() {
+            self.0
+                .lock()
+                .expect("an unpoisoned record")
+                .push((route.method(), route.operation_id().to_owned()));
+        }
+        Ok(next.run(request).await)
+    }
+}
+
+async fn report() -> Text {
+    Text("report".to_owned())
+}
+
+/// A `GET` that describes its HEAD makes that HEAD an operation of its own:
+/// the router's observers and the endpoint's own interceptors are told its
+/// name, the GET's handler answers it without content, and `Allow` still
+/// names `HEAD` once, right after `GET`.
+#[tokio::test]
+async fn a_described_head_is_reported_as_its_own_operation() {
+    let sightings = Sightings::default();
+    let inside = Inside::default();
+    let endpoint = EndpointBuilder::new(
+        openapi::Method::Get,
+        openapi::PathTemplate::parse("/report").expect("a valid path"),
+        report,
+    )
+    .operation_id("get_report")
+    .describe_head("head_report")
+    .intercept(inside.clone());
+    // `support`'s operations implement the `DELETE` the 405 below refuses.
+    let service = support::router()
+        .observe(sightings.clone())
+        .mount(endpoint)
+        .build(App::new())
+        .expect("a describable router");
+
+    let full = get(&service, "/report").call().await;
+    let head = send(&service, Method::HEAD, "/report").call().await;
+    let refused = send(&service, Method::DELETE, "/report").call().await;
+
+    assert_eq!(head.status, StatusCode::OK);
+    assert!(head.body.is_empty(), "{:?}", head.text());
+    assert_eq!(
+        head.field(header::CONTENT_LENGTH.as_str()),
+        Some(full.body.len().to_string())
+    );
+    assert_eq!(
+        refused.field(header::ALLOW.as_str()).as_deref(),
+        Some("GET, HEAD")
+    );
+
+    let routed: Vec<_> = sightings
+        .taken()
+        .into_iter()
+        .filter_map(|(_, route)| route.map(|(method, _, id)| (method, id)))
+        .collect();
+    let named = vec![
+        (openapi::Method::Get, "get_report".to_owned()),
+        (openapi::Method::Head, "head_report".to_owned()),
+    ];
+    assert_eq!(routed, named);
+    assert_eq!(*inside.0.lock().expect("an unpoisoned record"), named);
+}
+
 /// A declared `head` whose handler returns a body anyway.
 #[kynos::head("/loud")]
 async fn loud_head() -> Text {

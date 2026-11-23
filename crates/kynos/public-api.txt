@@ -8507,6 +8507,7 @@ pub struct kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>
 impl<C, H: kynos::handler::Handler<C, A>, A, P: kynos::middleware::catch_panic::PanicPolicy, I> kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::catch_panics(self) -> kynos::router::endpoint::builder::EndpointBuilder<C, H, A, kynos::middleware::catch_panic::Catch, I>
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::deprecated(self) -> Self
+pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::describe_head(self, &'static str) -> Self
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::description(self, &'static str) -> Self
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, kynos::middleware::stack::Cons<N, I>> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::operation_id(self, &'static str) -> Self
@@ -8537,6 +8538,7 @@ pub trait kynos::router::endpoint::meta::EndpointMeta
 pub type kynos::router::endpoint::meta::EndpointMeta::PanicPolicy: kynos::middleware::catch_panic::PanicPolicy
 pub const kynos::router::endpoint::meta::EndpointMeta::DEPRECATED: bool
 pub const kynos::router::endpoint::meta::EndpointMeta::DESCRIPTION: core::option::Option<&'static str>
+pub const kynos::router::endpoint::meta::EndpointMeta::HEAD_OPERATION_ID: core::option::Option<&'static str>
 pub const kynos::router::endpoint::meta::EndpointMeta::METHOD: &'static str
 pub const kynos::router::endpoint::meta::EndpointMeta::OPERATION_ID: &'static str
 pub const kynos::router::endpoint::meta::EndpointMeta::PATH: &'static str
@@ -8659,6 +8661,11 @@ pub mod kynos::router::error
 pub kynos::router::error::RouterError::DuplicateOperation
 pub kynos::router::error::RouterError::DuplicateOperation::method: kynos_openapi::model::paths::method::Method
 pub kynos::router::error::RouterError::DuplicateOperation::path: alloc::string::String
+pub kynos::router::error::RouterError::HeadDescribedTwice
+pub kynos::router::error::RouterError::HeadDescribedTwice::path: alloc::string::String
+pub kynos::router::error::RouterError::HeadWithoutGet
+pub kynos::router::error::RouterError::HeadWithoutGet::method: kynos_openapi::model::paths::method::Method
+pub kynos::router::error::RouterError::HeadWithoutGet::path: alloc::string::String
 pub kynos::router::error::RouterError::InvalidRoutePattern
 pub kynos::router::error::RouterError::InvalidRoutePattern::pattern: alloc::string::String
 pub kynos::router::error::RouterError::MappedOperation

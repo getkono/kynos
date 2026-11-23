@@ -149,20 +149,15 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     where
         C: 'static,
     {
-        let mut declared: HashSet<(&str, kynos_openapi::Method)> = self
-            .mounted
-            .iter()
-            .map(|mounted| (mounted.path.as_str(), mounted.endpoint.method()))
-            .collect();
+        let described = super::head::described_operations(&self.mounted);
+        let mut declared: HashSet<_> = described.iter().copied().collect();
 
         for route in &self.unchecked.routes {
             for method in &route.methods {
                 if declared.insert((route.pattern.as_str(), *method)) {
                     continue;
                 }
-                let described = self.mounted.iter().any(|mounted| {
-                    mounted.path.as_str() == route.pattern && mounted.endpoint.method() == *method
-                });
+                let described = described.contains(&(route.pattern.as_str(), *method));
                 // A repeat of a described operation is located at it; an
                 // unchecked pattern alone has no `paths` key.
                 let location = if described {
@@ -245,7 +240,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         let mut links = crate::extract::link::Resolver::default();
 
-        let mut paths = Paths::new();
+        // The `HEAD`s the `GET`s describe wait for every declared operation.
+        let (mut paths, mut heads) = (Paths::new(), super::head::Heads::default());
         for mounted in &self.mounted {
             let key = mounted.path.as_str().to_owned();
             let location = path_location(&key);
@@ -292,6 +288,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             };
             violations.extend(super::group::unguarded(mounted));
 
+            heads.defer(mounted, method, &operation, &mut violations);
+
             let item: &mut PathItem = paths.items.entry(key.clone()).or_default();
             if item.set_operation(method, operation).is_some() {
                 violations.push(error_at(
@@ -325,6 +323,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         document.paths = paths;
         document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
+        heads.describe(&mut document.paths, &document.components, &mut violations);
 
         // Before the version is chosen and the document validated, so both
         // read what the application publishes.

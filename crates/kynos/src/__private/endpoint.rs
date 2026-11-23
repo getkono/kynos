@@ -44,6 +44,9 @@ where
     for tag in M::TAGS {
         builder = builder.with_tag(*tag);
     }
+    if let Some(head) = M::HEAD_OPERATION_ID {
+        builder = builder.describe_head(head);
+    }
     // The builder's own check, in the attribute's words: `public` refuses a
     // guarded handler however it is called.
     const {
