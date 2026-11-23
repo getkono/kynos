@@ -1269,7 +1269,10 @@ untrusted caller is allowed to do — each an operator's decision.
 answer instead: an interceptor whose `Reads` group is both the declaration and
 the W3C propagation carrier, entered across `next.run` so the span covers the
 handler. It carries no dependency into the library, and both rows above are
-the application's to assert against its own instrumentation.
+the application's to assert against its own instrumentation. An application
+content with Kynos's own `request` span joins the caller's trace through
+`TraceSpan::parent_from` instead, which holds the guard the application's
+propagator returns while the span is created and names no foreign type.
 
 ## Workspace
 

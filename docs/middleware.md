@@ -1349,6 +1349,24 @@ such as "5xx at one level", could not log a 429 or a 503 at its own. The rule
 reads only the status, which is what says whether an exchange failed; a rule
 that needs the response's headers belongs in an `Observer`.
 
+## The trace a request span joins
+
+`Trace::span` creates its span under whatever span is current, and a layer
+such as `tracing-opentelemetry` takes a new span's remote parent from the
+context current *when the span is created*. `TraceSpan::parent_from` is that
+moment: its function is called with the request just before the span is
+created, and what it returns, a propagator's context guard, is held across the
+creation and dropped right after, before the chain runs. The guard type is the
+application's, so neither `tracing` nor any propagator's types reach a Kynos
+signature, and which format is read, and whether a client's `traceparent` is
+believed at all, stays the operator's decision.
+
+It is a `fn`, as `level_for` is, and it is called only when the span is
+created: a span the subscriber filters out has no parent to take. The guard is
+never held across an `.await`, so a `!Send` one fits. The span's type records
+the guard's, `TraceSpan<G>`, rather than boxing it per request; `TraceSpan`
+alone still names the span without one.
+
 ## Trusted hosts
 
 `TrustedHosts` refuses a request whose authority — the target's, else `Host`,

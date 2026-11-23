@@ -287,6 +287,7 @@ impl Trace {
         TraceSpan {
             callsite: SpanCallsite::interned(self.level, fields),
             trace: self,
+            parent: None,
         }
     }
 
@@ -387,19 +388,102 @@ fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
 ///
 /// Reads, adds and answers nothing, so mounting it changes no operation's
 /// description.
-#[derive(Clone)]
-pub struct TraceSpan {
+///
+/// `G` is what [`parent_from`](TraceSpan::parent_from)'s function returns, and
+/// `()` until it is called.
+pub struct TraceSpan<G = ()> {
     trace: Trace,
     callsite: &'static SpanCallsite,
+    /// Called just before the span is created; what it returns is dropped
+    /// right after.
+    parent: Option<fn(&http::Request) -> G>,
 }
 
-impl std::fmt::Debug for TraceSpan {
+// By hand, since a derive would ask `G: Clone` of a type only a function
+// pointer names.
+impl<G> Clone for TraceSpan<G> {
+    fn clone(&self) -> Self {
+        Self {
+            trace: self.trace.clone(),
+            callsite: self.callsite,
+            parent: self.parent,
+        }
+    }
+}
+
+impl<G> std::fmt::Debug for TraceSpan<G> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("TraceSpan")
             .field("trace", &self.trace)
             .field("fields", &self.callsite.declared)
+            .field("parent_from", &self.parent.is_some())
             .finish()
+    }
+}
+
+impl<G> TraceSpan<G> {
+    /// Creates each span while what `attach` returns for the request is held,
+    /// so the span takes its parent from the trace context the request
+    /// carries.
+    ///
+    /// `attach` is called with the request just before the span is created,
+    /// and what it returns is dropped right after, before anything inside the
+    /// span runs: hold a propagator's context guard there, and a layer that
+    /// reads the current context when a span is created, as
+    /// `tracing-opentelemetry`'s does, makes the caller's span its parent.
+    /// Neither `tracing` nor any propagator's types appear here, so the
+    /// propagation format stays the application's choice.
+    ///
+    /// It is called only where the span is created: a subscriber that filters
+    /// the span out, by [`level`](Trace::level) or otherwise, skips it. The
+    /// guard needs no `Send` bound, since no `.await` comes between taking
+    /// and dropping it. Called again, the last function wins. A function
+    /// rather than a closure, for the reason
+    /// [`level_for`](Trace::level_for) gives.
+    ///
+    /// A `traceparent` is an assertion by whoever sent it: believing one from
+    /// an untrusted client lets it join any trace whose identifier it guesses.
+    /// Attach the caller's context only where something in front of the
+    /// service sets or vets it.
+    ///
+    /// ```
+    /// use kynos::{http, middleware::trace::Trace};
+    /// use opentelemetry::{propagation::Extractor, trace::TraceContextExt as _};
+    ///
+    /// /// The request's headers as a propagator reads them.
+    /// struct Headers<'a>(&'a http::HeaderMap);
+    ///
+    /// impl Extractor for Headers<'_> {
+    ///     fn get(&self, key: &str) -> Option<&str> {
+    ///         self.0.get(key).and_then(|value| value.to_str().ok())
+    ///     }
+    ///
+    ///     fn keys(&self) -> Vec<&str> {
+    ///         self.0.keys().map(http::HeaderName::as_str).collect()
+    ///     }
+    /// }
+    ///
+    /// let span = Trace::new().span(&[]).parent_from(|request| {
+    ///     let parent = opentelemetry::global::get_text_map_propagator(|propagator| {
+    ///         propagator.extract(&Headers(request.headers()))
+    ///     });
+    ///     // A request with no valid `traceparent` starts a trace of its own.
+    ///     parent
+    ///         .span()
+    ///         .span_context()
+    ///         .is_valid()
+    ///         .then(|| parent.attach())
+    /// });
+    /// # let _ = span;
+    /// ```
+    #[must_use]
+    pub fn parent_from<H: 'static>(self, attach: fn(&http::Request) -> H) -> TraceSpan<H> {
+        TraceSpan {
+            trace: self.trace,
+            callsite: self.callsite,
+            parent: Some(attach),
+        }
     }
 }
 
@@ -549,7 +633,7 @@ impl Level {
     }
 }
 
-impl TraceSpan {
+impl<G> TraceSpan<G> {
     /// The identifier the span opens with: the one a `RequestId` outside it
     /// assigned, or, with none, whatever the client sent under the names
     /// [`correlating`](Trace::correlating) read.
@@ -582,6 +666,9 @@ impl TraceSpan {
         let recorded =
             (!self.trace.recorded.is_empty()).then(|| self.trace.recorded(request.headers()));
 
+        // Held while the span is created, and dropped before anything runs in it.
+        let _parent = self.parent.map(|attach| attach(request));
+
         tracing::Span::new(
             metadata,
             &fields.value_set(&[
@@ -604,7 +691,7 @@ impl TraceSpan {
     }
 }
 
-impl<C: Sync + 'static> super::Interceptor<C> for TraceSpan {
+impl<C: Sync + 'static, G: 'static> super::Interceptor<C> for TraceSpan<G> {
     type Reads = ();
     type Adds = ();
     type Short = std::convert::Infallible;
