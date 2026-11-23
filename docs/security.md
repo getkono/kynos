@@ -696,6 +696,27 @@ then rejected. A fixed slot rejects it at the signature, and moving the
 combination into the type parameter makes the description a function of the
 one type the guard runs.
 
+### Why a group does not declare its operations' guard
+
+A group-level requirement, `Group::require::<Scoped<B, R>>()`, was proposed so
+that a group whose handlers all take the same guard, and mostly never read it,
+could say so once. It would keep requiring and declaring one act, since the
+group's call would do both, and it was declined anyway:
+
+| Considered | Declined because |
+| --- | --- |
+| `Group::require::<G>()` | A reader of one handler could no longer tell whether it is guarded: the requirement would live wherever the group is assembled, which may be another module |
+| `Group::require_when::<M, G>(methods)` | The same, and which operations it covers would turn on each one's method, a second place to look |
+| Refusing a handler guard inside a requiring group | A handler needing the admitted credential would then read it through a second type, `Admitted<G>`, so one guard would have two spellings |
+| Letting a handler's guard narrow the group's | Two guards on one operation, which [one guard per operation](#why-a-second-guard-does-not-compile) exists to rule out |
+
+The unread `_caller: Scoped<B, Write>` argument is the price, and it is the
+declaration doing its job: the handler says what it requires where it is
+written. What the proposal also wanted to fix, a handler that forgot the
+argument and is served to anyone, is fixed without moving the guard: a group
+holding guarded operations refuses an unguarded one that is not declared
+public, which is the mistake made loud rather than made impossible to write.
+
 ### Why `Presented` is owned
 
 A borrowing form — `type Presented<'r>` — would keep the common path
