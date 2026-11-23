@@ -339,6 +339,35 @@ fn an_unbound_coverage_refuses_to_assert_covered() {
     Coverage::new().assert_covered();
 }
 
+/// Naming a document asserts against that document even on a bound record:
+/// bound to one declaring nothing, the record still reports what the named
+/// document declares and nobody exercised.
+#[tokio::test(start_paused = true)]
+#[cfg_attr(
+    feature = "server",
+    should_panic(expected = "7 responses declared but never exercised:\n  \
+                             POST /users -> 400\n  POST /users -> 413\n  \
+                             POST /users -> 415\n  POST /users -> 422\n  \
+                             POST /users -> 201\n  POST /users -> 409\n  \
+                             POST /users -> 408")
+)]
+#[cfg_attr(
+    not(feature = "server"),
+    should_panic(expected = "6 responses declared but never exercised:\n  \
+                             POST /users -> 400\n  POST /users -> 413\n  \
+                             POST /users -> 415\n  POST /users -> 422\n  \
+                             POST /users -> 201\n  POST /users -> 409")
+)]
+async fn a_named_document_overrides_the_bound_one() {
+    let document = service().expect("a describable router").openapi().clone();
+    let coverage = Coverage::for_document(kynos::openapi::Document::default());
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+
+    coverage.assert_declared_responses_covered(&document);
+}
+
 /// A client not built over the coverage records nothing into it, so what it
 /// exercised is still reported missing, and only that.
 #[tokio::test(start_paused = true)]
