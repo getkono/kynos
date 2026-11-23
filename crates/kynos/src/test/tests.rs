@@ -928,6 +928,57 @@ mod assertions {
     }
 }
 
+/// What `TestClient::method` reads a method from: a name as the method it
+/// spells, case and all, and a typed one as itself.
+mod methods {
+    use crate::{http::Method, test::IntoMethod};
+
+    #[test]
+    fn a_name_is_the_method_it_spells() {
+        assert_eq!("POST".into_method(), Method::POST);
+        assert_eq!("QUERY".into_method().as_str(), "QUERY");
+        // An extension method no registry names is sent as written.
+        assert_eq!("PURGE".into_method().as_str(), "PURGE");
+    }
+
+    #[test]
+    fn a_typed_method_is_itself() {
+        assert_eq!(Method::PATCH.into_method(), Method::PATCH);
+        assert_eq!((&Method::DELETE).into_method(), Method::DELETE);
+    }
+
+    #[test]
+    #[should_panic(expected = "`GE T` is not a method, which is a token (RFC 9110 section 9.1)")]
+    fn a_name_that_is_not_a_token_panics() {
+        let _ = "GE T".into_method();
+    }
+
+    #[test]
+    #[should_panic(expected = "`` is not a method")]
+    fn an_empty_name_panics() {
+        let _ = "".into_method();
+    }
+
+    /// Section 9.1 makes `post` another method than `POST`, which a test
+    /// spelling it so almost never means to send.
+    #[test]
+    #[should_panic(
+        expected = "`post` is not `POST`: a method is case-sensitive (RFC 9110 section 9.1); \
+                    write `POST`, or pass `Method::from_bytes(b\"post\")` to send the \
+                    extension method `post`"
+    )]
+    fn a_registered_method_in_another_case_panics() {
+        let _ = "post".into_method();
+    }
+
+    /// The typed method stays the way to send that extension method.
+    #[test]
+    fn a_typed_method_in_another_case_is_sent_as_written() {
+        let method = Method::from_bytes(b"post").expect("a token");
+        assert_eq!(method.into_method().as_str(), "post");
+    }
+}
+
 /// Witnesses a type that crosses a task boundary, and is shared across one.
 fn assert_send_sync<T: Send + Sync>() {}
 

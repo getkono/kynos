@@ -308,12 +308,30 @@ impl<C> TestClient<C> {
         )
     }
 
-    /// Begins a request with any method.
+    /// Begins a request with any method, given as a
+    /// [`Method`](crate::http::Method) or by its name.
     ///
-    /// For a method Kynos routes that this type has no shortcut for.
+    /// For a method Kynos routes that this type has no shortcut for, and for
+    /// a table of cases that names each method as text.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::http::Method;
+    ///
+    /// for (method, path, status) in [("GET", "/v1/status", 200), ("DELETE", "/v1/status", 405)] {
+    ///     client.method(method, path).send().await.assert_status(status);
+    /// }
+    /// client.method(Method::PUT, "/v1/status").send().await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`IntoMethod::into_method`] does: when a name is not a
+    /// method token, or spells a method RFC 9110 registers in another case.
     #[must_use]
-    pub fn method(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
-        self.request(method, path)
+    pub fn method(&self, method: impl IntoMethod, path: &str) -> TestRequest<'_, C> {
+        self.request(method.into_method(), path)
     }
 
     fn request(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
@@ -2122,6 +2140,73 @@ mod sealed {
     pub trait Sealed: Sized {
         /// The status, or the number that names none.
         fn status(self) -> Result<StatusCode, u16>;
+    }
+
+    /// What closes [`IntoMethod`](super::IntoMethod) to the types here.
+    pub trait SealedMethod {}
+}
+
+/// A method [`TestClient::method`] sends: a [`Method`](crate::http::Method),
+/// or its name, which a table of cases holds more naturally.
+///
+/// Sealed: implemented for `Method`, `&Method` and `&str`.
+pub trait IntoMethod: sealed::SealedMethod {
+    /// The method this names.
+    ///
+    /// A name is case-sensitive, as RFC 9110 section 9.1 makes a method, so
+    /// `"POST"` names `POST`. One that spells a registered method in another
+    /// case, as `"post"` does, panics rather than sending the extension
+    /// method it names; a test of that method sends
+    /// `Method::from_bytes(b"post")`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a name is not a method token, and when it spells a
+    /// registered method in another case.
+    fn into_method(self) -> HttpMethod;
+}
+
+/// The methods RFC 9110 section 9.3, RFC 5789 and the `QUERY` draft
+/// register, whose names a test spells in another case only by mistake.
+const REGISTERED_METHODS: [&str; 10] = [
+    "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "QUERY",
+];
+
+impl sealed::SealedMethod for HttpMethod {}
+impl sealed::SealedMethod for &HttpMethod {}
+impl sealed::SealedMethod for &str {}
+
+impl IntoMethod for HttpMethod {
+    fn into_method(self) -> HttpMethod {
+        self
+    }
+}
+
+impl IntoMethod for &HttpMethod {
+    fn into_method(self) -> HttpMethod {
+        self.clone()
+    }
+}
+
+impl IntoMethod for &str {
+    fn into_method(self) -> HttpMethod {
+        let method = HttpMethod::from_bytes(self.as_bytes()).unwrap_or_else(|_| {
+            panic!(
+                "`{}` is not a method, which is a token (RFC 9110 section 9.1)",
+                self.escape_debug()
+            )
+        });
+        if let Some(registered) = REGISTERED_METHODS
+            .iter()
+            .find(|registered| registered.eq_ignore_ascii_case(self) && **registered != self)
+        {
+            panic!(
+                "`{self}` is not `{registered}`: a method is case-sensitive (RFC 9110 \
+                 section 9.1); write `{registered}`, or pass `Method::from_bytes(b\"{self}\")` \
+                 to send the extension method `{self}`"
+            );
+        }
+        method
     }
 }
 

@@ -237,6 +237,17 @@ async fn any_method_can_be_sent() {
     assert_eq!(refused.status(), StatusCode::NOT_IMPLEMENTED);
 }
 
+/// A method named as text reaches the operation registered for it, as a
+/// table of cases names one.
+#[tokio::test]
+async fn a_method_named_as_text_is_sent_as_that_method() {
+    for (method, status) in [("HEAD", 204), ("OPTIONS", 204), ("PUT", 501)] {
+        let response = client().method(method, "/probe").send().await;
+        response.assert_status(status);
+        assert_eq!(response.method().as_str(), method);
+    }
+}
+
 // --- What a request can carry ---------------------------------------------
 
 #[tokio::test]
