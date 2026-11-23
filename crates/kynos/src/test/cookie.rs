@@ -7,7 +7,10 @@
 //! [`TestResponse::assert_cookie_cleared`] tell a live cookie from a removal,
 //! which [`TestResponse::cookies`] reports alike as a name and a value.
 
-use std::time::{Duration, SystemTime};
+use std::{
+    ops::RangeInclusive,
+    time::{Duration, SystemTime},
+};
 
 use crate::{response::cookie::SameSite, test::TestResponse};
 
@@ -46,7 +49,9 @@ pub struct TestSetCookie<'a> {
     /// `Max-Age`; zero for any value of zero or less, which section 5.2.2
     /// reads as the earliest representable date.
     pub max_age: Option<Duration>,
-    /// `Expires`, in any of the three formats RFC 9110 section 5.6.7 names.
+    /// `Expires`, read by section 5.1.1's cookie-date algorithm, which takes
+    /// the three formats RFC 9110 section 5.6.7 names and the
+    /// `Thu, 01-Jan-1970 00:00:00 GMT` none of them is.
     pub expires: Option<SystemTime>,
     /// `Secure`.
     pub secure: bool,
@@ -86,7 +91,7 @@ impl<'a> TestSetCookie<'a> {
             let (key, value) = (trim(key), trim(value));
             match key.to_ascii_lowercase().as_str() {
                 "expires" => {
-                    if let Some(expires) = crate::http::date::parse(value) {
+                    if let Some(expires) = cookie_date(value) {
                         cookie.expires = Some(expires);
                     }
                 }
@@ -221,6 +226,102 @@ fn max_age(text: &str) -> Option<Duration> {
         return Some(Duration::ZERO);
     }
     Some(Duration::from_secs(digits.parse().unwrap_or(u64::MAX)))
+}
+
+/// Section 5.1.1's cookie-date: the first time, day, month and year among
+/// the tokens between delimiters, in any order and case, or `None` where one
+/// is missing or names no instant.
+fn cookie_date(text: &str) -> Option<SystemTime> {
+    let (mut time, mut day, mut month, mut year) = (None, None, None, None);
+    for token in text
+        .split(is_date_delimiter)
+        .filter(|token| !token.is_empty())
+    {
+        if time.is_none() {
+            time = hms_time(token);
+            if time.is_some() {
+                continue;
+            }
+        }
+        if day.is_none() {
+            day = leading_number(token, 1..=2);
+            if day.is_some() {
+                continue;
+            }
+        }
+        if month.is_none() {
+            month = month_number(token);
+            if month.is_some() {
+                continue;
+            }
+        }
+        if year.is_none() {
+            year = leading_number(token, 2..=4);
+        }
+    }
+    let ((hour, minute, second), day, month) = (time?, day?, month?);
+    let year = match year? {
+        year @ 0..=69 => year + 2000,
+        year @ 70..=99 => year + 1900,
+        year => year,
+    };
+    if !(1..=31).contains(&day) || year < 1601 || hour > 23 || minute > 59 || second > 59 {
+        return None;
+    }
+    let days = crate::http::date::days_from_civil(
+        u16::try_from(year).ok()?,
+        u8::try_from(month).ok()?,
+        u8::try_from(day).ok()?,
+    )?;
+    let seconds = days * 86_400 + i64::from(hour * 3600 + minute * 60 + second);
+    let offset = Duration::from_secs(seconds.unsigned_abs());
+    if seconds < 0 {
+        SystemTime::UNIX_EPOCH.checked_sub(offset)
+    } else {
+        SystemTime::UNIX_EPOCH.checked_add(offset)
+    }
+}
+
+/// Section 5.1.1's `delimiter`, which separates a cookie-date's tokens.
+fn is_date_delimiter(c: char) -> bool {
+    matches!(c, '\t' | ' '..='/' | ';'..='@' | '['..='`' | '{'..='~')
+}
+
+/// Section 5.1.1's `hms-time`: three fields of one or two digits, joined by
+/// `:`, ending the token or followed by a non-digit.
+fn hms_time(token: &str) -> Option<(u32, u32, u32)> {
+    let (hour, rest) = split_number(token, 1..=2)?;
+    let (minute, rest) = split_number(rest.strip_prefix(':')?, 1..=2)?;
+    let (second, _) = split_number(rest.strip_prefix(':')?, 1..=2)?;
+    Some((hour, minute, second))
+}
+
+/// Section 5.1.1's `month`: a token whose first three letters name one, in
+/// any case, one-indexed.
+fn month_number(token: &str) -> Option<u32> {
+    let prefix = token.get(..3)?;
+    let index = crate::http::date::MONTHS
+        .iter()
+        .position(|month| prefix.eq_ignore_ascii_case(month))?;
+    u32::try_from(index + 1).ok()
+}
+
+/// The number a token opens with, where it is `width` digits long and ends
+/// the token or is followed by a non-digit, as the `day-of-month` and `year`
+/// productions read one.
+fn leading_number(token: &str, width: RangeInclusive<usize>) -> Option<u32> {
+    split_number(token, width).map(|(number, _)| number)
+}
+
+/// [`leading_number`], with the rest of the token after it.
+fn split_number(token: &str, width: RangeInclusive<usize>) -> Option<(u32, &str)> {
+    let end = token
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(token.len());
+    if !width.contains(&end) {
+        return None;
+    }
+    Some((token[..end].parse().ok()?, &token[end..]))
 }
 
 /// RFC 6265bis section 5.6.7's three enforcements, in any case.
