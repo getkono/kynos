@@ -343,6 +343,68 @@ fn a_server_serve_io_refuses_cannot_be_tested_through() {
     let _ = TestClient::through_server(server);
 }
 
+// --- Over a socket ---------------------------------------------------------
+
+/// `server` serving on a spawned task, on a loopback port.
+#[cfg(feature = "server")]
+async fn spawned(server: kynos::server::Server<()>) -> kynos::server::Running<()> {
+    server
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn()
+}
+
+/// Over a socket, a request reaches the handler with its fields and its body
+/// from the connection's own loopback address, and its response conforms to
+/// the description of the service the server runs.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn a_request_over_a_socket_carries_its_fields_and_body_from_its_own_address() {
+    let running = spawned(kynos::server::Server::new(service())).await;
+    let client = TestClient::connect(&running);
+
+    let seen: Seen = client
+        .post("/echo")
+        .cookie("session", "abc123")
+        .header("x-query", "limit=10")
+        .body_stream("text/plain; charset=utf-8", chunks(&["hel", "lo"]))
+        .send()
+        .await
+        .expect_status(200)
+        .json();
+    assert_eq!(seen.body, "hello");
+    assert_eq!(seen.cookie.as_deref(), Some("session=abc123"));
+    assert_eq!(seen.query.as_deref(), Some("limit=10"));
+    let peer: std::net::SocketAddr = seen.peer.parse().expect("a socket address");
+    assert!(peer.ip().is_loopback(), "{peer}");
+    assert_ne!(peer.port(), 0, "the peer is the socket's own port");
+
+    client.assert_conformance();
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
+/// Graceful shutdown is the listener's: once it ends, the listener is closed,
+/// and a request the client still sends is refused rather than answered.
+#[cfg(feature = "server")]
+#[tokio::test]
+#[should_panic(expected = "HEAD /probe: no response arrived: ")]
+async fn a_request_over_a_socket_once_its_server_shut_down_is_refused() {
+    let running = spawned(kynos::server::Server::new(service())).await;
+    let client = TestClient::connect(&running);
+    client.head("/probe").send().await.assert_status(204);
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+
+    let _ = client.head("/probe").send().await;
+}
+
 /// `client`'s answer to a stalled `POST /echo` on the real clock, or a panic
 /// once five seconds pass: far past the millisecond the in-process client
 /// waits, and far short of the 30 seconds a server waits by default.

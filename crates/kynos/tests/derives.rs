@@ -537,6 +537,99 @@ fn the_provider_derive_supplies_every_field_it_was_not_told_to_skip() {
     assert_eq!(provides(&app), (Pool(7), Cache("local")));
 }
 
+/// Admits every token, so the scheme a context routes to it is observable.
+#[derive(Clone, Debug, PartialEq)]
+struct Gate(&'static str);
+
+impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer, C> for Gate {
+    async fn authenticate(
+        &self,
+        _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
+        _: kynos::security::Head<'_>,
+        _: &C,
+    ) -> Result<String, kynos::error::rejection::AuthRejection> {
+        Ok(self.0.to_owned())
+    }
+}
+
+impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u32>, C> for Gate {
+    async fn authenticate(
+        &self,
+        _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
+        _: kynos::security::Head<'_>,
+        _: &C,
+    ) -> Result<u32, kynos::error::rejection::AuthRejection> {
+        Ok(0)
+    }
+}
+
+#[derive(kynos::Provider)]
+struct Guarded {
+    pool: Pool,
+    /// Kept back, as `authenticates` alone implies, and repeated for a second
+    /// scheme.
+    #[provide(authenticates = kynos::security::schemes::Bearer)]
+    #[provide(authenticates = kynos::security::schemes::Bearer<u32>)]
+    gate: Gate,
+    /// Handed out as well, which `provided` opts back in.
+    #[provide(authenticates = kynos::security::schemes::Bearer<u64>, provided)]
+    shared: Shared,
+}
+
+/// The `provided` authenticator, distinct from `Gate` so both fields can be
+/// told apart.
+#[derive(Clone, Debug, PartialEq)]
+struct Shared(Gate);
+
+impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u64>, C> for Shared {
+    async fn authenticate(
+        &self,
+        _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
+        _: kynos::security::Head<'_>,
+        _: &C,
+    ) -> Result<u64, kynos::error::rejection::AuthRejection> {
+        Ok(0)
+    }
+}
+
+fn authenticators<C>(context: &C) -> (&Gate, &Gate, &Shared)
+where
+    C: kynos::security::Authenticates<kynos::security::schemes::Bearer, Authenticator = Gate>
+        + kynos::security::Authenticates<kynos::security::schemes::Bearer<u32>, Authenticator = Gate>
+        + kynos::security::Authenticates<
+            kynos::security::schemes::Bearer<u64>,
+            Authenticator = Shared,
+        > + kynos::di::Provides<Pool>
+        + kynos::di::Provides<Shared>,
+{
+    (
+        kynos::security::Authenticates::<kynos::security::schemes::Bearer>::authenticator(context),
+        kynos::security::Authenticates::<kynos::security::schemes::Bearer<u32>>::authenticator(
+            context,
+        ),
+        kynos::security::Authenticates::<kynos::security::schemes::Bearer<u64>>::authenticator(
+            context,
+        ),
+    )
+}
+
+#[test]
+fn authenticates_borrows_the_field_for_each_scheme_it_names() {
+    let app = Guarded {
+        pool: Pool(1),
+        gate: Gate("gate"),
+        shared: Shared(Gate("shared")),
+    };
+    let (bearer, numbered, shared) = authenticators(&app);
+    assert_eq!(bearer, &Gate("gate"));
+    assert_eq!(numbered, &Gate("gate"));
+    assert_eq!(shared, &Shared(Gate("shared")));
+    assert_eq!(
+        <Guarded as kynos::di::Provides<Shared>>::provide(&app),
+        Shared(Gate("shared"))
+    );
+}
+
 /// An HTTP authentication scheme knows its own challenge, so a 401 and the
 /// description cannot disagree about what a client should do next.
 #[test]
@@ -4720,6 +4813,28 @@ macro_rules! forwarded_base {
 
 forwarded_base!(ForwardedLiteralError, "https://errors.example.com/");
 forwarded_base!(ForwardedConstError, PROBLEM_BASE);
+forwarded_base!(ForwardedDefaultError, default);
+
+// The prefix `base = default` and `problem_type!` read, at the crate root.
+kynos::problem_base!(PROBLEM_BASE);
+
+/// `LookupError` under the crate's `problem_base!`, and generic, as
+/// `SharedLookupError` is.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = default)]
+enum DefaultLookupError<T: std::fmt::Debug> {
+    #[error("no user with that id")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/user-unknown",
+        title = "User unknown"
+    )]
+    UserUnknown(std::marker::PhantomData<T>),
+
+    #[error("no tenant with that slug")]
+    #[problem(status = 404, title = "Tenant unknown")]
+    TenantUnknown,
+}
 
 /// Two failures answering with one status, neither naming a type and the enum
 /// declaring no `base`, so both publish `about:blank`. The schema is one
@@ -5764,8 +5879,30 @@ fn a_base_naming_a_const_publishes_what_the_literal_does() {
     );
 }
 
-/// A `base` forwarded through a `macro_rules!` fragment, literal or path, is
-/// read as the one written directly.
+/// `base = default` publishes what the crate's `problem_base!` written out as
+/// the `base` does, on the wire and in the description, still borrowed; and
+/// `problem_type!` names the URI a variant of that slug publishes.
+#[test]
+fn a_default_base_publishes_what_the_crate_problem_base_does() {
+    use kynos::error::problem::IntoProblem;
+    use std::borrow::Cow;
+
+    let joined = DefaultLookupError::<u8>::TenantUnknown.into_problem();
+    assert_eq!(joined.type_uri, "https://errors.example.com/tenant-unknown");
+    assert!(matches!(joined.type_uri, Cow::Borrowed(_)));
+    assert_eq!(joined.type_uri, kynos::problem_type!("tenant-unknown"));
+
+    let typed = DefaultLookupError::<u8>::UserUnknown(std::marker::PhantomData).into_problem();
+    assert_eq!(typed.type_uri, "https://errors.example.com/user-unknown");
+
+    assert_eq!(
+        emitted_responses::<DefaultLookupError<u8>>(),
+        emitted_responses::<LookupError>()
+    );
+}
+
+/// A `base` forwarded through a `macro_rules!` fragment, literal, path or
+/// `default`, is read as the one written directly.
 #[test]
 fn a_base_forwarded_through_a_macro_is_read_as_written() {
     use kynos::error::problem::IntoProblem;
@@ -5773,6 +5910,7 @@ fn a_base_forwarded_through_a_macro_is_read_as_written() {
     for problem in [
         ForwardedLiteralError::TenantUnknown.into_problem(),
         ForwardedConstError::TenantUnknown.into_problem(),
+        ForwardedDefaultError::TenantUnknown.into_problem(),
     ] {
         assert_eq!(
             problem.type_uri,

@@ -130,7 +130,7 @@ enum StoreError {
 
 | Position | Key | Meaning |
 | --- | --- | --- |
-| type | `base` | URI prefix, as a string literal or a path to a `const` of type `&str`; `type` defaults to it plus the kebab-cased variant name |
+| type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
 | type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
@@ -265,8 +265,22 @@ client wants. A failure that states the wait in its body too publishes
 as `#[problem(base = crate::PROBLEM_BASE)]` rather than repeating the literal,
 so the compiler holds them to one value. The prefix and each slug are joined
 in `const` items, so the type URI is still a `&'static str` and no response
-allocates for it. A framework-level default was rejected: the prefix stays
-visible on the type that publishes under it.
+allocates for it.
+
+A crate with one namespace says it once:
+`kynos::problem_base!("https://errors.example.com/")` at the crate root, and
+`#[problem(base = default)]` on each type publishing under it. The default is
+opt-in per type rather than implied by a bare derive: a proc macro cannot see
+whether the crate declared one, so an implied default would break every crate
+without it, and the prefix stays visible on the type that publishes under it. A
+router-level default was rejected for the same reason, and because it would make
+the type URI a run-time value. `base = default` in a crate declaring none is a
+compile error at `default`.
+
+A type URI named outside a derive — a
+`Scopes::FORBIDDEN_TYPE`, or an `AuthRejection::forbidden_as` — is
+`kynos::problem_type!("insufficient-scope")`: the same base joined with that
+slug in `const` items, so it cannot drift from the prefix the derives use.
 
 **A shared failure is declared once.** A variant marked `transparent` holds
 another `ApiError` — failures many operations share, such as validation or a

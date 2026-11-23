@@ -144,6 +144,34 @@ pub fn operation(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand_generic(attribute, item)
 }
 
+/// Declares that an operation takes no guard on purpose.
+///
+/// A group whose operations take a guard refuses to build around one that
+/// takes none, since a forgotten guard argument compiles and is served to
+/// anyone. An operation meant to be reached without a credential, such as the
+/// one issuing it, says so here:
+///
+/// ```ignore
+/// /// Exchange a password for a session token.
+/// #[kynos::post("/sessions")]
+/// #[kynos::public]
+/// async fn create_session(Json(login): Json<Login>) -> Result<Json<Session>, LoginError> {
+///     todo!()
+/// }
+/// ```
+///
+/// It goes beside a route attribute, above or below it, and takes no
+/// arguments. It changes nothing on the wire or in the description, and on a
+/// handler taking a guard it is a compile error, since `MaybeAuth` is how a
+/// guarded operation admits anonymous callers. `EndpointBuilder::public` is
+/// the builder's spelling.
+#[proc_macro_attribute]
+pub fn public(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    route::attrs::expand_public(&attribute.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 /// Collects operations for mounting.
 ///
 /// Operations sharing a path are merged into one Path Item, so `routes![list,
@@ -634,7 +662,11 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// struct declares its one status on the type instead; `base` always belongs on
 /// the type, since it is the prefix every variant's type URI shares. It is a
 /// string literal or, where several types share one prefix, a path to a
-/// `const` of type `&str`: `#[problem(base = crate::PROBLEM_BASE)]`.
+/// `const` of type `&str`: `#[problem(base = crate::PROBLEM_BASE)]`. A crate
+/// publishing under one prefix declares it once with `kynos::problem_base!`,
+/// and each type opts in with `#[problem(base = default)]`, which is a compile
+/// error at `default` in a crate declaring none. A type without `base` stays
+/// at `about:blank`.
 ///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
 /// A type without a `Display` is rejected at the derive.
@@ -1266,6 +1298,24 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 /// field supplies fails to typecheck.
 ///
 /// Two provided fields of the same type are rejected, naming both.
+///
+/// `#[provide(authenticates = Scheme)]` makes a field the context's
+/// authenticator, emitting `Authenticates<Scheme>` that borrows it; repeat the
+/// key for each scheme the field verifies. Such a field is not provided, as
+/// with `skip`, unless `provided` opts it back in:
+///
+/// ```ignore
+/// #[derive(Provider)]
+/// struct App {
+///     #[provide(authenticates = Bearer, authenticates = Basic)]
+///     gate: Gate,
+///     #[provide(authenticates = AccessToken, provided)]
+///     keys: Keys,
+/// }
+/// ```
+///
+/// `skip` beside either key, `provided` on a field authenticating nothing, and
+/// a scheme named twice are rejected.
 #[proc_macro_derive(Provider, attributes(provide))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
     derive::run(item, derive::provider::expand_inner)

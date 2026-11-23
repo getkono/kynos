@@ -1,0 +1,5 @@
+error[E0425]: cannot find value `__KYNOS_PROBLEM_BASE` in the crate root
+ --> tests/ui/macros/api_error_base_default_without_problem_base.rs:9:18
+  |
+9 | #[problem(base = default)]
+  |                  ^^^^^^^ not found in the crate root

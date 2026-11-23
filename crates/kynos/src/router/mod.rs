@@ -78,6 +78,10 @@ pub(crate) struct Mounted<C> {
     guard_at: Option<usize>,
     tags: Vec<DeclaredTag>,
     catch_panics: bool,
+    /// Whether the group this was mounted in holds an operation taking a
+    /// guard, which holds this one to taking one too or being declared
+    /// public.
+    group_guarded: bool,
     /// Undescribed layers an enclosing scope wrapped this operation in,
     /// outermost first. `pub(crate)` because `unchecked` reads it back.
     #[cfg(feature = "unchecked")]
@@ -329,6 +333,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
                 guard_at,
                 tags: tags.to_vec(),
                 catch_panics,
+                group_guarded: false,
                 #[cfg(feature = "unchecked")]
                 unchecked_layers: Vec::new(),
                 #[cfg(feature = "docs")]
@@ -548,6 +553,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Neither is checked against an earlier sibling `group`: no request
     /// reaches both, so sharing an interceptor is not a collision.
     ///
+    /// Where some of the group's operations take a guard, describing the
+    /// router refuses each of the others that is not declared public; see
+    /// [the rule](group::Group#a-guard-is-taken-by-all-or-declared-absent).
+    ///
     /// [`intercept`]: Router::intercept
     #[must_use]
     pub fn group<GP: PanicPolicy, GI, GS>(
@@ -579,7 +588,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self.tag_metadata.extend(tag_metadata);
         self.short_circuit_checks.extend(short_circuit_checks);
 
-        #[cfg(feature = "unchecked")]
         let first = self.mounted.len();
 
         // Each operation takes only the interceptors its method is covered by,
@@ -595,6 +603,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 guard_at,
                 catches::<GP>(),
             );
+        }
+
+        // Read per operation by `describe`, at the path it ends up mounted at.
+        let group_guarded = self.mounted[first..]
+            .iter()
+            .any(|mounted| mounted.endpoint.guarded());
+        for mounted in &mut self.mounted[first..] {
+            mounted.group_guarded = group_guarded;
         }
 
         // A group's layers cover only its operations, so they land per endpoint.

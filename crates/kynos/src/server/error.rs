@@ -100,4 +100,33 @@ impl ServerError {
     pub const fn is_requested_shutdown(&self) -> bool {
         matches!(self, Self::ShutdownTimeout { .. } | Self::ShutdownForced)
     }
+
+    /// The I/O failure this error carries, where it carries one: the
+    /// [`Resolve`](Self::Resolve), [`Bind`](Self::Bind),
+    /// [`Listener`](Self::Listener), [`Accept`](Self::Accept) and
+    /// [`Signal`](Self::Signal) variants.
+    ///
+    /// The same error [`source`](std::error::Error::source) returns, typed, so
+    /// the operating system's code is one call away rather than a downcast:
+    /// `error.io_error().and_then(io::Error::raw_os_error)`. Every other
+    /// variant is `None`; a TLS failure's cause is not an I/O error.
+    #[must_use]
+    pub const fn io_error(&self) -> Option<&io::Error> {
+        match self {
+            Self::Resolve { source, .. }
+            | Self::Bind { source, .. }
+            | Self::Listener(source)
+            | Self::Accept { source, .. }
+            | Self::Signal(source) => Some(source),
+            // Named rather than `_`, so a new variant has to say which side
+            // it is on.
+            Self::NoListeners
+            | Self::InvalidConfiguration(_)
+            | Self::AcceptLoop { .. }
+            | Self::ShutdownTimeout { .. }
+            | Self::ShutdownForced => None,
+            #[cfg(feature = "tls")]
+            Self::MutualTlsConflict | Self::Tls(_) => None,
+        }
+    }
 }

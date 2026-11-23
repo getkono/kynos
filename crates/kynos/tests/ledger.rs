@@ -245,8 +245,8 @@ fn listed_entries(source: &str, heading: &str) -> Vec<String> {
 #[cfg(feature = "openapi32")]
 #[test]
 fn every_route_attribute_has_a_case() {
-    /// The eight ungated attributes, `query`, and `operation`.
-    const WITNESSED: usize = 10;
+    /// The eight ungated attributes, `query`, `operation`, and `public`.
+    const WITNESSED: usize = 11;
 
     let declared = macro_crate().matches("#[proc_macro_attribute]").count();
     assert_eq!(

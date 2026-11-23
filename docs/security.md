@@ -98,6 +98,32 @@ Moving the guard into an interceptor of the application's own, which this
 replaces, checks twice and has to restate the guard's challenges to keep them
 `required` in the merged 401.
 
+### A group's operations take a guard or declare that they do not
+
+A handler that leaves its guard argument out compiles, is served to anyone,
+and is described without `security`. Nothing about it looks wrong on its own,
+so the router looks at its neighbours: where any operation of a `Group` takes a
+guard, building the router refuses every operation of that group that takes
+none with `RouterError::UnguardedOperation`, located at the operation.
+
+- **Public is declared, not inferred.** An operation meant to be reached
+  without a credential, such as the one issuing it, says so with
+  `#[kynos::public]` beside its route attribute, or `EndpointBuilder::public`.
+  It changes nothing on the wire or in the
+  description; it only answers the question the refusal asks.
+- **A guarded operation cannot be public.** Declaring it on a handler taking a
+  guard fails to compile. `MaybeAuth` is how a guarded operation admits
+  anonymous callers, and the description says so.
+- **Any guard counts.** `Auth`, `MaybeAuth` and `Scoped` alike, whatever their
+  schemes: which guard an operation needs is the handler's to say, and only
+  its absence is the mistake.
+- **The group is the scope.** Two groups, and the operations a router mounts
+  directly, are not compared: a router's root holding a health check beside a
+  guarded group is the usual shape, not a mistake. The refusal follows the
+  operation into a router that nests or merges it.
+- **An endpoint with no handler is not refused.** An asset or a reference page
+  has no guard argument to forget.
+
 ### A scheme says where its credential travels, once
 
 `#[derive(SecurityScheme)]` writes two implementations from one attribute.
@@ -340,6 +366,35 @@ not compile rather than admitting by default.
 it out also lets one authorizer serve every scheme sharing a scope type,
 `impl<S, C> Authorizer<S, C, Grant>`. What stays out of reach is one generic
 over every scope type, which would include `Unscoped`.
+
+### A context field names the scheme it authenticates
+
+`#[provide(authenticates = S)]` on a `#[derive(Provider)]` field emits
+`Authenticates<S>` borrowing that field, once per scheme it names. The field is
+then kept back from injection, since an authenticator is borrowed rather than
+cloned per request and need not be `Clone`; `provided` hands it out as well.
+
+```rust
+#[derive(Provider)]
+struct App {
+    #[provide(authenticates = AccessToken, provided)]
+    keys: Keys,
+    #[provide(authenticates = Basic<Credentials>)]
+    passwords: Passwords,
+}
+```
+
+| Refused | Why |
+| --- | --- |
+| `skip` beside `authenticates` | Two spellings of one thing; the field reads the same either way, so only one is accepted |
+| `skip` beside `provided` | The field cannot be both handed out and not |
+| `provided` with no `authenticates` | Every other field is handed out already, so it would say nothing |
+| One scheme named twice, on one field or two | A scheme has one authenticator, and a second would be a coherence error naming neither field |
+
+A blanket `impl<C: Provides<A>> Authenticates<S> for C` was the alternative. It
+needs the authenticator provided, which clones it per request, and it overlaps
+every hand-written impl. Writing the impl by hand stays the way to borrow an
+authenticator the context does not hold as a field.
 
 ### A scheme's default scopes are enforced where declared
 
@@ -669,6 +724,27 @@ second guard when the router is built leaves a handler that compiles and is
 then rejected. A fixed slot rejects it at the signature, and moving the
 combination into the type parameter makes the description a function of the
 one type the guard runs.
+
+### Why a group does not declare its operations' guard
+
+A group-level requirement, `Group::require::<Scoped<B, R>>()`, was proposed so
+that a group whose handlers all take the same guard, and mostly never read it,
+could say so once. It would keep requiring and declaring one act, since the
+group's call would do both, and it was declined anyway:
+
+| Considered | Declined because |
+| --- | --- |
+| `Group::require::<G>()` | A reader of one handler could no longer tell whether it is guarded: the requirement would live wherever the group is assembled, which may be another module |
+| `Group::require_when::<M, G>(methods)` | The same, and which operations it covers would turn on each one's method, a second place to look |
+| Refusing a handler guard inside a requiring group | A handler needing the admitted credential would then read it through a second type, `Admitted<G>`, so one guard would have two spellings |
+| Letting a handler's guard narrow the group's | Two guards on one operation, which [one guard per operation](#why-a-second-guard-does-not-compile) exists to rule out |
+
+The unread `_caller: Scoped<B, Write>` argument is the price, and it is the
+declaration doing its job: the handler says what it requires where it is
+written. What the proposal also wanted to fix, a handler that forgot the
+argument and is served to anyone, is fixed without moving the guard: a group
+holding guarded operations refuses an unguarded one that is not declared
+public, which is the mistake made loud rather than made impossible to write.
 
 ### Why `Presented` is owned
 

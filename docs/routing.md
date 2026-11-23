@@ -198,7 +198,9 @@ rule the document breaks arrives as `RouterError::Spec`, wrapping the
 `SpecError` a standalone `kynos-openapi` validator would report; the other
 variants are what no document can hold — a match-table conflict, an operation
 mounted twice, a short circuit disagreeing with its responses, a policy set on
-an absorbed router. `kynos-openapi` stays the document's vocabulary alone.
+an absorbed router, an operation without the guard the rest of its group takes
+([security.md](security.md#a-groups-operations-take-a-guard-or-declare-that-they-do-not)).
+`kynos-openapi` stays the document's vocabulary alone.
 
 ### One router value, described and built
 

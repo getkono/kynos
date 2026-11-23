@@ -148,7 +148,7 @@ pub use crate::{
 pub use kynos_macros::{
     ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
     SecurityScheme, Tag, delete, get, head, name_instantiation, operation, options, patch, path,
-    post, put, routes, trace,
+    post, public, put, routes, trace,
 };
 
 // Gated with the trait each derives, so a missing feature reports a missing
@@ -163,6 +163,99 @@ pub use kynos_macros::ProtobufMessage;
 pub use kynos_macros::assets;
 #[cfg(all(feature = "macros", feature = "openapi32"))]
 pub use kynos_macros::query;
+
+/// Declares the crate's problem base: the URI prefix every problem type the
+/// crate publishes hangs under, said once.
+///
+/// Invoked once, at the crate root, with an expression of type `&'static str`.
+/// `#[problem(base = default)]` on a derived `ApiError` joins it with each
+/// variant's slug, and [`problem_type!`] with the slug it is given, both in
+/// `const` items, so every type URI stays a `&'static str` built at compile
+/// time. A derive reads it only where it says `base = default`: one without
+/// `base` still publishes `about:blank`, so the prefix stays visible on each
+/// type publishing under it.
+///
+/// ```
+/// kynos::problem_base!("https://errors.example.com/");
+///
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+///
+/// fn main() {
+///     assert_eq!(
+///         INSUFFICIENT_SCOPE,
+///         "https://errors.example.com/insufficient-scope"
+///     );
+/// }
+/// ```
+///
+/// Anywhere but the crate root it is a compile error at the invocation, since
+/// the derive and [`problem_type!`] read it from there:
+///
+/// ```compile_fail
+/// mod problems {
+///     kynos::problem_base!("https://errors.example.com/");
+/// }
+/// # fn main() {}
+/// ```
+// `crate` is the caller's on purpose: the base is the invoking crate's item.
+#[expect(clippy::crate_in_macro_def)]
+#[macro_export]
+macro_rules! problem_base {
+    ($base:expr $(,)?) => {
+        #[doc(hidden)]
+        pub(crate) const __KYNOS_PROBLEM_BASE: &str = $base;
+        // Resolves only where the item above sits at the crate root.
+        const _: &str = crate::__KYNOS_PROBLEM_BASE;
+    };
+}
+
+/// The type URI the crate's [`problem_base!`] and `slug` join into, as a
+/// `const` expression of type `&'static str`.
+///
+/// It is the URI `#[problem(base = default)]` gives a variant whose name
+/// kebab-cases to `slug`, so a type URI named outside a derive, such as
+/// [`Scopes::FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE)
+/// or [`AuthRejection::forbidden_as`](crate::error::rejection::AuthRejection::forbidden_as)'s,
+/// cannot drift from the prefix. `slug` is joined verbatim, as a variant's
+/// `type` is sent.
+///
+/// ```
+/// use kynos::error::rejection::AuthRejection;
+///
+/// kynos::problem_base!("https://errors.example.com/");
+///
+/// const DEACTIVATED: AuthRejection =
+///     AuthRejection::forbidden_as(kynos::problem_type!("account-deactivated"));
+///
+/// fn main() {
+///     assert_eq!(
+///         kynos::problem_type!("account-deactivated"),
+///         "https://errors.example.com/account-deactivated"
+///     );
+///     # let _ = DEACTIVATED;
+/// }
+/// ```
+///
+/// A crate declaring no [`problem_base!`] has no prefix to join:
+///
+/// ```compile_fail
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+/// # fn main() {}
+/// ```
+// `crate` is the caller's on purpose, as in `problem_base!`.
+#[expect(clippy::crate_in_macro_def)]
+#[macro_export]
+macro_rules! problem_type {
+    ($slug:literal $(,)?) => {{
+        const __KYNOS_PROBLEM_LEN: usize = crate::__KYNOS_PROBLEM_BASE.len() + $slug.len();
+        const __KYNOS_PROBLEM_BYTES: &[u8] = &$crate::__private::problem::join::<
+            __KYNOS_PROBLEM_LEN,
+        >(crate::__KYNOS_PROBLEM_BASE, $slug);
+        // A `const`, so the UTF-8 check runs once, at compile time.
+        const __KYNOS_PROBLEM_URI: &str = $crate::__private::problem::utf8(__KYNOS_PROBLEM_BYTES);
+        __KYNOS_PROBLEM_URI
+    }};
+}
 
 /// Everything a typical application needs, in one import.
 pub mod prelude {
