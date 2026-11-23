@@ -1061,7 +1061,8 @@ reason of its own.
 span, whose callsite is built at run time because its fields are the
 application's. The span is `Trace`'s configuration read the other way round,
 through the same header and identifier readers, so the two are one concern:
-how a request is logged. A private module for the callsite alone would cost no
+how a request is logged. Issue #1373's `parent_from` and `on_open` are that
+span's configuration too, and stay beside it. A private module for the callsite alone would cost no
 path, but would be a second site under `middleware/` naming `tracing`, which
 the dependency rows below allow nowhere under `middleware/` but this file.
 
@@ -1270,7 +1271,10 @@ untrusted caller is allowed to do — each an operator's decision.
 answer instead: an interceptor whose `Reads` group is both the declaration and
 the W3C propagation carrier, entered across `next.run` so the span covers the
 handler. It carries no dependency into the library, and both rows above are
-the application's to assert against its own instrumentation.
+the application's to assert against its own instrumentation. An application
+content with Kynos's own `request` span joins the caller's trace through
+`TraceSpan::parent_from` instead, which holds the guard the application's
+propagator returns while the span is created and names no foreign type.
 
 ## Workspace
 

@@ -5,7 +5,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use super::{DEFAULT_CORRELATION, Level, REDACTED, SPAN_FIELDS, SpanCallsite, Trace};
+use super::{DEFAULT_CORRELATION, Level, REDACTED, SPAN_FIELDS, SpanCallsite, Trace, TraceSpan};
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderMap, HeaderValue, Request, Response, StatusCode, body::Body},
@@ -642,6 +642,274 @@ fn a_callsite_is_built_once_per_level_and_field_list() {
         first,
         SpanCallsite::interned(Level::Info, &["session_id"])
     ));
+}
+
+std::thread_local! {
+    /// Whether an [`Attached`] is alive on this thread.
+    static ATTACHED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A context guard's stand-in: marks this thread attached while alive.
+struct Attached;
+
+impl Attached {
+    fn attach(request: &Request) -> Self {
+        let _ = request;
+        ATTACHED.set(true);
+        Self
+    }
+}
+
+impl Drop for Attached {
+    fn drop(&mut self) {
+        ATTACHED.set(false);
+    }
+}
+
+/// Records, for each span created and each event emitted, whether an
+/// [`Attached`] was alive at that moment.
+#[derive(Clone, Default)]
+struct Witness(Arc<std::sync::Mutex<Vec<(&'static str, bool)>>>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Witness {
+    fn on_new_span(
+        &self,
+        attributes: &tracing::span::Attributes<'_>,
+        id: &tracing::span::Id,
+        context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let _ = (id, context);
+        self.0
+            .lock()
+            .expect("an unpoisoned witness")
+            .push((attributes.metadata().name(), ATTACHED.get()));
+    }
+
+    fn on_event(
+        &self,
+        event: &tracing::Event<'_>,
+        context: tracing_subscriber::layer::Context<'_, S>,
+    ) {
+        let _ = (event, context);
+        self.0
+            .lock()
+            .expect("an unpoisoned witness")
+            .push(("event", ATTACHED.get()));
+    }
+}
+
+/// What [`Witness`] saw while `layers` served one request, under a subscriber
+/// admitting `max` and below.
+fn witnessed(
+    max: tracing::Level,
+    layers: &[Arc<dyn ErasedInterceptor<()>>],
+) -> Vec<(&'static str, bool)> {
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    let witness = Witness::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_subscriber::filter::LevelFilter::from_level(max))
+        .with(witness.clone());
+    tracing::subscriber::with_default(subscriber, || {
+        served(layers, Some(get_user()), request(&[]));
+    });
+
+    witness.0.lock().expect("an unpoisoned witness").clone()
+}
+
+/// `parent_from`'s guard is alive while the span is created and gone before
+/// the chain inside it runs, so the handler's event is not under it.
+#[test]
+fn the_parent_guard_is_held_across_creation_only() {
+    let span = Trace::new().span(&[]).parent_from(Attached::attach);
+
+    let seen = witnessed(tracing::Level::TRACE, &[Arc::new(span)]);
+
+    assert_eq!(seen, [("request", true), ("event", false)]);
+    assert!(!ATTACHED.get(), "the guard is dropped");
+}
+
+/// A span the subscriber filters out is not created, so nothing is attached
+/// for it; the control is the same span at an admitted level.
+#[test]
+fn a_filtered_span_attaches_no_parent() {
+    let filtered = Trace::new()
+        .level(Level::Debug)
+        .span(&[])
+        .parent_from(|request| {
+            let _ = request;
+            panic!("attached for a span that is not created")
+        });
+    let admitted = Trace::new()
+        .level(Level::Info)
+        .span(&[])
+        .parent_from(Attached::attach);
+
+    assert_eq!(
+        witnessed(tracing::Level::INFO, &[Arc::new(filtered)]),
+        [("event", false)]
+    );
+    assert_eq!(
+        witnessed(tracing::Level::INFO, &[Arc::new(admitted)]),
+        [("request", true), ("event", false)]
+    );
+}
+
+/// `on_open` runs inside the span, before the handler, and what it records
+/// lands on the span the handler's event inherits.
+#[test]
+fn the_open_hook_runs_inside_the_span_before_the_chain() {
+    let span = Trace::new().span(&["tenant"]).on_open(|request| {
+        let tenant = request.headers()["x-tenant"]
+            .to_str()
+            .expect("a printable field");
+        tracing::Span::current().record("tenant", tenant);
+        tracing::info!("opened");
+    });
+
+    let lines = captured(|| {
+        served(
+            &[Arc::new(span)],
+            Some(get_user()),
+            request(&[("x-tenant", "acme")]),
+        );
+    });
+    let mut lines = lines.lines().map(str::trim_start);
+
+    let opened = lines.next().expect("the hook's event");
+    assert!(opened.starts_with("INFO request{"), "{opened}");
+    assert!(opened.ends_with(": opened"), "{opened}");
+    let handled = lines.next().expect("the handler's event");
+    assert!(handled.contains(" tenant=\"acme\"}: "), "{handled}");
+    assert!(handled.ends_with(": handled"), "{handled}");
+}
+
+/// The parent's guard is gone by the time the hook runs, and a filtered
+/// span runs no hook; the control is the same hook at an admitted level.
+#[test]
+fn the_open_hook_runs_after_the_guard_and_only_for_a_created_span() {
+    let admitted = Trace::new()
+        .span(&[])
+        .parent_from(Attached::attach)
+        .on_open(|request| {
+            let _ = request;
+            tracing::info!("opened");
+        });
+    let filtered = Trace::new()
+        .level(Level::Debug)
+        .span(&[])
+        .on_open(|request| {
+            let _ = request;
+            panic!("hooked a span that is not created")
+        });
+
+    assert_eq!(
+        witnessed(tracing::Level::INFO, &[Arc::new(admitted)]),
+        [("request", true), ("event", false), ("event", false)]
+    );
+    assert_eq!(
+        witnessed(tracing::Level::INFO, &[Arc::new(filtered)]),
+        [("event", false)]
+    );
+}
+
+/// The request's headers as an OpenTelemetry propagator reads them.
+struct Carrier<'a>(&'a HeaderMap);
+
+impl opentelemetry::propagation::Extractor for Carrier<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|value| value.to_str().ok())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(crate::http::HeaderName::as_str).collect()
+    }
+}
+
+/// The caller's context, attached where its `traceparent` is valid.
+fn caller(request: &Request) -> Option<opentelemetry::ContextGuard> {
+    use opentelemetry::{propagation::TextMapPropagator as _, trace::TraceContextExt as _};
+
+    let parent = opentelemetry_sdk::propagation::TraceContextPropagator::new()
+        .extract(&Carrier(request.headers()));
+    parent
+        .span()
+        .span_context()
+        .is_valid()
+        .then(|| parent.attach())
+}
+
+/// Answers with the trace identifier of the span it runs in.
+struct TraceIdOf;
+
+impl ErasedTerminal<()> for TraceIdOf {
+    fn call<'a>(
+        &'a self,
+        request: Request,
+        context: &'a (),
+    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
+        use opentelemetry::trace::TraceContextExt as _;
+        use tracing_opentelemetry::OpenTelemetrySpanExt as _;
+
+        let _ = (request, context);
+        Box::pin(async {
+            let id = tracing::Span::current()
+                .context()
+                .span()
+                .span_context()
+                .trace_id();
+            let mut response = Response::new(Body::empty());
+            response.headers_mut().insert(
+                "trace-id",
+                HeaderValue::from_str(&id.to_string()).expect("a hexadecimal identifier"),
+            );
+            response
+        })
+    }
+}
+
+/// The trace identifier the handler runs under when `span` serves `request`
+/// beneath an OpenTelemetry layer.
+fn joined<G: 'static>(span: TraceSpan<G>, request: Request) -> String {
+    use opentelemetry::trace::TracerProvider as _;
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder().build();
+    let subscriber = tracing_subscriber::registry()
+        .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("kynos")));
+    let layers: [Arc<dyn ErasedInterceptor<()>>; 1] = [Arc::new(span)];
+
+    let response = tracing::subscriber::with_default(subscriber, || {
+        let future = Next::new(&layers, &TraceIdOf, &(), Some(get_user())).run(request);
+        match pin!(future).poll(&mut Context::from_waker(Waker::noop())) {
+            Poll::Ready(continued) => continued.into_response(),
+            Poll::Pending => panic!("nothing in the chain waits"),
+        }
+    });
+    response.headers()["trace-id"]
+        .to_str()
+        .expect("a hexadecimal identifier")
+        .to_owned()
+}
+
+/// The issue's case: under `tracing-opentelemetry`, a span created while the
+/// caller's context is attached joins the caller's trace, and without
+/// `parent_from` the same request starts a trace of its own.
+#[test]
+fn a_span_with_a_parent_joins_the_callers_trace() {
+    const TRACE_ID: &str = "4bf92f3577b34da6a3ce929d0e0e4736";
+    let traced = || {
+        request(&[(
+            "traceparent",
+            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        )])
+    };
+
+    assert_eq!(
+        joined(Trace::new().span(&[]).parent_from(caller), traced()),
+        TRACE_ID
+    );
+    assert_ne!(joined(Trace::new().span(&[]), traced()), TRACE_ID);
 }
 
 /// A group of two names, to tell the first declared from the first present.

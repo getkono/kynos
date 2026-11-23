@@ -488,7 +488,8 @@ rustls = { workspace = true, features = ["ring", "std"] }
 listenfd = { workspace = true }
 mutants = { workspace = true }
 rust_decimal1 = { workspace = true, features = ["serde"] }
-# Examples install a subscriber and exporter; Kynos depends on neither.
+# Examples, the `TraceSpan::parent_from` doc example and the `middleware/trace`
+# tests install a subscriber and OpenTelemetry; Kynos depends on neither.
 tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true, features = ["rt-tokio"] }
