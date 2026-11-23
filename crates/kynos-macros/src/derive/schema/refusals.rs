@@ -3,6 +3,7 @@
 //! Each rule refuses a form with no schema true of the wire in both
 //! directions; the expansion reads only inputs every rule has passed.
 
+mod absence;
 mod grammar;
 mod naming;
 mod object_keys;
@@ -31,6 +32,7 @@ pub(super) fn check(input: &DeriveInput, container: &Container) -> syn::Result<(
     wire_form::reject_catch_all(input, container)?;
     wire_form::reject_transparent_without_one_field(input)?;
     skips::reject_read_required_skip(input, container)?;
+    absence::reject_undefaulted_nullable(input, container)?;
     object_keys::reject_contradicted_closure(input, container)?;
     object_keys::reject_closed_tagged_struct(input, container)?;
     object_keys::reject_field_named_as_tag(input, container)?;

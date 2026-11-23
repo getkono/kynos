@@ -245,6 +245,27 @@ value: draft 2020-12 makes both annotations, so a validator admits a string
 that does not decode, and so does the derive's check. Decoding is the
 handler's, and `max_length` beside them still bounds the encoded text.
 
+## Merge patches
+
+RFC 7396 reads a member three ways: left out leaves the target alone, `null`
+removes it, and a value replaces it. `Option<T>` holds two of the three, so a
+member a patch may clear is a
+[`Nullable<T>`](../crates/kynos/src/schema/mod.rs): `Absent`, `Null` or
+`Value(T)`. Its schema is `Option<T>`'s, `T` widened to admit `null`, which is
+the same in `openapi31` and `openapi32`: both emit JSON Schema 2020-12's type
+union, never 3.0's `nullable: true`. A `#[schema(...)]` bound applies to the
+value alone.
+
+The field still carries `#[serde(default)]`, and the `Schema` derive refuses
+one that does not (rule 51). serde hands a missing member to its type through
+the same `deserialize_option` call a present `null` makes, so no `Deserialize`
+can tell the two apart: without the default a patch leaving the member out
+would clear it. The default fills it with `Absent`, and keeps it out of
+`required` as any defaulted field is.
+
+`Nullable` has no `Serialize`: `Absent` has nothing to write, and a response
+states every member it carries.
+
 ## Deliberately unmapped, and the remedy
 
 A type that cannot produce a *constraining* schema has no implementation. There
@@ -776,7 +797,8 @@ no response body is.
   `Self` or a generic parameter. `pattern` and the two `content_*` keys stay
   literals, since the derive checks their text while it expands.
 - **A keyword applies to its own kind only**, as in JSON Schema: an absent
-  `Option` satisfies every bound. A bound on a type of another kind is a compile
+  `Option`, and a `Nullable` left out or sent as `null`, satisfies every
+  bound. A bound on a type of another kind is a compile
   error through `Numeric`, `Textual`, `Items` or `UniqueItems`, since a check that
   can never fire is a silent weak schema. A derived newtype takes the kinds of
   its member.
@@ -900,6 +922,7 @@ thread that uses it.
 | 48 | A field's `content_encoding` and `content_media_type` are its `contentEncoding` and `contentMediaType`, accepted only where the field reaches `Textual`, held to their grammars by the `Schema` derive and asserted by nothing, as [Binary content](#binary-content) sets out | `a_content_annotation_is_described_and_asserted_by_neither_side` in [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against the `jsonschema` validator; the derive's ledger and `a_content_annotation_is_held_to_its_grammar` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_content_encoding_on_bytes.rs`, `schema_content_encoding_unknown.rs` and `schema_content_media_type_malformed.rs` for the wording |
 | 49 | `MultipartForm` requires exactly the parts the `Schema` derive's `required` names, reading serde's attributes whether or not serde is derived: a field's `default`, bare or naming a function, makes its part optional and fills the field when it is left out, an `Option` without one is `None`, and a `Vec` must carry one, since an empty list is written as no part; under `deny_unknown_fields`, which closes the description under rule 32, a part no field declares is a 422 keyed by the name it was sent under, and otherwise it is ignored; a container `default`, which fills from a whole `Default` the decoder never builds, a container `tag`, described as a required property no part carries, a container `transparent`, described as the one field's schema while that field is still read as a part, and a field's `alias`, `flatten` and every `skip` key, which the description honours and a part cannot, are refused | `a_part_the_description_leaves_optional_may_be_left_out`, `an_empty_list_is_written_as_no_part_and_read_back_empty` and `a_closed_form_refuses_a_part_it_does_not_declare` in [`tests/extractors.rs`](../crates/kynos/tests/extractors.rs), against the emitted schema; the `multipart` ledger, `every_skip_is_refused` and `a_defaulted_field_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/multipart_container_default.rs`, `multipart_tag.rs`, `multipart_transparent.rs`, `multipart_alias.rs`, `multipart_skip.rs`, `multipart_flatten.rs` and `multipart_vec_without_default.rs` for the wording |
 | 50 | An instantiation `name_instantiation!` names and `Router::name_instantiation` registers, from any router nested or merged into the described one, is published under the alias's identifier wherever its mangled name would have been, wrappers sharing that name included, with the alias's doc comment as its `description` in place of the generic type's own; one instantiation named twice is a conflicting implementation at compile time, and two names for one mangled name, a name for an instantiation with none, and a `NAME` that is no component name each refuse the router as `Error::InstantiationName`; the macro refuses an alias with generic parameters, any attribute but a doc comment, and an identifier outside ASCII | the naming, the refusals and the build failure in [`registry/tests.rs`](../crates/kynos/src/schema/registry/tests.rs); `a_named_instantiation_declared_on_a_nested_router_names_its_component` in [`tests/description.rs`](../crates/kynos/tests/description.rs); the `name_instantiation` ledger and expansion in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `tests/ui/macros/name_instantiation_refusals.rs` and `tests/ui/traits/named_instantiation.rs` for the wording and `name_instantiation.rs` in the pass suite |
+| 51 | A `Nullable` named field serde reads, recognised by its type's last path segment as an `Option` is, carries `#[serde(default)]` on the field or its struct, and is refused otherwise, as [Merge patches](#merge-patches) sets out; a `#[serde(transparent)]` struct's member and a positional member are left alone, since serde never reads either as a missing member; the default keeps it out of `required` under rule 19 | the `Nullable` row of the field ledger in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_nullable_member_is_optional_and_bounded_by_its_value` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs); the `merge_patch` module of [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) for what serde reads with and without the default; and `tests/ui/macros/schema_nullable_without_default.rs` for the wording, with `schema_nullable_with_default.rs` in the pass suite |
 
 ## Rationale
 

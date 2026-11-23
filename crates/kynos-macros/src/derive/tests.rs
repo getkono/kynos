@@ -503,6 +503,18 @@ mod schema {
                 "reads the map empty",
             ),
             case(
+                "a `Nullable` field serde reads with no `default`, which serde reads left out \
+                 as `null`",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(default)]
+                        notes: Nullable<String>,
+                        title: Nullable<String>,
+                    }
+                ),
+                "this `Nullable` reads as `Nullable::Null` when the member is left out",
+            ),
+            case(
                 "a constraint written twice, across two lists, when the second would replace \
                  the first",
                 quote::quote!(
@@ -720,6 +732,7 @@ mod schema {
                 include_str!("schema.rs"),
                 include_str!("schema/container.rs"),
                 include_str!("schema/refusals.rs"),
+                include_str!("schema/refusals/absence.rs"),
                 include_str!("schema/refusals/grammar.rs"),
                 include_str!("schema/refusals/naming.rs"),
                 include_str!("schema/refusals/object_keys.rs"),
