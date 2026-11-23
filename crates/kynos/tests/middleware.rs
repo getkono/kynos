@@ -1920,8 +1920,12 @@ mod decompression {
         }
     }
 
+    ///
+    /// It reads the body too, which it then ignores: `Decompression` runs only
+    /// where a body is read, so a head-only handler would see the coded form's
+    /// fields untouched.
     #[kynos::post("/fields")]
-    async fn fields(Headers(coded): Headers<CodedForm>) -> Text {
+    async fn fields(Headers(coded): Headers<CodedForm>, Text(_body): Text) -> Text {
         let shown = |field: Option<String>| field.unwrap_or_else(|| "<absent>".to_owned());
 
         Text(format!(

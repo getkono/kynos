@@ -409,6 +409,164 @@ async fn a_body_limit_leaves_the_fallbacks_alone_at_either_scope() {
     assert_eq!(grouped.status, StatusCode::NOT_FOUND);
 }
 
+// --- Decompression: 400, 413, 415 ----------------------------------------
+
+/// `Decompression`'s limit is the route's body limit, so it covers what
+/// `BodySize` covers: only the operations reading a body.
+#[cfg(feature = "compression")]
+mod decompression {
+    use kynos::{
+        Router,
+        error::problem::ProblemType,
+        http::{Method, StatusCode},
+        middleware::decompression::Decompression,
+    };
+
+    use super::support::{self, App, create_user, send};
+
+    /// Names the 415, so a declaration of it is told from any other.
+    struct UnknownCoding;
+
+    impl ProblemType for UnknownCoding {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/unknown-coding");
+    }
+
+    /// Names the 400.
+    struct NotWhatItClaimed;
+
+    impl ProblemType for NotWhatItClaimed {
+        const TYPE_URI: Option<&'static str> =
+            Some("https://errors.example.com/not-what-it-claimed");
+    }
+
+    /// Names the 413.
+    struct Bomb;
+
+    impl ProblemType for Bomb {
+        const TYPE_URI: Option<&'static str> = Some("https://errors.example.com/bomb");
+    }
+
+    /// The three URIs, each of which only a `Decompression` declares.
+    const URIS: [&str; 3] = ["unknown-coding", "not-what-it-claimed", "bomb"];
+
+    fn decompression() -> Decompression<UnknownCoding, NotWhatItClaimed, Bomb> {
+        Decompression::new(4096)
+            .unsupported_coding_problem_type::<UnknownCoding>()
+            .malformed_problem_type::<NotWhatItClaimed>()
+            .too_large_problem_type::<Bomb>()
+    }
+
+    /// At router, group and endpoint scope, the operation reading a body
+    /// declares each of the three refusals and the head-only ones none: not
+    /// its 415 nor its 413 at all, and not its 400 beside the one a path
+    /// parameter already declares.
+    #[test]
+    fn decompression_declares_its_statuses_on_every_operation_reading_a_body() {
+        let routed = || {
+            kynos::routes![
+                support::get_user,
+                support::list_users,
+                create_user,
+                support::delete_user
+            ]
+        };
+
+        for (scope, document) in [
+            (
+                "router",
+                support::router().intercept(decompression()).openapi(),
+            ),
+            (
+                "group",
+                Router::<App>::new()
+                    .group(
+                        kynos::router::group::Group::new("/")
+                            .intercept(decompression())
+                            .mount(routed()),
+                    )
+                    .openapi(),
+            ),
+            (
+                "endpoint",
+                Router::<App>::new()
+                    .mount(kynos::routes![
+                        support::get_user.intercept(decompression()),
+                        support::list_users.intercept(decompression()),
+                        create_user.intercept(decompression()),
+                        support::delete_user.intercept(decompression()),
+                    ])
+                    .openapi(),
+            ),
+        ] {
+            let document = serde_json::to_value(document.expect("a describable router"))
+                .expect("a serializable document");
+
+            for (path, method, reads_a_body) in [
+                ("/users/{id}", "get", false),
+                ("/users", "get", false),
+                ("/users", "post", true),
+                ("/users/{id}", "delete", false),
+            ] {
+                let responses = &document["paths"][path][method]["responses"];
+                let text = responses.to_string();
+
+                for uri in URIS {
+                    assert_eq!(
+                        text.contains(uri),
+                        reads_a_body,
+                        "{scope}: {method} {path} names {uri}: {responses}"
+                    );
+                }
+                if !reads_a_body {
+                    for status in ["413", "415"] {
+                        assert!(
+                            responses.get(status).is_none(),
+                            "{scope}: {method} {path} declares {status}: {responses}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// A coding nothing here decodes is refused 415 where a body is read, and
+    /// ignored with the body everywhere else: a head-only operation answers as
+    /// it would without `Decompression`, and so does every fallback.
+    #[tokio::test]
+    async fn decompression_leaves_an_operation_reading_no_body_alone() {
+        let service = support::router()
+            .intercept(decompression())
+            .build(App::new())
+            .expect("a describable router");
+
+        let removed = send(&service, Method::DELETE, "/users/1")
+            .header("content-encoding", "deflate")
+            .body(b"anything".to_vec())
+            .call()
+            .await;
+        assert_eq!(removed.status, StatusCode::NO_CONTENT);
+
+        let missing = send(&service, Method::POST, "/nothing-here")
+            .header("content-encoding", "deflate")
+            .body(b"anything".to_vec())
+            .call()
+            .await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
+
+        let created = support::post(&service, "/users")
+            .header("content-type", "application/json")
+            .header("content-encoding", "deflate")
+            .body(b"anything".to_vec())
+            .call()
+            .await;
+        assert_eq!(created.status, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+        assert_eq!(
+            created.json()["type"],
+            "https://errors.example.com/unknown-coding"
+        );
+    }
+}
+
 // --- What applies when nothing is mounted --------------------------------
 
 /// The cap every buffering body extractor applies when no limit covers its
