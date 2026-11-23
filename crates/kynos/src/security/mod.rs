@@ -755,6 +755,10 @@ where
 /// prove it can authenticate `S`, and, for a scheme with scopes, authorize
 /// them: the authenticator is an [`Authorizer`], which every authenticator of
 /// an [`Unscoped`] scheme already is.
+///
+/// A context holding its authenticator as a field need not write this:
+/// `#[provide(authenticates = S)]` on that field of a `#[derive(Provider)]`
+/// context emits it.
 pub trait Authenticates<S: carrier::Carries>: Sync + Sized {
     /// The concrete authenticator owned by this context.
     type Authenticator: Authorizer<S, Self, S::Scope>;

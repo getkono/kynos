@@ -24,6 +24,10 @@ more implementations rather than a second mechanism.
 Two fields of the same type are rejected by the derive rather than left to
 coherence, because a handler asking for that type could not say which field it
 meant. `#[provide(skip)]` opts a field out.
+`#[provide(authenticates = S)]` makes a field the context's authenticator for
+`S` and opts it out the same way, unless `provided` opts it back in; the
+[security guide](security.md#a-context-field-names-the-scheme-it-authenticates)
+says why.
 
 **`Provides<T>` is synchronous and infallible.** The reason is not simplicity.
 [`Describe::describe`](../crates/kynos/src/extract/describe.rs) is a static

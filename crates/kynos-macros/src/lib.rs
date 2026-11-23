@@ -1308,6 +1308,24 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 /// field supplies fails to typecheck.
 ///
 /// Two provided fields of the same type are rejected, naming both.
+///
+/// `#[provide(authenticates = Scheme)]` makes a field the context's
+/// authenticator, emitting `Authenticates<Scheme>` that borrows it; repeat the
+/// key for each scheme the field verifies. Such a field is not provided, as
+/// with `skip`, unless `provided` opts it back in:
+///
+/// ```ignore
+/// #[derive(Provider)]
+/// struct App {
+///     #[provide(authenticates = Bearer, authenticates = Basic)]
+///     gate: Gate,
+///     #[provide(authenticates = AccessToken, provided)]
+///     keys: Keys,
+/// }
+/// ```
+///
+/// `skip` beside either key, `provided` on a field authenticating nothing, and
+/// a scheme named twice are rejected.
 #[proc_macro_derive(Provider, attributes(provide))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
     derive::run(item, derive::provider::expand_inner)

@@ -1,0 +1,29 @@
+error: `skip` and `provided` contradict each other: the field is either handed out or not. Write one
+  --> tests/ui/macros/provider_authenticates.rs:12:21
+   |
+12 |     #[provide(skip, provided, authenticates = kynos::security::schemes::Bearer)]
+   |                     ^^^^^^^^
+
+error: `authenticates` already keeps the field from being handed out, so `skip` adds nothing. Drop it
+  --> tests/ui/macros/provider_authenticates.rs:18:15
+   |
+18 |     #[provide(skip, authenticates = kynos::security::schemes::Bearer)]
+   |               ^^^^
+
+error: `provided` hands out a field `authenticates` would keep back, and this field authenticates no scheme, so it is handed out already. Drop it
+  --> tests/ui/macros/provider_authenticates.rs:27:15
+   |
+27 |     #[provide(provided)]
+   |               ^^^^^^^^
+
+error: `gate` already authenticates `kynos::security::schemes::Bearer`; name each scheme once
+  --> tests/ui/macros/provider_authenticates.rs:37:31
+   |
+37 |     #[provide(authenticates = kynos::security::schemes::Bearer)]
+   |                               ^^^^^
+
+error: `gate` and `fallback` both authenticate `kynos::security::schemes::Bearer`, and a scheme has one authenticator. Keep one
+  --> tests/ui/macros/provider_authenticates.rs:45:31
+   |
+45 |     #[provide(authenticates = kynos::security::schemes::Bearer)]
+   |                               ^^^^^
