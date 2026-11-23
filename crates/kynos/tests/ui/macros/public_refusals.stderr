@@ -1,0 +1,17 @@
+error: `#[kynos::public]` takes no arguments; it only declares that the operation takes no guard on purpose
+ --> tests/ui/macros/public_refusals.rs:6:17
+  |
+6 | #[kynos::public(anonymous)]
+  |                 ^^^^^^^^^
+
+error: `#[kynos::public]` declares an operation public, and this function is none; put it beside a route attribute such as `#[kynos::get("/path")]`
+  --> tests/ui/macros/public_refusals.rs:11:10
+   |
+11 | async fn not_an_operation() {}
+   |          ^^^^^^^^^^^^^^^^
+
+error: `#[kynos::public]` is already given; an operation is declared public once
+  --> tests/ui/macros/public_refusals.rs:15:3
+   |
+15 | #[kynos::public]
+   |   ^^^^^

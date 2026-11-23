@@ -1365,3 +1365,191 @@ mod templates {
         );
     }
 }
+
+/// `#[kynos::public]`: read and removed by the route attribute it is written
+/// below, moved below the one it is written above, and refused anywhere else.
+mod public {
+    use proc_macro2::TokenStream;
+    use quote::{ToTokens, quote};
+    use syn::ItemFn;
+
+    use super::RouteArgs;
+    use crate::route::{attrs::expand_public, emit::emit};
+
+    /// One row per `syn::Error::new` site in `attrs.rs`: what follows the
+    /// attribute's name, the function it is written above, and a fragment of
+    /// the refusal.
+    fn public_cases() -> Vec<(&'static str, TokenStream, TokenStream, &'static str)> {
+        vec![
+            (
+                "an argument",
+                quote!(anonymous),
+                quote!(
+                    #[kynos::get("/x")]
+                    async fn f() {}
+                ),
+                "`#[kynos::public]` takes no arguments",
+            ),
+            (
+                "a function carrying no route attribute",
+                quote!(),
+                quote!(
+                    async fn f() {}
+                ),
+                "declares an operation public, and this function is none",
+            ),
+            (
+                "a second `#[kynos::public]`",
+                quote!(),
+                quote!(
+                    #[kynos::get("/x")]
+                    #[kynos::public]
+                    async fn f() {}
+                ),
+                "`#[kynos::public]` is already given",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        for (description, attribute, item, expected) in public_cases() {
+            let Err(error) = expand_public(&attribute, item) else {
+                panic!("{description} must be rejected");
+            };
+            let reported = error.to_string();
+            assert!(
+                reported.contains(expected),
+                "{description}: expected a diagnostic containing {expected:?}, got {reported:?}"
+            );
+        }
+    }
+
+    /// A count, not a mapping, as for the route arguments.
+    #[test]
+    fn every_public_diagnostic_has_a_case() {
+        const SOURCE: &str = include_str!("attrs.rs");
+
+        let sites =
+            SOURCE.matches("syn::Error::new(").count() + SOURCE.matches("meta.error(").count();
+        assert_eq!(
+            public_cases().len(),
+            sites,
+            "`attrs.rs` raises {sites} diagnostic(s) and {} have a case",
+            public_cases().len()
+        );
+    }
+
+    /// A `POST` route attribute's expansion over `function`.
+    fn expanded(function: &ItemFn) -> syn::File {
+        let args = RouteArgs::parse(quote!(path = "/sessions")).expect("the arguments parse");
+        syn::parse2(emit("POST", &args, function).expect("the route expands"))
+            .expect("the expansion parses as items")
+    }
+
+    /// `PUBLIC`'s value in an expansion, and whether its handler kept any
+    /// attribute naming `public`, which would expand again on its own.
+    fn read(file: &syn::File) -> (String, bool) {
+        let mut public = None;
+        let mut kept = false;
+        for item in &file.items {
+            match item {
+                syn::Item::Fn(function) => {
+                    kept = function.attrs.iter().any(|attribute| {
+                        attribute
+                            .path()
+                            .segments
+                            .last()
+                            .is_some_and(|segment| segment.ident == "public")
+                    });
+                }
+                syn::Item::Impl(block) => {
+                    for member in &block.items {
+                        if let syn::ImplItem::Const(constant) = member {
+                            if constant.ident == "PUBLIC" {
+                                public = Some(constant.expr.to_token_stream().to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        (public.expect("the expansion declares `PUBLIC`"), kept)
+    }
+
+    /// Under each spelling a `use` may leave it.
+    #[test]
+    fn below_a_route_attribute_it_is_read_and_removed() {
+        for spelling in [
+            quote!(#[kynos::public]),
+            quote!(#[::kynos::public]),
+            quote!(#[public]),
+        ] {
+            let function: ItemFn =
+                syn::parse2(quote!(#spelling async fn f() {})).expect("a function");
+            assert_eq!(
+                read(&expanded(&function)),
+                ("true".to_owned(), false),
+                "{spelling}"
+            );
+        }
+    }
+
+    /// The control: without it, `PUBLIC` is written `false`.
+    #[test]
+    fn without_it_the_operation_is_not_public() {
+        let function: ItemFn = syn::parse2(quote!(
+            #[allow(unused)]
+            async fn f() {}
+        ))
+        .expect("a function");
+        assert_eq!(read(&expanded(&function)), ("false".to_owned(), false));
+    }
+
+    /// Above one, it moves itself directly below it, where the route attribute
+    /// reads it, leaving the attributes around them in place.
+    #[test]
+    fn above_a_route_attribute_it_moves_below_it() {
+        let moved = expand_public(
+            &quote!(),
+            quote!(
+                #[doc = "Issue a session."]
+                #[kynos::post("/sessions")]
+                #[allow(unused)]
+                async fn f() {}
+            ),
+        )
+        .expect("a route handler");
+        let function: ItemFn = syn::parse2(moved).expect("a function");
+        let order: Vec<String> = function
+            .attrs
+            .iter()
+            .map(|attribute| attribute.path().to_token_stream().to_string())
+            .collect();
+        assert_eq!(
+            order,
+            ["doc", "kynos :: post", ":: kynos :: public", "allow"]
+        );
+    }
+
+    /// An argument is refused below the route attribute too, where the route
+    /// attribute reads it rather than this one.
+    #[test]
+    fn below_a_route_attribute_an_argument_is_refused() {
+        let function: ItemFn = syn::parse2(quote!(
+            #[kynos::public(anonymous)]
+            async fn f() {}
+        ))
+        .expect("a function");
+        let args = RouteArgs::parse(quote!(path = "/sessions")).expect("the arguments parse");
+        let Err(error) = emit("POST", &args, &function) else {
+            panic!("an argument must be rejected");
+        };
+        assert!(
+            error
+                .to_string()
+                .contains("`#[kynos::public]` takes no arguments")
+        );
+    }
+}

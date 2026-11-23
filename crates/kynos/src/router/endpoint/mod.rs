@@ -67,6 +67,18 @@ pub trait Endpoint<C>: Send + Sync + 'static {
         false
     }
 
+    /// Whether this operation takes no guard deliberately, which a group
+    /// whose other operations take one requires of it.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from [`public`](builder::EndpointBuilder::public). An
+    /// endpoint with no handler, such as an asset, has no guard argument to
+    /// leave out, so the default answers yes.
+    #[doc(hidden)]
+    fn __public(&self) -> bool {
+        true
+    }
+
     /// Runs this operation's guard from the request head, ahead of the
     /// interceptors a [`guard_first`](crate::router::group::Group::guard_first)
     /// scope puts it before, handing the request on with what the guard
@@ -158,6 +170,10 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn unhonourable_interceptor(&self) -> Option<MiddlewareError>;
 
+    fn guarded(&self) -> bool;
+
+    fn public(&self) -> bool;
+
     /// This operation's guard as an interceptor, where its handler takes one.
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>>;
 }
@@ -185,6 +201,14 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
 
     fn unhonourable_interceptor(&self) -> Option<MiddlewareError> {
         Endpoint::__unhonourable_interceptor(self)
+    }
+
+    fn guarded(&self) -> bool {
+        Endpoint::__guarded(self)
+    }
+
+    fn public(&self) -> bool {
+        Endpoint::__public(self)
     }
 
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>> {
