@@ -68,6 +68,8 @@ pub struct TestClient<C> {
     peer: Option<std::net::SocketAddr>,
     /// The fields every request starts from.
     headers: HeaderMap,
+    /// What a problem type with no scheme is joined to, for every response.
+    problem_base: Option<Arc<str>>,
     /// What [`Transport::Direct`] holds a request body to between frames.
     #[cfg(feature = "server")]
     request_body_idle_timeout: IdleTimeout,
@@ -105,6 +107,7 @@ impl<C> TestClient<C> {
             coverage: None,
             peer: None,
             headers: HeaderMap::new(),
+            problem_base: None,
             #[cfg(feature = "server")]
             request_body_idle_timeout: IdleTimeout::Default,
         }
@@ -243,6 +246,47 @@ impl<C> TestClient<C> {
     pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
         let (name, value) = field(name, value);
         self.headers.insert(name, value);
+        self
+    }
+
+    /// Joins `base` to every problem type given to
+    /// [`TestResponse::assert_problem`] and
+    /// [`TestResponse::assert_problem_type`] as a slug, one with no URI
+    /// scheme, so an API whose types share one prefix names each by its
+    /// slug. A type with a scheme, `about:blank` or a full URI, is compared
+    /// as given. A second call replaces the first.
+    ///
+    /// `base` and the slug are joined verbatim, as
+    /// [`problem_type!`](crate::problem_type) joins them, so the base is the
+    /// string the application's [`problem_base!`](crate::problem_base)
+    /// declares, its trailing `/` included.
+    ///
+    /// ```
+    /// # async fn run(service: kynos::router::service::Service<()>) {
+    /// use kynos::test::TestClient;
+    ///
+    /// let client = TestClient::new(service).with_problem_base("https://errors.example.com/");
+    /// // Compared against `https://errors.example.com/insufficient-scope`.
+    /// client
+    ///     .get("/admin")
+    ///     .send()
+    ///     .await
+    ///     .assert_problem(403, "insufficient-scope");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `base` has no URI scheme (RFC 3986 section 3.1), so that
+    /// no type it is joined to could be absolute.
+    #[must_use]
+    pub fn with_problem_base(mut self, base: &str) -> Self {
+        assert!(
+            has_scheme(base),
+            "`{base}` is not a problem base: one begins with a URI scheme, as \
+             `https://errors.example.com/` does"
+        );
+        self.problem_base = Some(Arc::from(base));
         self
     }
 
@@ -1230,6 +1274,7 @@ impl<'a, C> TestRequest<'a, C> {
             path,
             response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
             body: bytes,
+            problem_base: client.problem_base.clone(),
         }
     }
 
@@ -1286,6 +1331,7 @@ impl<'a, C> TestRequest<'a, C> {
             read: 0,
             observed: &client.observed,
             record,
+            problem_base: client.problem_base.clone(),
         }
     }
 
@@ -1452,6 +1498,9 @@ pub struct TestStream<'a> {
     observed: &'a Mutex<Vec<Observed>>,
     /// This exchange's place in `observed`.
     record: usize,
+    /// The client's [`with_problem_base`](TestClient::with_problem_base),
+    /// for the response [`finish`](Self::finish) returns.
+    problem_base: Option<Arc<str>>,
 }
 
 impl TestStream<'_> {
@@ -1535,6 +1584,7 @@ impl TestStream<'_> {
             path: self.path,
             response: Response::from_parts(self.parts, Body::from_bytes(body.clone())),
             body,
+            problem_base: self.problem_base,
         }
     }
 
@@ -1603,6 +1653,8 @@ pub struct TestResponse {
     response: Response,
     /// The drained body, kept so the response stays readable after assertions.
     body: Bytes,
+    /// The client's [`with_problem_base`](TestClient::with_problem_base).
+    problem_base: Option<Arc<str>>,
 }
 
 impl TestResponse {
@@ -1745,12 +1797,16 @@ impl TestResponse {
     /// Asserts that the body is an RFC 9457 problem document of a given type.
     ///
     /// A problem document that omits `type` means `about:blank`, which RFC 9457
-    /// section 3.1.1 makes the default rather than an absence.
+    /// section 3.1.1 makes the default rather than an absence. A slug is
+    /// joined to the client's
+    /// [`with_problem_base`](TestClient::with_problem_base) first.
     ///
     /// # Panics
     ///
     /// Panics when the body is not a problem document, or its `type` differs.
     pub fn assert_problem_type(&self, expected: &str) -> &Self {
+        let expected = self.problem_type(expected);
+        let expected = expected.as_ref();
         let document: Value = serde_json::from_slice(&self.body).unwrap_or_else(|error| {
             panic!(
                 "{}: the body is not a problem document: {error}\n{}",
@@ -1786,7 +1842,9 @@ impl TestResponse {
     /// [`assert_status`](Self::assert_status) does; that `Content-Type` is
     /// `application/problem+json` (RFC 9457 section 6.1), its parameters aside;
     /// that the body's `type` is `type_uri`, an omitted one being
-    /// `about:blank` (section 3.1.1); and that a `status` member, where the
+    /// `about:blank` (section 3.1.1), and a slug being joined to the client's
+    /// [`with_problem_base`](TestClient::with_problem_base) first; and that a
+    /// `status` member, where the
     /// document carries one, names the status line, which section 3.1.2 binds a
     /// generator to.
     ///
@@ -1834,6 +1892,8 @@ impl TestResponse {
         }
 
         let problem = self.problem();
+        let type_uri = self.problem_type(type_uri);
+        let type_uri = type_uri.as_ref();
         assert!(
             problem.type_uri == type_uri,
             "{}: expected problem type `{type_uri}`, received `{}`\n{}",
@@ -2147,6 +2207,15 @@ impl TestResponse {
         )
     }
 
+    /// `type_uri` joined to the problem base where it is a slug, and as
+    /// given where it has a scheme or the client set no base.
+    fn problem_type<'t>(&self, type_uri: &'t str) -> std::borrow::Cow<'t, str> {
+        match &self.problem_base {
+            Some(base) if !has_scheme(type_uri) => format!("{base}{type_uri}").into(),
+            _ => type_uri.into(),
+        }
+    }
+
     /// The body as an assertion message shows it.
     fn rendered_body(&self) -> String {
         match std::str::from_utf8(&self.body) {
@@ -2282,6 +2351,20 @@ fn field(name: &str, value: &str) -> (HeaderName, HeaderValue) {
     let value =
         HeaderValue::from_str(value).unwrap_or_else(|_| panic!("`{value}` is not a header value"));
     (name, value)
+}
+
+/// Whether `reference` opens with a URI scheme, `ALPHA *( ALPHA / DIGIT /
+/// "+" / "-" / "." ) ":"` (RFC 3986 section 3.1): an absolute URI does, and
+/// a relative reference cannot, since section 4.2 bars a colon from its
+/// first segment.
+fn has_scheme(reference: &str) -> bool {
+    reference.split_once(':').is_some_and(|(scheme, _)| {
+        let mut octets = scheme.bytes();
+        octets
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
+            && octets.all(|octet| octet.is_ascii_alphanumeric() || b"+-.".contains(&octet))
+    })
 }
 
 /// `n responses`, or `1 response`, for an assertion message that counts them.

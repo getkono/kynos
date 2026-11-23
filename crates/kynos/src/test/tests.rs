@@ -325,6 +325,52 @@ mod defaults {
         let client = client();
         let _ = client.get("/a").bearer("a\nb");
     }
+
+    /// The base reaches every response the client receives, and the last
+    /// one set is the one joined.
+    #[tokio::test]
+    async fn a_problem_base_reaches_every_response() {
+        let service = crate::router::service::Service::<()>::new(
+            kynos_openapi::Document::new(
+                kynos_openapi::SpecVersion::V3_1,
+                kynos_openapi::Info::new("Test", "1"),
+            ),
+            |_| async {
+                let mut response = crate::http::Response::new(crate::http::body::Body::from_bytes(
+                    bytes::Bytes::from_static(br#"{"type":"https://errors.example.com/gone"}"#),
+                ));
+                *response.status_mut() = crate::http::StatusCode::GONE;
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/problem+json"),
+                );
+                response
+            },
+        );
+        let client = TestClient::new(service)
+            .with_problem_base("https://elsewhere.example/")
+            .with_problem_base("https://errors.example.com/");
+
+        for _ in 0..2 {
+            client.get("/a").send().await.assert_problem(410, "gone");
+        }
+        client
+            .get("/a")
+            .send_streaming()
+            .await
+            .finish()
+            .await
+            .assert_problem(410, "gone");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "`errors.example.com/` is not a problem base: one begins with a URI \
+                               scheme, as `https://errors.example.com/` does"
+    )]
+    fn a_problem_base_with_no_scheme_panics() {
+        let _ = client().with_problem_base("errors.example.com/");
+    }
 }
 
 /// An in-process response carries the `Content-Length` a connection frames it
@@ -488,6 +534,85 @@ mod assertions {
             path: "/things".to_owned(),
             response,
             body,
+            problem_base: None,
+        }
+    }
+
+    /// `received`, from a client built with `with_problem_base(base)`.
+    fn based(base: &str, status: StatusCode, body: &'static [u8]) -> TestResponse {
+        TestResponse {
+            problem_base: Some(base.into()),
+            ..received(status, &[PROBLEM], body)
+        }
+    }
+
+    /// A slug is joined to the base verbatim, as `problem_type!` joins one,
+    /// and a type with a scheme is compared as given.
+    #[test]
+    fn a_slug_is_joined_to_the_problem_base_and_a_uri_is_not() {
+        let response = based(
+            "https://errors.example.com/",
+            StatusCode::FORBIDDEN,
+            br#"{"type":"https://errors.example.com/insufficient-scope","status":403}"#,
+        );
+        response
+            .assert_problem(403, "insufficient-scope")
+            .assert_problem_type("insufficient-scope")
+            .assert_problem(403, "https://errors.example.com/insufficient-scope");
+
+        based("https://errors.example.com/", StatusCode::NOT_FOUND, b"{}")
+            .assert_problem(404, "about:blank")
+            .assert_problem_type("about:blank");
+    }
+
+    /// The failure names the type the slug was joined into, which is what the
+    /// body was compared against.
+    #[test]
+    #[should_panic(expected = "GET /things -> 403: expected problem type \
+                    `https://errors.example.com/insufficient-scope`, received `urn:example:other`")]
+    fn assert_problem_names_the_joined_type_it_expected() {
+        based(
+            "https://errors.example.com/",
+            StatusCode::FORBIDDEN,
+            br#"{"type":"urn:example:other"}"#,
+        )
+        .assert_problem(403, "insufficient-scope");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 403: expected problem type \
+                    `https://errors.example.com/insufficient-scope`, received `about:blank`")]
+    fn assert_problem_type_names_the_joined_type_it_expected() {
+        based("https://errors.example.com/", StatusCode::FORBIDDEN, b"{}")
+            .assert_problem_type("insufficient-scope");
+    }
+
+    /// Without a base a slug is compared as written, as every type was.
+    #[test]
+    #[should_panic(expected = "expected problem type `insufficient-scope`")]
+    fn a_slug_without_a_base_is_compared_as_written() {
+        received(
+            StatusCode::FORBIDDEN,
+            &[PROBLEM],
+            br#"{"type":"https://errors.example.com/insufficient-scope"}"#,
+        )
+        .assert_problem(403, "insufficient-scope");
+    }
+
+    /// RFC 3986 section 3.1's scheme, and section 4.2's relative references,
+    /// which never open with one.
+    #[test]
+    fn a_scheme_is_what_rfc_3986_says_opens_an_absolute_uri() {
+        for absolute in [
+            "about:blank",
+            "urn:example:x",
+            "https://e.example/",
+            "a+b-c.d:x",
+        ] {
+            assert!(crate::test::has_scheme(absolute), "{absolute}");
+        }
+        for relative in ["slug", "a/b:c", "1x:y", ":x", "", "./a:b", "-a:b"] {
+            assert!(!crate::test::has_scheme(relative), "{relative}");
         }
     }
 
@@ -1083,6 +1208,7 @@ mod streaming {
             read: 0,
             observed,
             record: 0,
+            problem_base: Some("https://errors.example.com/".into()),
         }
     }
 
@@ -1233,6 +1359,20 @@ mod streaming {
             observed.lock().unwrap()[0].body,
             Some(Bytes::from_static(FEED.as_bytes()))
         );
+    }
+
+    /// The finished response keeps the client's problem base, as a sent one
+    /// does.
+    #[tokio::test]
+    async fn finish_keeps_the_problem_base() {
+        let observed = record();
+        stream(
+            framed(r#"{"type":"https://errors.example.com/gone"}"#, &[]),
+            &observed,
+        )
+        .finish()
+        .await
+        .assert_problem_type("gone");
     }
 
     /// A body failing part-way fails the read, naming the exchange.
