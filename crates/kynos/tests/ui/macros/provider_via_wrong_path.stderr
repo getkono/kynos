@@ -1,0 +1,18 @@
+error[E0308]: mismatched types
+  --> tests/ui/macros/provider_via_wrong_path.rs:13:29
+   |
+13 | #[provider(for = App, via = name)]
+   |                             ^^^^ expected `&Services`, found `&&str`
+14 | struct Services {
+15 |     pool: Pool,
+   |     ----  ---- this return type influences the call expression's return type
+   |     |
+   |     arguments to this function are incorrect
+   |
+   = note: expected reference `&Services`
+              found reference `&&'static str`
+note: method defined here
+  --> src/di/mod.rs
+   |
+   |     fn provide(&self) -> T;
+   |        ^^^^^^^
