@@ -43,7 +43,8 @@
 //!
 //! `Server::prepare` and `Service::into_tower_unchecked` edit a built
 //! service's document, and each edit renders the reference again, so the bytes
-//! served always equal what `Service::openapi` reports.
+//! served always equal what `Service::openapi` reports. A clone of the service
+//! serves the same reference, so either edit is refused while one lives.
 
 mod endpoint;
 mod page;

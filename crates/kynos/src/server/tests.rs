@@ -4187,6 +4187,60 @@ async fn mutual_tls_refuses_a_service_a_connection_still_shares() {
     drop(connection);
 }
 
+/// A clone of the service shares its mounted reference, which mutual TLS
+/// would render again behind the clone's own document, so `prepare` refuses
+/// before binding; without a reference the clone keeps its own document.
+#[cfg(all(feature = "tls", feature = "docs"))]
+#[tokio::test]
+async fn mutual_tls_refuses_a_service_a_clone_shares_a_reference_with() {
+    let issued = authority();
+    let tls = || {
+        let client_authentication = crate::server::tls::ClientCertificateConfig::from_pem_roots(
+            issued.certificate.as_bytes(),
+        )
+        .expect("CA parses");
+        crate::server::tls::TlsConfig::from_pem(
+            issued.server.certificate.as_bytes(),
+            issued.server.key.as_bytes(),
+        )
+        .expect("server identity parses")
+        .require_client_certificate(client_authentication)
+    };
+    let referenced = crate::Router::<()>::new()
+        .docs(crate::router::docs::Docs::scalar())
+        .build(())
+        .expect("a describable router");
+    let clone = referenced.clone();
+
+    let error = crate::server::Server::new(referenced)
+        .tls(tls())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect_err("a clone still serves the reference");
+    assert!(matches!(error, crate::Error::DescriptionShared), "{error}");
+    drop(clone);
+
+    let unreferenced = crate::Router::<()>::new()
+        .build(())
+        .expect("a describable router");
+    let clone = unreferenced.clone();
+    let bound = crate::server::Server::new(unreferenced)
+        .tls(tls())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("no reference to share");
+    let declares_mutual_tls = |document: &kynos_openapi::Document| {
+        document
+            .to_json()
+            .expect("a serializable document")
+            .contains(crate::server::tls::document::MUTUAL_TLS_NAME)
+    };
+    assert!(declares_mutual_tls(bound.openapi()));
+    assert!(!declares_mutual_tls(clone.openapi()));
+}
+
 /// A mounted reference serves the description the bound server reports,
 /// mutual TLS included.
 ///
