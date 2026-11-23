@@ -502,7 +502,8 @@ impl<C: 'static> TestClient<C> {
     /// with the refusal.
     ///
     /// What a socket fixes for itself, the client cannot set: a request
-    /// leaves from the connection's own loopback address, so
+    /// leaves from the connection's own address, loopback for a loopback
+    /// listener, so
     /// [`with_peer`](Self::with_peer) and [`TestRequest::peer`] panic, and
     /// [`TestRequest::send_timed`] panics, since the real socket's
     /// readiness is not on the paused clock it measures. Nor does it write a
