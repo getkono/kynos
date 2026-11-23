@@ -156,6 +156,7 @@ impl<C> TestClient<C> {
     /// bodies.
     #[cfg(feature = "server")]
     #[must_use]
+    #[track_caller]
     pub fn with_request_body_idle_timeout(mut self, timeout: Option<std::time::Duration>) -> Self {
         if let Some(built) = self.transport.served_by() {
             panic!(
@@ -198,6 +199,7 @@ impl<C> TestClient<C> {
     /// [`connect`](Self::connect), whose requests leave from their own
     /// socket's address.
     #[cfg(feature = "server")]
+    #[track_caller]
     fn refuse_peer_over_a_socket(&self, setter: &str) {
         if let Transport::Connected { .. } = self.transport {
             panic!(
@@ -241,6 +243,7 @@ impl<C> TestClient<C> {
     /// Panics on a client built [`connect`](Self::connect), whose requests
     /// leave from their own socket's address.
     #[must_use]
+    #[track_caller]
     pub fn with_peer(mut self, peer: std::net::SocketAddr) -> Self {
         #[cfg(feature = "server")]
         self.refuse_peer_over_a_socket("with_peer");
@@ -266,6 +269,7 @@ impl<C> TestClient<C> {
     /// [`with_default_cookie`](Self::with_default_cookie), whose cookies the
     /// field would silently replace.
     #[must_use]
+    #[track_caller]
     pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
         let (name, value) = field(name, value);
         assert!(
@@ -306,6 +310,7 @@ impl<C> TestClient<C> {
     /// a `Cookie` [`with_default_header`](Self::with_default_header), which
     /// these would silently replace.
     #[must_use]
+    #[track_caller]
     pub fn with_default_cookie(mut self, name: &str, value: &str) -> Self {
         assert!(
             !self.headers.contains_key(crate::http::header::COOKIE),
@@ -355,6 +360,7 @@ impl<C> TestClient<C> {
     /// Panics when `base` has no URI scheme (RFC 3986 section 3.1), so that
     /// no type it is joined to could be absolute.
     #[must_use]
+    #[track_caller]
     pub fn with_problem_base(mut self, base: &str) -> Self {
         assert!(
             has_scheme(base),
@@ -449,6 +455,7 @@ impl<C> TestClient<C> {
     /// Panics as [`IntoMethod::into_method`] does: when a name is not a
     /// method token, or spells a method RFC 9110 registers in another case.
     #[must_use]
+    #[track_caller]
     pub fn method(&self, method: impl IntoMethod, path: &str) -> TestRequest<'_, C> {
         self.request(method.into_method(), path)
     }
@@ -615,6 +622,7 @@ impl<C: 'static> TestClient<C> {
     /// Panics when `serve_io` refuses `server`: a value
     /// [`prepare`](crate::server::Server::prepare) refuses, or TLS.
     #[must_use]
+    #[track_caller]
     pub fn through_server(server: crate::server::Server<C>) -> Self {
         if let Err(error) = server.check_servable() {
             panic!("a server `serve_io` refuses cannot be tested through: {error}");
@@ -674,10 +682,11 @@ impl<C: 'static> TestClient<C> {
     /// domain sockets has, and when its listeners speak TLS, since the
     /// client writes plaintext.
     #[must_use]
+    #[track_caller]
     pub fn connect(running: &crate::server::Running<C>) -> Self {
-        let address = running.local_addr().unwrap_or_else(|| {
+        let Some(address) = running.local_addr() else {
             panic!("a server with no TCP listener cannot be connected to; `connect` sends over TCP")
-        });
+        };
         assert!(
             !running.serves_tls(),
             "a server whose listeners speak TLS cannot be connected to; `connect` writes plaintext"
@@ -903,10 +912,11 @@ impl Coverage {
     /// # Panics
     ///
     /// Panics when `path` is not a request target.
+    #[track_caller]
     pub fn record(&self, method: &HttpMethod, path: &str, status: StatusCode) {
-        let uri = path
-            .parse::<Uri>()
-            .unwrap_or_else(|_| panic!("`{path}` is not a request target"));
+        let Ok(uri) = path.parse::<Uri>() else {
+            panic!("`{path}` is not a request target")
+        };
         push(
             &self.exchanges,
             Exchange {
@@ -1046,6 +1056,7 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// Panics when `name` or `value` is not one HTTP can carry.
     #[must_use]
+    #[track_caller]
     pub fn header(mut self, name: &str, value: &str) -> Self {
         let (name, value) = field(name, value);
         self.headers.insert(name, value);
@@ -1062,6 +1073,7 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// Panics when `token` leaves the field no header value.
     #[must_use]
+    #[track_caller]
     pub fn bearer(self, token: &str) -> Self {
         self.header("authorization", &format!("Bearer {token}"))
     }
@@ -1077,11 +1089,14 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics when `name` is not a header name, or when `value` holds an octet
     /// no field value can: a control character other than horizontal tab.
     #[must_use]
+    #[track_caller]
     pub fn header_bytes(mut self, name: &str, value: &[u8]) -> Self {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
-        let value = HeaderValue::from_bytes(value)
-            .unwrap_or_else(|_| panic!("`{}` is not a header value", value.escape_ascii()));
+        let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+            panic!("`{name}` is not a header name")
+        };
+        let Ok(value) = HeaderValue::from_bytes(value) else {
+            panic!("`{}` is not a header value", value.escape_ascii())
+        };
         self.headers.insert(name, value);
         self
     }
@@ -1096,6 +1111,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// infinite float (so a `HashMap<(u8, u8), _>` panics here).
     #[cfg(feature = "json")]
     #[must_use]
+    #[track_caller]
     pub fn json<T: serde::Serialize>(mut self, body: &T) -> Self {
         self.body = RequestBody::Whole(Bytes::from(
             serde_json::to_vec(body).expect("a serializable request body"),
@@ -1118,6 +1134,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// struct of scalars cannot cause.
     #[cfg(feature = "form")]
     #[must_use]
+    #[track_caller]
     pub fn query_string<T: serde::Serialize>(mut self, value: &T) -> Self {
         let encoded = serde_html_form::to_string(value).expect("a serializable query");
         if !encoded.is_empty() {
@@ -1155,6 +1172,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics on a client built [`connect`](TestClient::connect), whose
     /// requests leave from their own socket's address.
     #[must_use]
+    #[track_caller]
     pub fn peer(mut self, address: std::net::SocketAddr) -> Self {
         #[cfg(feature = "server")]
         self.client.refuse_peer_over_a_socket("peer");
@@ -1168,6 +1186,7 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// Panics when `media_type` is not a header value.
     #[must_use]
+    #[track_caller]
     pub fn body(mut self, media_type: &str, bytes: impl Into<Bytes>) -> Self {
         self.body = RequestBody::Whole(bytes.into());
         self.content_type(media_type)
@@ -1191,6 +1210,7 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// Panics when `media_type` is not a header value.
     #[must_use]
+    #[track_caller]
     pub fn body_stream<S>(mut self, media_type: &str, chunks: S) -> Self
     where
         S: futures_core::Stream<Item = Bytes> + Send + 'static,
@@ -1222,6 +1242,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics when `media_type` is not a header value.
     #[cfg(feature = "server")]
     #[must_use]
+    #[track_caller]
     pub fn stalled_body(mut self, media_type: &str) -> Self {
         self.body = RequestBody::Stalled;
         self.content_length(1).content_type(media_type)
@@ -1265,6 +1286,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// since such a body arrives whole rather than stalling.
     #[cfg(feature = "server")]
     #[must_use]
+    #[track_caller]
     pub fn stalled_after(mut self, media_type: &str, first: impl Into<Bytes>) -> Self {
         self.body = RequestBody::StalledAfter(first.into());
         self.content_type(media_type)
@@ -1288,17 +1310,19 @@ impl<'a, C> TestRequest<'a, C> {
         self
     }
 
+    #[track_caller]
     fn content_type(mut self, media_type: &str) -> Self {
-        self.headers.insert(
-            crate::http::header::CONTENT_TYPE,
-            HeaderValue::from_str(media_type)
-                .unwrap_or_else(|_| panic!("`{media_type}` is not a media type")),
-        );
+        let Ok(value) = HeaderValue::from_str(media_type) else {
+            panic!("`{media_type}` is not a media type")
+        };
+        self.headers
+            .insert(crate::http::header::CONTENT_TYPE, value);
         self
     }
 
     /// Sets a `text/plain` body.
     #[must_use]
+    #[track_caller]
     pub fn text(self, body: &str) -> Self {
         self.body("text/plain; charset=utf-8", Bytes::from(body.to_owned()))
     }
@@ -1310,6 +1334,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics when `body` cannot be form-encoded.
     #[cfg(feature = "form")]
     #[must_use]
+    #[track_caller]
     pub fn form<T: serde::Serialize>(self, body: &T) -> Self {
         let encoded = serde_html_form::to_string(body).expect("a serializable form body");
         self.body(
@@ -1799,15 +1824,17 @@ impl TestResponse {
     /// Panics when the body is not valid JSON for `T`.
     #[cfg(feature = "json")]
     #[must_use]
+    #[track_caller]
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
-        serde_json::from_slice(&self.body).unwrap_or_else(|error| {
-            panic!(
+        match serde_json::from_slice(&self.body) {
+            Ok(value) => value,
+            Err(error) => panic!(
                 "{}: the body is not valid JSON for `{}`: {error}\n{}",
                 self.exchange(),
                 std::any::type_name::<T>(),
                 self.rendered_body()
-            )
-        })
+            ),
+        }
     }
 
     /// The body as bytes.
@@ -2112,14 +2139,16 @@ impl TestResponse {
     ///
     /// Panics when the body is not UTF-8.
     #[must_use]
+    #[track_caller]
     pub fn text(&self) -> &str {
-        std::str::from_utf8(&self.body).unwrap_or_else(|_| {
+        let Ok(text) = std::str::from_utf8(&self.body) else {
             panic!(
                 "{}: the body is not text\n{}",
                 self.exchange(),
                 self.rendered_body()
-            );
-        })
+            )
+        };
+        text
     }
 
     /// The first value of a response header, as text.
@@ -2308,6 +2337,7 @@ impl TestResponse {
     /// [`TestRequest::send_streaming`] reads one that is not as it arrives.
     /// Comment lines (keep-alives) are dropped, as a client ignores them.
     #[must_use]
+    #[track_caller]
     pub fn events(&self) -> Vec<TestEvent> {
         self.text()
             .split(EVENT_DELIMITER)
@@ -2432,13 +2462,14 @@ impl IntoMethod for &HttpMethod {
 }
 
 impl IntoMethod for &str {
+    #[track_caller]
     fn into_method(self) -> HttpMethod {
-        let method = HttpMethod::from_bytes(self.as_bytes()).unwrap_or_else(|_| {
+        let Ok(method) = HttpMethod::from_bytes(self.as_bytes()) else {
             panic!(
                 "`{}` is not a method, which is a token (RFC 9110 section 9.1)",
                 self.escape_debug()
             )
-        });
+        };
         if let Some(registered) = REGISTERED_METHODS
             .iter()
             .find(|registered| registered.eq_ignore_ascii_case(self) && **registered != self)
@@ -2472,9 +2503,12 @@ impl IntoStatus for StatusCode {
 }
 
 impl IntoStatus for u16 {
+    #[track_caller]
     fn into_status(self) -> StatusCode {
-        sealed::Sealed::status(self)
-            .unwrap_or_else(|code| panic!("`{code}` is not a status code, which is 100 to 999"))
+        match sealed::Sealed::status(self) {
+            Ok(status) => status,
+            Err(code) => panic!("`{code}` is not a status code, which is 100 to 999"),
+        }
     }
 }
 
@@ -2483,12 +2517,15 @@ impl IntoStatus for u16 {
 /// # Panics
 ///
 /// Panics when `name` or `value` is not one HTTP can carry.
+#[track_caller]
 fn field(name: &str, value: &str) -> (HeaderName, HeaderValue) {
-    let name = HeaderName::from_bytes(name.as_bytes())
-        .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
-    let value =
-        HeaderValue::from_str(value).unwrap_or_else(|_| panic!("`{value}` is not a header value"));
-    (name, value)
+    let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+        panic!("`{name}` is not a header name")
+    };
+    let Ok(field_value) = HeaderValue::from_str(value) else {
+        panic!("`{value}` is not a header value")
+    };
+    (name, field_value)
 }
 
 /// Whether `reference` opens with a URI scheme, `ALPHA *( ALPHA / DIGIT /
@@ -2579,9 +2616,12 @@ impl TestEvent {
     /// Panics when `data` is not the JSON `T`.
     #[cfg(feature = "json")]
     #[must_use]
+    #[track_caller]
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
-        serde_json::from_str(&self.data)
-            .unwrap_or_else(|error| panic!("`{}` is not the expected JSON: {error}", self.data))
+        match serde_json::from_str(&self.data) {
+            Ok(value) => value,
+            Err(error) => panic!("`{}` is not the expected JSON: {error}", self.data),
+        }
     }
 }
 
@@ -2617,17 +2657,19 @@ impl TestProblem {
     /// read from their fields and would otherwise read as absent here, and
     /// when the member is present but not a `T`.
     #[must_use]
+    #[track_caller]
     pub fn extension<T: serde::de::DeserializeOwned>(&self, name: &str) -> Option<T> {
         assert!(
             !["type", "title", "status", "detail", "instance"].contains(&name),
             "`{name}` is a member RFC 9457 registers, not an extension; read its field"
         );
         let value = self.extensions.get(name)?;
-        Some(T::deserialize(value).unwrap_or_else(|error| {
-            panic!(
+        match T::deserialize(value) {
+            Ok(extension) => Some(extension),
+            Err(error) => panic!(
                 "the problem document's `{name}` is not a `{}`: {error}\n{name}: {value}",
                 std::any::type_name::<T>()
-            )
-        }))
+            ),
+        }
     }
 }
