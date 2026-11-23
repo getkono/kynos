@@ -5,7 +5,7 @@ error[E0277]: `std::string::String` is not a number, so a numeric bound cannot a
   |           ^^^^^^ not a number
   |
   = help: the trait `Numeric` is not implemented for `std::string::String`
-  = note: `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and `multiple_of` apply to the integer and float types, and to an `Option`, `Box` or `Arc` of one; implement `kynos::schema::constraints::Numeric` for a newtype that is a number on the wire
+  = note: `minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and `multiple_of` apply to the integer and float types, and to an `Option`, `Nullable`, `Box` or `Arc` of one; implement `kynos::schema::constraints::Numeric` for a newtype that is a number on the wire
   = note: or, on a `Schema` field whose serde form is a number, describe it as one with `#[schema(as = u64)]`, converting through `From<&std::string::String>` or `via = path`
   = help: the following other types implement trait `Numeric`:
             Arc<T>

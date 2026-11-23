@@ -573,9 +573,9 @@ pub enum ConstraintDetail {
     message = "`{Self}` is not a number, so a numeric bound cannot apply to it",
     label = "not a number",
     note = "`minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and `multiple_of` \
-            apply to the integer and float types, and to an `Option`, `Box` or `Arc` of one; \
-            implement `kynos::schema::constraints::Numeric` for a newtype that is a number on \
-            the wire",
+            apply to the integer and float types, and to an `Option`, `Nullable`, `Box` or `Arc` \
+            of one; implement `kynos::schema::constraints::Numeric` for a newtype that is a \
+            number on the wire",
     note = "or, on a `Schema` field whose serde form is a number, describe it as one with \
             `#[schema(as = u64)]`, converting through `From<&{Self}>` or `via = path`"
 )]
@@ -600,7 +600,7 @@ pub trait Numeric {
     message = "`{Self}` is not a string, so a string bound cannot apply to it",
     label = "not a string",
     note = "`min_length`, `max_length`, `pattern`, `content_encoding` and `content_media_type` \
-            apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement \
+            apply to `String`, and to an `Option`, `Nullable`, `Box` or `Arc` of one; implement \
             `kynos::schema::constraints::Textual` for a newtype that is a string on the wire",
     note = "or, on a `Schema` field whose serde form is a string, describe it as one with \
             `#[schema(as = String)]`, converting through `From<&{Self}>` or `via = path`"
@@ -619,8 +619,8 @@ pub trait Textual {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an array, so an item bound cannot apply to it",
     label = "not an array",
-    note = "`min_items` and `max_items` apply to sequences and sets, and to an `Option`, `Box` \
-            or `Arc` of one",
+    note = "`min_items` and `max_items` apply to sequences and sets, and to an `Option`, \
+            `Nullable`, `Box` or `Arc` of one",
     note = "or, on a `Schema` field whose serde form is an array, describe it as one with \
             `#[schema(as = Vec<T>)]`, converting through `From<&{Self}>` or `via = path`"
 )]
