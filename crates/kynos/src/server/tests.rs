@@ -2248,6 +2248,35 @@ async fn a_spawned_server_reports_its_shutdown_timeout() {
     client.await.expect("client task joins");
 }
 
+/// The handle lends the service it serves, so its description is reachable
+/// once the server is spawned.
+#[tokio::test]
+async fn a_spawned_server_lends_the_service_it_serves() {
+    let document = kynos_openapi::Document::new(
+        kynos_openapi::SpecVersion::V3_1,
+        kynos_openapi::Info::new("Spawned", "7"),
+    );
+    let service = crate::router::service::Service::<()>::new(document, |_| async {
+        crate::http::Response::new(crate::http::body::Body::empty())
+    });
+    let running = crate::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+
+    let info = &running.service().openapi().info;
+    assert_eq!(
+        (info.title.as_str(), info.version.as_str()),
+        ("Spawned", "7")
+    );
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
 /// Dropping the handle begins shutdown without anyone waiting for it.
 #[tokio::test]
 async fn dropping_a_spawned_servers_handle_shuts_it_down() {

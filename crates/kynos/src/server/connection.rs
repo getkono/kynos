@@ -173,27 +173,46 @@ where
         .map_err(std::io::Error::other)
 }
 
-/// The client half of [`TestClient::through_server`](crate::test::TestClient::through_server),
-/// here because hyper and the runtime are named nowhere else.
+/// The client half of [`TestClient::through_server`](crate::test::TestClient::through_server)
+/// and [`TestClient::connect`](crate::test::TestClient::connect), here because
+/// hyper and the runtime are named nowhere else.
 #[cfg(feature = "test-util")]
-pub(in crate::server) mod test_client {
-    use std::{future::Future, pin::Pin};
+pub(crate) mod test_client {
+    use std::{future::Future, net::SocketAddr, pin::Pin, sync::Arc};
 
     #[cfg(not(feature = "http1"))]
     use hyper_util::rt::TokioExecutor;
     use hyper_util::rt::TokioIo;
+    use tokio::io::{AsyncRead, AsyncWrite};
 
     use crate::{
         extract::connection::Connection,
         http::{Request, Response, body::Body},
         router::service::Service,
-        server::Server,
+        server::{Running, Server},
     };
 
     impl<C> Server<C> {
         /// The service every connection shares, for its description.
         pub(crate) fn served(&self) -> &Service<C> {
             &self.service
+        }
+    }
+
+    impl<C> Running<C> {
+        /// The service every connection shares, for a client to hold past
+        /// the handle's borrow.
+        pub(crate) fn shared_service(&self) -> Arc<Service<C>> {
+            Arc::clone(&self.service)
+        }
+
+        /// Whether its TCP listeners speak TLS, which a plaintext client
+        /// cannot.
+        pub(crate) fn serves_tls(&self) -> bool {
+            #[cfg(feature = "tls")]
+            return self.tls;
+            #[cfg(not(feature = "tls"))]
+            false
         }
     }
 
@@ -204,9 +223,8 @@ pub(in crate::server) mod test_client {
         }
 
         /// Sends `request` over a duplex [`serve_io`](Server::serve_io) serves
-        /// as `connection`: HTTP/1.1 where it is compiled, prior-knowledge
-        /// HTTP/2 otherwise. The response body is read off the same
-        /// connection, which closes once that body ends.
+        /// as `connection`, as [`send_on`] writes it. The response body is
+        /// read off the same connection, which closes once that body ends.
         pub(crate) fn exchange(
             &self,
             request: Request,
@@ -219,30 +237,8 @@ pub(in crate::server) mod test_client {
             let serving = self.serve_io(io, connection);
             Box::pin(async move {
                 let driver = tokio::spawn(serving.map_err(std::io::Error::other)?);
-                let client = TokioIo::new(client);
-
-                #[cfg(feature = "http1")]
-                let sent = {
-                    let (mut sender, connection) = hyper::client::conn::http1::handshake(client)
-                        .await
-                        .map_err(std::io::Error::other)?;
-                    tokio::spawn(connection);
-                    sender.send_request(request).await
-                };
-                #[cfg(not(feature = "http1"))]
-                let sent = {
-                    let mut request = request;
-                    *request.uri_mut() = http2_target(&request)?;
-                    let (mut sender, connection) =
-                        hyper::client::conn::http2::handshake(TokioExecutor::new(), client)
-                            .await
-                            .map_err(std::io::Error::other)?;
-                    tokio::spawn(connection);
-                    sender.send_request(request).await
-                };
-
-                match sent {
-                    Ok(response) => Ok(response.map(Body::from_incoming)),
+                match send_on(client, request).await? {
+                    Ok(response) => Ok(response),
                     // Why the server ended the connection, where it already has.
                     Err(error) if driver.is_finished() => {
                         Err(std::io::Error::other(match driver.await {
@@ -257,6 +253,54 @@ pub(in crate::server) mod test_client {
                 }
             })
         }
+    }
+
+    /// Sends `request` over a fresh TCP connection to `address`, as
+    /// [`send_on`] writes it. The response body is read off the same
+    /// connection, which closes once that body ends.
+    pub(crate) async fn exchange_at(
+        address: SocketAddr,
+        request: Request,
+    ) -> std::io::Result<Response> {
+        let stream = tokio::net::TcpStream::connect(address).await?;
+        // As a client writing its head and then its body does, so neither
+        // write waits on the other's acknowledgement.
+        stream.set_nodelay(true)?;
+        send_on(stream, request)
+            .await?
+            .map_err(std::io::Error::other)
+    }
+
+    /// Sends `request` on `io`: HTTP/1.1 where it is compiled, prior-knowledge
+    /// HTTP/2 otherwise. A failed handshake is the outer error; the inner one
+    /// is a connection that ended without a response.
+    async fn send_on<I>(io: I, request: Request) -> std::io::Result<Result<Response, hyper::Error>>
+    where
+        I: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let io = TokioIo::new(io);
+
+        #[cfg(feature = "http1")]
+        let sent = {
+            let (mut sender, connection) = hyper::client::conn::http1::handshake(io)
+                .await
+                .map_err(std::io::Error::other)?;
+            tokio::spawn(connection);
+            sender.send_request(request).await
+        };
+        #[cfg(not(feature = "http1"))]
+        let sent = {
+            let mut request = request;
+            *request.uri_mut() = http2_target(&request)?;
+            let (mut sender, connection) =
+                hyper::client::conn::http2::handshake(TokioExecutor::new(), io)
+                    .await
+                    .map_err(std::io::Error::other)?;
+            tokio::spawn(connection);
+            sender.send_request(request).await
+        };
+
+        Ok(sent.map(|response| response.map(Body::from_incoming)))
     }
 
     /// The absolute target a prior-knowledge HTTP/2 request is sent with,
