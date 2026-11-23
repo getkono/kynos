@@ -1,26 +1,26 @@
 //! Building an endpoint at runtime rather than with a route attribute.
+//!
+//! The setters assembling one are here; what it does once mounted, describing
+//! its operation and serving it, is in the private `serve`.
 
-use std::{future::Future, marker::PhantomData, pin::Pin, sync::Arc};
+mod serve;
+
+use std::{marker::PhantomData, sync::Arc};
 
 use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
     handler::Handler,
-    http::{Parts, Request, Response, body::Body},
     middleware::{
-        Continued, Interceptor, MiddlewareError, Next,
+        Interceptor,
         catch_panic::{Catch, PanicPolicy, Propagate},
-        erased::{ErasedInterceptor, ErasedTerminal},
+        erased::ErasedInterceptor,
         stack::{self, CompatibleWith, Cons},
     },
     router::{
-        dispatch,
-        endpoint::{
-            Endpoint,
-            set::{Endpoints, IntoEndpoints},
-        },
+        endpoint::set::{Endpoints, IntoEndpoints},
         install,
-        operation::{DeclaredTag, OperationCx, Route, Tag},
+        operation::{DeclaredTag, Tag},
     },
 };
 
@@ -242,154 +242,5 @@ where
 
     fn into_endpoints(self, sink: &mut Endpoints<C>) {
         sink.push(self);
-    }
-}
-
-impl<C, H, A, P, I: 'static> Endpoint<C> for EndpointBuilder<C, H, A, P, I>
-where
-    C: Send + Sync + 'static,
-    H: Handler<C, A>,
-    // Only `'static`, as above.
-    A: 'static,
-    P: PanicPolicy,
-{
-    fn method(&self) -> Method {
-        self.method
-    }
-
-    fn path(&self) -> &PathTemplate {
-        &self.path
-    }
-
-    fn describe(&self, operation: &mut OperationCx<'_>) {
-        // First, so the handler's responses win over an interceptor's.
-        <H as Handler<C, A>>::describe(operation);
-
-        for interceptor in &self.interceptors {
-            interceptor.describe(operation);
-        }
-
-        if let Some(id) = self.operation_id {
-            operation.set_operation_id(id);
-        }
-        if let Some(summary) = self.summary {
-            operation.set_summary(summary);
-        }
-        if let Some(description) = self.description {
-            operation.set_description(description);
-        }
-        for tag in &self.tags {
-            operation.add_tag(*tag);
-        }
-        operation.set_deprecated(self.deprecated);
-
-        if install::catches::<P>() {
-            dispatch::recovery::describe(operation);
-        }
-    }
-
-    // Splits the request before the future exists and awaits each branch in
-    // place: every matched request carries this future in a box, and the head
-    // it owns is the only copy, which the handler borrows. A request argument,
-    // or an `async fn` between the box and the handler, would keep another.
-    fn call(&self, request: Request, context: &C) -> impl Future<Output = Response> + Send {
-        let (mut parts, body) = request.into_parts();
-        async move {
-            if install::catches::<P>() {
-                // Boxed by `recover`, so it costs this future a pointer.
-                return match dispatch::recovery::recover(self.serve(parts, body, context)).await {
-                    Ok(response) => response,
-                    Err(payload) => dispatch::recovery::recovered_response(payload),
-                };
-            }
-
-            // Without interceptors, no chain and no second box. `serve`'s
-            // branches, inlined: awaiting `serve` would move the head into a
-            // future of its own, beside the slot this one keeps for it.
-            if self.interceptors.is_empty() {
-                return Handler::call(self.handler.clone(), &mut parts, body, context).await;
-            }
-
-            self.chain(Request::from_parts(parts, body), context)
-                .await
-                .into_response()
-        }
-    }
-
-    fn __unhonourable_interceptor(&self) -> Option<MiddlewareError> {
-        self.interceptors
-            .iter()
-            .find_map(|interceptor| install::cors_conflict(interceptor))
-    }
-
-    fn __guarded(&self) -> bool {
-        H::__GUARDED
-    }
-
-    // This operation's recovery covers its guard wherever the guard runs.
-    fn __guard_ahead(
-        &self,
-        request: Request,
-        context: &C,
-    ) -> impl Future<Output = Result<Request, Response>> + Send {
-        super::guard_ahead::<C, H, A>(request, context, install::catches::<P>())
-    }
-}
-
-impl<C, H, A, P, I: 'static> EndpointBuilder<C, H, A, P, I>
-where
-    C: Send + Sync + 'static,
-    H: Handler<C, A>,
-    // Only `'static`, as above.
-    A: 'static,
-    P: PanicPolicy,
-{
-    /// Runs the handler, through this operation's own interceptors where it
-    /// has any; what recovery wraps, and so the owner of the head it lends.
-    async fn serve(&self, mut parts: Parts, body: Body, context: &C) -> Response {
-        if self.interceptors.is_empty() {
-            Handler::call(self.handler.clone(), &mut parts, body, context).await
-        } else {
-            self.chain(Request::from_parts(parts, body), context)
-                .await
-                .into_response()
-        }
-    }
-
-    /// Starts this operation's own interceptors around the handler, which is
-    /// this builder itself as the chain's terminal.
-    fn chain<'a>(
-        &'a self,
-        request: Request,
-        context: &'a C,
-    ) -> impl Future<Output = Continued<()>> + Send + 'a {
-        // The key routing matched, prefixes included; this endpoint's own
-        // template only when driven without a router.
-        let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
-        let route = Route::new(path, self.operation_id.unwrap_or_default(), self.method);
-        Next::new(&self.interceptors, self, context, Some(route)).run(request)
-    }
-}
-
-/// The handler, as the end of this endpoint's own interceptor chain: the
-/// builder rather than a terminal built per request, so nothing the chain
-/// borrows lives in the future driving it.
-impl<C, H, A, P, I: 'static> ErasedTerminal<C> for EndpointBuilder<C, H, A, P, I>
-where
-    C: Send + Sync + 'static,
-    H: Handler<C, A>,
-    A: 'static,
-    P: PanicPolicy,
-{
-    fn call<'a>(
-        &'a self,
-        request: Request,
-        context: &'a C,
-    ) -> Pin<Box<dyn Future<Output = Response> + Send + 'a>> {
-        // The box owns the head the handler borrows.
-        let (mut parts, body) = request.into_parts();
-        Box::pin(
-            async move { Handler::call(self.handler.clone(), &mut parts, body, context).await },
-        )
     }
 }
