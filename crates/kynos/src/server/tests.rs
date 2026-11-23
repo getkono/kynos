@@ -6352,6 +6352,14 @@ const CONFIGURATION_REFUSALS: &[(&str, &str)] = &[
         "HTTP/2 idle_timeout must be non-zero when enabled",
     ),
     (
+        "server/request_body.rs",
+        "request_body_idle_timeout is off, so the router must not declare its 408: build it with declare_body_stall(false)",
+    ),
+    (
+        "server/request_body.rs",
+        "the router was built with declare_body_stall(false), so the 408 request_body_idle_timeout answers with is undeclared: set request_body_idle_timeout(None)",
+    ),
+    (
         "server/tcp.rs",
         "TCP keepalive durations must be between 1 and 32767 seconds",
     ),
@@ -7014,7 +7022,7 @@ mod request_body_idle {
     use std::time::Duration;
 
     use crate::{
-        server::request_body::validate_request_body_idle_timeout,
+        server::request_body::{validate_body_stall, validate_request_body_idle_timeout},
         server::{Server, error::ServerError},
     };
 
@@ -7056,6 +7064,67 @@ mod request_body_idle {
         validate_request_body_idle_timeout(None).expect("waiting indefinitely is a decision");
         validate_request_body_idle_timeout(Some(Duration::from_nanos(1)))
             .expect("any positive limit is accepted");
+    }
+
+    /// The timer and the router's declaration of the 408 it sends agree, or
+    /// the document is wrong about every operation reading a body.
+    #[test]
+    fn a_timer_disagreeing_with_the_declared_stall_is_refused() {
+        let refusal = |declared, timeout| match validate_body_stall(declared, timeout) {
+            Err(ServerError::InvalidConfiguration(reason)) => Some(reason),
+            Err(other) => panic!("refused as {other:?}"),
+            Ok(()) => None,
+        };
+
+        let declared_but_off = refusal(true, None).expect("a 408 nothing sends is refused");
+        assert!(
+            declared_but_off.contains("declare_body_stall(false)"),
+            "{declared_but_off}"
+        );
+        let omitted_but_on =
+            refusal(false, Some(Duration::from_secs(1))).expect("an undeclared 408 is refused");
+        assert!(
+            omitted_but_on.contains("request_body_idle_timeout(None)"),
+            "{omitted_but_on}"
+        );
+        assert_eq!(refusal(true, Some(Duration::from_secs(1))), None);
+        assert_eq!(refusal(false, None), None);
+    }
+
+    /// `prepare` and `serve_io` refuse it, before a socket is bound or a
+    /// stream is read.
+    #[tokio::test]
+    async fn a_server_with_no_timer_refuses_a_service_declaring_the_stall() {
+        let error = Server::new(super::test_service())
+            .request_body_idle_timeout(None)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .prepare()
+            .await
+            .expect_err("the default router declares the stall");
+        assert!(
+            matches!(
+                error,
+                crate::Error::Server(ServerError::InvalidConfiguration(reason))
+                    if reason.contains("declare_body_stall(false)")
+            ),
+            "{error}"
+        );
+
+        let service = super::test_service().with_body_stall(false);
+        let (io, _peer) = tokio::io::duplex(64);
+        let connection = crate::extract::connection::Connection::from_peer(
+            std::net::SocketAddr::from(([127, 0, 0, 1], 1)),
+            std::net::SocketAddr::from(([127, 0, 0, 1], 2)),
+        );
+        let refused = Server::new(service).serve_io(io, connection).err();
+        assert!(
+            matches!(
+                refused,
+                Some(crate::Error::Server(ServerError::InvalidConfiguration(reason)))
+                    if reason.contains("request_body_idle_timeout(None)")
+            ),
+            "a service declaring no stall under the default timer is refused"
+        );
     }
 
     /// `prepare` refuses what the validator refuses, rather than binding with it.
@@ -7295,7 +7364,8 @@ mod request_body_idle {
         tokio::task::JoinHandle<crate::error::Result<()>>,
     ) {
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
-        let bound = Server::new(service)
+        // Declaring the stall exactly where the timer sends it.
+        let bound = Server::new(service.with_body_stall(idle.is_some()))
             .request_body_idle_timeout(idle)
             .bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .graceful_shutdown(crate::server::shutdown::Shutdown::on(async move {

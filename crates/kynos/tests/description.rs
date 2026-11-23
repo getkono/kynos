@@ -1808,6 +1808,206 @@ fn a_shared_status_declares_the_headers_either_contributor_sends() {
     }
 }
 
+/// What `/drafts` reads: any body, so the extractor's rejection is reached.
+#[cfg(feature = "server")]
+#[derive(serde::Deserialize, Schema)]
+struct Draft {
+    #[allow(dead_code)]
+    text: String,
+}
+
+/// A failure answering 408 for a reason of the handler's own, after a 409.
+#[cfg(feature = "server")]
+#[derive(Debug, thiserror::Error, ApiError)]
+#[allow(dead_code)]
+enum DraftRefused {
+    #[error("the draft was edited elsewhere")]
+    #[problem(status = 409, title = "Draft edited elsewhere")]
+    Conflict,
+
+    #[error("the draft's upstream store timed out")]
+    #[problem(
+        status = 408,
+        type = "https://errors.example.com/draft-store",
+        title = "Draft store timed out"
+    )]
+    StoreTimedOut,
+}
+
+/// One operation reading a body, whose own error type declares a 408.
+#[cfg(feature = "server")]
+#[kynos::post("/drafts")]
+async fn draft(
+    kynos::extract::body::json::Json(draft): kynos::extract::body::json::Json<Draft>,
+) -> Result<NoContent, DraftRefused> {
+    let _ = draft;
+    Err(DraftRefused::Conflict)
+}
+
+/// A 408 the operation declares itself is published as it wrote it: the
+/// stalled body's 408 joins its schema, never its description or its place.
+///
+/// Every operation reading a body answers a stalled one 408, so the stall is
+/// a contributor to a status the application already describes, and the
+/// application's words and order are what its document should read.
+#[cfg(feature = "server")]
+#[test]
+fn a_408_the_operation_declares_keeps_its_description_and_place_beside_the_stall() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![draft])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/drafts");
+
+    let response = declared_problem(&operation, "408");
+    assert_eq!(
+        response["description"],
+        serde_json::json!("Draft store timed out"),
+        "{response}"
+    );
+    // The stall's `about:blank` beside the handler's own type.
+    let mut types = published(&response["content"]["application/problem+json"]["schema"]);
+    types.sort();
+    assert_eq!(
+        types,
+        ["about:blank", "https://errors.example.com/draft-store"],
+        "{response}"
+    );
+
+    let statuses: Vec<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .map(String::as_str)
+        .collect();
+    let at = |status: &str| statuses.iter().position(|key| *key == status);
+    assert!(at("409") < at("408"), "{statuses:?}");
+}
+
+/// A router built for a server with no idle timer declares no stall: the
+/// operation's own 408 publishes its type alone, and an operation with none
+/// declares no 408 at all.
+#[cfg(feature = "server")]
+#[test]
+fn a_router_declaring_no_stall_leaves_every_408_to_the_application() {
+    #[kynos::post("/notes")]
+    async fn note(
+        kynos::extract::body::text::Text(note): kynos::extract::body::text::Text,
+    ) -> NoContent {
+        let _ = note;
+        NoContent
+    }
+
+    let document = Router::<()>::new()
+        .declare_body_stall(false)
+        .mount(kynos::routes![draft, note])
+        .openapi()
+        .expect("a describable router");
+
+    let response = declared_problem(&operation(&document, "/drafts"), "408");
+    assert_eq!(
+        published(&response["content"]["application/problem+json"]["schema"]),
+        ["https://errors.example.com/draft-store"],
+        "{response}"
+    );
+    assert!(
+        !operation(&document, "/notes")
+            .responses
+            .responses
+            .contains_key("408"),
+        "an operation with no 408 of its own declares none"
+    );
+}
+
+/// An optional body is read by the same extractor as a required one, so it
+/// answers a stall with the same 408 and declares it as the router says.
+#[cfg(feature = "server")]
+#[test]
+fn an_optional_body_declares_the_stall_as_the_router_says() {
+    #[kynos::post("/maybe")]
+    async fn maybe(draft: Option<kynos::extract::body::json::Json<Draft>>) -> NoContent {
+        let _ = draft.map(|kynos::extract::body::json::Json(draft)| draft);
+        NoContent
+    }
+
+    let declares = |router: Router<()>| {
+        let document = router
+            .mount(kynos::routes![maybe])
+            .openapi()
+            .expect("a describable router");
+        operation(&document, "/maybe")
+            .responses
+            .responses
+            .contains_key("408")
+    };
+    assert!(declares(Router::new()));
+    assert!(!declares(Router::new().declare_body_stall(false)));
+}
+
+/// A hand-written extractor reading through `Json`, which carries a stall
+/// through as `BodyRejection::Stalled`'s 408.
+#[cfg(feature = "server")]
+struct Relayed<const READS: bool>;
+
+#[cfg(feature = "server")]
+impl<const READS: bool> kynos::extract::describe::Describe for Relayed<READS> {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        let body = kynos::openapi::RequestBody::json(kynos::openapi::Schema::any());
+        if READS {
+            operation.read_request_body(body);
+        } else {
+            operation.set_request_body(body);
+        }
+    }
+}
+
+#[cfg(feature = "server")]
+impl<C: Sync, const READS: bool> kynos::extract::FromRequest<C> for Relayed<READS> {
+    type Rejection = kynos::error::rejection::BodyRejection;
+
+    async fn from_request(
+        parts: &mut kynos::http::Parts,
+        body: kynos::http::body::Body,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let kynos::extract::body::json::Json(draft) = <kynos::extract::body::json::Json<Draft> as kynos::extract::FromRequest<C>>::from_request(parts, body, context).await?;
+        let _ = draft;
+        Ok(Self)
+    }
+}
+
+/// A hand-written extractor declares the stall's 408 only by saying, through
+/// `read_request_body`, that its rejection carries one: `set_request_body`
+/// is for a body whose stall it answers otherwise.
+#[cfg(feature = "server")]
+#[test]
+fn a_hand_written_extractor_declares_the_stall_through_read_request_body() {
+    #[kynos::post("/read")]
+    async fn read(relayed: Relayed<true>) -> NoContent {
+        let _ = relayed;
+        NoContent
+    }
+
+    #[kynos::post("/set")]
+    async fn set(relayed: Relayed<false>) -> NoContent {
+        let _ = relayed;
+        NoContent
+    }
+
+    let document = Router::<()>::new()
+        .mount(kynos::routes![read, set])
+        .openapi()
+        .expect("a describable router");
+    let declares = |path| {
+        operation(&document, path)
+            .responses
+            .responses
+            .contains_key("408")
+    };
+    assert!(declares("/read"));
+    assert!(!declares("/set"));
+}
+
 // --- Scope in what a 403 publishes ------------------------------------------
 //
 // `AuthRejection::forbidden_as` puts an application's own problem type on a 403
@@ -2566,7 +2766,7 @@ fn a_nested_routers_external_docs_are_used_only_when_the_outer_declares_none() {
     );
 }
 
-/// The four application-wide policies are the root router's alone, so an
+/// The application-wide policies are the root router's alone, so an
 /// absorbed router that sets one is refused rather than silently overridden,
 /// through `nest` and `merge` alike. Setting one to its default counts too:
 /// the root's own value would replace it just the same.
@@ -2579,7 +2779,7 @@ fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
     };
 
     type Set = fn(Router<()>) -> Router<()>;
-    let policies: [(&str, Set); 4] = [
+    let policies: Vec<(&str, Set)> = vec![
         ("not_found", |router| {
             router.not_found(FallbackPolicy::Empty)
         }),
@@ -2591,6 +2791,10 @@ fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
         }),
         ("trusted_proxies", |router| {
             router.trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
+        }),
+        #[cfg(feature = "server")]
+        ("declare_body_stall", |router| {
+            router.declare_body_stall(true)
         }),
     ];
     let refused = |policy| Violation {
