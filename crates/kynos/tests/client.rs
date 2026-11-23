@@ -302,6 +302,45 @@ async fn client_defaults_reach_the_service_until_a_request_sets_its_own() {
     assert_eq!(own.query.as_deref(), Some("from-client"));
 }
 
+/// The client the router resolved, or `none` when it resolved none.
+#[kynos::get("/origin")]
+async fn origin(forwarded: kynos::http::forwarded::Forwarded) -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text(
+        forwarded
+            .client()
+            .map_or_else(|| "none".to_owned(), |client| client.to_string()),
+    )
+}
+
+/// A client built `new` sends from loopback over a connection, so a policy
+/// trusting `127.0.0.1` believes the forwarding field it relays, and with
+/// none relayed resolves the loopback peer itself, as `with_peer` documents.
+#[tokio::test]
+async fn a_policy_trusting_loopback_reads_what_a_new_client_forwards() {
+    use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+
+    let client = TestClient::new(
+        Router::<()>::new()
+            .mount(kynos::routes![origin])
+            .trusted_proxies(TrustedProxies::addresses(
+                ProxyHeader::Forwarded,
+                [std::net::Ipv4Addr::LOCALHOST.into()],
+            ))
+            .build(())
+            .expect("a describable router"),
+    );
+
+    let forwarded = client
+        .get("/origin")
+        .header("forwarded", "for=203.0.113.7")
+        .send()
+        .await;
+    assert_eq!(forwarded.text(), "203.0.113.7");
+
+    let direct = client.get("/origin").send().await;
+    assert_eq!(direct.text(), "127.0.0.1");
+}
+
 // --- Through a server -----------------------------------------------------
 
 /// Through a server, a request reaches the handler with its fields, its body
