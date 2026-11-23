@@ -284,6 +284,61 @@ async fn coverage_shared_by_two_clients_covers_what_both_exercised() {
     coverage.assert_declared_responses_covered(&document);
 }
 
+/// A coverage bound to its document is asserted with no argument, and each
+/// clone of it is the same record: what clients built over two clones
+/// exercised covers the description together.
+#[tokio::test(start_paused = true)]
+async fn clones_of_a_bound_coverage_cover_its_document_together() {
+    let document = service().expect("a describable router").openapi().clone();
+    let coverage = Coverage::for_document(document);
+    let reads =
+        TestClient::new(service().expect("a describable router")).with_coverage(&coverage.clone());
+    let writes =
+        TestClient::new(service().expect("a describable router")).with_coverage(&coverage.clone());
+
+    exercise_reads(&reads).await;
+    exercise_writes(&writes).await;
+
+    coverage.assert_covered();
+}
+
+/// A bound coverage is asserted against the document it was built for, so
+/// what no clone's client exercised is reported missing, and only that.
+#[tokio::test(start_paused = true)]
+#[cfg_attr(
+    feature = "server",
+    should_panic(expected = "7 responses declared but never exercised:\n  \
+                             POST /users -> 400\n  POST /users -> 413\n  \
+                             POST /users -> 415\n  POST /users -> 422\n  \
+                             POST /users -> 201\n  POST /users -> 409\n  \
+                             POST /users -> 408")
+)]
+#[cfg_attr(
+    not(feature = "server"),
+    should_panic(expected = "6 responses declared but never exercised:\n  \
+                             POST /users -> 400\n  POST /users -> 413\n  \
+                             POST /users -> 415\n  POST /users -> 422\n  \
+                             POST /users -> 201\n  POST /users -> 409")
+)]
+async fn a_bound_coverage_reports_what_its_document_declares_and_nobody_exercised() {
+    let document = service().expect("a describable router").openapi().clone();
+    let coverage = Coverage::for_document(std::sync::Arc::new(document));
+    let reads =
+        TestClient::new(service().expect("a describable router")).with_coverage(&coverage.clone());
+
+    exercise_reads(&reads).await;
+
+    coverage.assert_covered();
+}
+
+/// A coverage built with no document has nothing for `assert_covered` to
+/// assert against, which is refused rather than passed vacuously.
+#[test]
+#[should_panic(expected = "a Coverage built without a document has nothing to assert against")]
+fn an_unbound_coverage_refuses_to_assert_covered() {
+    Coverage::new().assert_covered();
+}
+
 /// A client not built over the coverage records nothing into it, so what it
 /// exercised is still reported missing, and only that.
 #[tokio::test(start_paused = true)]
