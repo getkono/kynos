@@ -371,8 +371,54 @@ fn observed(status: u16, content_type: Option<&str>, body: &str) -> crate::test:
         uri: crate::http::Uri::from_static("/thing"),
         status: crate::http::StatusCode::from_u16(status).expect("a status"),
         headers,
-        body: bytes::Bytes::copy_from_slice(body.as_bytes()),
+        body: Some(bytes::Bytes::copy_from_slice(body.as_bytes())),
     }
+}
+
+/// One `GET /thing` exchange a `TestStream` dropped before its body ended.
+fn hung_up(status: u16, content_type: Option<&str>) -> crate::test::Observed {
+    crate::test::Observed {
+        body: None,
+        ..observed(status, content_type, "")
+    }
+}
+
+/// A body the test hung up on is not all known, so no schema holds it: the
+/// octets that arrived are a prefix, which no JSON schema can judge.
+#[test]
+fn a_body_hung_up_on_is_not_validated() {
+    let document = document_declaring(refusing_ok(&["application/json"]));
+
+    let reasons = conformance(&document, &hung_up(200, Some("application/json")));
+
+    assert!(reasons.is_empty(), "{reasons:?}");
+}
+
+/// Its head is still held to the declaration: a `Content-Type` under a
+/// response declaring none is reported, as the head it is, and an undeclared
+/// one is too.
+#[test]
+fn the_head_of_a_body_hung_up_on_is_still_checked() {
+    let document = document_declaring(
+        kynos_openapi::Responses::new().with(429, kynos_openapi::Response::new("rate limited")),
+    );
+    let reasons = conformance(&document, &hung_up(429, Some("text/event-stream")));
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].ends_with("but a `text/event-stream` head was sent"),
+        "{}",
+        reasons[0]
+    );
+    assert!(conformance(&document, &hung_up(429, None)).is_empty());
+
+    let document = document_declaring(json_ok());
+    let reasons = conformance(&document, &hung_up(200, Some("text/plain")));
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains("`text/plain` is not a declared representation"),
+        "{}",
+        reasons[0]
+    );
 }
 
 /// A response declaring no content is a claim that none was sent, so a body
