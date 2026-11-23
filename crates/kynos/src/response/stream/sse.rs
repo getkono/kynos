@@ -498,7 +498,9 @@ fn heartbeat_record(comment: &str) -> bytes::Bytes {
 
 impl<S> futures_core::Stream for Records<S>
 where
-    S: futures_core::Stream<Item: SseItem<Data: serde::Serialize>>,
+    S: futures_core::Stream,
+    S::Item: SseItem,
+    <S::Item as SseItem>::Data: serde::Serialize,
 {
     type Item = Result<bytes::Bytes, BoxError>;
 
@@ -636,7 +638,9 @@ fn field(record: &mut bytes::BytesMut, name: &str, value: &[u8]) {
 
 impl<S> IntoResponse for Sse<S>
 where
-    S: futures_core::Stream<Item: SseItem<Data: serde::Serialize>> + Send + 'static,
+    S: futures_core::Stream + Send + 'static,
+    S::Item: SseItem,
+    <S::Item as SseItem>::Data: serde::Serialize,
 {
     fn into_response(self) -> Response {
         let records = Records {
@@ -659,7 +663,9 @@ where
 
 impl<S> Responses for Sse<S>
 where
-    S: futures_core::Stream<Item: SseItem<Data: Schema>>,
+    S: futures_core::Stream,
+    S::Item: SseItem,
+    <S::Item as SseItem>::Data: Schema,
 {
     // OpenAPI 3.2 describes `text/event-stream` as parsed events, so the item is
     // the event and the JSON payload hangs off `data`'s `contentSchema`.
