@@ -55,6 +55,8 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     tags: Vec<DeclaredTag>,
     deprecated: bool,
     public: bool,
+    /// The `operationId` of the `HEAD` this `GET` describes, if it does.
+    head: Option<&'static str>,
     /// Every interceptor this operation was given, outermost first.
     written: Vec<Arc<dyn ErasedInterceptor<C>>>,
     /// Those of `written` that cover this operation, which run and are
@@ -101,6 +103,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: Vec::new(),
             deprecated: false,
             public: false,
+            head: None,
             written: Vec::new(),
             interceptors: Vec::new(),
             _private: PhantomData,
@@ -119,6 +122,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: self.tags,
             deprecated: self.deprecated,
             public: self.public,
+            head: self.head,
             written: self.written,
             interceptors: self.interceptors,
             _private: PhantomData,
@@ -272,6 +276,43 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// which refuses a guarded handler in the attribute's words instead.
     pub(crate) fn declared_public(mut self) -> Self {
         self.public = true;
+        self
+    }
+
+    /// Describes the `HEAD` this `GET` already answers, as an operation of its
+    /// own named `operation_id`.
+    ///
+    /// A `GET` answers `HEAD` on its path whether or not this is called (RFC
+    /// 9110 section 9.3.2); this only puts that `HEAD` in the description, so
+    /// a client generated from it can call it. The `HEAD` is the `GET`'s
+    /// operation, its parameters, security and every response's headers
+    /// included, with no response carrying content, and it runs the `GET`'s
+    /// handler under the same interceptors, which see it as `operation_id`.
+    /// `#[kynos::get(.., head)]` is the route attribute's spelling.
+    ///
+    /// Building refuses it on anything but a `GET`, as
+    /// [`RouterError::HeadWithoutGet`](crate::router::error::RouterError::HeadWithoutGet),
+    /// and on a path that also declares a `HEAD` operation, as
+    /// [`RouterError::HeadDescribedTwice`](crate::router::error::RouterError::HeadDescribedTwice).
+    ///
+    /// ```no_run
+    /// # use kynos::{openapi, router::endpoint::builder::EndpointBuilder};
+    /// async fn get_report() -> kynos::response::status::NoContent {
+    ///     kynos::response::status::NoContent
+    /// }
+    ///
+    /// let endpoint = EndpointBuilder::<(), _, _>::new(
+    ///     openapi::Method::Get,
+    ///     openapi::PathTemplate::parse("/report").expect("valid path"),
+    ///     get_report,
+    /// )
+    /// .operation_id("get_report")
+    /// .describe_head("head_report");
+    /// # let _ = endpoint;
+    /// ```
+    #[must_use]
+    pub fn describe_head(mut self, operation_id: &'static str) -> Self {
+        self.head = Some(operation_id);
         self
     }
 

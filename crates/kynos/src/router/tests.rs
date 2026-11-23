@@ -907,6 +907,80 @@ mod mixed_guards {
     }
 }
 
+/// What a `HEAD` a `GET` describes keeps of the `GET`'s responses: every one,
+/// none with content, a referenced one inlined only where its target has
+/// content to remove.
+mod derived_head {
+    use kynos_openapi::{
+        Components, Header, MediaType, Operation, Ref, RefOr, Response, Schema,
+        model::schema::types::SchemaType,
+    };
+
+    use super::super::head::derived_head;
+
+    fn carrying(description: &str) -> Response {
+        Response::with_content(
+            description,
+            "text/plain",
+            MediaType::new(Schema::of_type(SchemaType::String)),
+        )
+        .with_header("ETag", Header::new(Schema::of_type(SchemaType::String)))
+    }
+
+    fn stripped(mut response: Response) -> Response {
+        response.content.clear();
+        response
+    }
+
+    #[test]
+    fn a_derived_head_keeps_every_response_and_no_content() {
+        let mut components = Components::default();
+        components
+            .responses
+            .insert("Found".to_owned(), RefOr::Item(carrying("A found thing.")));
+        components
+            .responses
+            .insert("Gone".to_owned(), RefOr::Item(Response::new("Nothing.")));
+
+        let mut overridden = Ref::new("#/components/responses/Found");
+        overridden.description = Some("Found here.".to_owned());
+        let mut get = Operation {
+            operation_id: Some("get_thing".to_owned()),
+            ..Operation::default()
+        };
+        get.responses.default_response = Some(RefOr::Item(carrying("Otherwise.")));
+        for (status, response) in [
+            ("200", RefOr::Item(carrying("The thing."))),
+            ("203", RefOr::Ref(Ref::new("#/components/responses/Found"))),
+            ("206", RefOr::Ref(overridden)),
+            ("410", RefOr::Ref(Ref::new("#/components/responses/Gone"))),
+            (
+                "451",
+                RefOr::Ref(Ref::new("https://example.com/responses.json#/Hidden")),
+            ),
+        ] {
+            get.responses.responses.insert(status.to_owned(), response);
+        }
+
+        let head = derived_head(get.clone(), "head_thing", &components);
+
+        let mut expected = get;
+        expected.operation_id = Some("head_thing".to_owned());
+        expected.responses.default_response = Some(RefOr::Item(stripped(carrying("Otherwise."))));
+        for (status, response) in [
+            ("200", stripped(carrying("The thing."))),
+            ("203", stripped(carrying("A found thing."))),
+            ("206", stripped(carrying("Found here."))),
+        ] {
+            expected
+                .responses
+                .responses
+                .insert(status.to_owned(), RefOr::Item(response));
+        }
+        assert_eq!(head, expected);
+    }
+}
+
 /// One case per variant of [`RouterError`], what a router's violation says is
 /// wrong.
 mod router_errors {
@@ -922,6 +996,8 @@ mod router_errors {
         match error {
             RouterError::Spec(_) => "Spec",
             RouterError::DuplicateOperation { .. } => "DuplicateOperation",
+            RouterError::HeadDescribedTwice { .. } => "HeadDescribedTwice",
+            RouterError::HeadWithoutGet { .. } => "HeadWithoutGet",
             RouterError::UnguardedOperation { .. } => "UnguardedOperation",
             RouterError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
             RouterError::RouteConflict { .. } => "RouteConflict",
@@ -950,6 +1026,21 @@ mod router_errors {
                 },
                 "operation `GET /users` is described more than once; a path item holds one \
                  operation per method",
+            ),
+            (
+                RouterError::HeadDescribedTwice {
+                    path: "/files/{id}".to_owned(),
+                },
+                "`HEAD /files/{id}` is declared as an operation and also described by its \
+                 `GET`'s `head`; remove one of them",
+            ),
+            (
+                RouterError::HeadWithoutGet {
+                    method: Method::Post,
+                    path: "/files".to_owned(),
+                },
+                "operation `POST /files` describes a `HEAD`, which only a `GET` answers; remove \
+                 `describe_head`",
             ),
             (
                 RouterError::UnguardedOperation {
@@ -1037,6 +1128,8 @@ mod router_errors {
         let declared: BTreeSet<&str> = [
             "Spec",
             "DuplicateOperation",
+            "HeadDescribedTwice",
+            "HeadWithoutGet",
             "UnguardedOperation",
             "ShortCircuitMismatch",
             "RouteConflict",
