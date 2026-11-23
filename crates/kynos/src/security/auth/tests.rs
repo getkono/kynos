@@ -1525,6 +1525,58 @@ fn a_scoped_member_declares_the_403_a_scope_refusal_is() {
     assert_eq!(body(named), body(unscoped));
 }
 
+/// Scoping every member by sets naming one refusal narrows the 403 as the
+/// `Scoped` guard does, so `Auth<AnyOf<(Scoped<A, R>, Scoped<B, R>)>>`
+/// describes exactly what `Scoped<AnyOf<(A, B)>, R>` does. Members naming
+/// different refusals, or a member naming none, leave it wide.
+#[test]
+fn members_naming_one_refusal_narrow_the_403_as_the_scoped_guard_does() {
+    /// Names its refusal.
+    struct Named;
+
+    impl Scopes for Named {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+        const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/no-scope");
+    }
+
+    /// Names another refusal.
+    struct Other;
+
+    impl Scopes for Other {
+        type Scope = Grant;
+        const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
+        const FORBIDDEN_TYPE: Option<&'static str> = Some("https://errors.example.com/other");
+    }
+
+    let (guard, _) = described::<Scoped<AnyOf<(Audited, Bearer<String, Grant>)>, Named>>();
+    let (members, _) =
+        described::<Auth<AnyOf<(Scoped<Audited, Named>, Scoped<Bearer<String, Grant>, Named>)>>>();
+    assert_eq!(members, guard);
+
+    let forbidden = |operation: kynos_openapi::Operation| {
+        serde_json::to_value(&operation.responses.responses["403"]).expect("a serializable 403")
+    };
+    let (single, _) = described::<Scoped<Bearer<String, Grant>, Named>>();
+    let (together, _) =
+        described::<Auth<AllOf<(Scoped<Audited, Named>, Scoped<Bearer<String, Grant>, Named>)>>>();
+    assert_eq!(forbidden(together), forbidden(single));
+
+    let (wide, _) = described::<Auth<Bearer>>();
+    let (disagreeing, _) =
+        described::<Auth<AnyOf<(Scoped<Audited, Named>, Scoped<Bearer<String, Grant>, Other>)>>>();
+    assert_eq!(forbidden(disagreeing), forbidden(wide.clone()));
+    let (unnamed, _) = described::<
+        Auth<
+            AnyOf<(
+                Scoped<Audited, Named>,
+                Scoped<Bearer<String, Grant>, ReadReports>,
+            )>,
+        >,
+    >();
+    assert_eq!(forbidden(unnamed), forbidden(wide));
+}
+
 /// Each alternative is authorized for its own set: a scoped member for its
 /// defaults and its set together, and a bare member with no defaults not at
 /// all, so the member a refused set fails is passed over for the next.
