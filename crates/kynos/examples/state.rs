@@ -45,13 +45,28 @@ struct Cache {
 ///
 /// Every provided field's type must be `Clone`. `#[provide(skip)]` opts a field
 /// out, because not everything an application holds is a dependency.
-#[derive(Provider)]
+#[derive(Clone, Provider)]
 struct App {
-    pool: Pool,
     cache: Cache,
+    /// Provided through `Services`'s own forward, type by type, rather than
+    /// as one `Arc<Services>`.
+    #[provide(skip)]
+    services: Arc<Services>,
     #[provide(skip)]
     #[allow(dead_code)]
     name: &'static str,
+}
+
+/// Services kept behind an `Arc`, so cloning `App` clones one pointer.
+///
+/// The forward goes on this struct, the only place its field types are known:
+/// `App` gains one `Provides` implementation per field here, reaching it at
+/// `self.services`. A type both structs provided would not compile, since a
+/// handler asking for it could not say which it meant.
+#[derive(Provider)]
+#[provider(for = App, via = services)]
+struct Services {
+    pool: Pool,
 }
 
 /// Reads through the cache, falling back to the pool.
@@ -100,12 +115,14 @@ async fn health(Inject(pool): Inject<Pool>) -> Result<NoContent, HealthError> {
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
     let context = App {
-        pool: Pool {
-            _connections: Arc::new(()),
-        },
         cache: Cache {
             _entries: Arc::new(()),
         },
+        services: Arc::new(Services {
+            pool: Pool {
+                _connections: Arc::new(()),
+            },
+        }),
         name: "orders",
     };
 
