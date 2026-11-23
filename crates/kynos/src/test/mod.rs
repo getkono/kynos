@@ -749,7 +749,7 @@ impl Coverage {
 
     /// Records one exchange made outside a [`TestClient`], for
     /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
-    /// to count.
+    /// or [`assert_covered`](Self::assert_covered) to count.
     ///
     /// `path` is the concrete request target, matched against the
     /// description when asserted, as a client's own exchanges are.
