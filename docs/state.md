@@ -29,6 +29,19 @@ meant. `#[provide(skip)]` opts a field out.
 [security guide](security.md#a-context-field-names-the-scheme-it-authenticates)
 says why.
 
+A context that keeps its services in a struct of their own, behind an `Arc`
+so it is cheap to clone, forwards them with
+`#[provider(for = Context, via = inner.services)]` on that struct. The
+attribute goes on the inner struct, not the context, because only there are
+the field types known: a blanket `impl<T> Provides<T> for Context where
+Services: Provides<T>` would overlap the reflexive implementation and the
+context's own fields. Each forwarded implementation calls the inner struct's
+own, so the two cannot disagree, and `via` is a path of fields, so
+forwarding stays a clone of a handle. A type both the context and the inner
+struct provide is the same ambiguity as two fields of one type, and it stays
+a compile error, reported by coherence at both sources rather than by the
+derive, which sees only one of them.
+
 **`Provides<T>` is synchronous and infallible.** The reason is not simplicity.
 [`Describe::describe`](../crates/kynos/src/extract/describe.rs) is a static
 method that cannot name the context type, so it can never see — and therefore

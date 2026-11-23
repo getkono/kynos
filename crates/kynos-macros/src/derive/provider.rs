@@ -1,5 +1,7 @@
 //! `#[derive(Provider)]`.
 
+mod forward;
+
 use proc_macro2::Span;
 use quote::{quote, quote_spanned};
 use syn::{DeriveInput, Field, spanned::Spanned};
@@ -8,6 +10,7 @@ use crate::derive::{
     attribute::{Keys, compact, unknown},
     common::named_fields,
 };
+use forward::Forward;
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "Provider")?;
@@ -28,6 +31,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 
     reject_duplicate_types(&provided)?;
     reject_type_parameter_fields(input, &provided)?;
+    let forwards = Forward::read_all(input)?;
 
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
@@ -64,7 +68,11 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         }
     });
 
-    Ok(quote!(#(#implementations)* #(#authenticates)*))
+    let forwarded = forwards
+        .iter()
+        .map(|forward| forward.expand(input, &provided, &authenticators));
+
+    Ok(quote!(#(#implementations)* #(#authenticates)* #(#forwarded)*))
 }
 
 /// What a field's `#[provide(...)]` lists said.
