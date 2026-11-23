@@ -222,3 +222,59 @@ fn sanitizing_an_entirely_illegal_name_still_yields_something_legal() {
     let name = ComponentName::sanitized("<>").expect("non-empty");
     assert!(ComponentName::is_valid(name.as_str()));
 }
+
+/// A `Components` read from JSON holding one entry, `X`, in every section a
+/// [`Component`](super::Component) is kept in, so each lands in the field
+/// serde reads that section's key into.
+fn one_of_each() -> Components {
+    #[cfg_attr(not(feature = "openapi32"), expect(unused_mut))]
+    let mut json = serde_json::json!({
+        "responses": { "X": { "description": "d" } },
+        "parameters": { "X": { "name": "n", "in": "query", "schema": {} } },
+        "examples": { "X": {} },
+        "requestBodies": { "X": { "content": {} } },
+        "headers": { "X": { "schema": {} } },
+        "securitySchemes": { "X": { "type": "http", "scheme": "basic" } },
+        "links": { "X": { "operationId": "o" } },
+        "callbacks": { "X": {} },
+    });
+    #[cfg(feature = "openapi32")]
+    {
+        json["mediaTypes"] = serde_json::json!({ "X": {} });
+    }
+    serde_json::from_value(json).expect("components")
+}
+
+/// Whether a reference into `section` reaches the entry serde read there.
+fn reaches<T: super::Component>(components: &Components, section: &str) -> bool {
+    let entry = RefOr::<T>::Ref(Ref::new(format!("#/components/{section}/X")));
+    components.resolve(&entry).is_ok()
+}
+
+#[test]
+fn each_component_is_followed_into_the_section_its_wire_key_names() {
+    use crate::model::{
+        body::RequestBody,
+        callback::Callback,
+        example::Example,
+        link::Link,
+        parameter::{Parameter, header::Header},
+        response::Response,
+        security::SecurityScheme,
+    };
+
+    let components = one_of_each();
+    assert!(reaches::<Response>(&components, "responses"));
+    assert!(reaches::<Parameter>(&components, "parameters"));
+    assert!(reaches::<Example>(&components, "examples"));
+    assert!(reaches::<RequestBody>(&components, "requestBodies"));
+    assert!(reaches::<Header>(&components, "headers"));
+    assert!(reaches::<SecurityScheme>(&components, "securitySchemes"));
+    assert!(reaches::<Link>(&components, "links"));
+    assert!(reaches::<Callback>(&components, "callbacks"));
+    #[cfg(feature = "openapi32")]
+    assert!(reaches::<crate::model::body::media_type::MediaType>(
+        &components,
+        "mediaTypes"
+    ));
+}

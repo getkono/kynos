@@ -60,7 +60,8 @@ pub mod validate;
 // Internal: the locations `emit` and `validate` both report, kept below both
 // so neither depends on the other for them.
 mod pointer;
-// Internal: the one walk over Path Items and Operations the rules share.
+// Internal: the one walk over Path Items and Operations the rules and
+// `Document::operations` share.
 mod visit;
 
 // The curated crate-root facade: shortcuts to items whose canonical paths are
@@ -72,8 +73,8 @@ pub use crate::{
     model::{
         body::{RequestBody, encoding::Encoding, media_type::MediaType},
         callback::Callback,
-        components::{ComponentName, Components},
-        document::{Document, SpecVersion},
+        components::{Component, ComponentName, Components},
+        document::{Document, OperationAt, SpecVersion},
         example::{Example, ExampleValue, Examples},
         extensions::Extensions,
         external_docs::ExternalDocumentation,
@@ -87,7 +88,7 @@ pub use crate::{
         paths::{
             Paths, item::PathItem, method::Method, operation::Operation, template::PathTemplate,
         },
-        reference::{Ref, RefOr},
+        reference::{Ref, RefOr, UnresolvedRef},
         response::{Response, Responses, status::StatusPattern},
         schema::{
             Schema,

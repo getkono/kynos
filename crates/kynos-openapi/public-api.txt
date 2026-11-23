@@ -210,6 +210,7 @@ pub fn kynos_openapi::model::body::media_type::MediaType::default() -> kynos_ope
 impl core::fmt::Debug for kynos_openapi::model::body::media_type::MediaType
 pub fn kynos_openapi::model::body::media_type::MediaType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::body::media_type::MediaType
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::media_type::MediaType
 impl serde_core::ser::Serialize for kynos_openapi::model::body::media_type::MediaType
 pub fn kynos_openapi::model::body::media_type::MediaType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::body::media_type::MediaType
@@ -252,6 +253,7 @@ pub fn kynos_openapi::model::body::RequestBody::default() -> kynos_openapi::mode
 impl core::fmt::Debug for kynos_openapi::model::body::RequestBody
 pub fn kynos_openapi::model::body::RequestBody::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::body::RequestBody
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::RequestBody
 impl serde_core::ser::Serialize for kynos_openapi::model::body::RequestBody
 pub fn kynos_openapi::model::body::RequestBody::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::body::RequestBody
@@ -280,6 +282,7 @@ pub fn kynos_openapi::model::callback::Callback::default() -> kynos_openapi::mod
 impl core::fmt::Debug for kynos_openapi::model::callback::Callback
 pub fn kynos_openapi::model::callback::Callback::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::callback::Callback
+impl kynos_openapi::model::components::Component for kynos_openapi::model::callback::Callback
 impl serde_core::ser::Serialize for kynos_openapi::model::callback::Callback
 pub fn kynos_openapi::model::callback::Callback::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::callback::Callback
@@ -388,6 +391,16 @@ impl core::marker::Unpin for kynos_openapi::model::components::InvalidComponentN
 impl core::marker::UnsafeUnpin for kynos_openapi::model::components::InvalidComponentName
 impl core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::components::InvalidComponentName
 impl core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::components::InvalidComponentName
+pub trait kynos_openapi::model::components::Component: kynos_openapi::model::components::sealed::Sealed
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::RequestBody
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::media_type::MediaType
+impl kynos_openapi::model::components::Component for kynos_openapi::model::callback::Callback
+impl kynos_openapi::model::components::Component for kynos_openapi::model::example::Example
+impl kynos_openapi::model::components::Component for kynos_openapi::model::link::Link
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::Parameter
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::header::Header
+impl kynos_openapi::model::components::Component for kynos_openapi::model::response::Response
+impl kynos_openapi::model::components::Component for kynos_openapi::model::security::SecurityScheme
 pub mod kynos_openapi::model::document
 #[non_exhaustive] pub enum kynos_openapi::model::document::SpecVersion
 pub kynos_openapi::model::document::SpecVersion::V3_1
@@ -435,6 +448,9 @@ pub kynos_openapi::model::document::Document::webhooks: kynos_openapi::Map<kynos
 impl kynos_openapi::model::document::Document
 pub fn kynos_openapi::model::document::Document::effective_dialect(&self) -> &str
 pub fn kynos_openapi::model::document::Document::new(kynos_openapi::model::document::SpecVersion, kynos_openapi::model::info::Info) -> Self
+pub fn kynos_openapi::model::document::Document::operations(&self) -> impl core::iter::traits::iterator::Iterator<Item = kynos_openapi::model::document::OperationAt<'_>>
+pub fn kynos_openapi::model::document::Document::resolve<'d, T: kynos_openapi::model::components::Component>(&'d self, &'d kynos_openapi::model::reference::RefOr<T>) -> core::result::Result<&'d T, kynos_openapi::model::reference::UnresolvedRef>
+pub fn kynos_openapi::model::document::Document::resolve_schema<'d>(&'d self, &'d kynos_openapi::model::schema::Schema) -> core::result::Result<&'d kynos_openapi::model::schema::Schema, kynos_openapi::model::reference::UnresolvedRef>
 pub fn kynos_openapi::model::document::Document::spec_version(&self) -> core::option::Option<kynos_openapi::model::document::SpecVersion>
 pub fn kynos_openapi::model::document::Document::with_security(self, kynos_openapi::model::security::requirement::SecurityRequirement) -> Self
 pub fn kynos_openapi::model::document::Document::with_server(self, kynos_openapi::model::server::Server) -> Self
@@ -469,6 +485,23 @@ impl core::marker::Unpin for kynos_openapi::model::document::Document
 impl core::marker::UnsafeUnpin for kynos_openapi::model::document::Document
 impl core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::document::Document
 impl core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::document::Document
+#[non_exhaustive] pub struct kynos_openapi::model::document::OperationAt<'d>
+pub kynos_openapi::model::document::OperationAt::item: &'d kynos_openapi::model::paths::item::PathItem
+pub kynos_openapi::model::document::OperationAt::method: &'d str
+pub kynos_openapi::model::document::OperationAt::operation: &'d kynos_openapi::model::paths::operation::Operation
+pub kynos_openapi::model::document::OperationAt::path: core::option::Option<&'d str>
+pub kynos_openapi::model::document::OperationAt::pointer: alloc::string::String
+impl<'d> core::clone::Clone for kynos_openapi::model::document::OperationAt<'d>
+pub fn kynos_openapi::model::document::OperationAt<'d>::clone(&self) -> kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::fmt::Debug for kynos_openapi::model::document::OperationAt<'d>
+pub fn kynos_openapi::model::document::OperationAt<'d>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'d> core::marker::Freeze for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::Send for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::Sync for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::Unpin for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::UnsafeUnpin for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::document::OperationAt<'d>
 pub mod kynos_openapi::model::example
 #[non_exhaustive] pub enum kynos_openapi::model::example::ExampleValue
 pub kynos_openapi::model::example::ExampleValue::Data
@@ -535,6 +568,7 @@ pub fn kynos_openapi::model::example::Example::default() -> kynos_openapi::model
 impl core::fmt::Debug for kynos_openapi::model::example::Example
 pub fn kynos_openapi::model::example::Example::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::example::Example
+impl kynos_openapi::model::components::Component for kynos_openapi::model::example::Example
 impl serde_core::ser::Serialize for kynos_openapi::model::example::Example
 pub fn kynos_openapi::model::example::Example::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::example::Example
@@ -739,6 +773,7 @@ pub fn kynos_openapi::model::link::Link::eq(&self, &kynos_openapi::model::link::
 impl core::fmt::Debug for kynos_openapi::model::link::Link
 pub fn kynos_openapi::model::link::Link::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::link::Link
+impl kynos_openapi::model::components::Component for kynos_openapi::model::link::Link
 impl serde_core::ser::Serialize for kynos_openapi::model::link::Link
 pub fn kynos_openapi::model::link::Link::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::link::Link
@@ -803,6 +838,7 @@ pub fn kynos_openapi::model::parameter::header::Header::eq(&self, &kynos_openapi
 impl core::fmt::Debug for kynos_openapi::model::parameter::header::Header
 pub fn kynos_openapi::model::parameter::header::Header::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::parameter::header::Header
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::header::Header
 impl serde_core::ser::Serialize for kynos_openapi::model::parameter::header::Header
 pub fn kynos_openapi::model::parameter::header::Header::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::parameter::header::Header
@@ -1004,6 +1040,7 @@ pub fn kynos_openapi::model::parameter::Parameter::eq(&self, &kynos_openapi::mod
 impl core::fmt::Debug for kynos_openapi::model::parameter::Parameter
 pub fn kynos_openapi::model::parameter::Parameter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::parameter::Parameter
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::Parameter
 impl serde_core::ser::Serialize for kynos_openapi::model::parameter::Parameter
 pub fn kynos_openapi::model::parameter::Parameter::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::parameter::Parameter
@@ -1308,6 +1345,29 @@ impl<T> core::marker::Unpin for kynos_openapi::model::reference::RefOr<T> where 
 impl<T> core::marker::UnsafeUnpin for kynos_openapi::model::reference::RefOr<T> where T: core::marker::UnsafeUnpin
 impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::reference::RefOr<T> where T: core::panic::unwind_safe::RefUnwindSafe
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::reference::RefOr<T> where T: core::panic::unwind_safe::UnwindSafe
+pub enum kynos_openapi::model::reference::UnresolvedRef
+pub kynos_openapi::model::reference::UnresolvedRef::Cycle
+pub kynos_openapi::model::reference::UnresolvedRef::Missing
+pub kynos_openapi::model::reference::UnresolvedRef::NotLocal
+impl core::clone::Clone for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::clone(&self) -> kynos_openapi::model::reference::UnresolvedRef
+impl core::cmp::Eq for kynos_openapi::model::reference::UnresolvedRef
+impl core::cmp::PartialEq for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::eq(&self, &kynos_openapi::model::reference::UnresolvedRef) -> bool
+impl core::error::Error for kynos_openapi::model::reference::UnresolvedRef
+impl core::fmt::Debug for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::StructuralPartialEq for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Freeze for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Send for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Sync for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Unpin for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::UnsafeUnpin for kynos_openapi::model::reference::UnresolvedRef
+impl core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::reference::UnresolvedRef
+impl core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::reference::UnresolvedRef
 pub struct kynos_openapi::model::reference::Ref
 pub kynos_openapi::model::reference::Ref::description: core::option::Option<alloc::string::String>
 pub kynos_openapi::model::reference::Ref::location: alloc::string::String
@@ -1422,6 +1482,7 @@ pub fn kynos_openapi::model::response::Response::default() -> kynos_openapi::mod
 impl core::fmt::Debug for kynos_openapi::model::response::Response
 pub fn kynos_openapi::model::response::Response::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::response::Response
+impl kynos_openapi::model::components::Component for kynos_openapi::model::response::Response
 impl serde_core::ser::Serialize for kynos_openapi::model::response::Response
 pub fn kynos_openapi::model::response::Response::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::response::Response
@@ -1563,6 +1624,8 @@ pub kynos_openapi::model::schema::object::SchemaObject::unique_items: core::opti
 pub kynos_openapi::model::schema::object::SchemaObject::unknown_keywords: kynos_openapi::Map<serde_json::value::Value>
 pub kynos_openapi::model::schema::object::SchemaObject::write_only: core::option::Option<bool>
 pub kynos_openapi::model::schema::object::SchemaObject::xml: core::option::Option<kynos_openapi::model::schema::xml::Xml>
+impl kynos_openapi::model::schema::object::SchemaObject
+pub fn kynos_openapi::model::schema::object::SchemaObject::subschemas(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &kynos_openapi::model::schema::Schema)>
 impl core::clone::Clone for kynos_openapi::model::schema::object::SchemaObject
 pub fn kynos_openapi::model::schema::object::SchemaObject::clone(&self) -> kynos_openapi::model::schema::object::SchemaObject
 impl core::cmp::PartialEq for kynos_openapi::model::schema::object::SchemaObject
@@ -1727,6 +1790,7 @@ pub fn kynos_openapi::model::schema::Schema::never() -> Self
 pub fn kynos_openapi::model::schema::Schema::nullable(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::of_type(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::reference(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kynos_openapi::model::schema::Schema::walk(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &Self)>
 pub fn kynos_openapi::model::schema::Schema::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::clone(&self) -> kynos_openapi::model::schema::Schema
@@ -1924,6 +1988,7 @@ pub fn kynos_openapi::model::security::SecurityScheme::eq(&self, &kynos_openapi:
 impl core::fmt::Debug for kynos_openapi::model::security::SecurityScheme
 pub fn kynos_openapi::model::security::SecurityScheme::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::security::SecurityScheme
+impl kynos_openapi::model::components::Component for kynos_openapi::model::security::SecurityScheme
 impl serde_core::ser::Serialize for kynos_openapi::model::security::SecurityScheme
 pub fn kynos_openapi::model::security::SecurityScheme::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::security::SecurityScheme
@@ -2563,6 +2628,7 @@ pub fn kynos_openapi::model::schema::Schema::never() -> Self
 pub fn kynos_openapi::model::schema::Schema::nullable(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::of_type(kynos_openapi::model::schema::types::SchemaType) -> Self
 pub fn kynos_openapi::model::schema::Schema::reference(impl core::convert::Into<alloc::string::String>) -> Self
+pub fn kynos_openapi::model::schema::Schema::walk(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &Self)>
 pub fn kynos_openapi::model::schema::Schema::with_description(self, impl core::convert::Into<alloc::string::String>) -> Self
 impl core::clone::Clone for kynos_openapi::model::schema::Schema
 pub fn kynos_openapi::model::schema::Schema::clone(&self) -> kynos_openapi::model::schema::Schema
@@ -2663,6 +2729,7 @@ pub fn kynos_openapi::model::security::SecurityScheme::eq(&self, &kynos_openapi:
 impl core::fmt::Debug for kynos_openapi::model::security::SecurityScheme
 pub fn kynos_openapi::model::security::SecurityScheme::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::security::SecurityScheme
+impl kynos_openapi::model::components::Component for kynos_openapi::model::security::SecurityScheme
 impl serde_core::ser::Serialize for kynos_openapi::model::security::SecurityScheme
 pub fn kynos_openapi::model::security::SecurityScheme::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::security::SecurityScheme
@@ -2933,6 +3000,29 @@ impl core::marker::Unpin for kynos_openapi::model::schema::types::TypeSet
 impl core::marker::UnsafeUnpin for kynos_openapi::model::schema::types::TypeSet
 impl core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::schema::types::TypeSet
 impl core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::schema::types::TypeSet
+pub enum kynos_openapi::UnresolvedRef
+pub kynos_openapi::UnresolvedRef::Cycle
+pub kynos_openapi::UnresolvedRef::Missing
+pub kynos_openapi::UnresolvedRef::NotLocal
+impl core::clone::Clone for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::clone(&self) -> kynos_openapi::model::reference::UnresolvedRef
+impl core::cmp::Eq for kynos_openapi::model::reference::UnresolvedRef
+impl core::cmp::PartialEq for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::eq(&self, &kynos_openapi::model::reference::UnresolvedRef) -> bool
+impl core::error::Error for kynos_openapi::model::reference::UnresolvedRef
+impl core::fmt::Debug for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos_openapi::model::reference::UnresolvedRef
+pub fn kynos_openapi::model::reference::UnresolvedRef::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::StructuralPartialEq for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Freeze for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Send for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Sync for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::Unpin for kynos_openapi::model::reference::UnresolvedRef
+impl core::marker::UnsafeUnpin for kynos_openapi::model::reference::UnresolvedRef
+impl core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::reference::UnresolvedRef
+impl core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::reference::UnresolvedRef
 #[non_exhaustive] pub enum kynos_openapi::XmlNode
 pub kynos_openapi::XmlNode::Flags
 pub kynos_openapi::XmlNode::Flags::attribute: core::option::Option<bool>
@@ -3002,6 +3092,7 @@ pub fn kynos_openapi::model::callback::Callback::default() -> kynos_openapi::mod
 impl core::fmt::Debug for kynos_openapi::model::callback::Callback
 pub fn kynos_openapi::model::callback::Callback::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::callback::Callback
+impl kynos_openapi::model::components::Component for kynos_openapi::model::callback::Callback
 impl serde_core::ser::Serialize for kynos_openapi::model::callback::Callback
 pub fn kynos_openapi::model::callback::Callback::serialize<S: serde_core::ser::Serializer>(&self, S) -> core::result::Result<<S as serde_core::ser::Serializer>::Ok, <S as serde_core::ser::Serializer>::Error>
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::callback::Callback
@@ -3161,6 +3252,9 @@ pub kynos_openapi::Document::webhooks: kynos_openapi::Map<kynos_openapi::model::
 impl kynos_openapi::model::document::Document
 pub fn kynos_openapi::model::document::Document::effective_dialect(&self) -> &str
 pub fn kynos_openapi::model::document::Document::new(kynos_openapi::model::document::SpecVersion, kynos_openapi::model::info::Info) -> Self
+pub fn kynos_openapi::model::document::Document::operations(&self) -> impl core::iter::traits::iterator::Iterator<Item = kynos_openapi::model::document::OperationAt<'_>>
+pub fn kynos_openapi::model::document::Document::resolve<'d, T: kynos_openapi::model::components::Component>(&'d self, &'d kynos_openapi::model::reference::RefOr<T>) -> core::result::Result<&'d T, kynos_openapi::model::reference::UnresolvedRef>
+pub fn kynos_openapi::model::document::Document::resolve_schema<'d>(&'d self, &'d kynos_openapi::model::schema::Schema) -> core::result::Result<&'d kynos_openapi::model::schema::Schema, kynos_openapi::model::reference::UnresolvedRef>
 pub fn kynos_openapi::model::document::Document::spec_version(&self) -> core::option::Option<kynos_openapi::model::document::SpecVersion>
 pub fn kynos_openapi::model::document::Document::with_security(self, kynos_openapi::model::security::requirement::SecurityRequirement) -> Self
 pub fn kynos_openapi::model::document::Document::with_server(self, kynos_openapi::model::server::Server) -> Self
@@ -3252,6 +3346,7 @@ pub fn kynos_openapi::model::example::Example::default() -> kynos_openapi::model
 impl core::fmt::Debug for kynos_openapi::model::example::Example
 pub fn kynos_openapi::model::example::Example::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::example::Example
+impl kynos_openapi::model::components::Component for kynos_openapi::model::example::Example
 impl serde_core::ser::Serialize for kynos_openapi::model::example::Example
 pub fn kynos_openapi::model::example::Example::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::example::Example
@@ -3349,6 +3444,7 @@ pub fn kynos_openapi::model::parameter::header::Header::eq(&self, &kynos_openapi
 impl core::fmt::Debug for kynos_openapi::model::parameter::header::Header
 pub fn kynos_openapi::model::parameter::header::Header::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::parameter::header::Header
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::header::Header
 impl serde_core::ser::Serialize for kynos_openapi::model::parameter::header::Header
 pub fn kynos_openapi::model::parameter::header::Header::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::parameter::header::Header
@@ -3446,6 +3542,7 @@ pub fn kynos_openapi::model::link::Link::eq(&self, &kynos_openapi::model::link::
 impl core::fmt::Debug for kynos_openapi::model::link::Link
 pub fn kynos_openapi::model::link::Link::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::link::Link
+impl kynos_openapi::model::components::Component for kynos_openapi::model::link::Link
 impl serde_core::ser::Serialize for kynos_openapi::model::link::Link
 pub fn kynos_openapi::model::link::Link::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::link::Link
@@ -3506,6 +3603,7 @@ pub fn kynos_openapi::model::body::media_type::MediaType::default() -> kynos_ope
 impl core::fmt::Debug for kynos_openapi::model::body::media_type::MediaType
 pub fn kynos_openapi::model::body::media_type::MediaType::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::body::media_type::MediaType
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::media_type::MediaType
 impl serde_core::ser::Serialize for kynos_openapi::model::body::media_type::MediaType
 pub fn kynos_openapi::model::body::media_type::MediaType::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::body::media_type::MediaType
@@ -3696,6 +3794,23 @@ impl core::marker::Unpin for kynos_openapi::model::paths::operation::Operation
 impl core::marker::UnsafeUnpin for kynos_openapi::model::paths::operation::Operation
 impl core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::paths::operation::Operation
 impl core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::paths::operation::Operation
+#[non_exhaustive] pub struct kynos_openapi::OperationAt<'d>
+pub kynos_openapi::OperationAt::item: &'d kynos_openapi::model::paths::item::PathItem
+pub kynos_openapi::OperationAt::method: &'d str
+pub kynos_openapi::OperationAt::operation: &'d kynos_openapi::model::paths::operation::Operation
+pub kynos_openapi::OperationAt::path: core::option::Option<&'d str>
+pub kynos_openapi::OperationAt::pointer: alloc::string::String
+impl<'d> core::clone::Clone for kynos_openapi::model::document::OperationAt<'d>
+pub fn kynos_openapi::model::document::OperationAt<'d>::clone(&self) -> kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::fmt::Debug for kynos_openapi::model::document::OperationAt<'d>
+pub fn kynos_openapi::model::document::OperationAt<'d>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'d> core::marker::Freeze for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::Send for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::Sync for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::Unpin for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::marker::UnsafeUnpin for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::document::OperationAt<'d>
+impl<'d> core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::document::OperationAt<'d>
 pub struct kynos_openapi::Parameter
 pub kynos_openapi::Parameter::allow_empty_value: core::option::Option<bool>
 pub kynos_openapi::Parameter::deprecated: core::option::Option<bool>
@@ -3735,6 +3850,7 @@ pub fn kynos_openapi::model::parameter::Parameter::eq(&self, &kynos_openapi::mod
 impl core::fmt::Debug for kynos_openapi::model::parameter::Parameter
 pub fn kynos_openapi::model::parameter::Parameter::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::parameter::Parameter
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::Parameter
 impl serde_core::ser::Serialize for kynos_openapi::model::parameter::Parameter
 pub fn kynos_openapi::model::parameter::Parameter::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::parameter::Parameter
@@ -3911,6 +4027,7 @@ pub fn kynos_openapi::model::body::RequestBody::default() -> kynos_openapi::mode
 impl core::fmt::Debug for kynos_openapi::model::body::RequestBody
 pub fn kynos_openapi::model::body::RequestBody::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::body::RequestBody
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::RequestBody
 impl serde_core::ser::Serialize for kynos_openapi::model::body::RequestBody
 pub fn kynos_openapi::model::body::RequestBody::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::body::RequestBody
@@ -3944,6 +4061,7 @@ pub fn kynos_openapi::model::response::Response::default() -> kynos_openapi::mod
 impl core::fmt::Debug for kynos_openapi::model::response::Response
 pub fn kynos_openapi::model::response::Response::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::marker::StructuralPartialEq for kynos_openapi::model::response::Response
+impl kynos_openapi::model::components::Component for kynos_openapi::model::response::Response
 impl serde_core::ser::Serialize for kynos_openapi::model::response::Response
 pub fn kynos_openapi::model::response::Response::serialize<__S>(&self, __S) -> core::result::Result<<__S as serde_core::ser::Serializer>::Ok, <__S as serde_core::ser::Serializer>::Error> where __S: serde_core::ser::Serializer
 impl<'de> serde_core::de::Deserialize<'de> for kynos_openapi::model::response::Response
@@ -4051,6 +4169,8 @@ pub kynos_openapi::SchemaObject::unique_items: core::option::Option<bool>
 pub kynos_openapi::SchemaObject::unknown_keywords: kynos_openapi::Map<serde_json::value::Value>
 pub kynos_openapi::SchemaObject::write_only: core::option::Option<bool>
 pub kynos_openapi::SchemaObject::xml: core::option::Option<kynos_openapi::model::schema::xml::Xml>
+impl kynos_openapi::model::schema::object::SchemaObject
+pub fn kynos_openapi::model::schema::object::SchemaObject::subschemas(&self) -> impl core::iter::traits::iterator::Iterator<Item = (alloc::string::String, &kynos_openapi::model::schema::Schema)>
 impl core::clone::Clone for kynos_openapi::model::schema::object::SchemaObject
 pub fn kynos_openapi::model::schema::object::SchemaObject::clone(&self) -> kynos_openapi::model::schema::object::SchemaObject
 impl core::cmp::PartialEq for kynos_openapi::model::schema::object::SchemaObject
@@ -4242,4 +4362,14 @@ impl core::marker::Unpin for kynos_openapi::model::schema::xml::Xml
 impl core::marker::UnsafeUnpin for kynos_openapi::model::schema::xml::Xml
 impl core::panic::unwind_safe::RefUnwindSafe for kynos_openapi::model::schema::xml::Xml
 impl core::panic::unwind_safe::UnwindSafe for kynos_openapi::model::schema::xml::Xml
+pub trait kynos_openapi::Component: kynos_openapi::model::components::sealed::Sealed
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::RequestBody
+impl kynos_openapi::model::components::Component for kynos_openapi::model::body::media_type::MediaType
+impl kynos_openapi::model::components::Component for kynos_openapi::model::callback::Callback
+impl kynos_openapi::model::components::Component for kynos_openapi::model::example::Example
+impl kynos_openapi::model::components::Component for kynos_openapi::model::link::Link
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::Parameter
+impl kynos_openapi::model::components::Component for kynos_openapi::model::parameter::header::Header
+impl kynos_openapi::model::components::Component for kynos_openapi::model::response::Response
+impl kynos_openapi::model::components::Component for kynos_openapi::model::security::SecurityScheme
 pub type kynos_openapi::Map<V> = indexmap::map::IndexMap<alloc::string::String, V>

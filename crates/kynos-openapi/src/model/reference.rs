@@ -122,6 +122,47 @@ impl<T> RefOr<T> {
     }
 }
 
+/// Why a `$ref` could not be followed to the object it stands for.
+///
+/// Returned by [`Document::resolve`](crate::Document::resolve) and
+/// [`Document::resolve_schema`](crate::Document::resolve_schema), which follow
+/// only same-document pointers to a component by its literal name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum UnresolvedRef {
+    /// A reference this document alone cannot follow: anything but a
+    /// fragment-only `#/components/...` pointer, an absolute URI naming this
+    /// same document included; or one below a component, into another
+    /// section, or naming a component with `~` or `%`, which no valid
+    /// component name needs.
+    #[error("the reference does not name a component of this document's own section")]
+    NotLocal,
+    /// A reference to a component this document does not declare.
+    #[error("the reference names a component this document does not declare")]
+    Missing,
+    /// A chain of references that returns to a component it already passed.
+    #[error("the reference is part of a cycle of references")]
+    Cycle,
+}
+
+/// The name `reference` gives a component in `section`, where it is a
+/// same-document pointer into `#/components/<section>/`, as written.
+///
+/// What remains is returned undecoded, so a lookup by it finds a component
+/// only under exactly that spelling.
+pub(crate) fn component_name<'r>(reference: &'r str, section: &str) -> Option<&'r str> {
+    reference
+        .strip_prefix("#/components/")?
+        .strip_prefix(section)?
+        .strip_prefix('/')
+}
+
+/// The same, refusing a name holding `/`, `~` or `%`: such a pointer is
+/// escaped or reaches below the component, and no valid component name
+/// needs any of the three.
+pub(crate) fn literal_component_name<'r>(reference: &'r str, section: &str) -> Option<&'r str> {
+    component_name(reference, section).filter(|name| !name.contains(['/', '~', '%']))
+}
+
 impl<T> From<Ref> for RefOr<T> {
     fn from(reference: Ref) -> Self {
         Self::Ref(reference)

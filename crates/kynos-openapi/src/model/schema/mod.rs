@@ -129,6 +129,46 @@ impl Schema {
         Self::Object(object)
     }
 
+    /// This schema and every schema below it, depth first and each before
+    /// what it holds, with the JSON Pointer it sits at relative to this one:
+    /// `""` for this schema itself, then as
+    /// [`SchemaObject::subschemas`] writes them, `/properties/a/items`.
+    ///
+    /// A `$ref` is not followed, so the walk ends; follow one with
+    /// [`Document::resolve_schema`](crate::Document::resolve_schema) and walk
+    /// what it returns, keeping the names already walked where the schemas
+    /// may recurse.
+    ///
+    /// ```
+    /// use kynos_openapi::{Schema, SchemaObject, SchemaType};
+    ///
+    /// let mut tag = SchemaObject::default();
+    /// tag.properties.insert("name".to_owned(), Schema::of_type(SchemaType::String));
+    /// let mut tags = SchemaObject::default();
+    /// tags.items = Some(Box::new(Schema::Object(Box::new(tag))));
+    ///
+    /// let schema = Schema::Object(Box::new(tags));
+    /// let pointers: Vec<String> = schema.walk().map(|(pointer, _)| pointer).collect();
+    /// assert_eq!(pointers, ["", "/items", "/items/properties/name"]);
+    /// ```
+    pub fn walk(&self) -> impl Iterator<Item = (String, &Self)> {
+        let mut pending = vec![(String::new(), self)];
+        std::iter::from_fn(move || {
+            let (pointer, schema) = pending.pop()?;
+            if let Some(object) = schema.as_object() {
+                let held = pending.len();
+                pending.extend(
+                    object
+                        .subschemas()
+                        .map(|(below, subschema)| (format!("{pointer}{below}"), subschema)),
+                );
+                // Popped from the end, so reversed to come out in order.
+                pending[held..].reverse();
+            }
+            Some((pointer, schema))
+        })
+    }
+
     /// The keyword-carrying form accepting the same instances.
     fn into_object(self) -> Box<SchemaObject> {
         match self {

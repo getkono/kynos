@@ -11,9 +11,10 @@ use crate::{
         callback::Callback,
         example::Example,
         extensions::Extensions,
+        link::Link,
         parameter::{Parameter, header::Header},
         paths::item::PathItem,
-        reference::RefOr,
+        reference::{RefOr, UnresolvedRef, literal_component_name},
         response::Response,
         schema::Schema,
         security::SecurityScheme,
@@ -159,7 +160,7 @@ pub struct Components {
 
     /// Reusable links.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
-    pub links: Map<RefOr<crate::model::link::Link>>,
+    pub links: Map<RefOr<Link>>,
 
     /// Reusable callbacks.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
@@ -220,6 +221,83 @@ impl Components {
 
         empty
     }
+
+    /// Follows `entry` through the [`Component`] map its type is kept in, to
+    /// the object it stands for.
+    pub(crate) fn resolve<'c, T: Component>(
+        &'c self,
+        entry: &'c RefOr<T>,
+    ) -> Result<&'c T, UnresolvedRef> {
+        let entries = T::entries(self);
+        let mut current = entry;
+        // Each hop lands on a distinct component unless the chain cycles, so
+        // one hop more than there are components proves a cycle.
+        for _ in 0..=entries.len() {
+            let reference = match current {
+                RefOr::Item(item) => return Ok(item),
+                RefOr::Ref(reference) => reference,
+            };
+            let name = literal_component_name(&reference.location, T::SECTION)
+                .ok_or(UnresolvedRef::NotLocal)?;
+            current = entries.get(name).ok_or(UnresolvedRef::Missing)?;
+        }
+        Err(UnresolvedRef::Cycle)
+    }
+}
+
+/// An object a [`RefOr`] can stand in for that the [`Components`] Object
+/// keeps under a map of its own, which a `$ref` to it names.
+///
+/// Sealed: the set is the specification's. A Schema is followed by
+/// [`Document::resolve_schema`](crate::Document::resolve_schema) instead,
+/// since its `$ref` is a keyword rather than a [`RefOr`], and a Path Item is
+/// not one because its `$ref` sits beside its own fields.
+pub trait Component: sealed::Sealed {}
+
+mod sealed {
+    use crate::{
+        Map,
+        model::{components::Components, reference::RefOr},
+    };
+
+    /// Where a [`Component`](super::Component) is kept.
+    pub trait Sealed: Sized {
+        /// The section of `#/components/` a reference to one names.
+        const SECTION: &'static str;
+
+        /// The map it is kept in.
+        fn entries(components: &Components) -> &Map<RefOr<Self>>;
+    }
+}
+
+/// Implements [`Component`] for each type, kept under its section's field.
+macro_rules! component {
+    ($($(#[$attr:meta])* $ty:ty => $section:literal, $field:ident;)*) => {$(
+        $(#[$attr])*
+        impl sealed::Sealed for $ty {
+            const SECTION: &'static str = $section;
+
+            fn entries(components: &Components) -> &Map<RefOr<Self>> {
+                &components.$field
+            }
+        }
+
+        $(#[$attr])*
+        impl Component for $ty {}
+    )*};
+}
+
+component! {
+    Response => "responses", responses;
+    Parameter => "parameters", parameters;
+    Example => "examples", examples;
+    RequestBody => "requestBodies", request_bodies;
+    Header => "headers", headers;
+    SecurityScheme => "securitySchemes", security_schemes;
+    Link => "links", links;
+    Callback => "callbacks", callbacks;
+    #[cfg(feature = "openapi32")]
+    MediaType => "mediaTypes", media_types;
 }
 
 #[cfg(test)]

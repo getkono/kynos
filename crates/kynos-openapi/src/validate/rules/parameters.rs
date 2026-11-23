@@ -11,12 +11,9 @@ use crate::{
             Parameter, ParameterIn,
             header::{Header, is_ignored_header, is_ignored_header_parameter},
         },
-        reference::RefOr,
+        reference::{RefOr, UnresolvedRef},
     },
-    validate::{
-        rules::literal_component_name,
-        violation::{SpecError, Violation},
-    },
+    validate::violation::{SpecError, Violation},
 };
 
 /// The key a parameter is deduplicated under.
@@ -51,23 +48,11 @@ pub(in crate::validate) fn resolve_parameter<'doc>(
     parameter: &'doc RefOr<Parameter>,
     components: &'doc Components,
 ) -> Resolved<'doc> {
-    let mut current = parameter;
-    // Each hop lands on a distinct component unless the chain cycles, so one
-    // hop more than there are components proves a cycle.
-    for _ in 0..=components.parameters.len() {
-        let reference = match current {
-            RefOr::Item(parameter) => return Resolved::Found(parameter),
-            RefOr::Ref(reference) => reference,
-        };
-        let Some(name) = literal_component_name(&reference.location, "parameters") else {
-            return Resolved::Elsewhere;
-        };
-        let Some(next) = components.parameters.get(name) else {
-            return Resolved::Missing;
-        };
-        current = next;
+    match components.resolve(parameter) {
+        Ok(parameter) => Resolved::Found(parameter),
+        Err(UnresolvedRef::NotLocal) => Resolved::Elsewhere,
+        Err(UnresolvedRef::Missing | UnresolvedRef::Cycle) => Resolved::Missing,
     }
-    Resolved::Missing
 }
 
 /// Checks one list of parameters, as written on a Path Item or an Operation.
