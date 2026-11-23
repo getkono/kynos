@@ -46,6 +46,32 @@ fn both_docs_routes_are_described_where_they_are_mounted() {
     }
 }
 
+/// Both docs routes serve from the head alone, so a router's body limit
+/// neither runs on them nor declares its 413 there.
+#[tokio::test]
+async fn a_body_limit_leaves_both_docs_routes_alone() {
+    let router = support::router()
+        .intercept(kynos::middleware::limits::body_size::BodySize::new(1))
+        .docs(Docs::scalar());
+    let document = router.openapi().expect("a describable router");
+    let service = router.build(App::new()).expect("a describable router");
+
+    for path in ["/docs", "/openapi.json"] {
+        let reply = support::send(&service, kynos::http::Method::GET, path)
+            .header("content-length", "4")
+            .body(&b"left"[..])
+            .call()
+            .await;
+        assert_eq!(reply.status, StatusCode::OK, "{path}");
+
+        let operation = document.paths.items[path]
+            .get
+            .as_ref()
+            .expect("a described GET");
+        assert!(!operation.responses.responses.contains_key("413"), "{path}");
+    }
+}
+
 #[test]
 fn a_router_that_mounts_no_docs_describes_neither_path() {
     // The control for the case above. Without it, that test passes against a

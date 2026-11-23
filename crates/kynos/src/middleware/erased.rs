@@ -33,6 +33,10 @@ pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
     /// Which operations this interceptor covers: its [`Interceptor::COVERS`].
     fn covers(&self) -> Covers;
 
+    /// Whether this interceptor may read the request body: its
+    /// [`Interceptor::READS_BODY`].
+    fn reads_body(&self) -> bool;
+
     /// Hands `request` to this interceptor, boxing the future it returns and
     /// nothing else.
     ///
@@ -124,6 +128,10 @@ where
 
     fn covers(&self) -> Covers {
         I::COVERS
+    }
+
+    fn reads_body(&self) -> bool {
+        I::READS_BODY
     }
 
     fn intercept<'a>(

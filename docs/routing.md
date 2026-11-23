@@ -136,8 +136,12 @@ those operations inside `routes!`, so groups stay one per resource rather than
 one per limit. Nor does a group split by which operations read a body: an
 interceptor whose work is the body, as `BodySize`'s is, says so with
 `Interceptor::COVERS`, and runs and is declared only on the operations whose
-handler's last argument reads one. A `DELETE` or an action `POST` in the same
-group declares no 413 it could never send.
+body something beneath it reads: the handler's last argument, or an
+interceptor beneath it whose `Interceptor::READS_BODY` says it may. A `DELETE`
+or an action `POST` in the same group declares no 413 it could never send,
+while a request printer beneath the limit keeps every body it buffers bounded.
+`READS_BODY` defaults to `true`, so an interceptor that never says leaves a
+limit above it covering too much rather than too little.
 
 What reaches a router is anything implementing `IntoEndpoints<C>`: an
 [`Endpoints<C>`](../crates/kynos/src/router/endpoint/), an

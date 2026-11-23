@@ -84,7 +84,7 @@ pub trait Endpoint<C>: Send + Sync + 'static {
     /// is run and declared on.
     ///
     /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
-    /// answers it from its handler. Any other endpoint is taken to read one,
+    /// answers it from its handler and its own interceptors. Any other endpoint is taken to read one,
     /// so nothing is left uncovered by accident.
     #[doc(hidden)]
     fn __reads_body(&self) -> bool {
@@ -149,6 +149,8 @@ where
     type Reads = ();
     type Adds = ();
     type Short = Infallible;
+
+    const READS_BODY: bool = false;
 
     async fn intercept(
         &self,

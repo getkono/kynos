@@ -441,6 +441,8 @@ where
     /// the 500 any refused group does, without running the chain.
     type Short = Infallible;
 
+    const READS_BODY: bool = false;
+
     // Everything before the chain runs is done before the future is built, so
     // the future holds the rest of the chain rather than the request.
     fn intercept(

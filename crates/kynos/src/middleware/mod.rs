@@ -243,13 +243,26 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     const ADDS_ON: Placement = Placement::Success;
 
     /// Which of the operations this interceptor is mounted over it covers,
-    /// by what their handler reads. Defaults to [`Covers::Every`].
+    /// by what reads their body beneath it. Defaults to [`Covers::Every`].
     ///
     /// An operation it does not cover neither runs it nor declares it, at
     /// whatever scope it is mounted. The collision check still compares it
     /// with every interceptor it is mounted beside, since no value narrows
     /// what it covers to operations another one leaves out.
     const COVERS: Covers = Covers::Every;
+
+    /// Whether this interceptor may read the request body itself, rather than
+    /// leave it for what runs beneath. Defaults to `true`.
+    ///
+    /// An interceptor mounted above this one covering
+    /// [`Covers::BodyReading`], such as
+    /// [`BodySize`](limits::body_size::BodySize), keeps covering every
+    /// operation this one runs on while it may read, so a body buffered here
+    /// stays bounded even where the handler reads none. Set it to `false` for
+    /// one that touches only the head, or only wraps the body for whatever
+    /// beneath reads it, so the limit above can leave a head-only operation
+    /// alone.
+    const READS_BODY: bool = true;
 
     /// Not part of the API: the methods of the operations a stack element
     /// covers, which the collision check reads.
@@ -310,11 +323,12 @@ pub enum Placement {
     Problems,
 }
 
-/// Which operations an interceptor covers, by what their handler reads: its
-/// [`Interceptor::COVERS`].
+/// Which operations an interceptor covers, by what reads their request body:
+/// its [`Interceptor::COVERS`].
 ///
-/// Settled when the router is built, from each operation's handler type, so a
-/// request pays nothing for it.
+/// Settled when the router is built, from each operation's handler type and
+/// the [`Interceptor::READS_BODY`] of each interceptor beneath, so a request
+/// pays nothing for it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Covers {
@@ -322,15 +336,18 @@ pub enum Covers {
     #[default]
     Every,
 
-    /// Only the operations whose handler reads the request body: those whose
-    /// last argument is a [`FromRequest`](crate::extract::FromRequest)
-    /// extractor, such as `Json<T>`, rather than one reading the head alone.
+    /// Only the operations whose request body something beneath it reads:
+    /// the handler, where its last argument is a
+    /// [`FromRequest`](crate::extract::FromRequest) extractor such as
+    /// `Json<T>` rather than one reading the head alone, or an interceptor
+    /// mounted beneath this one whose [`Interceptor::READS_BODY`] says it may.
     ///
     /// For an interceptor whose only work is on the request body, as
-    /// [`BodySize`](limits::body_size::BodySize)'s is: on an operation that
-    /// reads none it could only declare a refusal it never makes. A request
-    /// no operation matched reads no body either, so a router's own
-    /// interceptor covering this leaves its fallbacks alone too. An operation
+    /// [`BodySize`](limits::body_size::BodySize)'s is: on an operation whose
+    /// body nothing reads it could only declare a refusal it never makes. A
+    /// request no operation matched has no handler to read it, so a router's
+    /// own interceptor covering this leaves its fallbacks alone unless a
+    /// router interceptor beneath it may read the body. An operation
     /// with no handler of Kynos's, such as an `unchecked` route or a
     /// hand-written [`Endpoint`](crate::router::endpoint::Endpoint), counts
     /// as reading one, so it is never left uncovered by accident.
@@ -338,8 +355,8 @@ pub enum Covers {
 }
 
 impl Covers {
-    /// Whether an operation whose handler reads its body where `reads_body`
-    /// is covered.
+    /// Whether an operation is covered where `reads_body` says whether
+    /// something beneath the interceptor reads its body.
     pub(crate) const fn reaches(self, reads_body: bool) -> bool {
         match self {
             Self::Every => true,

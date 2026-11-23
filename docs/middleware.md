@@ -117,8 +117,10 @@ matches scope in the router.
 **The root router's own interceptors also cover its fallbacks.** The 404, 308,
 405 and 501 the router answers when no operation does pass through them, so a
 request id or a header every response carries reaches those too. A group's and
-a nested router's do not: they cover operations, and a fallback is none.
-`Next::route` is `None` there, an interceptor keyed by the operation (`Cache`,
+a nested router's do not: they cover operations, and a fallback is none. One
+covering `Covers::BodyReading`, as `BodySize` does, covers a fallback only
+while a router interceptor beneath it may read the body (`READS_BODY`), since
+no handler reads that one. `Next::route` is `None` there, an interceptor keyed by the operation (`Cache`,
 `RateLimit`) hands the response on untouched, and nothing is added to the
 document — a fallback stays out of `paths`, as
 [`routing.md`](routing.md#why-fallbacks-are-not-routes) says.

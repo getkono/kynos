@@ -213,16 +213,23 @@ impl<T: ProblemType, U: ProblemType> Responses for BodyRefused<T, U> {
 ///
 /// # What it covers
 ///
-/// Only the operations whose handler reads the body, by its
-/// [`Covers::BodyReading`]: one whose last argument is a body extractor such
-/// as `Json<T>`. Mounted over a group, it leaves the group's head-only
-/// operations — a `GET` by id, a `DELETE`, a `POST` that only triggers an
-/// action — exactly as they were: it does not run on them, and they declare
-/// neither its 413 nor, with a [`deadline`](BodySize::deadline), its 408,
-/// since neither is a refusal they could make. A router's own `BodySize`
-/// leaves the router's fallbacks alone too. So one limit covers a whole
-/// resource, and its group stays one per resource rather than one per body
-/// class.
+/// Only the operations whose body something beneath it reads, by its
+/// [`Covers::BodyReading`]: a handler whose last argument is a body extractor
+/// such as `Json<T>`, or an interceptor mounted beneath this one that may read
+/// the body, by its [`READS_BODY`](Interceptor::READS_BODY). Mounted over a
+/// group, it leaves the group's head-only operations — a `GET` by id, a
+/// `DELETE`, a `POST` that only triggers an action — exactly as they were: it
+/// does not run on them, and they declare neither its 413 nor, with a
+/// [`deadline`](BodySize::deadline), its 408, since neither is a refusal they
+/// could make. A router's own `BodySize` leaves the router's fallbacks alone
+/// too. So one limit covers a whole resource, and its group stays one per
+/// resource rather than one per body class.
+///
+/// Above an interceptor that buffers the body, such as one printing it, it
+/// covers every operation that interceptor runs on, fallbacks included, so
+/// what is buffered stays bounded. Every interceptor Kynos ships that touches
+/// only the head says so, and leaves the limit as narrow as the handlers make
+/// it; one of an application's own does too once it sets `READS_BODY = false`.
 ///
 /// # Replacing the default
 ///

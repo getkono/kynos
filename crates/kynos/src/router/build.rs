@@ -162,7 +162,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 /// Every interceptor covering `mounted`, outermost first: the router's own,
 /// then the enclosing scopes', with the endpoint's guard among them where a
 /// scope asked for it first and the handler takes one, and without each whose
-/// [`Covers`](crate::middleware::Covers) leaves out what the handler reads.
+/// [`Covers`](crate::middleware::Covers) leaves out what reads the body
+/// beneath it.
 fn covering<C: Send + Sync + 'static>(
     router: &[Arc<dyn ErasedInterceptor<C>>],
     router_guard: Option<usize>,
@@ -178,19 +179,15 @@ fn covering<C: Send + Sync + 'static>(
         }
     }
 
-    let reads_body = mounted.endpoint.reads_body();
-    interceptors.retain(|interceptor| interceptor.covers().reaches(reads_body));
-    interceptors
+    super::covered(interceptors, mounted.endpoint.reads_body())
 }
 
 /// The root router's interceptors that run around a fallback: those covering
-/// an operation that reads no body, since no operation reads this one.
+/// a request whose body only they may read, since no handler reads this one.
 fn unrouted<C: 'static>(
     router: Vec<Arc<dyn ErasedInterceptor<C>>>,
 ) -> Vec<Arc<dyn ErasedInterceptor<C>>> {
-    let mut interceptors = router;
-    interceptors.retain(|interceptor| interceptor.covers().reaches(false));
-    interceptors
+    super::covered(router, false)
 }
 
 /// Adds the routes no path template expresses to the match table.

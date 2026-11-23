@@ -105,8 +105,14 @@ where
         self.public
     }
 
+    // The handler, or one of this operation's own interceptors, all of which
+    // run beneath whatever covers it from outside.
     fn __reads_body(&self) -> bool {
         H::__READS_BODY
+            || self
+                .interceptors
+                .iter()
+                .any(|interceptor| interceptor.reads_body())
     }
 
     // This operation's recovery covers its guard wherever the guard runs.

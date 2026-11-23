@@ -394,6 +394,8 @@ where
     /// a required encoding none of them can apply.
     type Short = NotAcceptable<T>;
 
+    const READS_BODY: bool = false;
+
     // Negotiates before building the future, so the future holds the rest of
     // the chain rather than the request.
     fn intercept(

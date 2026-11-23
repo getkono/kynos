@@ -733,6 +733,8 @@ impl<C: Sync + 'static, G: 'static> super::Interceptor<C> for TraceSpan<G> {
     type Adds = ();
     type Short = std::convert::Infallible;
 
+    const READS_BODY: bool = false;
+
     // The span is entered around `next.run` as well as around its future, so
     // the inner interceptors' work before their futures is inside it too.
     fn intercept(

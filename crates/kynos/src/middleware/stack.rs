@@ -91,6 +91,8 @@ where
 
     const COVERS: Covers = N::COVERS;
 
+    const READS_BODY: bool = N::READS_BODY;
+
     const __METHODS: Methods = M::METHODS;
 
     fn intercept(

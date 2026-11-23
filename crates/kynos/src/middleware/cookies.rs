@@ -136,6 +136,8 @@ where
     type Adds = SetCookieHeaders;
     type Short = Infallible;
 
+    const READS_BODY: bool = false;
+
     // Reads the request before building the future, so the future holds the
     // rest of the chain rather than the request.
     fn intercept(

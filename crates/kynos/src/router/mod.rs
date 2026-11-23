@@ -94,19 +94,42 @@ pub(crate) struct Mounted<C> {
 
 impl<C: 'static> Mounted<C> {
     /// What of `router`'s interceptors and the enclosing scopes' covers this
-    /// operation, outermost first: each whose
-    /// [`Covers`](crate::middleware::Covers) reaches what the handler reads,
-    /// which is what `describe` declares and `build` runs.
+    /// operation, outermost first, as [`covered`] keeps them: what `describe`
+    /// declares and `build` runs.
     fn covered_by<'a>(
         &'a self,
         router: &'a [Arc<dyn ErasedInterceptor<C>>],
-    ) -> impl Iterator<Item = &'a Arc<dyn ErasedInterceptor<C>>> {
-        let reads_body = self.endpoint.reads_body();
-        router
-            .iter()
-            .chain(&self.interceptors)
-            .filter(move |interceptor| interceptor.covers().reaches(reads_body))
+    ) -> Vec<&'a Arc<dyn ErasedInterceptor<C>>> {
+        covered(
+            router.iter().chain(&self.interceptors).collect(),
+            self.endpoint.reads_body(),
+        )
     }
+}
+
+/// The interceptors of `chain`, outermost first, that cover an operation whose
+/// handler reads its body where `handler_reads`.
+///
+/// Walked from the handler outwards, since whether an interceptor's
+/// [`Covers`](crate::middleware::Covers) reaches the operation depends on
+/// whether anything it keeps beneath it reads the body: the handler, or an
+/// interceptor it runs over whose
+/// [`READS_BODY`](crate::middleware::Interceptor::READS_BODY) says it may.
+fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
+    chain: Vec<T>,
+    handler_reads: bool,
+) -> Vec<T> {
+    let mut read = handler_reads;
+    let mut kept = Vec::with_capacity(chain.len());
+    for interceptor in chain.into_iter().rev() {
+        let erased = interceptor.as_ref();
+        if erased.covers().reaches(read) {
+            read |= erased.reads_body();
+            kept.push(interceptor);
+        }
+    }
+    kept.reverse();
+    kept
 }
 
 /// The root of an API.
