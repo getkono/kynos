@@ -1061,12 +1061,13 @@ impl<C: 'static> BoundServer<C> {
     ///
     /// Outside a tokio runtime, as `tokio::spawn` does.
     #[must_use = "dropping the handle begins shutdown at once"]
-    pub fn spawn(mut self) -> Running {
+    pub fn spawn(mut self) -> Running<C> {
         let (trigger, triggered) = oneshot::channel::<Infallible>();
         self.shutdown = Some(Shutdown::or_on(self.shutdown.take(), async move {
             let _ = triggered.await;
         }));
         Running {
+            service: Arc::clone(&self.service),
             local_addrs: self.local_addrs.clone(),
             trigger,
             task: tokio::spawn(self.serve()),
@@ -1079,14 +1080,23 @@ impl<C: 'static> BoundServer<C> {
 /// Dropping it begins graceful shutdown without waiting for the drain, whose
 /// result is then discarded; [`shutdown`](Self::shutdown) waits for it.
 #[derive(Debug)]
-pub struct Running {
+pub struct Running<C> {
+    /// The service every connection shares, as `serve` holds it.
+    service: Arc<Service<C>>,
     local_addrs: Vec<SocketAddr>,
     /// Never sent: dropping it is the trigger.
     trigger: oneshot::Sender<Infallible>,
     task: JoinHandle<Result<()>>,
 }
 
-impl Running {
+impl<C> Running<C> {
+    /// The service every connection shares, whose
+    /// [`openapi`](Service::openapi) describes what the server answers.
+    #[must_use]
+    pub fn service(&self) -> &Service<C> {
+        &self.service
+    }
+
     /// The first address [`local_addrs`](Self::local_addrs) lists, or `None`
     /// where only Unix domain socket listeners were bound.
     #[must_use]
