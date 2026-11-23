@@ -116,6 +116,33 @@ async fn a_file_is_served_with_the_media_type_its_name_implies() {
     assert_eq!(reply.text(), "body { margin: 0 }\n");
 }
 
+/// An asset is served from the head alone, so a body limit over its group
+/// neither runs on it nor declares its 413 there, however long a body the
+/// request declares.
+#[tokio::test]
+async fn a_body_limit_leaves_an_asset_alone() {
+    let router = Router::<()>::new().group(
+        Group::new("/static")
+            .intercept(kynos::middleware::limits::body_size::BodySize::new(1))
+            .mount(Fixture::assets()),
+    );
+    let document = router.openapi().expect("a describable router");
+    let service = router.build(()).expect("a describable router");
+
+    let reply = send(&service, Method::GET, "/static/css/app.css")
+        .header("content-length", "4")
+        .body(&b"left"[..])
+        .call()
+        .await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    let operation = document.paths.items["/static/css/app.css"]
+        .get
+        .as_ref()
+        .expect("a described GET");
+    assert!(!operation.responses.responses.contains_key("413"));
+}
+
 /// The index is served at its own path *and* at the directory it indexes.
 #[tokio::test]
 async fn an_index_is_served_at_both_urls_it_answers_for() {

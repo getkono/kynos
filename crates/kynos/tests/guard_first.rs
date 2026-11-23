@@ -19,9 +19,12 @@ use std::{
 use kynos::{
     Router,
     error::rejection::AuthRejection,
-    extract::body::text::Text,
+    extract::{body::text::Text, params::query::Query},
     http::{Request, Response, StatusCode, header},
-    middleware::{Continued, Interceptor, Next, Observer, limits::body_size::BodySize},
+    middleware::{
+        Continued, Covers, Interceptor, Next, Observer,
+        limits::body_size::{BodySize, BodySizeExceeded},
+    },
     response::status::NoContent,
     router::{group::Group, operation::Route},
     security::{
@@ -374,6 +377,103 @@ async fn an_operation_without_a_guard_keeps_its_chain() {
 
     assert_eq!(open.status, StatusCode::NO_CONTENT);
     assert_eq!(gate.passed(), ["inner"]);
+}
+
+// --- Beside an interceptor covering only bodies -----------------------------
+
+/// Records that a request passed through it, as [`Witness`] does, and covers
+/// only the operations that read a body; declares a 413 it never answers, so
+/// the description shows where it covers.
+struct BodyWitness(&'static str);
+
+impl Interceptor<Gate> for BodyWitness {
+    type Reads = ();
+    type Adds = ();
+    type Short = BodySizeExceeded;
+
+    const COVERS: Covers = Covers::BodyReading;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        gate: &Gate,
+        next: Next<'_, Gate>,
+    ) -> Result<Continued, BodySizeExceeded> {
+        gate.passed.lock().expect("an unpoisoned log").push(self.0);
+        Ok(next.run(request).await)
+    }
+}
+
+/// Reads the head alone behind the key, through an extractor after the guard.
+#[kynos::get("/mine")]
+async fn mine(Auth(_): Auth<UploadKey>, Query(_): Query<Page>) -> NoContent {
+    NoContent
+}
+
+/// What `/mine` reads from the request target.
+#[derive(kynos::Schema, kynos::QueryParams)]
+struct Page {
+    page: Option<u32>,
+}
+
+/// A guard takes no part in whether a handler reads a body: behind one, as
+/// without, only the operation whose last argument reads the body is covered.
+#[test]
+fn a_guard_leaves_what_a_handler_reads_to_its_other_arguments() {
+    let document = Router::new()
+        .group(
+            Group::new("/api")
+                .intercept(BodyWitness("body"))
+                .mount(kynos::routes![upload, feed, open, mine]),
+        )
+        .openapi()
+        .expect("a describable router");
+
+    for (path, covered) in [
+        ("/api/uploads", true),
+        ("/api/feed", false),
+        ("/api/open", false),
+        ("/api/mine", false),
+    ] {
+        let item = &document.paths.items[path];
+        let (_, operation) = item.operations().next().expect("one operation");
+        assert_eq!(
+            operation.responses.responses.contains_key("413"),
+            covered,
+            "{path}"
+        );
+    }
+}
+
+/// A guard run first keeps its point among the interceptors that cover an
+/// operation once one covering only bodies is left out of it.
+#[tokio::test]
+async fn a_guard_run_first_keeps_its_point_beside_an_interceptor_left_out() {
+    let gate = Gate::default();
+    let group = Group::new("/api")
+        .intercept(Witness("outer"))
+        .guard_first()
+        .intercept(BodyWitness("inner"));
+    let service = served!(group, gate);
+
+    let refused = get(&service, "/api/feed")
+        .header("x-api-key", "k_wrong")
+        .call()
+        .await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
+    assert_eq!(gate.passed(), ["outer"]);
+    assert_eq!(gate.checks(), 1);
+
+    let admitted = post(&service, "/api/uploads")
+        .header("x-api-key", "k_ok")
+        .header("content-type", "text/plain")
+        .body("payload")
+        .call()
+        .await;
+    assert_eq!(admitted.status, StatusCode::NO_CONTENT);
+    assert_eq!(gate.passed(), ["outer", "outer", "inner"]);
+    assert_eq!(gate.checks(), 2);
 }
 
 // --- Scopes, nested --------------------------------------------------------

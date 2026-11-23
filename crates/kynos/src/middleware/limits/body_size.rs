@@ -25,7 +25,7 @@ use crate::{
         body::{Body, BoxError},
         header,
     },
-    middleware::{Continued, Interceptor, Next},
+    middleware::{Continued, Covers, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
     schema::registry::Registry,
 };
@@ -211,6 +211,26 @@ impl<T: ProblemType, U: ProblemType> Responses for BodyRefused<T, U> {
 /// Contributes 413 to every covered operation, so configuring a limit also
 /// documents it.
 ///
+/// # What it covers
+///
+/// Only the operations whose body something beneath it reads, by its
+/// [`Covers::BodyReading`]: a handler whose last argument is a body extractor
+/// such as `Json<T>`, or an interceptor mounted beneath this one that may read
+/// the body, by its [`READS_BODY`](Interceptor::READS_BODY). Mounted over a
+/// group, it leaves the group's head-only operations — a `GET` by id, a
+/// `DELETE`, a `POST` that only triggers an action — exactly as they were: it
+/// does not run on them, and they declare neither its 413 nor, with a
+/// [`deadline`](BodySize::deadline), its 408, since neither is a refusal they
+/// could make. A router's own `BodySize` leaves the router's fallbacks alone
+/// too. So one limit covers a whole resource, and its group stays one per
+/// resource rather than one per body class.
+///
+/// Above an interceptor that buffers the body, such as one printing it, it
+/// covers every operation that interceptor runs on, fallbacks included, so
+/// what is buffered stays bounded. Every interceptor Kynos ships that touches
+/// only the head says so, and leaves the limit as narrow as the handlers make
+/// it; one of an application's own does too once it sets `READS_BODY = false`.
+///
 /// # Replacing the default
 ///
 /// Every body extractor that buffers already caps what it reads at
@@ -218,8 +238,7 @@ impl<T: ProblemType, U: ProblemType> Responses for BodyRefused<T, U> {
 /// replaces that one for every operation it covers, in either direction, so
 /// mounting it on a single endpoint is how one large upload is let through:
 /// `kynos::routes![upload.intercept(BodySize::new(..))]` for an attribute
-/// route. It also covers operations that read no body, which then declare a
-/// 413 too; mount it where bodies are read.
+/// route.
 ///
 /// # What it costs a streaming read
 ///
@@ -427,6 +446,8 @@ where
     type Adds = ();
     type Short = BodySizeExceeded<T>;
 
+    const COVERS: Covers = Covers::BodyReading;
+
     async fn intercept(
         &self,
         mut request: http::Request,
@@ -469,6 +490,8 @@ where
     type Reads = ();
     type Adds = ();
     type Short = BodyRefused<T, U>;
+
+    const COVERS: Covers = Covers::BodyReading;
 
     async fn intercept(
         &self,

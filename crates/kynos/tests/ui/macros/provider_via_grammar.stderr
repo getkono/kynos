@@ -1,0 +1,41 @@
+error: forwarding to `App` needs `via = path`, the fields leading from it to this struct, such as `via = inner.services`
+  --> tests/ui/macros/provider_via_grammar.rs:14:3
+   |
+14 | #[provider(for = App)]
+   |   ^^^^^^^^
+
+error: `#[provider(...)]` forwards this struct's types to the context holding it, so it needs `for = Context`, the context to provide them on
+  --> tests/ui/macros/provider_via_grammar.rs:20:3
+   |
+20 | #[provider(via = inner)]
+   |   ^^^^^^^^
+
+error: `via` starts at the `for` context's own fields, so it is written without `self`. Drop `self.`
+  --> tests/ui/macros/provider_via_grammar.rs:26:29
+   |
+26 | #[provider(for = App, via = self.inner)]
+   |                             ^^^^
+
+error: `via` is the fields leading from the `for` context to this struct, such as `inner.services`, and `inner.services()` is not a field path
+  --> tests/ui/macros/provider_via_grammar.rs:32:29
+   |
+32 | #[provider(for = App, via = inner.services())]
+   |                             ^^^^^
+
+error: this struct already forwards to `App`, and a second forward would provide every type twice. Keep one
+  --> tests/ui/macros/provider_via_grammar.rs:39:18
+   |
+39 | #[provider(for = App, via = inner)]
+   |                  ^^^
+
+error: `via` is already set, and each `#[provider(...)]` forwards to one context, so it takes each key once
+  --> tests/ui/macros/provider_via_grammar.rs:45:36
+   |
+45 | #[provider(for = App, via = inner, via = inner)]
+   |                                    ^^^
+
+error: `through` is not part of the `#[provider(...)]` grammar
+  --> tests/ui/macros/provider_via_grammar.rs:51:23
+   |
+51 | #[provider(for = App, through = inner)]
+   |                       ^^^^^^^

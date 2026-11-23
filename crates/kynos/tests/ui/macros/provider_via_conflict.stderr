@@ -1,0 +1,8 @@
+error[E0119]: conflicting implementations of trait `Provides<Pool>` for type `App`
+  --> tests/ui/macros/provider_via_conflict.rs:20:5
+   |
+10 | #[derive(Clone, kynos::Provider)]
+   |                 --------------- first implementation here
+...
+20 |     pool: Pool,
+   |     ^^^^ conflicting implementation for `App`

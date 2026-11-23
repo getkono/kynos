@@ -7,10 +7,12 @@
 //! # How this module is laid out
 //!
 //! [`decision`] is what a policy reports, [`store`] is where counters live,
-//! [`key`] is what a request counts against, [`quota`] is the algorithm over the
-//! three, [`headers`] is what an allowed exchange says on the wire and
-//! [`refusal`] is what a denied one says. The interceptor itself is here.
+//! [`key`] is what a request counts against, [`clock`] is where the time comes
+//! from, [`quota`] is the algorithm over the four, [`headers`] is what an
+//! allowed exchange says on the wire and [`refusal`] is what a denied one says.
+//! The interceptor itself is here.
 
+pub mod clock;
 pub mod decision;
 pub mod headers;
 pub mod key;
@@ -267,6 +269,8 @@ where
     type Reads = ();
     type Adds = D::Headers;
     type Short = D::Denied;
+
+    const READS_BODY: bool = false;
 
     async fn intercept(
         &self,

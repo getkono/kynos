@@ -133,7 +133,15 @@ authentication to a group documents it on every operation underneath, correctly,
 without anyone maintaining that by hand. An interceptor only some of a
 resource's operations need — a larger body limit on its one upload — goes on
 those operations inside `routes!`, so groups stay one per resource rather than
-one per limit.
+one per limit. Nor does a group split by which operations read a body: an
+interceptor whose work is the body, as `BodySize`'s is, says so with
+`Interceptor::COVERS`, and runs and is declared only on the operations whose
+body something beneath it reads: the handler's last argument, or an
+interceptor beneath it whose `Interceptor::READS_BODY` says it may. A `DELETE`
+or an action `POST` in the same group declares no 413 it could never send,
+while a request printer beneath the limit keeps every body it buffers bounded.
+`READS_BODY` defaults to `true`, so an interceptor that never says leaves a
+limit above it covering too much rather than too little.
 
 What reaches a router is anything implementing `IntoEndpoints<C>`: an
 [`Endpoints<C>`](../crates/kynos/src/router/endpoint/), an
@@ -151,6 +159,14 @@ carries no interceptor of its own the mount site can check — and an
 `Endpoints` is opaque and append-only. The prefix, the panic policy and the
 interceptors belong to whatever is mounting, not to the endpoints, so there is
 nothing there for a caller to reach into.
+
+A module hands its operations out from a function, not a macro, through
+`Endpoints::from_routes(routes![..])`. The tuple's type names every handler
+and cannot be written; `Endpoints<C, S>` can, and `S` keeps what the members'
+own interceptors were, gathered into one `stack![..]` in the order `routes!`
+names them, so the mount site still checks them. Erasing them instead would
+let an upload's own `BodySize` mount under a group's smaller one and lose to
+it silently. A set with no such interceptor is `Endpoints<C>`.
 
 ### The description a router serves is the one it emits
 

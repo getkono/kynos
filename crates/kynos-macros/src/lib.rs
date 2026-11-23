@@ -192,6 +192,16 @@ pub fn public(attribute: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// No other builder method is accepted; what else describes an operation is
 /// the route attribute's to declare.
+///
+/// It expands to a tuple, whose type no function can name. A module that hands
+/// its operations out collects them with `Endpoints::from_routes`, which keeps
+/// the interceptors each one carries in its type:
+///
+/// ```ignore
+/// pub fn routes() -> Endpoints<App, kynos::stack![BodySize]> {
+///     Endpoints::from_routes(routes![users::list, users::create.intercept(BodySize::new(64 * 1024))])
+/// }
+/// ```
 #[proc_macro]
 pub fn routes(input: TokenStream) -> TokenStream {
     route::routes::expand_routes(input)
@@ -1316,7 +1326,47 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 ///
 /// `skip` beside either key, `provided` on a field authenticating nothing, and
 /// a scheme named twice are rejected.
-#[proc_macro_derive(Provider, attributes(provide))]
+///
+/// A context that keeps its services in a struct of their own, behind an
+/// `Arc` so the context is cheap to clone, provides them by naming itself on
+/// that struct:
+///
+/// ```ignore
+/// #[derive(Clone, Provider)]
+/// struct App {
+///     inner: Arc<Inner>,
+/// }
+///
+/// struct Inner {
+///     services: Services,
+/// }
+///
+/// #[derive(Provider)]
+/// #[provider(for = App, via = inner.services)]
+/// struct Services {
+///     pool: Pool,
+///     #[provide(authenticates = Bearer)]
+///     gate: Gate,
+/// }
+/// ```
+///
+/// `Services` derives as it would alone, and `App` gains a `Provides` and an
+/// `Authenticates` implementation for each one `Services` has, each reaching
+/// it at `self.inner.services`; the path follows `Deref` as field access does.
+/// It goes on the inner struct because only there are the field types known.
+/// Repeat the attribute for each context holding the struct.
+///
+/// A type both the context and the struct provide is a conflict `rustc`
+/// reports at both sources, as it would two fields of one type: a handler
+/// asking for it could not say which it meant. `via` is a path of fields,
+/// written without `self`; a method call, a missing `for` or `via`, and one
+/// context named twice are rejected.
+///
+/// The implementations are emitted beside the inner struct, so the fields
+/// `via` names must be visible there, and they take the inner struct's
+/// generics: a context generic over a parameter the inner struct lacks
+/// cannot be named in `for`.
+#[proc_macro_derive(Provider, attributes(provide, provider))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
     derive::run(item, derive::provider::expand_inner)
 }

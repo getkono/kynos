@@ -29,7 +29,7 @@ use std::{future::Future, marker::PhantomData};
 use crate::{
     extract::params::header::HeaderParams,
     http::{Request, header_name_eq},
-    middleware::{Continued, Interceptor, Next, Placement, catch_panic::PanicPolicy},
+    middleware::{Continued, Covers, Interceptor, Next, Placement, catch_panic::PanicPolicy},
     response::ShortCircuit,
     router::group::{Group, MethodSet, Methods},
 };
@@ -88,6 +88,10 @@ where
     type Short = N::Short;
 
     const ADDS_ON: Placement = N::ADDS_ON;
+
+    const COVERS: Covers = N::COVERS;
+
+    const READS_BODY: bool = N::READS_BODY;
 
     const __METHODS: Methods = M::METHODS;
 

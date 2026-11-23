@@ -41,7 +41,7 @@ use crate::{
 ///     openapi::PathTemplate::parse("/health").expect("valid path"),
 ///     health,
 /// )
-/// .intercept(kynos::middleware::limits::body_size::BodySize::new(1_024));
+/// .intercept(kynos::middleware::request_id::RequestId::new());
 /// let router = kynos::Router::<()>::new().mount(endpoint);
 /// # let _ = router;
 /// ```
@@ -55,6 +55,10 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     tags: Vec<DeclaredTag>,
     deprecated: bool,
     public: bool,
+    /// Every interceptor this operation was given, outermost first.
+    written: Vec<Arc<dyn ErasedInterceptor<C>>>,
+    /// Those of `written` that cover this operation, which run and are
+    /// declared: the rest cover only operations whose body something reads.
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
 
     // `fn() -> _` keeps the parameters out of this builder's auto traits. `I`
@@ -97,6 +101,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: Vec::new(),
             deprecated: false,
             public: false,
+            written: Vec::new(),
             interceptors: Vec::new(),
             _private: PhantomData,
         }
@@ -114,6 +119,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: self.tags,
             deprecated: self.deprecated,
             public: self.public,
+            written: self.written,
             interceptors: self.interceptors,
             _private: PhantomData,
         }
@@ -290,7 +296,10 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
         const { stack::unscoped::<C, N>() };
 
         let mut builder: EndpointBuilder<C, H, A, P, Cons<N, I>> = self.retype();
-        builder.interceptors.push(Arc::new(interceptor));
+        // Every one stays in the type, so the collision check reads what was
+        // written; each newest is innermost, so what covers is walked again.
+        builder.written.push(Arc::new(interceptor));
+        builder.interceptors = crate::router::covered(builder.written.clone(), H::__READS_BODY);
         builder
     }
 }

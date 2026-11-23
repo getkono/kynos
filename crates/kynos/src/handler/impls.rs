@@ -110,6 +110,8 @@ macro_rules! impl_handler {
             $( $head: FromRequestParts<C> + Describe, )*
             $last: FromRequestParts<C> + Describe,
         {
+            const __READS_BODY: bool = false;
+
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
                 $( let $head = or_respond!($head::from_request_parts(parts, context), parts); )*
@@ -168,6 +170,8 @@ macro_rules! impl_handler {
             $( $head: FromRequestParts<C> + Describe, )*
             $last: FromRequestParts<C> + Describe,
         {
+            const __READS_BODY: bool = false;
+
             #[allow(non_snake_case, unused_variables)]
             async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
                 let G = guard!(G, parts, context);
@@ -198,6 +202,8 @@ where
     Res: IntoResponse + Responses,
     C: Send + Sync + 'static,
 {
+    const __READS_BODY: bool = false;
+
     async fn call(self, parts: &mut Parts, body: Body, context: &C) -> Response {
         let _ = (parts, body, context);
         self().await.into_response()
@@ -219,6 +225,8 @@ where
     C: Send + Sync + 'static,
     G: Guard<C>,
 {
+    const __READS_BODY: bool = false;
+
     #[allow(non_snake_case)]
     async fn call(self, parts: &mut Parts, _body: Body, context: &C) -> Response {
         let G = guard!(G, parts, context);

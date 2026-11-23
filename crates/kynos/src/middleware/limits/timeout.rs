@@ -210,6 +210,8 @@ where
     type Adds = ();
     type Short = R;
 
+    const READS_BODY: bool = false;
+
     async fn intercept(
         &self,
         request: http::Request,

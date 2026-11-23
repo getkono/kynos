@@ -7036,9 +7036,123 @@ mod provider {
         ]
     }
 
+    /// The container grammar, `#[provider(for = .., via = ..)]`.
+    fn forward_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a forward naming no path, which could not reach the struct",
+                quote::quote!(
+                    #[provider(for = App)]
+                    struct Services {
+                        pool: Pool,
+                    }
+                ),
+                "needs `via = path`",
+            ),
+            case(
+                "a forward naming no context, which has nothing to provide on",
+                quote::quote!(
+                    #[provider(via = inner.services)]
+                    struct Services {
+                        pool: Pool,
+                    }
+                ),
+                "it needs `for = Context`",
+            ),
+            case(
+                "a path starting at `self`, which `via` already starts at",
+                quote::quote!(
+                    #[provider(for = App, via = self.inner.services)]
+                    struct Services {
+                        pool: Pool,
+                    }
+                ),
+                "Drop `self.`",
+            ),
+            case(
+                "a path calling a method, which is more than a field",
+                quote::quote!(
+                    #[provider(for = App, via = inner.services())]
+                    struct Services {
+                        pool: Pool,
+                    }
+                ),
+                "is not a field path",
+            ),
+            case(
+                "one context forwarded to twice, which would emit every implementation twice",
+                quote::quote!(
+                    #[provider(for = App, via = inner)]
+                    #[provider(for = App, via = other)]
+                    struct Services {
+                        pool: Pool,
+                    }
+                ),
+                "this struct already forwards to `App`",
+            ),
+            case(
+                "`via` written twice in one forward",
+                quote::quote!(
+                    #[provider(for = App, via = inner, via = other)]
+                    struct Services {
+                        pool: Pool,
+                    }
+                ),
+                "each `#[provider(...)]` forwards to one context",
+            ),
+            case(
+                "a key outside the forward's grammar",
+                quote::quote!(
+                    #[provider(for = App, through = inner)]
+                    struct Services {
+                        pool: Pool,
+                    }
+                ),
+                "is not part of the `#[provider(...)]` grammar",
+            ),
+        ]
+    }
+
+    /// Each forward emits every implementation the struct has for its own
+    /// context, reached through the path as written; a skipped field and a
+    /// kept-back authenticator stay unforwarded as they stay unprovided.
+    #[test]
+    fn a_forward_emits_each_implementation_for_each_context() {
+        let input = syn::parse2(quote::quote!(
+            #[provider(for = App, via = inner.services)]
+            #[provider(for = Other, via = 0)]
+            struct Services {
+                pool: Pool,
+                #[provide(authenticates = Bearer)]
+                gate: Gate,
+                #[provide(skip)]
+                started_at: Instant,
+            }
+        ))
+        .expect("the input parses");
+        let expanded = expand_inner(&input)
+            .expect("the grammar admits it")
+            .to_string();
+        assert_eq!(
+            expanded.matches("Provides < Pool > for").count(),
+            3,
+            "{expanded}"
+        );
+        assert_eq!(
+            expanded.matches("Authenticates < Bearer >").count(),
+            5,
+            "{expanded}"
+        );
+        assert!(!expanded.contains("Provides < Gate >"), "{expanded}");
+        assert!(!expanded.contains("Provides < Instant >"), "{expanded}");
+        assert!(expanded.contains("& self . inner . services"), "{expanded}");
+        assert!(expanded.contains("& self . 0"), "{expanded}");
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(forward_ledger(), expand_inner);
     }
 
     /// `authenticates` repeats across lists as within one, so a second
@@ -7117,16 +7231,20 @@ mod provider {
         );
     }
 
-    /// The rows refusing a second `skip` and a key outside the grammar, which
-    /// `attribute::Keys::read` and `attribute::unknown` raise.
-    const IN_ATTRIBUTE: usize = 2;
+    /// The rows refusing a second `skip` or `via` and a key outside either
+    /// grammar, which `attribute::Keys::read` and `attribute::unknown` raise.
+    const IN_ATTRIBUTE: usize = 4;
 
     #[test]
     fn every_provider_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
-            "provider.rs",
-            include_str!("provider.rs"),
-            ledger().len() - IN_ATTRIBUTE,
+            "provider.rs` and `provider/",
+            &[
+                include_str!("provider.rs"),
+                include_str!("provider/forward.rs"),
+            ]
+            .concat(),
+            ledger().len() + forward_ledger().len() - IN_ATTRIBUTE,
         );
     }
 }

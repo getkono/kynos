@@ -97,6 +97,18 @@ pub trait Handler<C, A>: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     const __GUARDED: bool = false;
 
+    /// Whether the handler reads the request body: whether its last argument
+    /// is a [`FromRequest`](crate::extract::FromRequest) extractor, which an
+    /// interceptor covering [`Covers::BodyReading`] is run and declared on.
+    ///
+    /// Not part of the stable API: the head-only implementations answer
+    /// `false`, and any other handler is taken to read one, so nothing is left
+    /// uncovered by accident.
+    ///
+    /// [`Covers::BodyReading`]: crate::middleware::Covers::BodyReading
+    #[doc(hidden)]
+    const __READS_BODY: bool = true;
+
     /// Runs the handler's guard from the head alone, ahead of the interceptors
     /// covering it, keeping what it admits for [`call`](Handler::call); the
     /// guard's rejection where it refuses.

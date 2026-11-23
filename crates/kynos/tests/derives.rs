@@ -630,6 +630,70 @@ fn authenticates_borrows_the_field_for_each_scheme_it_names() {
     );
 }
 
+/// A context holding its services behind an `Arc`, which the `via` path
+/// reaches through `Deref` as field access does.
+#[derive(Clone)]
+struct Shell {
+    inner: std::sync::Arc<ShellInner>,
+    /// The context's own dependency, beside the forwarded ones.
+    cache: Cache,
+}
+
+struct ShellInner {
+    services: Services,
+}
+
+/// Provided on itself as well as on `Shell`, and on a second context.
+#[derive(kynos::Provider)]
+#[provider(for = Shell, via = inner.services)]
+#[provider(for = Tupled, via = 0)]
+struct Services {
+    pool: Pool,
+    #[provide(authenticates = kynos::security::schemes::Bearer)]
+    gate: Gate,
+    #[provide(skip)]
+    #[allow(dead_code)]
+    name: &'static str,
+}
+
+impl kynos::di::Provides<Cache> for Shell {
+    fn provide(&self) -> Cache {
+        self.cache.clone()
+    }
+}
+
+struct Tupled(Services);
+
+fn forwarded<C>(context: &C) -> (Pool, &Gate)
+where
+    C: kynos::di::Provides<Pool>
+        + kynos::security::Authenticates<kynos::security::schemes::Bearer, Authenticator = Gate>,
+{
+    (
+        context.provide(),
+        kynos::security::Authenticates::<kynos::security::schemes::Bearer>::authenticator(context),
+    )
+}
+
+#[test]
+fn a_forwarded_provider_supplies_the_context_holding_it() {
+    let services = || Services {
+        pool: Pool(3),
+        gate: Gate("inner"),
+        name: "orders",
+    };
+    let shell = Shell {
+        inner: std::sync::Arc::new(ShellInner {
+            services: services(),
+        }),
+        cache: Cache("shell"),
+    };
+    assert_eq!(forwarded(&shell), (Pool(3), &Gate("inner")));
+    assert_eq!(provides(&shell), (Pool(3), Cache("shell")));
+    assert_eq!(forwarded(&shell.inner.services), (Pool(3), &Gate("inner")));
+    assert_eq!(forwarded(&Tupled(services())), (Pool(3), &Gate("inner")));
+}
+
 /// An HTTP authentication scheme knows its own challenge, so a 401 and the
 /// description cannot disagree about what a client should do next.
 #[test]

@@ -258,7 +258,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
             // Router's interceptors outermost, then the enclosing scopes'; the
             // endpoint described itself first, so its responses win.
-            for interceptor in self.interceptors.iter().chain(&mounted.interceptors) {
+            for interceptor in mounted.covered_by(&self.interceptors) {
                 interceptor.describe(&mut cx);
             }
 

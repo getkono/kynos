@@ -29,7 +29,8 @@
 //!   decided at compile time and its 500 is contributed for the same reason.
 //! * **An interceptor can cover one operation.** `get_user.intercept(..)`
 //!   inside `routes!` gives that operation its own deadline without a group of
-//!   its own, so groups stay one per resource.
+//!   its own, so groups stay one per resource. `Endpoints::from_routes` lets a
+//!   function return those operations, interceptor and all.
 //! * **A link knows where its target was mounted.** `suspend_user` extracts a
 //!   `Link<get_user>` and redirects through it, so the `/users` prefix only
 //!   the group names reaches the `Location`. A link to an operation the router
@@ -59,7 +60,7 @@ use kynos::{
     openapi::{Method, PathTemplate},
     prelude::*,
     router::{
-        endpoint::builder::EndpointBuilder,
+        endpoint::{builder::EndpointBuilder, set::Endpoints},
         policy::{FallbackPolicy, TrailingSlashPolicy},
     },
     server::Server,
@@ -178,6 +179,17 @@ async fn version() -> NoContent {
     NoContent
 }
 
+/// The user operations, as the resource's module would hand them out: a named
+/// type a function can return, still carrying the one operation's own
+/// interceptor for the mount site to check.
+fn user_routes() -> Endpoints<(), kynos::stack![Timeout]> {
+    // The fifth scope an interceptor has: one operation.
+    Endpoints::from_routes(kynos::routes![
+        list_users,
+        get_user.intercept(Timeout::new(Duration::from_secs(2)))
+    ])
+}
+
 /// The whole API, as one value both the document and the service come from.
 fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
     Router::<()>::new()
@@ -186,15 +198,7 @@ fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
         .tag::<Ops>()
         // A group is the recommended unit of API structure, one per resource.
         // The second tag scope, and the prefix that joins each path beneath.
-        .group(
-            Group::new("/users")
-                .tag::<Users>()
-                // The fifth scope an interceptor has: one operation.
-                .mount(kynos::routes![
-                    list_users,
-                    get_user.intercept(Timeout::new(Duration::from_secs(2)))
-                ]),
-        )
+        .group(Group::new("/users").tag::<Users>().mount(user_routes()))
         // `nest` introduces a prefix; the nested router did not know it.
         .nest("/admin", admin_router())
         // `merge` does not; the two operation sets union at this level.

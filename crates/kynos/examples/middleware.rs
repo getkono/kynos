@@ -400,7 +400,8 @@ async fn main() -> kynos::Result<()> {
         )
         // Limits, each contributing the response it can produce: 408, 413 and
         // 503 respectively. Nothing below lists those statuses, and every
-        // operation's description carries them.
+        // operation's description carries them -- the 413 only where the
+        // handler reads a body, since `BodySize` covers no other operation.
         //
         // `Timeout` comes first, so it sits *outside* `BodySize` -- which is
         // what makes it bound the read. `BodySize` walks a length-less body
