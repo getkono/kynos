@@ -11298,8 +11298,12 @@ impl<'a> core::panic::unwind_safe::RefUnwindSafe for kynos::test::cookie::TestSe
 impl<'a> core::panic::unwind_safe::UnwindSafe for kynos::test::cookie::TestSetCookie<'a>
 pub struct kynos::test::Coverage
 impl kynos::test::Coverage
+pub fn kynos::test::Coverage::assert_conformance(&self)
+pub fn kynos::test::Coverage::assert_conformance_to(&self, &kynos_openapi::model::document::Document)
 pub fn kynos::test::Coverage::assert_covered(&self)
+pub fn kynos::test::Coverage::assert_covered_where(&self, impl core::ops::function::Fn(&kynos_openapi::model::document::OperationAt<'_>) -> bool)
 pub fn kynos::test::Coverage::assert_declared_responses_covered(&self, &kynos_openapi::model::document::Document)
+pub fn kynos::test::Coverage::assert_declared_responses_covered_where(&self, &kynos_openapi::model::document::Document, impl core::ops::function::Fn(&kynos_openapi::model::document::OperationAt<'_>) -> bool)
 pub fn kynos::test::Coverage::for_document(impl core::convert::Into<alloc::sync::Arc<kynos_openapi::model::document::Document>>) -> Self
 pub fn kynos::test::Coverage::new() -> Self
 pub fn kynos::test::Coverage::record(&self, &http::method::Method, &str, http::status::StatusCode)
