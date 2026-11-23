@@ -23,14 +23,15 @@
 //!   right tool for each.
 //! * **A parameter is one value.** Each field is a `ParamValue`: read with
 //!   `FromStr`, written with `Display`, and described by a schema that is not
-//!   an object or an array. `UserId` below opts in with an empty impl, and
-//!   `Order` derives all three from the names its schema lists.
+//!   an object or an array. `UserId` below derives `FromStr` and `Display`
+//!   through the integer it wraps, and `Order` derives them from the names its
+//!   schema lists.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
 //!   implements the same two traits the derives implement. Nothing about the
 //!   derived path is privileged, which is what makes the rule "every argument
 //!   describes itself" enforceable rather than aspirational.
 
-use std::{fmt, net::Ipv4Addr, num::ParseIntError, str::FromStr};
+use std::net::Ipv4Addr;
 
 use kynos::{
     extract::{
@@ -43,7 +44,7 @@ use kynos::{
     openapi::{Parameter, ParameterIn},
     prelude::*,
     router::operation::OperationCx,
-    schema::{ParamValue, registry::Registry},
+    schema::registry::Registry,
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -59,7 +60,10 @@ struct User {
 ///
 /// A newtype rather than a bare `u64`, so a handler cannot pass some other
 /// number where a user is meant. It is still one integer on the wire, which is
-/// what `ParamValue` asks it to promise.
+/// what `ParamValue` asks it to promise: the derive reads and writes it
+/// through the `u64`. Its schema is written by hand, inline as a bare `u64`'s
+/// rather than a component of its own.
+#[derive(kynos::ParamValue)]
 struct UserId(u64);
 
 impl Schema for UserId {
@@ -67,22 +71,6 @@ impl Schema for UserId {
         u64::schema(registry)
     }
 }
-
-impl FromStr for UserId {
-    type Err = ParseIntError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        raw.parse().map(Self)
-    }
-}
-
-impl fmt::Display for UserId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl ParamValue for UserId {}
 
 /// What `/users/{id}` captures.
 #[allow(dead_code)]
@@ -109,7 +97,7 @@ enum Order {
 
 /// How a list is paged.
 #[allow(dead_code)]
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct Page {
     /// Optional, because the type is.
     after: Option<u64>,

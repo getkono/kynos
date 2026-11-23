@@ -1,0 +1,26 @@
+error: serde writes a struct with named fields as an object keyed by them, which no parameter text holds. Make it a newtype, `struct Name(Inner);`, whose text form is its field's, or write one field under `#[serde(transparent)]`
+  --> tests/ui/macros/param_value_struct_refusals.rs:8:13
+   |
+ 8 |   struct Page {
+   |  _____________^
+ 9 | |     limit: u32,
+10 | | }
+   | |_^
+
+error: a parameter is one value, and this tuple struct holds several or none. A newtype's text form is its one field's: hold exactly one
+  --> tests/ui/macros/param_value_struct_refusals.rs:13:13
+   |
+13 | struct Range(u32, u32);
+   |             ^^^^^^^^^^
+
+error: a unit struct holds no value a parameter could carry. Hold the value in one field, `struct Name(Inner);`
+  --> tests/ui/macros/param_value_struct_refusals.rs:16:8
+   |
+16 | struct Nothing;
+   |        ^^^^^^^
+
+error: `ParamValue` is derived for a field-less enum, whose variant names are its text form, or for a newtype, whose field's is; a union is neither
+  --> tests/ui/macros/param_value_struct_refusals.rs:19:1
+   |
+19 | union Bits {
+   | ^^^^^

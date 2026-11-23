@@ -127,14 +127,6 @@ fn an_identifier_request_id_echoes_is_logged_on_arrival() {
     assert_eq!(trusting.inbound(&map(&[("x-correlation-id", "")])), None);
 }
 
-/// The closing event carries what the response does, trusted or not.
-#[test]
-fn the_assigned_identifier_is_logged_on_departure() {
-    let response = map(&[("x-request-id", "minted")]);
-
-    assert_eq!(Trace::new().assigned(&response), "minted");
-}
-
 /// The lines a `fmt` subscriber writes while `emitting` runs on this thread,
 /// each span's closing included.
 fn captured(emitting: impl FnOnce()) -> String {
@@ -239,11 +231,81 @@ fn each_level_is_emitted_as_the_tracing_level_of_its_name() {
     }
 }
 
-/// The closing event carries the identifier the response does, and its status.
+/// A rule that raises 429 and a 5xx apart from the rest.
+fn by_status(status: StatusCode) -> Level {
+    match status.as_u16() {
+        500.. => Level::Error,
+        429 => Level::Warn,
+        _ => Level::Debug,
+    }
+}
+
+/// The level each event of one exchange answered with `status` is emitted at.
+fn levels_of(trace: &Trace, status: StatusCode) -> Vec<String> {
+    let request = Request::new(Body::empty());
+    let mut response = Response::new(Body::empty());
+    *response.status_mut() = status;
+
+    let lines = captured(|| {
+        Observer::<()>::on_request(trace, &request, None, &());
+        Observer::<()>::on_response(trace, &response, None, std::time::Duration::ZERO);
+    });
+
+    lines
+        .lines()
+        .map(|line| {
+            line.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect()
+}
+
+/// `level_for` picks the closing event's level from the status sent, and
+/// leaves the opening event, and a span, at `level`.
+#[test]
+fn the_closing_level_is_chosen_by_status_and_the_opening_one_is_not() {
+    let trace = Trace::new().level(Level::Trace).level_for(by_status);
+
+    assert_eq!(levels_of(&trace, StatusCode::OK), ["TRACE", "DEBUG"]);
+    assert_eq!(levels_of(&trace, StatusCode::NOT_FOUND), ["TRACE", "DEBUG"]);
+    assert_eq!(
+        levels_of(&trace, StatusCode::TOO_MANY_REQUESTS),
+        ["TRACE", "WARN"]
+    );
+    assert_eq!(
+        levels_of(&trace, StatusCode::INTERNAL_SERVER_ERROR),
+        ["TRACE", "ERROR"]
+    );
+    assert_eq!(trace.span(&[]).callsite.level, Level::Trace);
+}
+
+/// `level` set after `level_for` moves the opening event and leaves the
+/// rule in charge of the closing one, so the two read the same in either
+/// order.
+#[test]
+fn level_after_level_for_does_not_replace_the_rule() {
+    let trace = Trace::new().level_for(by_status).level(Level::Info);
+
+    assert_eq!(
+        levels_of(&trace, StatusCode::SERVICE_UNAVAILABLE),
+        ["INFO", "ERROR"]
+    );
+    assert_eq!(levels_of(&trace, StatusCode::OK), ["INFO", "DEBUG"]);
+}
+
+/// The closing event carries the identifier `RequestId` assigned, and its
+/// status, under whichever group it writes: this `Trace` names no group, and
+/// assumes the default's, which the response does not carry.
 #[test]
 fn the_closing_event_carries_the_assigned_identifier() {
-    let mut response = crate::http::Response::new(crate::http::body::Body::empty());
-    *response.headers_mut() = map(&[("x-request-id", "minted")]);
+    let response = served(
+        &[Arc::new(RequestId::new().header::<Pair>())],
+        None,
+        request(&[]),
+    );
+    assert!(response.headers().get("x-request-id").is_none());
 
     let lines = captured(|| {
         Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
@@ -251,8 +313,22 @@ fn the_closing_event_carries_the_assigned_identifier() {
 
     assert!(lines.contains("INFO"), "{lines}");
     assert!(lines.contains("response sent"), "{lines}");
-    assert!(lines.contains("status=200"), "{lines}");
-    assert!(lines.contains("request_id=\"minted\""), "{lines}");
+    assert!(lines.contains("status=201"), "{lines}");
+    assert!(lines.contains("request_id=\"0\""), "{lines}");
+}
+
+/// A field named as the identifier's, which no `RequestId` wrote, is not
+/// logged as one: only an assigned identifier is the request's.
+#[test]
+fn the_closing_event_ignores_an_identifier_no_request_id_assigned() {
+    let mut response = Response::new(Body::empty());
+    *response.headers_mut() = map(&[("x-request-id", "forged")]);
+
+    let lines = captured(|| {
+        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
+    });
+
+    assert!(lines.contains("request_id=\"\""), "{lines}");
 }
 
 /// The closing event names the matched operation's method, so it joins on its
@@ -419,6 +495,24 @@ fn the_handlers_event_inherits_the_request_span() {
     assert!(closed.contains(" status=201 latency_ms="), "{closed}");
     assert!(closed.ends_with(": close"), "{closed}");
     assert_eq!(lines.next(), None);
+}
+
+/// Mounted inside `RequestId`, the span opens with the identifier it assigned
+/// whatever group carries it, so a `Trace` never told the group still names it.
+#[test]
+fn a_span_inside_request_id_carries_the_assigned_identifier_unnamed() {
+    let lines = captured(|| {
+        served(
+            &[
+                Arc::new(RequestId::new().header::<Pair>()),
+                Arc::new(Trace::new().span(&[])),
+            ],
+            Some(get_user()),
+            request(&[]),
+        );
+    });
+
+    assert!(lines.contains("request_id=\"0\""), "{lines}");
 }
 
 /// Mounted before `RequestId`, the span opens before an identifier is

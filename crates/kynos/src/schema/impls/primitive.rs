@@ -20,6 +20,13 @@ impl Schema for String {
     }
 }
 
+// What `&str` and `Cow<str>` delegate to, through their transparent impls.
+impl Schema for str {
+    fn schema(_registry: &mut Registry) -> OpenApiSchema {
+        OpenApiSchema::of_type(SchemaType::String)
+    }
+}
+
 // Length bounds beside the format, since registry format support is optional.
 impl Schema for char {
     fn schema(_registry: &mut Registry) -> OpenApiSchema {

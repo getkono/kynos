@@ -237,10 +237,94 @@ fn identifier_schema() -> kynos_openapi::Schema {
     kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::String)
 }
 
+/// The identifier a request is correlated by, as [`RequestId`] assigned it.
+///
+/// `RequestId` inserts it into the request's extensions before the rest of the
+/// chain runs, and into the response's on the way out, so whatever reads it
+/// names no header: it is the same value under whichever header group the
+/// router's `RequestId` was given. It is absent where no `RequestId` covers the
+/// operation or reaches it, as for a request an earlier interceptor answers,
+/// and where the group refused to encode it, since that response carries no
+/// identifier either.
+///
+/// A handler takes it as `Option<AssignedId>`, which never rejects and
+/// describes nothing: the header is `RequestId`'s to describe.
+///
+/// ```
+/// use kynos::{
+///     Router,
+///     extract::body::text::Text,
+///     middleware::request_id::{AssignedId, RequestId},
+/// };
+///
+/// #[kynos::get("/whoami")]
+/// async fn whoami(id: Option<AssignedId>) -> Text {
+///     Text(id.as_ref().and_then(AssignedId::as_str).unwrap_or_default().to_owned())
+/// }
+///
+/// let router = Router::<()>::new()
+///     .mount(kynos::routes![whoami])
+///     .intercept(RequestId::new());
+/// # let _ = router;
+/// ```
+///
+/// An interceptor mounted inside `RequestId` reads it with
+/// [`of`](AssignedId::of), and an [`Observer`](crate::middleware::Observer)
+/// with [`of_response`](AssignedId::of_response).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AssignedId(http::HeaderValue);
+
+impl AssignedId {
+    /// The identifier `RequestId` assigned `request`, if one did.
+    #[must_use]
+    pub fn of(request: &http::Request) -> Option<&Self> {
+        request.extensions().get()
+    }
+
+    /// The identifier `RequestId` wrote on `response`, if one did.
+    #[must_use]
+    pub fn of_response(response: &http::Response) -> Option<&Self> {
+        response.extensions().get()
+    }
+
+    /// The identifier as text, or `None` where it is not visible ASCII, which
+    /// a trusted client or a replaced [`RequestIdSource`] may send.
+    #[must_use]
+    pub fn as_str(&self) -> Option<&str> {
+        self.0.to_str().ok()
+    }
+
+    /// The identifier as the field value the response carries.
+    #[must_use]
+    pub fn as_header_value(&self) -> &http::HeaderValue {
+        &self.0
+    }
+}
+
+impl<C: Sync> crate::extract::FromRequestParts<C> for Option<AssignedId> {
+    type Rejection = Infallible;
+
+    async fn from_request_parts(
+        parts: &mut http::Parts,
+        _context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(parts.extensions.get::<AssignedId>().cloned())
+    }
+}
+
+/// Nothing: the header the identifier arrives in is the covering
+/// `RequestId`'s to describe, and reading it uncovered reads `None`.
+impl crate::extract::describe::Describe for Option<AssignedId> {
+    fn describe(operation: &mut crate::router::operation::OperationCx<'_>) {
+        let _ = operation;
+    }
+}
+
 /// Assigns each request an identifier and echoes it back.
 ///
 /// The header group `H` is both what every covered operation documents and
-/// what the response carries.
+/// what the response carries. The identifier is also handed on as an
+/// [`AssignedId`], which reads it without naming `H`.
 pub struct RequestId<S = Counter, H = XRequestId> {
     source: S,
     // Read by `Trace`, which logs an inbound identifier only where this echoes it.
@@ -284,6 +368,25 @@ impl RequestId<Counter, XRequestId> {
             trust_client: false,
             _header: PhantomData,
         }
+    }
+
+    /// [`AssignedId::of`], spelled from the interceptor that assigns it.
+    ///
+    /// Reads the identifier any `RequestId` assigned, whatever its source and
+    /// header group.
+    #[must_use]
+    pub fn of(request: &http::Request) -> Option<&AssignedId> {
+        AssignedId::of(request)
+    }
+
+    /// [`AssignedId::of_response`], spelled from the interceptor that assigns
+    /// it.
+    ///
+    /// Reads the identifier any `RequestId` wrote, whatever its source and
+    /// header group.
+    #[must_use]
+    pub fn of_response(response: &http::Response) -> Option<&AssignedId> {
+        AssignedId::of_response(response)
     }
 }
 
@@ -359,6 +462,8 @@ where
         };
 
         let id = inbound.unwrap_or_else(|| self.source.next_id());
+        // A clone shares the value's one allocation.
+        let assigned = AssignedId(id.clone());
 
         let headers = H::from_id(id);
 
@@ -370,12 +475,14 @@ where
         // replace whatever the chain returned with this same 500.
         //
         // Encoded once: the response is written from the same fields, whose
-        // values the request holds clones of.
+        // values the request holds clones of. The extension is set only where
+        // the fields are, so it never names an identifier no header carries.
         let run = match headers.encode() {
             Ok(fields) => {
                 for (name, value) in &fields {
                     request.headers_mut().insert(name.clone(), value.clone());
                 }
+                request.extensions_mut().insert(assigned.clone());
                 Ok((next.run(request), fields))
             }
             Err(_) => Err(headers),
@@ -383,7 +490,11 @@ where
 
         async move {
             Ok(match run {
-                Ok((run, fields)) => run.await.with_encoded::<H>(fields),
+                Ok((run, fields)) => {
+                    let mut continued = run.await.with_encoded::<H>(fields);
+                    continued.insert_extension(assigned);
+                    continued
+                }
                 Err(headers) => {
                     Continued::new(crate::response::headers::refused()).with_headers(headers)
                 }

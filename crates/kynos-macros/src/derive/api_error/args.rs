@@ -39,6 +39,8 @@ pub(super) struct ProblemArgs {
     pub(super) transparent: Option<Span>,
     /// `subset_of`: the wider `ApiError` enum this one is a subset of.
     pub(super) subset_of: Option<(Type, Span)>,
+    /// `variant_of`: the variant of a wider `ApiError` enum this variant is.
+    pub(super) variant_of: Option<(syn::Path, Span)>,
     /// `extension(name = value, ...)`: the members this failure always sends
     /// the same value of, in declaration order.
     pub(super) constants: Vec<Constant>,
@@ -91,28 +93,7 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                 )?,
                 "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
-                "base" if position == Position::Type => {
-                    let mut base = meta.value()?.parse::<Expr>()?;
-                    // A `macro_rules!` fragment arrives wrapped in an
-                    // invisible group; a forwarded literal or path is still one.
-                    while let Expr::Group(group) = base {
-                        base = *group.expr;
-                    }
-                    args.base = Some(match base {
-                        Expr::Lit(ExprLit {
-                            lit: Lit::Str(literal),
-                            ..
-                        }) => Base::Literal(literal.value()),
-                        Expr::Path(path) => Base::Const(path),
-                        other => {
-                            return Err(syn::Error::new(
-                                other.span(),
-                                "`base` is a string literal, or the path to a `const` of type \
-                                 `&str` holding one",
-                            ));
-                        }
-                    });
-                }
+                "base" if position == Position::Type => args.base = Some(base(&meta)?),
                 "base" => {
                     return Err(syn::Error::new(
                         span,
@@ -128,6 +109,17 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                         span,
                         "`subset_of` names the wider error every variant converts into, so it \
                          belongs on the enum rather than on one variant",
+                    ));
+                }
+                "variant_of" if position == Position::Variant => {
+                    args.variant_of = Some((meta.value()?.parse::<syn::Path>()?, span));
+                }
+                "variant_of" => {
+                    return Err(syn::Error::new(
+                        span,
+                        "`variant_of` names the wider variant one variant is, so it belongs on \
+                         that variant; an enum whose every variant is a wider enum's says \
+                         `subset_of`",
                     ));
                 }
                 "transparent" if position == Position::Variant => {
@@ -167,6 +159,39 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
     }
 
     Ok(args)
+}
+
+/// What a type's `base = ...` names: a string literal, or a path to a `const`.
+fn base(meta: &ParseNestedMeta<'_>) -> syn::Result<Base> {
+    let mut base = meta.value()?.parse::<Expr>()?;
+    // A `macro_rules!` fragment arrives wrapped in an invisible group; a
+    // forwarded literal or path is still one.
+    while let Expr::Group(group) = base {
+        base = *group.expr;
+    }
+    match base {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(literal),
+            ..
+        }) => Ok(Base::Literal(literal.value())),
+        Expr::Path(path) => Ok(Base::Const(path)),
+        other => Err(syn::Error::new(
+            other.span(),
+            "`base` is a string literal, or the path to a `const` of type `&str` holding one",
+        )),
+    }
+}
+
+/// The span of `thiserror`'s `#[error(transparent)]` among `attrs`: the item
+/// displays as the one field it holds, which a variant declaring no status of
+/// its own also answers as.
+pub(super) fn error_transparent(attrs: &[Attribute]) -> Option<Span> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("error"))
+        .filter_map(|attr| attr.parse_args::<syn::Ident>().ok())
+        .find(|ident| ident == "transparent")
+        .map(|ident| ident.span())
 }
 
 /// Reads the `name = value` pairs of an item's `extension(...)` list into

@@ -1,0 +1,55 @@
+error[E0599]: no variant, associated function, or constant named `__KYNOS_PROBLEM_STATUSES_Gone` found for enum `ProfileProblem` in the current scope
+  --> tests/ui/macros/api_error_variant_of_not_in_wide.rs:19:44
+   |
+10 | enum ProfileProblem {
+   | ------------------- variant, associated function, or constant `__KYNOS_PROBLEM_STATUSES_Gone` not found for this enum
+...
+19 |     #[problem(variant_of = ProfileProblem::Gone)]
+   |                                            ^^^^ variant, associated function, or constant not found in `ProfileProblem`
+   |
+help: there is an associated constant `__KYNOS_PROBLEM_STATUSES_Unavailable` with a similar name
+   |
+19 -     #[problem(variant_of = ProfileProblem::Gone)]
+19 +     #[problem(variant_of = ProfileProblem::__KYNOS_PROBLEM_STATUSES_Unavailable)]
+   |
+
+error[E0599]: no variant named `Gone` found for enum `ProfileProblem`
+  --> tests/ui/macros/api_error_variant_of_not_in_wide.rs:19:44
+   |
+10 | enum ProfileProblem {
+   | ------------------- variant `Gone` not found here
+...
+19 |     #[problem(variant_of = ProfileProblem::Gone)]
+   |                                            ^^^^ variant not found in `ProfileProblem`
+
+error[E0559]: variant `ProfileProblem::Unavailable` has no field named `reason`
+  --> tests/ui/macros/api_error_variant_of_not_in_wide.rs:30:9
+   |
+30 |         reason: String,
+   |         ^^^^^^ `ProfileProblem::Unavailable` does not have this field
+   |
+   = note: all struct fields are already assigned
+
+error[E0026]: variant `ProfileProblem::Unavailable` does not have a field named `reason`
+  --> tests/ui/macros/api_error_variant_of_not_in_wide.rs:30:9
+   |
+30 |         reason: String,
+   |         ^^^^^^ variant `ProfileProblem::Unavailable` does not have this field
+
+error[E0063]: missing field `retry` in initializer of `ProfileProblem`
+  --> tests/ui/macros/api_error_variant_of_not_in_wide.rs:37:28
+   |
+37 |     #[problem(variant_of = ProfileProblem::Unavailable)]
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^ missing `retry`
+
+error: pattern requires `..` due to inaccessible fields
+  --> tests/ui/macros/api_error_variant_of_not_in_wide.rs:34:35
+   |
+34 | #[derive(Debug, thiserror::Error, ApiError)]
+   |                                   ^^^^^^^^
+   |
+   = note: this error originates in the derive macro `ApiError` (in Nightly builds, run with -Z macro-backtrace for more info)
+help: ignore the inaccessible and unused fields
+   |
+38 |     Unavailable { detail: String, .. },
+   |                                 ++++

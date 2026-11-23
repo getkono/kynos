@@ -21,8 +21,7 @@
 //! derived `Reply` or `ApiError` writes; and a derived carrier's reading of
 //! its `reads` group beside the credential.
 //! Their tests call the derived code directly, with no server. What *is*
-//! checked beyond compiling is the description a derive emits, and what the
-//! default `QueryParams::parameters` makes of a derived schema.
+//! checked beyond compiling is the description a derive emits.
 
 #![cfg(feature = "macros")]
 #![allow(dead_code)]
@@ -76,7 +75,7 @@ struct UserPath {
     user_id: u64,
 }
 
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct ListQuery {
     page: u32,
     #[param(rename = "per_page")]
@@ -1086,6 +1085,46 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
     assert_eq!(format!("{:.3}", Phase::Checking), "che");
 }
 
+/// A newtype over one parameter value, written by serde as itself.
+#[derive(Debug, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+struct Cursor {
+    token: String,
+}
+
+/// A derived newtype `ParamValue` reads and writes through its field: the
+/// field's text, the field's refusal, and the caller's formatting flags, as
+/// serde writes the newtype as the field. The same recorded exception as the
+/// enum's, since the delegation is the decoder.
+#[test]
+fn a_derived_newtype_param_value_reads_and_writes_through_its_field() {
+    assert_eq!("42".parse::<Score>(), Ok(Score(42)));
+    assert_eq!("-1".parse::<Score>(), "-1".parse::<u32>().map(Score));
+    assert_eq!(Score(42).to_string(), "42");
+    assert_eq!(format!("{:>4}", Score(42)), "  42");
+    assert_eq!(
+        serde_json::to_value(Cursor {
+            token: "abc".to_owned()
+        })
+        .expect("a string serializes"),
+        serde_json::Value::from("abc"),
+    );
+    assert_eq!(
+        "abc".parse::<Cursor>(),
+        Ok(Cursor {
+            token: "abc".to_owned()
+        })
+    );
+    assert_eq!(
+        Cursor {
+            token: "abc".to_owned()
+        }
+        .to_string(),
+        "abc"
+    );
+    implements_param_value::<Cursor>();
+}
+
 /// A deprecated type says so, and says nothing about the note.
 #[test]
 #[allow(deprecated)]
@@ -1907,91 +1946,6 @@ fn an_externally_tagged_branch_admits_only_its_variant_key() {
     }
 }
 
-// --- The default query projection reads the top level alone ----------------
-//
-// A group implementing `QueryParams` by hand over a derived schema gets the
-// default `parameters`, which reads only the object's own `properties` and
-// `required`. These record what that loses rather than endorse it: a bound no
-// Parameter Object can state, and members it does not read. The default's
-// rustdoc names both and their remedies.
-
-impl QueryParamsTrait for Aliased {}
-
-#[derive(Schema, serde::Serialize, serde::Deserialize)]
-struct Located {
-    id: u64,
-    #[serde(flatten)]
-    origin: Origin,
-}
-
-impl QueryParamsTrait for Located {}
-
-/// The parameters `T`'s default projection describes, as JSON.
-fn query_parameters<T: QueryParamsTrait>() -> serde_json::Value {
-    let mut registry = kynos::schema::registry::Registry::new();
-    serde_json::to_value(T::parameters(&mut registry)).expect("parameters serialize")
-}
-
-/// Each name of a required aliased field is an optional parameter, and the
-/// exactly-one bound its schema's `allOf` states is dropped.
-#[test]
-fn a_required_aliased_field_projects_to_one_optional_parameter_per_name() {
-    assert_eq!(
-        query_parameters::<Aliased>(),
-        serde_json::json!([
-            {"name": "b", "in": "query", "schema": emitted::<u64>()},
-            {"name": "bee", "in": "query", "schema": emitted::<u64>()},
-        ])
-    );
-}
-
-/// A flattened struct's members reach the schema through a `$ref` inside an
-/// `allOf`, neither of which the projection reads, so only the parent's own
-/// field is a parameter.
-///
-/// Not implied by the aliased case, whose `allOf` holds bounds and no `$ref`:
-/// a projection that walked `allOf` and resolved what it found would pass that
-/// one and list `host` here.
-#[test]
-fn a_flattened_structs_members_project_to_no_parameter() {
-    assert!(emitted::<Located>()["allOf"][0].get("$ref").is_some());
-
-    assert_eq!(
-        query_parameters::<Located>(),
-        serde_json::json!([
-            {"name": "id", "in": "query", "required": true, "schema": emitted::<u64>()},
-        ])
-    );
-}
-
-#[derive(Schema, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "kind")]
-enum Audience {
-    Team { team: u64 },
-    User { user: u64 },
-}
-
-impl QueryParamsTrait for Audience {}
-
-#[derive(Schema, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-struct WrappedOrigin {
-    origin: Origin,
-}
-
-impl QueryParamsTrait for WrappedOrigin {}
-
-/// An enum's variants sit under a `oneOf` and a `transparent` type's inner
-/// fields behind a `$ref`, and neither has a top-level property to project.
-#[test]
-fn a_oneof_or_ref_schema_projects_to_no_parameter() {
-    assert!(emitted::<Audience>().get("oneOf").is_some());
-    assert!(emitted::<WrappedOrigin>().get("$ref").is_some());
-
-    assert_eq!(query_parameters::<Audience>(), serde_json::json!([]));
-    assert_eq!(query_parameters::<WrappedOrigin>(), serde_json::json!([]));
-}
-
 // --- The derived query decoder reads only octets that are text -------------
 //
 // The recorded runtime exception checked here, because no other target
@@ -2098,26 +2052,10 @@ fn a_group_without_parameters_decodes_from_any_query() {
 
 /// A named number with a bound of its own, so a field's bound lands beside a
 /// `$ref` and the type's is checked as well.
-#[derive(Schema, Debug, PartialEq)]
+#[derive(Schema, ParamValue, Debug, PartialEq)]
 struct Score(#[schema(maximum = 100)] u32);
 
-impl std::str::FromStr for Score {
-    type Err = std::num::ParseIntError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        raw.parse().map(Self)
-    }
-}
-
-impl std::fmt::Display for Score {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl kynos::schema::ParamValue for Score {}
-
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct Bounded {
     #[schema(min_length = 2)]
     #[param(rename = "q")]
@@ -2126,6 +2064,12 @@ struct Bounded {
     limit: Option<u32>,
     #[schema(minimum = 1)]
     score: Option<Score>,
+}
+
+/// The parameters `T` describes, as JSON.
+fn query_parameters<T: QueryParamsTrait>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::new();
+    serde_json::to_value(T::parameters(&mut registry)).expect("parameters serialize")
 }
 
 /// `T`'s schema as a field or parameter of type `T` refers to it.
@@ -2253,8 +2197,10 @@ fn a_nan_query_value_is_refused_under_its_numeric_bounds() {
 // The same recorded exception as the query parameter's: each other parameter
 // derive writes a field's `#[schema(...)]` bounds into its description and
 // refuses a decoded value that breaks one, or one its type declares.
+// None derives `Schema`: each parameter derive reads the attribute itself,
+// as the query group above does.
 
-#[derive(Schema, PathParams)]
+#[derive(PathParams)]
 struct BoundedPath {
     #[schema(minimum = 1)]
     #[param(rename = "id")]
@@ -2263,7 +2209,7 @@ struct BoundedPath {
     score: Score,
 }
 
-#[derive(Schema, HeaderParams)]
+#[derive(HeaderParams)]
 struct BoundedHeaders {
     #[schema(max_length = 8)]
     #[header(rename = "X-Request-Id")]
@@ -2274,7 +2220,7 @@ struct BoundedHeaders {
 }
 
 #[cfg(feature = "cookie")]
-#[derive(Schema, kynos::CookieParams)]
+#[derive(kynos::CookieParams)]
 struct BoundedCookies {
     #[schema(min_length = 4)]
     session: String,
@@ -2491,27 +2437,11 @@ const PAGE_OUT_OF_RANGE: kynos::schema::constraints::ConstraintProblem =
     );
 
 /// A parameter value naming its own problem.
-#[derive(Schema, Debug, PartialEq)]
+#[derive(Schema, ParamValue, Debug, PartialEq)]
 #[schema(constraint_problem = PAGE_OUT_OF_RANGE)]
 struct PageNumber(#[schema(maximum = 100)] u32);
 
-impl std::str::FromStr for PageNumber {
-    type Err = std::num::ParseIntError;
-
-    fn from_str(raw: &str) -> Result<Self, Self::Err> {
-        raw.parse().map(Self)
-    }
-}
-
-impl std::fmt::Display for PageNumber {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-impl kynos::schema::ParamValue for PageNumber {}
-
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 struct NamedQuery {
     #[schema(minimum = 1)]
     page: Option<PageNumber>,
@@ -2611,7 +2541,7 @@ const GROUP_INVALID: kynos::schema::constraints::ConstraintProblem =
     )
     .unprocessable();
 
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedQuery {
     #[schema(maximum = 10)]
@@ -2620,14 +2550,14 @@ struct GroupedQuery {
     page: Option<PageNumber>,
 }
 
-#[derive(Schema, PathParams)]
+#[derive(PathParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedPath {
     #[schema(maximum = 10)]
     id: u32,
 }
 
-#[derive(Schema, HeaderParams)]
+#[derive(HeaderParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedHeaders {
     #[schema(maximum = 10)]
@@ -2636,7 +2566,7 @@ struct GroupedHeaders {
 }
 
 #[cfg(feature = "cookie")]
-#[derive(Schema, kynos::CookieParams)]
+#[derive(kynos::CookieParams)]
 #[schema(constraint_problem = GROUP_INVALID)]
 struct GroupedCookies {
     #[schema(maximum = 10)]
@@ -2705,41 +2635,6 @@ fn a_parameter_group_answers_with_the_problem_it_names() {
         ));
         assert_eq!(GroupedCookies::constraint_problems(), [GROUP_INVALID]);
     }
-}
-
-/// A query group whose `Schema` is written by hand, naming its problem there.
-#[derive(QueryParams)]
-struct HandNamedQuery {
-    page: Option<PageNumber>,
-}
-
-impl kynos::schema::Schema for HandNamedQuery {
-    const CONSTRAINT_PROBLEM: Option<kynos::schema::constraints::ConstraintProblem> =
-        Some(GROUP_INVALID);
-
-    fn schema(_: &mut kynos::schema::registry::Registry) -> kynos::openapi::Schema {
-        kynos::openapi::Schema::any()
-    }
-}
-
-/// A query group answers with the problem its `Schema` names however that
-/// `Schema` was written, as `QueryString` reads it, in place of the one its
-/// field's type names.
-#[test]
-fn a_query_group_answers_with_the_problem_its_hand_written_schema_names() {
-    use kynos::{
-        error::rejection::QueryRejection,
-        extract::params::query::{DecodeQuery, QueryParams},
-    };
-
-    assert!(matches!(
-        HandNamedQuery::decode(Some("page=101")),
-        Err(QueryRejection::Schema {
-            problem: Some(GROUP_INVALID),
-            ..
-        })
-    ));
-    assert_eq!(HandNamedQuery::constraint_problems(), [GROUP_INVALID]);
 }
 
 // --- The derived cookie decoder reads only a cookie that is text -----------
@@ -4372,6 +4267,42 @@ fn a_newtype_member_publishes_its_prose_and_deprecation() {
     );
 }
 
+/// A stable problem code.
+#[derive(Schema, serde::Serialize)]
+struct ProblemCode(&'static str);
+
+/// A newtype over a static string is a string, described by its own doc
+/// comment.
+#[test]
+fn a_static_str_newtype_is_a_described_string() {
+    assert_eq!(
+        emitted::<ProblemCode>(),
+        serde_json::json!({"type": "string", "description": "A stable problem code."})
+    );
+}
+
+// No doc comment, for the reason `Labels` gives.
+#[derive(Schema, serde::Serialize)]
+struct Borrowed<'a> {
+    name: &'a str,
+    label: std::borrow::Cow<'a, str>,
+    owner: &'a User,
+}
+
+/// A borrow and a `Cow` are what they hold, under its own component name.
+#[test]
+fn a_borrowed_member_is_described_as_what_it_borrows() {
+    let properties = emitted::<Borrowed<'_>>()["properties"].clone();
+    assert_eq!(
+        properties,
+        serde_json::json!({
+            "name": {"type": "string"},
+            "label": {"type": "string"},
+            "owner": {"$ref": "#/components/schemas/User"},
+        })
+    );
+}
+
 // --- A field described as another type --------------------------------------
 //
 // `#[schema(as = T)]` describes a field as `T`, under the field's own bounds,
@@ -5892,7 +5823,8 @@ struct ValidationFailed {
 
 /// Two shared groups beside failures of its own, one of which shares 404 with
 /// `LookupError`, so a status is met from both sides. One group sits in a
-/// tuple variant and one in a named field.
+/// tuple variant and one in a named field, which `#[error(transparent)]`
+/// alone makes transparent.
 #[derive(Debug, thiserror::Error, ApiError)]
 enum PauseError {
     #[error(transparent)]
@@ -5904,7 +5836,6 @@ enum PauseError {
     AlreadyPaused,
 
     #[error(transparent)]
-    #[problem(transparent)]
     Invalid {
         #[from]
         source: ValidationFailed,
@@ -5981,6 +5912,53 @@ fn a_transparent_only_enum_describes_what_it_holds() {
         responses["422"],
         emitted_responses::<ValidationFailed>()["422"],
         "{responses}"
+    );
+}
+
+/// A message that is its field's, under a failure of its own: the status
+/// beside `#[error(transparent)]` opts the variant out of transparency.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum OptedOut {
+    #[error(transparent)]
+    #[problem(status = 503, title = "Store unavailable")]
+    Store(#[from] std::io::Error),
+}
+
+/// `#[error(transparent)]` alone answers as the held error, exactly as the
+/// explicit `#[problem(transparent)]` beside it does; with a status it answers
+/// with that status, `detail` still the field's `Display`.
+#[test]
+fn error_transparent_answers_as_the_held_error_unless_a_status_opts_out() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    let implied = serde_json::to_value(
+        PauseError::from(ValidationFailed {
+            field: "name".to_owned(),
+        })
+        .into_problem(),
+    )
+    .expect("a problem serializes");
+    let held = serde_json::to_value(
+        ValidationFailed {
+            field: "name".to_owned(),
+        }
+        .into_problem(),
+    )
+    .expect("a problem serializes");
+    assert_eq!(implied, held);
+
+    assert_eq!(OptedOut::STATUSES, [503]);
+    let opted =
+        serde_json::to_value(OptedOut::from(std::io::Error::other("disk gone")).into_problem())
+            .expect("a problem serializes");
+    assert_eq!(
+        opted,
+        serde_json::json!({
+            "type": "about:blank",
+            "title": "Store unavailable",
+            "status": 503,
+            "detail": "disk gone",
+        })
     );
 }
 
@@ -6313,6 +6291,111 @@ fn a_subset_names_a_generic_or_parenthesized_wider_enum() {
         emitted_responses::<ParenthesizedSubset>(),
         emitted_responses::<ConflictSubset>()
     );
+}
+
+/// Two of `ChunkRejection`'s variants, one under a name of its own, one of
+/// a generic wider enum's named by a turbofish path, and a failure of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ChunkOrQuota {
+    #[error("the chunk is missing")]
+    #[problem(variant_of = ChunkRejection::NotFound)]
+    Missing { id: u64 },
+
+    #[error("the store is busy")]
+    #[problem(variant_of = ChunkRejection::Unavailable)]
+    Busy(RetryAfter),
+
+    #[error("the chunk is gone")]
+    #[problem(variant_of = generic_wide::Wide::<u32>::Gone)]
+    Gone(std::marker::PhantomData<u32>),
+
+    #[error("the store is over quota")]
+    #[problem(status = 507)]
+    OverQuota,
+}
+
+/// A `variant_of` variant answers as the wider variant it builds from its
+/// fields — status, type, title, the wider `Display` as `detail`, extension
+/// members and header group — beside the enum's own failure, and is described
+/// as the wider enum describes that variant alone.
+#[tokio::test]
+async fn a_variant_of_variant_answers_and_is_described_as_the_wider_variant() {
+    use kynos::response::ShortCircuit;
+
+    async fn same(narrow: ChunkOrQuota, wide: ChunkRejection) {
+        let narrow = answered(narrow.into_response()).await;
+        let wide = answered(wide.into_response()).await;
+        assert_eq!(narrow.status, wide.status);
+        assert_eq!(narrow.headers, wide.headers);
+        assert_eq!(narrow.body, wide.body);
+    }
+
+    same(
+        ChunkOrQuota::Missing { id: 7 },
+        ChunkRejection::NotFound { id: 7 },
+    )
+    .await;
+    same(
+        ChunkOrQuota::Busy(RetryAfter { retry_after: 9 }),
+        ChunkRejection::Unavailable(RetryAfter { retry_after: 9 }),
+    )
+    .await;
+
+    assert_eq!(ChunkOrQuota::STATUSES, &[404, 503, 410, 507]);
+    let responses = emitted_responses::<ChunkOrQuota>();
+    assert_eq!(
+        responses["404"],
+        emitted_responses::<MissingChunk>()["404"],
+        "{responses}"
+    );
+    assert_eq!(
+        responses["410"],
+        emitted_responses::<GoneSubset>()["410"],
+        "{responses}"
+    );
+    // `Draining` shares 503 with `Unavailable` and is not taken, so 503 is
+    // described as `Unavailable` declares it alone, as a subset holding only
+    // it would describe it.
+    assert_eq!(
+        responses["503"],
+        emitted_responses::<UnavailableSubset>()["503"],
+        "{responses}"
+    );
+}
+
+/// Only `ChunkRejection`'s `Unavailable`, the reference the 503 above is
+/// described against.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ChunkRejection)]
+enum UnavailableSubset {
+    Unavailable(RetryAfter),
+}
+
+/// Each wider enum a variant is taken from converts back: a wider value of a
+/// taken variant into it, fields moved by name or position, and any other
+/// wider value handed back unchanged as the error.
+#[test]
+fn a_variant_of_variant_converts_back_from_the_wider_enum() {
+    assert!(matches!(
+        ChunkOrQuota::try_from(ChunkRejection::NotFound { id: 3 }),
+        Ok(ChunkOrQuota::Missing { id: 3 })
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(ChunkRejection::Unavailable(RetryAfter { retry_after: 4 })),
+        Ok(ChunkOrQuota::Busy(RetryAfter { retry_after: 4 }))
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(ChunkRejection::RangeConflict(5)),
+        Err(ChunkRejection::RangeConflict(5))
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(generic_wide::Wide::<u32>::Gone(std::marker::PhantomData)),
+        Ok(ChunkOrQuota::Gone(_))
+    ));
+    assert!(matches!(
+        ChunkOrQuota::try_from(generic_wide::Wide::<u32>::Locked),
+        Err(generic_wide::Wide::Locked)
+    ));
 }
 
 /// An interceptor's answer that is one of Kynos' refusals or the

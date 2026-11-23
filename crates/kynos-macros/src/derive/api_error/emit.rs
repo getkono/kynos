@@ -26,15 +26,29 @@ pub(super) fn codes(outcomes: &[Outcome], statuses: &[u16]) -> TokenStream2 {
             let status = failure.status;
             quote!(&[#status])
         }
-        Outcome::Transparent(delegate) => {
-            let ty = &delegate.ty;
-            // Spanned to the field, so an inner type that is no `ApiError` is
-            // reported where it is named.
-            quote_spanned!(ty.span()=> <#ty as ::kynos::response::ShortCircuit>::STATUSES)
-        }
+        Outcome::Transparent(delegate) => delegate.statuses(),
     });
 
     union(parts)
+}
+
+impl Transparent {
+    /// The statuses it answers with, as a `&'static [u16]` expression.
+    ///
+    /// Spanned to the type, so one that is no `ApiError`, or a wider enum
+    /// lacking the variant, is reported where it is named.
+    pub(super) fn statuses(&self) -> TokenStream2 {
+        let ty = &self.ty;
+        match &self.of {
+            None => quote_spanned! {ty.span()=>
+                <#ty as ::kynos::__private::problem::HeldError>::STATUSES
+            },
+            Some(of) => {
+                let item = super::subset::statuses_of(of);
+                quote!(<#ty>::#item)
+            }
+        }
+    }
 }
 
 /// `parts`, each a `&'static [u16]` expression, joined in `const` items into
@@ -66,7 +80,7 @@ pub(super) fn into_problem(failures: &[&Failure], delegates: &[&Transparent]) ->
         failures,
         delegates,
         arms,
-        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::error::problem::IntoProblem>::into_problem),
+        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::into_problem),
     )
 }
 
@@ -164,13 +178,14 @@ fn respond(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
         failures,
         delegates,
         arms,
-        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::response::IntoResponse>::into_response),
+        |ty| quote_spanned!(ty.span()=> <#ty as ::kynos::__private::problem::HeldError>::into_response),
     )
 }
 
 /// A `match self` over `arms`, one per failure declared here, then an arm per
-/// transparent variant handing its field to the function `delegate` names for
-/// the field's type, after the `let detail` an arm reads.
+/// variant answering as another error, handing what it holds — its field, or
+/// the wider variant built from its fields — to the function `delegate` names
+/// for that type, after the `let detail` an arm reads.
 fn dispatch(
     failures: &[&Failure],
     delegates: &[&Transparent],
@@ -179,10 +194,11 @@ fn dispatch(
 ) -> TokenStream2 {
     let handed_over = delegates.iter().map(|transparent| {
         let variant = &transparent.variant;
-        let member = &transparent.member;
+        let bindings = &transparent.bindings;
+        let held = &transparent.held;
         let delegate = delegate(&transparent.ty);
         quote! {
-            Self::#variant { #member: inner } => #delegate(inner),
+            Self::#variant #bindings => #delegate(#held),
         }
     });
 

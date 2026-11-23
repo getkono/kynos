@@ -1,0 +1,35 @@
+error: `variant_of` names the wider variant one variant is, so it belongs on that variant; an enum whose every variant is a wider enum's says `subset_of`
+  --> tests/ui/macros/api_error_variant_of_refusals.rs:25:11
+   |
+25 | #[problem(variant_of = ProfileProblem::Unavailable)]
+   |           ^^^^^^^^^^
+
+error: a variant `variant_of` names answers with the wider variant's declarations, so it takes no `status`, `title`, `type`, `transparent` or `extension` of its own
+  --> tests/ui/macros/api_error_variant_of_refusals.rs:31:15
+   |
+31 |     #[problem(variant_of = ProfileProblem::Unavailable, status = 503)]
+   |               ^^^^^^^^^^
+
+error: variant `Unavailable` answers as the wider variant, whose field markers it takes; drop this `#[problem(...)]`
+  --> tests/ui/macros/api_error_variant_of_refusals.rs:44:9
+   |
+44 |         #[problem(extension)]
+   |         ^
+
+error: `variant_of` names a variant through its enum, as `Wide::Variant`
+  --> tests/ui/macros/api_error_variant_of_refusals.rs:52:28
+   |
+52 |     #[problem(variant_of = Unavailable)]
+   |                            ^^^^^^^^^^^
+
+error: a wider variant's statuses are a `const`, which cannot depend on the type's generic parameter `T`; name a concrete wider enum
+  --> tests/ui/macros/api_error_variant_of_refusals.rs:59:28
+   |
+59 |     #[problem(variant_of = Wide::<T>::Gone)]
+   |                            ^^^^
+
+error: variant `Unavailable` already is the wider variant `Unavailable`, and a wider value converts back into one variant; take it once
+  --> tests/ui/macros/api_error_variant_of_refusals.rs:73:44
+   |
+73 |     #[problem(variant_of = ProfileProblem::Unavailable)]
+   |                                            ^^^^^^^^^^^

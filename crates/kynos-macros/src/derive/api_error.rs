@@ -5,7 +5,10 @@
 //! #[problem( subset_of = <type> )]                 on an enum, alone, instead of
 //!                                                  every list below it
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
-//! #[problem(transparent)]                          on a one-field variant, instead
+//! #[problem(transparent)]                          on a one-field variant, instead;
+//!                                                  implied by `#[error(transparent)]`
+//!                                                  on a variant with no `status`
+//! #[problem( variant_of = <path>::<variant> )]     on a variant, alone, instead
 //! #[problem(extension)]                            on a named field, optional
 //! #[problem(headers)]                              on one field, optional
 //!
@@ -50,11 +53,16 @@
 //! A transparent variant answers as the `ApiError` it holds: its problem is
 //! that type's, and its statuses and responses join the enum's, the statuses
 //! in `const` items of the expansion's own. Its response is that type's too,
-//! so the headers the held error sends reach the wire.
+//! so the headers the held error sends reach the wire. Each is read through
+//! `kynos::__private::problem::HeldError`, so a held type that is no
+//! `ApiError` is reported as that, at the field, rather than once per trait
+//! each use needs.
 //!
 //! A `subset_of` enum's variants are some of the derived enum `<type>` names,
 //! by name and fields; it converts into that enum and answers and is described
-//! as it, as [`subset`] says.
+//! as it, as [`subset`] says. A `variant_of` variant is one variant of such an
+//! enum, in an enum otherwise its own, and converts back, as [`variant_of`]
+//! says.
 //!
 //! `into_response` first hands a 5xx failure to
 //! `kynos::__private::problem::Failed`, which logs it under `trace`; the
@@ -65,6 +73,7 @@ mod describe;
 mod emit;
 mod outcomes;
 mod subset;
+mod variant_of;
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote, quote_spanned};
@@ -135,13 +144,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     .expect("an enum's failures are its variants");
                 (variant, quote!(&[#status]))
             }
-            Outcome::Transparent(delegate) => {
-                let ty = &delegate.ty;
-                (
-                    delegate.variant.clone(),
-                    quote_spanned!(ty.span()=> <#ty as ::kynos::response::ShortCircuit>::STATUSES),
-                )
-            }
+            Outcome::Transparent(delegate) => (delegate.variant.clone(), delegate.statuses()),
         });
         let body = responses(&failures, &statuses, &delegates, true);
         (
@@ -159,12 +162,14 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     };
 
     let impls = impls(input, &problem, &response, &responses, &codes);
+    let back = variant_of::conversions_back(input, &delegates)?;
 
     // `Responses` and `into_problem` come from the same declarations.
     Ok(quote! {
         #display
         #impls
         #handles
+        #back
     })
 }
 
@@ -235,15 +240,37 @@ enum Outcome {
     /// A failure its own `#[problem(...)]` declares.
     Declared(Failure),
 
-    /// The `ApiError` its one field holds.
+    /// Another `ApiError` it answers as: its one field, or a wider variant.
     Transparent(Transparent),
 }
 
-/// A `#[problem(transparent)]` variant: the field it delegates to.
+/// A variant answering as another `ApiError`: the one field a transparent
+/// variant hands over, or the wider variant `variant_of` names, built from the
+/// variant's fields.
 struct Transparent {
     variant: Ident,
-    member: Member,
+    /// The braced bindings after `Self::Variant` that `held` is built from.
+    bindings: TokenStream2,
+    /// The value handed over.
+    held: TokenStream2,
+    /// The type answering: the field's, or the wider enum.
     ty: Type,
+    /// For `variant_of`, the wider variant, whose statuses and description
+    /// are its own rather than the whole wider enum's.
+    of: Option<Ident>,
+}
+
+impl Transparent {
+    /// A transparent variant handing over the field at `member`.
+    fn field(variant: Ident, member: &Member, ty: Type) -> Self {
+        Self {
+            variant,
+            bindings: quote!({ #member: inner }),
+            held: quote!(inner),
+            ty,
+            of: None,
+        }
+    }
 }
 
 /// One way the type can fail: a pattern that matches it, and what it says.

@@ -129,7 +129,8 @@ enum StoreError {
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
-| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type` |
+| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`; implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
+| variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
 | field | `headers` | send this field, a header group, on this failure's response, and declare it under this failure's status alone |
@@ -241,6 +242,16 @@ declare is unioned rather than replaced, so the description names every type
 reaching it, the enum's own first. The union is built in `const` items, so the
 held type cannot name the enum's generic parameters.
 
+`#[error(transparent)]` already says the variant is what it holds, so it makes
+the variant transparent here too, and `#[problem(transparent)]` beside it is
+redundant. A `status` is the opt-out: a variant whose message is its field's
+but whose failure is its own declares one, with the `title` and `type` that go
+with it. A `title`, `type` or `extension(...)` without a `status` is refused
+rather than read either way, since the held error's would silently replace it.
+Where the held type is no `ApiError`, the compile error says so and names both
+ways out. A transparent variant's message being its field's is `thiserror`'s
+rule, so the implication follows it rather than any guess about the type.
+
 **An operation that cannot fail every way names a subset.** A rejection
 type's statuses are declared on every operation returning it, so a `HEAD`
 sharing a `PUT`'s enum would declare a 409 it can never send. The narrower
@@ -270,6 +281,17 @@ reads as hidden inherent items, and `subset_of` names a derived `ApiError`
 enum, a subset included. A per-operation exclusion was rejected, because it
 moves the guarantee from the type to a run-time check.
 
+**A variant shared with a wider enum is taken, not copied.** An enum that also
+fails its own ways is no subset, but one of its variants can be the wider
+enum's: `#[problem(variant_of = ProfileProblem::ProfileUnavailable)]` on it
+answers and is described as that variant, building it from the variant's
+fields by name or position, as a subset does. The derive generates
+`TryFrom<ProfileProblem> for Self`, whose `Error` is the wider value it did not
+convert, over every variant taken from that enum, so a value moves across with
+`?` rather than a hand-written `match` or `let ... else { unreachable!() }`.
+Two variants taking one wider variant are refused, since a wider value converts
+back into one.
+
 **A refusal Kynos ships is held the same way.** Every interceptor refusal that
 sends a problem — `BodySizeExceeded`, `RateLimited`, `Undecodable` and the rest
 — implements `IntoProblem`, so an interceptor answering with one of them or a
@@ -284,7 +306,9 @@ problem.
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,
 a `base` on a variant, an `extension` on a field with
-no name, a `transparent` on a struct, beside a `status`, `title` or `type`, over
+no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an
+`#[error(transparent)]` variant with a `title`, `type` or `extension(...)` and
+no `status`, over
 other than one field, over a field marked `extension`, over a field naming the
 enum's generic parameters or holding no `ApiError`, a `headers` field whose
 type is no header group, and a type with no
@@ -300,7 +324,10 @@ naming a field the failure already publishes; a `const` value whose type is not
 `Serialize` is a compile error at the path, with a case in
 [`tests/ui/macros`](../crates/kynos/tests/ui/macros). A `subset_of` on a variant or a struct, beside another key,
 naming the subset's generic parameter, or over a variant or field with a
-`#[problem(...)]` of its own is a compile error with a case in both. What `base`, `title`,
+`#[problem(...)]` of its own is a compile error with a case in both. So is a
+`variant_of` on the type, beside another key, over a field with a
+`#[problem(...)]`, naming no enum, naming the enum's generic parameter, or
+taking a wider variant another variant already takes. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
@@ -441,8 +468,8 @@ which could disagree, on a trait the application already implements for the
 value, the `Scopes::FORBIDDEN_TYPE` shape above. The type read is the one the
 input decodes: a body extractor's `T`, a `QueryString`'s `T`, a derived
 parameter group, else its field's type. A member naming a problem of its own
-does not override the body holding it, and `Option`, `Box` and `Arc` answer as
-their `T`. The rejection's `Schema` variant carries the problem in `problem`, as
+does not override the body holding it, and `Option`, `Box`, `Arc`, `&T` and
+`Cow` answer as their `T`. The rejection's `Schema` variant carries the problem in `problem`, as
 `AuthRejection::Forbidden` carries its URI, rather than a second variant, since
 a parameter's `Schema` is already nothing but a broken bound. A type an
 `ApiError` also publishes takes the title it publishes there, since one type

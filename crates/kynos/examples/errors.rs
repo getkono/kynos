@@ -98,7 +98,7 @@ struct UserPath {
 /// list. A `limit` past 100 answers as a broken bound on `User` does: the
 /// group names `BOUND_BROKEN` for every field it holds, a plain `u32` too.
 #[allow(dead_code)]
-#[derive(Schema, QueryParams)]
+#[derive(QueryParams)]
 #[schema(constraint_problem = BOUND_BROKEN)]
 struct Page {
     /// Where to resume from.
@@ -166,7 +166,8 @@ struct RetryAfter {
 #[derive(Debug, thiserror::Error, ApiError)]
 #[problem(base = "https://errors.example.com/")]
 enum StoreError {
-    /// `#[from]` is what makes the `?` in `get_user` compile.
+    /// `#[from]` is what makes the `?` in `get_user` compile. Its message is
+    /// the row's, and its status is its own, so it is not transparent.
     #[error(transparent)]
     #[problem(status = 404, title = "User not found")]
     NotFound(#[from] RowMissing),
@@ -175,9 +176,9 @@ enum StoreError {
     #[problem(status = 409)]
     EmailTaken,
 
-    /// Answers as `Invalid` does, and its 422 joins this enum's statuses.
+    /// Answers as `Invalid` does, and its 422 joins this enum's statuses:
+    /// `#[error(transparent)]` with no status of its own is transparent.
     #[error(transparent)]
-    #[problem(transparent)]
     Invalid(#[from] Invalid),
 
     #[error("the store is over its {limit} row budget")]
@@ -212,6 +213,26 @@ enum StoreError {
 #[problem(subset_of = StoreError)]
 enum ListError {
     Busy { retry: RetryAfter },
+}
+
+/// What resolving a user behind the store fails with: the store's own `Busy`,
+/// and a failure no `StoreError` describes, so it is no subset.
+///
+/// `variant_of` takes that one variant by name and fields, answering and
+/// described as `StoreError` declares it, and the derive generates
+/// `TryFrom<StoreError> for ResolveError`, so a store failure moves across
+/// with `?` where it is one of the variants taken, and is handed back where
+/// it is not.
+#[allow(dead_code)]
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ResolveError {
+    #[error("the store is busy")]
+    #[problem(variant_of = StoreError::Busy)]
+    Busy { retry: RetryAfter },
+
+    #[error("that user was deleted")]
+    #[problem(status = 410)]
+    Deleted,
 }
 
 /// Refuses everything while the store is being migrated.

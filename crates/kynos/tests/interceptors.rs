@@ -12,7 +12,11 @@
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
-use std::collections::BTreeSet;
+use std::{
+    collections::BTreeSet,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use kynos::{
     Router,
@@ -22,13 +26,17 @@ use kynos::{
     },
     http::{HeaderName, HeaderValue, Method, StatusCode},
     middleware::{
+        Observer,
         catch_panic::Propagate,
         cors::Cors,
         limits::body_size::BodySize,
-        request_id::{CorrelationHeaders, RequestId, RequestIdSource, XRequestId},
+        request_id::{AssignedId, CorrelationHeaders, RequestId, RequestIdSource, XRequestId},
     },
     openapi::Method as OperationMethod,
-    router::group::{Group, MethodSet, Methods, SafeMethods, UnsafeMethods},
+    router::{
+        group::{Group, MethodSet, Methods, SafeMethods, UnsafeMethods},
+        operation::Route,
+    },
 };
 
 #[path = "support/mod.rs"]
@@ -256,6 +264,92 @@ async fn a_group_naming_two_headers_sets_both_to_one_identifier() {
         .await;
     assert_eq!(trusted.fields("x-request-id"), ["first-name"]);
     assert_eq!(trusted.fields("x-correlation-id"), ["first-name"]);
+}
+
+/// A group carrying the identifier under a name other than the default's.
+struct Renamed(HeaderValue);
+
+impl HeaderParams for Renamed {
+    const NAMES: &'static [&'static str] = &["x-correlation-id"];
+}
+
+impl EncodeHeaders for Renamed {
+    fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+        Ok(vec![(
+            HeaderName::from_static("x-correlation-id"),
+            self.0.clone(),
+        )])
+    }
+}
+
+impl CorrelationHeaders for Renamed {
+    fn from_id(id: HeaderValue) -> Self {
+        Self(id)
+    }
+}
+
+/// Answers with the identifier `RequestId` assigned, or `none`.
+#[kynos::get("/assigned")]
+async fn assigned(id: Option<AssignedId>) -> Text {
+    Text(
+        id.as_ref()
+            .map_or("none", |id| id.as_str().expect("a printable identifier"))
+            .to_owned(),
+    )
+}
+
+/// What an observer read off each response it saw.
+#[derive(Clone, Default)]
+struct Departures(Arc<Mutex<Vec<Option<AssignedId>>>>);
+
+impl Observer<App> for Departures {
+    fn on_request(&self, _: &kynos::http::Request, _: Option<Route<'_>>, _: &App) {}
+
+    fn on_response(&self, response: &kynos::http::Response, _: Option<Route<'_>>, _: Duration) {
+        self.0
+            .lock()
+            .expect("an unpoisoned record")
+            .push(AssignedId::of_response(response).cloned());
+    }
+}
+
+/// A handler and an observer read the identifier the response carries, under
+/// whichever name the router's `RequestId` writes it, without naming it.
+#[tokio::test]
+async fn the_assigned_identifier_reaches_a_handler_and_an_observer_unnamed() {
+    let departures = Departures::default();
+    let service = Router::<App>::new()
+        .mount(kynos::routes![assigned])
+        .intercept(RequestId::new().header::<Renamed>())
+        .observe(departures.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/assigned").call().await;
+    let carried = reply
+        .field("x-correlation-id")
+        .expect("the response carries an identifier");
+    assert_eq!(reply.text(), carried);
+
+    let seen = departures.0.lock().expect("an unpoisoned record").clone();
+    let [Some(seen)] = <[_; 1]>::try_from(seen).expect("one response observed") else {
+        panic!("the observer saw no identifier");
+    };
+    assert_eq!(seen.as_str(), Some(carried.as_str()));
+}
+
+/// Without a `RequestId`, the handler reads `None` rather than being refused.
+#[tokio::test]
+async fn an_operation_no_request_id_covers_reads_no_identifier() {
+    let service = Router::<App>::new()
+        .mount(kynos::routes![assigned])
+        .build(App::new())
+        .expect("a describable router");
+
+    let reply = get(&service, "/assigned").call().await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(reply.text(), "none");
 }
 
 /// A correlation group that refuses every identifier it is given.

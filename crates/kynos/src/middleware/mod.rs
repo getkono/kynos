@@ -456,6 +456,16 @@ impl<H> Continued<H> {
         *self.response.body_mut() = body;
     }
 
+    /// Sets a response extension, for an interceptor that hands a value to
+    /// whatever is outside it, observers included.
+    ///
+    /// Crate-private: an extension has no wire form and so needs no
+    /// declaration, but each value set here is one the framework documents
+    /// where it is set.
+    pub(crate) fn insert_extension<T: Clone + Send + Sync + 'static>(&mut self, value: T) {
+        self.response.extensions_mut().insert(value);
+    }
+
     /// Removes a field the declared group `G` names.
     ///
     /// For a field the interceptor owns that has stopped being true, such as
@@ -601,7 +611,12 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 /// `route` is `None` when no operation matched.
 pub trait Observer<C>: Send + Sync + 'static {
     /// Called when a request arrives, before any interceptor.
-    fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &C);
+    ///
+    /// Does nothing unless implemented, so an observer that only reads
+    /// responses implements [`on_response`](Observer::on_response) alone.
+    fn on_request(&self, request: &Request, route: Option<Route<'_>>, context: &C) {
+        let _ = (request, route, context);
+    }
 
     /// Called when a response is about to be written.
     ///

@@ -5441,7 +5441,108 @@ mod api_error {
                 ),
                 "cannot depend on the type's generic parameter `'a`",
             ),
+            case(
+                "an `#[error(transparent)]` variant with a title and no status",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(title = "User not found")]
+                        Lookup(LookupError),
+                    }
+                ),
+                "`#[error(transparent)]` makes variant `Lookup` answer as the error it holds",
+            ),
         ]
+    }
+
+    /// `#[error(transparent)]` implies `#[problem(transparent)]` where the
+    /// variant declares no status, so the refusals of a transparent variant
+    /// reach it unwritten; one declaring a status is a failure of its own.
+    #[test]
+    fn error_transparent_implies_problem_transparent_unless_a_status_opts_out() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "an implied transparent variant holding two fields",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error(transparent)]
+                            Lookup(LookupError, u64),
+                        }
+                    ),
+                    "holds exactly one field",
+                ),
+                case(
+                    "an implied transparent variant with a type and no status",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error(transparent)]
+                            #[problem(type = "https://errors.example.com/lookup")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answer as the error it holds",
+                ),
+                case(
+                    "an implied transparent variant with a constant member",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error(transparent)]
+                            #[problem(extension(code = "lookup"))]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answer as the error it holds",
+                ),
+                case(
+                    "an `#[error(\"...\")]` variant, which is not transparent",
+                    quote::quote!(
+                        enum StoreError {
+                            #[error("lookup failed")]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "does not say what status it produces",
+                ),
+                case(
+                    "a struct's `#[error(transparent)]`, which has no variant to hand over",
+                    quote::quote!(
+                        #[error(transparent)]
+                        struct StoreError(LookupError);
+                    ),
+                    "this error does not say what status it produces",
+                ),
+            ],
+            expand_inner,
+        );
+
+        for (description, accepted) in [
+            (
+                "a variant `#[error(transparent)]` alone makes transparent",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        Lookup(#[from] LookupError),
+                    }
+                ),
+            ),
+            (
+                "a variant whose status opts out of transparency",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(status = 404, title = "User not found")]
+                        Lookup(#[from] LookupError),
+                    }
+                ),
+            ),
+        ] {
+            let input = syn::parse2(accepted).expect("the case itself must parse");
+            assert!(
+                expand_inner(&input).is_ok(),
+                "{description} must be accepted"
+            );
+        }
     }
 
     /// The refusals of `#[problem(subset_of = ...)]`, apart for the reason
@@ -5500,6 +5601,104 @@ mod api_error {
         ]
     }
 
+    /// The refusals of `#[problem(variant_of = ...)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn variant_of_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`variant_of` on the type, when it names one variant",
+                quote::quote!(
+                    #[problem(variant_of = ProfileProblem::Unavailable)]
+                    enum Lookup {
+                        Unavailable,
+                    }
+                ),
+                "belongs on that variant",
+            ),
+            case(
+                "`variant_of` beside a status of its own",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = ProfileProblem::Unavailable, status = 503)]
+                        Unavailable,
+                    }
+                ),
+                "takes no `status`, `title`, `type`, `transparent` or `extension` of its own",
+            ),
+            case(
+                "a `variant_of` variant's field marked as the wider field is",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = ProfileProblem::Unavailable)]
+                        Unavailable {
+                            #[problem(extension)]
+                            profile_status: String,
+                        },
+                    }
+                ),
+                "whose field markers it takes",
+            ),
+            case(
+                "`variant_of` naming no enum",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = Unavailable)]
+                        Unavailable,
+                    }
+                ),
+                "names a variant through its enum",
+            ),
+            case(
+                "`variant_of` naming the type's generic parameter",
+                quote::quote!(
+                    enum Lookup<T> {
+                        #[problem(variant_of = Wide::<T>::Gone)]
+                        Gone(T),
+                    }
+                ),
+                "cannot depend on the type's generic parameter `T`",
+            ),
+            case(
+                "two variants taking one wider variant",
+                quote::quote!(
+                    enum Lookup {
+                        #[problem(variant_of = ProfileProblem::Unavailable)]
+                        Unavailable,
+                        #[problem(variant_of = ProfileProblem::Unavailable)]
+                        Down,
+                    }
+                ),
+                "already is the wider variant `Unavailable`",
+            ),
+        ]
+    }
+
+    /// One diagnostic site refuses every key beside `variant_of`, so the
+    /// ledger's row with a status leaves the others unwitnessed.
+    #[test]
+    fn a_variant_of_variant_refuses_each_key_of_its_own() {
+        for key in [
+            quote::quote!(title = "Down"),
+            quote::quote!(type = "https://errors.example.com/down"),
+            quote::quote!(transparent),
+            quote::quote!(extension(code = "down")),
+        ] {
+            each_case_is_refused(
+                vec![case(
+                    "a `variant_of` variant declaring a key of its own",
+                    quote::quote!(
+                        enum Lookup {
+                            #[problem(variant_of = ProfileProblem::Unavailable, #key)]
+                            Unavailable,
+                        }
+                    ),
+                    "of its own",
+                )],
+                expand_inner,
+            );
+        }
+    }
+
     /// One diagnostic site refuses every list below a subset, so the ledger's
     /// row on a variant leaves a field's marker unwitnessed.
     #[test]
@@ -5527,6 +5726,7 @@ mod api_error {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
         each_case_is_refused(subset_ledger(), expand_inner);
+        each_case_is_refused(variant_of_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
@@ -5580,11 +5780,13 @@ mod api_error {
                 include_str!("api_error/emit.rs"),
                 include_str!("api_error/outcomes.rs"),
                 include_str!("api_error/subset.rs"),
+                include_str!("api_error/variant_of.rs"),
             ]
             .concat(),
             ledger().len()
                 + transparent_ledger().len()
                 + subset_ledger().len()
+                + variant_of_ledger().len()
                 + headers_ledger().len()
                 + keys_ledger().len()
                 + constants_ledger().len()
@@ -7154,6 +7356,51 @@ mod cookies {
     }
 }
 
+/// Every parameter derive registers `#[schema(...)]`, so each refuses a
+/// malformed one as the `Schema` derive does, on the group and on a field,
+/// where no `Schema` derive stands beside it to.
+mod parameter_groups {
+    use super::{Case, DeriveInput, TokenStream2, case, each_case_is_refused};
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a misspelled field bound",
+                quote::quote!(
+                    struct Group {
+                        #[schema(maxium = 3)]
+                        limit: u32,
+                    }
+                ),
+                "`maxium` is not part of the `#[schema(...)]` grammar",
+            ),
+            case(
+                "a bound written on the group",
+                quote::quote!(
+                    #[schema(minimum = 1)]
+                    struct Group {
+                        limit: u32,
+                    }
+                ),
+                "a type's `#[schema(...)]` takes only `constraint_problem = ...`",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_parameter_derive_refuses_a_malformed_schema_attribute() {
+        let derives: [fn(&DeriveInput) -> syn::Result<TokenStream2>; 4] = [
+            crate::derive::path_params::expand_inner,
+            crate::derive::query_params::expand_inner,
+            crate::derive::headers::expand_inner,
+            crate::derive::cookies::expand_inner,
+        ];
+        for expand in derives {
+            each_case_is_refused(ledger(), expand);
+        }
+    }
+}
+
 mod path_params {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::path_params::expand_inner;
@@ -7523,11 +7770,37 @@ mod param_value {
     fn ledger() -> Vec<Case> {
         vec![
             case(
-                "a struct, which has no variant names",
+                "a union, which is neither an enum nor a newtype",
                 quote::quote!(
-                    struct UserId(u64);
+                    union Bits {
+                        int: u32,
+                        float: f32,
+                    }
                 ),
-                "derived for a field-less enum",
+                "a union is neither",
+            ),
+            case(
+                "a struct with named fields, which serde writes as an object",
+                quote::quote!(
+                    struct Page {
+                        limit: u32,
+                    }
+                ),
+                "named fields as an object",
+            ),
+            case(
+                "a tuple struct holding two fields",
+                quote::quote!(
+                    struct Range(u32, u32);
+                ),
+                "holds several or none",
+            ),
+            case(
+                "a unit struct",
+                quote::quote!(
+                    struct Nothing;
+                ),
+                "a unit struct holds no value",
             ),
             case(
                 "a variant carrying data",
