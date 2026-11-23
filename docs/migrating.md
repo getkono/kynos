@@ -34,6 +34,7 @@ the section for the release that ships it.
 | `assert_eq!(resp.status().as_u16(), 401, "a revoked token is dead")`, which drops the body from the failure | `resp.assert_status_because(401, "a revoked token is dead")` | #1391 |
 | An `assert_problem(resp, status, slug)` wrapper formatting `BASE + slug` | `test::TestClient::new(service).with_problem_base(BASE)` once, then `resp.assert_problem(403, "insufficient-scope")` | #1391 |
 | `.peer(..)` on every request so a test reads one client whether built `test::TestClient::new` or `through_server` | nothing: both send from `127.0.0.1:0`; `with_peer` once where the address itself matters | #1391 |
+| A `#[kynos::head]` twin whose body calls the same function as the `#[kynos::get]`, only so the document describes the HEAD | `#[kynos::get(.., head)]` on the GET alone, or `head = "..."` beside an explicit `operation_id`; a twin left beside it is refused, `HeadDescribedTwice` | #1394 |
 
 ## 0.5 to 0.6
 
