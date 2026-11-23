@@ -381,7 +381,8 @@ fn routes_takes_more_than_sixteen_operations() {
 /// tuple's stacks combine as a flat one's do.
 #[test]
 fn a_member_past_the_sixteenth_keeps_its_interceptor() {
-    use kynos::middleware::limits::body_size::BodySize;
+    // A probe covering an operation whatever its handler reads.
+    use kynos::middleware::limits::concurrency::Concurrency;
 
     let router = Router::<()>::new().mount(kynos::routes![
         r00,
@@ -400,12 +401,12 @@ fn a_member_past_the_sixteenth_keeps_its_interceptor() {
         r13,
         r14,
         r15,
-        r16.intercept(BodySize::new(64)),
+        r16.intercept(Concurrency::new(std::num::NonZeroUsize::MIN)),
     ]);
     let document = router.openapi().expect("a describable router");
     let limited = document.paths.items["/r16"].get.as_ref().expect("a GET");
     let unlimited = document.paths.items["/r15"].get.as_ref().expect("a GET");
 
-    assert!(limited.responses.responses.contains_key("413"));
-    assert!(!unlimited.responses.responses.contains_key("413"));
+    assert!(limited.responses.responses.contains_key("503"));
+    assert!(!unlimited.responses.responses.contains_key("503"));
 }

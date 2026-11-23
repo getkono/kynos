@@ -105,6 +105,10 @@ where
         self.public
     }
 
+    fn __reads_body(&self) -> bool {
+        H::__READS_BODY
+    }
+
     // This operation's recovery covers its guard wherever the guard runs.
     fn __guard_ahead(
         &self,

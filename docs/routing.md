@@ -133,7 +133,11 @@ authentication to a group documents it on every operation underneath, correctly,
 without anyone maintaining that by hand. An interceptor only some of a
 resource's operations need — a larger body limit on its one upload — goes on
 those operations inside `routes!`, so groups stay one per resource rather than
-one per limit.
+one per limit. Nor does a group split by which operations read a body: an
+interceptor whose work is the body, as `BodySize`'s is, says so with
+`Interceptor::COVERS`, and runs and is declared only on the operations whose
+handler's last argument reads one. A `DELETE` or an action `POST` in the same
+group declares no 413 it could never send.
 
 What reaches a router is anything implementing `IntoEndpoints<C>`: an
 [`Endpoints<C>`](../crates/kynos/src/router/endpoint/), an

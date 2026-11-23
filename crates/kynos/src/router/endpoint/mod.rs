@@ -79,6 +79,18 @@ pub trait Endpoint<C>: Send + Sync + 'static {
         true
     }
 
+    /// Whether this operation reads the request body, which an interceptor
+    /// covering [`Covers::BodyReading`](crate::middleware::Covers::BodyReading)
+    /// is run and declared on.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from its handler. Any other endpoint is taken to read one,
+    /// so nothing is left uncovered by accident.
+    #[doc(hidden)]
+    fn __reads_body(&self) -> bool {
+        true
+    }
+
     /// Runs this operation's guard from the request head, ahead of the
     /// interceptors a [`guard_first`](crate::router::group::Group::guard_first)
     /// scope puts it before, handing the request on with what the guard
@@ -174,6 +186,8 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn public(&self) -> bool;
 
+    fn reads_body(&self) -> bool;
+
     /// This operation's guard as an interceptor, where its handler takes one.
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>>;
 }
@@ -209,6 +223,10 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
 
     fn public(&self) -> bool {
         Endpoint::__public(self)
+    }
+
+    fn reads_body(&self) -> bool {
+        Endpoint::__reads_body(self)
     }
 
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>> {

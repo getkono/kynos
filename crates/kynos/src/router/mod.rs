@@ -92,6 +92,23 @@ pub(crate) struct Mounted<C> {
     pub(crate) docs: Option<docs::state::Role>,
 }
 
+impl<C: 'static> Mounted<C> {
+    /// What of `router`'s interceptors and the enclosing scopes' covers this
+    /// operation, outermost first: each whose
+    /// [`Covers`](crate::middleware::Covers) reaches what the handler reads,
+    /// which is what `describe` declares and `build` runs.
+    fn covered_by<'a>(
+        &'a self,
+        router: &'a [Arc<dyn ErasedInterceptor<C>>],
+    ) -> impl Iterator<Item = &'a Arc<dyn ErasedInterceptor<C>>> {
+        let reads_body = self.endpoint.reads_body();
+        router
+            .iter()
+            .chain(&self.interceptors)
+            .filter(move |interceptor| interceptor.covers().reaches(reads_body))
+    }
+}
+
 /// The root of an API.
 ///
 /// `C` is the application context type: the application's own struct, which
@@ -709,7 +726,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// On the root router it also runs around the 404, 308, 405 and 501 the
     /// router answers when no operation does, where
     /// [`Next::route`](crate::middleware::Next::route) is `None`; the
-    /// description is unchanged, since a fallback has no `paths` entry. On a
+    /// description is unchanged, since a fallback has no `paths` entry. One
+    /// covering [`Covers::BodyReading`](crate::middleware::Covers::BodyReading)
+    /// leaves the fallbacks alone, since none of them reads a body. On a
     /// router that is nested or merged into another it covers that router's
     /// operations alone, as a group's interceptor does.
     ///

@@ -299,6 +299,11 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
             &request,
         )
     }
+
+    /// An asset is served from the head alone.
+    fn __reads_body(&self) -> bool {
+        false
+    }
 }
 
 /// The form of an asset one request receives.

@@ -242,6 +242,15 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     /// [`HeaderParams::DESCRIBED`]: crate::extract::params::header::HeaderParams::DESCRIBED
     const ADDS_ON: Placement = Placement::Success;
 
+    /// Which of the operations this interceptor is mounted over it covers,
+    /// by what their handler reads. Defaults to [`Covers::Every`].
+    ///
+    /// An operation it does not cover neither runs it nor declares it, at
+    /// whatever scope it is mounted. The collision check still compares it
+    /// with every interceptor it is mounted beside, since no value narrows
+    /// what it covers to operations another one leaves out.
+    const COVERS: Covers = Covers::Every;
+
     /// Not part of the API: the methods of the operations a stack element
     /// covers, which the collision check reads.
     ///
@@ -299,6 +308,44 @@ pub enum Placement {
     /// For a header meaningful only on a failure, as `Retry-After` on a 429 or
     /// 503 is.
     Problems,
+}
+
+/// Which operations an interceptor covers, by what their handler reads: its
+/// [`Interceptor::COVERS`].
+///
+/// Settled when the router is built, from each operation's handler type, so a
+/// request pays nothing for it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum Covers {
+    /// Every operation it is mounted over.
+    #[default]
+    Every,
+
+    /// Only the operations whose handler reads the request body: those whose
+    /// last argument is a [`FromRequest`](crate::extract::FromRequest)
+    /// extractor, such as `Json<T>`, rather than one reading the head alone.
+    ///
+    /// For an interceptor whose only work is on the request body, as
+    /// [`BodySize`](limits::body_size::BodySize)'s is: on an operation that
+    /// reads none it could only declare a refusal it never makes. A request
+    /// no operation matched reads no body either, so a router's own
+    /// interceptor covering this leaves its fallbacks alone too. An operation
+    /// with no handler of Kynos's, such as an `unchecked` route or a
+    /// hand-written [`Endpoint`](crate::router::endpoint::Endpoint), counts
+    /// as reading one, so it is never left uncovered by accident.
+    BodyReading,
+}
+
+impl Covers {
+    /// Whether an operation whose handler reads its body where `reads_body`
+    /// is covered.
+    pub(crate) const fn reaches(self, reads_body: bool) -> bool {
+        match self {
+            Self::Every => true,
+            Self::BodyReading => reads_body,
+        }
+    }
 }
 
 /// An interceptor configured with a combination it cannot honour.

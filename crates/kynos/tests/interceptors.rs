@@ -24,15 +24,16 @@ use kynos::{
         body::text::Text,
         params::header::{EncodeHeaders, HeaderParams, Headers, UnencodableHeader},
     },
-    http::{HeaderName, HeaderValue, Method, StatusCode},
+    http::{HeaderName, HeaderValue, Method, Request, StatusCode},
     middleware::{
-        Observer,
+        Continued, Covers, Interceptor, Next, Observer,
         catch_panic::Propagate,
         cors::Cors,
-        limits::body_size::BodySize,
+        limits::body_size::{BodySize, BodySizeExceeded},
         request_id::{AssignedId, CorrelationHeaders, RequestId, RequestIdSource, XRequestId},
     },
     openapi::Method as OperationMethod,
+    response::status::NoContent,
     router::{
         group::{Group, MethodSet, Methods, SafeMethods, UnsafeMethods},
         operation::Route,
@@ -643,7 +644,8 @@ async fn interceptors_scoped_to_disjoint_methods_never_meet_on_an_operation() {
 }
 
 /// What a scoped interceptor declares lands on the operations it covers and on
-/// no other: the `413` its `Short` answers, and the header it `Adds`.
+/// no other: the `413` its `Short` answers, where its `Covers` reaches the
+/// operation too, and the header it `Adds`.
 #[test]
 fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
     let document = serde_json::to_value(
@@ -653,11 +655,13 @@ fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
     )
     .expect("a serializable document");
 
-    for (path, method, covered) in [
-        ("/users/{id}", "get", false),
-        ("/users", "get", false),
-        ("/users", "post", true),
-        ("/users/{id}", "delete", true),
+    // `BodySize` covers only an operation reading a body, which the `DELETE`
+    // is not.
+    for (path, method, covered, reads_a_body) in [
+        ("/users/{id}", "get", false, false),
+        ("/users", "get", false, false),
+        ("/users", "post", true, true),
+        ("/users/{id}", "delete", true, false),
     ] {
         let responses = &document["paths"][path][method]["responses"];
         let declares_413 = responses.get("413").is_some();
@@ -667,9 +671,171 @@ fn a_method_scoped_interceptor_is_declared_only_on_the_methods_it_names() {
             .values()
             .any(|response| response["headers"].get("X-Request-Id").is_some());
 
-        assert_eq!(declares_413, covered, "{method} {path}: the 413");
+        assert_eq!(
+            declares_413,
+            covered && reads_a_body,
+            "{method} {path}: the 413"
+        );
         assert_eq!(declares_header, covered, "{method} {path}: X-Request-Id");
     }
+}
+
+// --- An interceptor covering only the operations that read a body ----------
+
+/// Refuses every request it covers with a 413, and covers only the operations
+/// that read a body.
+struct Bodies;
+
+impl<C: Sync + 'static> Interceptor<C> for Bodies {
+    type Reads = ();
+    type Adds = ();
+    type Short = BodySizeExceeded;
+
+    const COVERS: Covers = Covers::BodyReading;
+
+    async fn intercept(
+        &self,
+        _: Request,
+        (): (),
+        _: &C,
+        _: Next<'_, C>,
+    ) -> Result<Continued, BodySizeExceeded> {
+        Err(BodySizeExceeded::new(0))
+    }
+}
+
+/// Takes nothing at all, so it reads no body.
+#[kynos::get("/ping")]
+async fn ping() -> NoContent {
+    NoContent
+}
+
+/// The support operations and `ping` under a `RequestId`, with [`Bodies`]
+/// mounted at `scope`: a body read by `create_user` alone, and each other one
+/// reading the head through a different handler shape.
+macro_rules! bodies_at {
+    (router) => {
+        Router::<App>::new()
+            .mount(kynos::routes![
+                support::get_user,
+                support::list_users,
+                support::create_user,
+                support::delete_user,
+                ping,
+            ])
+            .intercept(RequestId::new())
+            .intercept(Bodies)
+    };
+    (group) => {
+        Router::<App>::new()
+            .group(Group::new("/").intercept(Bodies).mount(kynos::routes![
+                support::get_user,
+                support::list_users,
+                support::create_user,
+                support::delete_user,
+                ping,
+            ]))
+            .intercept(RequestId::new())
+    };
+    (endpoint) => {
+        Router::<App>::new()
+            .mount(kynos::routes![
+                support::get_user.intercept(Bodies),
+                support::list_users.intercept(Bodies),
+                support::create_user.intercept(Bodies),
+                support::delete_user.intercept(Bodies),
+                ping.intercept(Bodies),
+            ])
+            .intercept(RequestId::new())
+    };
+}
+
+/// [`bodies_at!`] at each scope, under the scope's name.
+fn bodies_at_every_scope() -> [(&'static str, kynos::Result<kynos::openapi::Document>); 3] {
+    [
+        ("router", bodies_at!(router).openapi()),
+        ("group", bodies_at!(group).openapi()),
+        ("endpoint", bodies_at!(endpoint).openapi()),
+    ]
+}
+
+/// At every scope, the interceptor is declared on the one operation reading a
+/// body and on none reading the head alone, whatever its handler's shape.
+#[test]
+fn an_interceptor_covering_bodies_is_declared_only_where_a_body_is_read() {
+    for (scope, document) in bodies_at_every_scope() {
+        let document = document.expect("a describable router");
+
+        let mut operations = 0;
+        for (path, item) in &document.paths.items {
+            for (method, operation) in item.operations() {
+                operations += 1;
+                assert_eq!(
+                    operation.responses.responses.contains_key("413"),
+                    operation.request_body.is_some(),
+                    "{scope}: {method:?} {path}"
+                );
+            }
+        }
+        assert_eq!(operations, 5, "{scope}");
+    }
+}
+
+/// At every scope, the interceptor runs on the operation reading a body and
+/// on none reading the head alone, while the interceptors beside it still run
+/// on each.
+#[tokio::test]
+async fn an_interceptor_covering_bodies_runs_only_where_a_body_is_read() {
+    for (scope, service) in [
+        ("router", bodies_at!(router).build(App::new())),
+        ("group", bodies_at!(group).build(App::new())),
+        ("endpoint", bodies_at!(endpoint).build(App::new())),
+    ] {
+        let service = service.expect("a describable router");
+
+        let created = post(&service, "/users")
+            .header("content-type", "application/json")
+            .body(r#"{"id":2,"name":"a"}"#)
+            .call()
+            .await;
+        assert_eq!(created.status, StatusCode::PAYLOAD_TOO_LARGE, "{scope}");
+
+        for (method, target, status) in [
+            (Method::GET, "/users/1", StatusCode::OK),
+            (Method::GET, "/users", StatusCode::OK),
+            (Method::DELETE, "/users/1", StatusCode::NO_CONTENT),
+            (Method::GET, "/ping", StatusCode::NO_CONTENT),
+        ] {
+            let reply = support::send(&service, method.clone(), target)
+                .header("content-length", "4")
+                .body(&b"left"[..])
+                .call()
+                .await;
+            assert_eq!(reply.status, status, "{scope}: {method} {target}");
+            assert!(
+                reply.field("x-request-id").is_some(),
+                "{scope}: {method} {target}"
+            );
+        }
+    }
+}
+
+/// A router's own interceptor covering bodies leaves its fallbacks alone, as
+/// it leaves an operation reading no body: no operation reads that one.
+#[tokio::test]
+async fn a_router_interceptor_covering_bodies_leaves_its_fallbacks_alone() {
+    let service = bodies_at!(router)
+        .build(App::new())
+        .expect("a describable router");
+
+    let unmatched = post(&service, "/nothing-here")
+        .header("content-type", "application/json")
+        .body(r#"{"id":2,"name":"a"}"#)
+        .call()
+        .await;
+
+    assert_eq!(unmatched.status, StatusCode::NOT_FOUND);
+    assert!(unmatched.field("x-request-id").is_some());
 }
 
 // --- The two closed sets --------------------------------------------------

@@ -41,7 +41,7 @@ use crate::{
 ///     openapi::PathTemplate::parse("/health").expect("valid path"),
 ///     health,
 /// )
-/// .intercept(kynos::middleware::limits::body_size::BodySize::new(1_024));
+/// .intercept(kynos::middleware::request_id::RequestId::new());
 /// let router = kynos::Router::<()>::new().mount(endpoint);
 /// # let _ = router;
 /// ```
@@ -290,7 +290,10 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
         const { stack::unscoped::<C, N>() };
 
         let mut builder: EndpointBuilder<C, H, A, P, Cons<N, I>> = self.retype();
-        builder.interceptors.push(Arc::new(interceptor));
+        // Still in the type, so the collision check reads what was written.
+        if N::COVERS.reaches(H::__READS_BODY) {
+            builder.interceptors.push(Arc::new(interceptor));
+        }
         builder
     }
 }
