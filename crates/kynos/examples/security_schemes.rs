@@ -71,10 +71,11 @@
 //!
 //! `ReadReports` says that URI a second time as `Scopes::FORBIDDEN_TYPE`, which
 //! is the only seam a document assembled from *types* has for a value chosen at
-//! run time. `/reports` then declares a 403 publishing that type or
-//! `about:blank`; every other guarded operation here names no scope set and
-//! declares the shared `Problem` component, which is the widest thing true of a
-//! refusal nothing has named.
+//! run time. `/reports` and `/reports/summary` then declare a 403 publishing
+//! that type or `about:blank`; every other guarded operation here declares the
+//! shared `Problem` component, which is the widest thing true of a refusal
+//! nothing has named. `/exports/reports` scopes its token by `ReadReports` too,
+//! but its service key names no refusal, so its 403 stays wide.
 
 use std::{collections::HashMap, net::Ipv4Addr, time::Duration};
 
