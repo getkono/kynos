@@ -1288,6 +1288,43 @@ mod assertions {
             assert!(!removed("empty"));
         }
 
+        /// `Expires` reads as RFC 6265 section 5.1.1's cookie-date, so the
+        /// dashed date a removal is commonly written with reads as one, and
+        /// a date that algorithm refuses reads as absent.
+        #[test]
+        fn expires_reads_as_a_cookie_date() {
+            let response = setting(&[
+                "dashed=; Expires=Thu, 01-Jan-1970 00:00:00 GMT",
+                "loose=x; Expires=1 JAN 2000 1:2:3",
+                "two-digit=x; Expires=Wed, 09 Jun 21 10:18:14 GMT",
+                "earliest=x; Expires=Mon, 01 Jan 1601 00:00:00 GMT",
+                "too-early=x; Expires=Sun, 31 Dec 1600 23:59:59 GMT",
+                "leap-second=x; Expires=Thu, 01 Jan 1970 00:00:60 GMT",
+                "no-such-day=x; Expires=Tue, 31 Feb 2026 00:00:00 GMT",
+                "no-time=x; Expires=Thu, 01 Jan 1970",
+            ]);
+            let expires = |name| {
+                response
+                    .set_cookie(name)
+                    .unwrap_or_else(|| panic!("`{name}` is set"))
+                    .expires
+            };
+            let at = |seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds);
+
+            assert_eq!(expires("dashed"), Some(SystemTime::UNIX_EPOCH));
+            response.assert_cookie_cleared("dashed");
+            assert_eq!(expires("loose"), Some(at(946_684_800 + 3723)));
+            assert_eq!(expires("two-digit"), Some(at(1_623_233_894)));
+            assert_eq!(
+                expires("earliest"),
+                SystemTime::UNIX_EPOCH.checked_sub(Duration::from_secs(11_644_473_600))
+            );
+            assert_eq!(expires("too-early"), None);
+            assert_eq!(expires("leap-second"), None);
+            assert_eq!(expires("no-such-day"), None);
+            assert_eq!(expires("no-time"), None);
+        }
+
         /// Of several fields naming one cookie, the last is the one a user
         /// agent is left holding; a field naming no cookie is skipped.
         #[test]
