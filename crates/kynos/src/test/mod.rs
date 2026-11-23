@@ -1666,17 +1666,53 @@ impl TestResponse {
     /// Panics, with the body included, when the status differs, and when a
     /// number is outside 100 to 999, which no status can be.
     pub fn assert_status(&self, expected: impl IntoStatus) -> &Self {
+        self.check_status(expected, None)
+    }
+
+    /// [`assert_status`](Self::assert_status), saying which rule the status
+    /// checks: `reason` follows the exchange at the head of the failure
+    /// message, before the statuses and the body.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .get("/sessions/current")
+    ///     .bearer("revoked")
+    ///     .send()
+    ///     .await
+    ///     .assert_status_because(401, "a revoked token is dead");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`assert_status`](Self::assert_status) does, naming
+    /// `reason`.
+    pub fn assert_status_because(
+        &self,
+        expected: impl IntoStatus,
+        reason: impl std::fmt::Display,
+    ) -> &Self {
+        self.check_status(expected, Some(&reason))
+    }
+
+    /// Asserts the status, `reason` leading the failure where there is one.
+    fn check_status(
+        &self,
+        expected: impl IntoStatus,
+        reason: Option<&dyn std::fmt::Display>,
+    ) -> &Self {
+        let head = match reason {
+            Some(reason) => format!("{}: {reason}", self.exchange()),
+            None => self.exchange(),
+        };
         let expected = expected.status().unwrap_or_else(|code| {
-            panic!(
-                "{}: `{code}` is not a status code, which is 100 to 999",
-                self.exchange()
-            )
+            panic!("{head}: `{code}` is not a status code, which is 100 to 999")
         });
         let actual = self.status();
         assert!(
             actual == expected,
-            "{}: expected {expected}, received {actual}\n{}",
-            self.exchange(),
+            "{head}: expected {expected}, received {actual}\n{}",
             self.rendered_body()
         );
         self

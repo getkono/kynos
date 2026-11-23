@@ -500,6 +500,33 @@ mod assertions {
         received(StatusCode::NOT_FOUND, &[], b"gone").assert_status(StatusCode::OK);
     }
 
+    /// The reason follows the exchange, so the message still opens with the
+    /// request, and the body still follows the statuses.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: a revoked token is dead: expected 401 Unauthorized, \
+                    received 200 OK\nbody: welcome"
+    )]
+    fn assert_status_because_fails_naming_the_reason_and_shows_the_body() {
+        received(StatusCode::OK, &[], b"welcome")
+            .assert_status_because(401, "a revoked token is dead");
+    }
+
+    #[test]
+    fn assert_status_because_passes_on_the_status_and_chains() {
+        received(StatusCode::UNAUTHORIZED, &[("x-id", "7")], b"")
+            .assert_status_because(StatusCode::UNAUTHORIZED, "unused")
+            .assert_header("x-id", "7");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: rows are numbered: `1000` is not a status code, which is 100 to 999"
+    )]
+    fn assert_status_because_names_the_reason_for_a_number_no_status_has() {
+        received(StatusCode::OK, &[], b"").assert_status_because(1000, "rows are numbered");
+    }
+
     /// The response comes back whole, so it stays readable after the
     /// assertion.
     #[test]

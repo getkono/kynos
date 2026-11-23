@@ -30,6 +30,7 @@ the section for the release that ships it.
 | `TcpListener::bind`, `tokio::spawn(server.listener(..).serve())`, a hand-formatted request head and a status-line parser, to test what only a listener answers | `test::TestClient::connect(&running)` over `server::BoundServer::spawn`'s handle, then `running.shutdown()` | #1389 |
 | A `test::Coverage` newtype behind an `Arc`, whose only method calls `assert_declared_responses_covered(&my_document())` | `test::Coverage::for_document(my_document())`, a `.clone()` of it to each harness, and `assert_covered()` once | #1388 |
 | `http::Method::from_bytes(name.as_bytes()).unwrap()` before `test::TestClient::method(..)`, for a table of cases naming each method as text | `client.method("POST", path)`: `method` takes any `test::IntoMethod`, a `Method`, a `&Method` or a name | #1391 |
+| `assert_eq!(resp.status().as_u16(), 401, "a revoked token is dead")`, which drops the body from the failure | `resp.assert_status_because(401, "a revoked token is dead")` | #1391 |
 
 ## 0.5 to 0.6
 

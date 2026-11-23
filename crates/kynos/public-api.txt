@@ -11087,6 +11087,7 @@ pub fn kynos::test::TestResponse::assert_problem(&self, impl kynos::test::IntoSt
 pub fn kynos::test::TestResponse::assert_problem_type(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_redirect(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_status(&self, impl kynos::test::IntoStatus) -> &Self
+pub fn kynos::test::TestResponse::assert_status_because(&self, impl kynos::test::IntoStatus, impl core::fmt::Display) -> &Self
 pub fn kynos::test::TestResponse::bytes(&self) -> &bytes::bytes::Bytes
 pub fn kynos::test::TestResponse::cookies(&self) -> alloc::vec::Vec<(&str, &str)>
 pub fn kynos::test::TestResponse::events(&self) -> alloc::vec::Vec<kynos::test::TestEvent>
