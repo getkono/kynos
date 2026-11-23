@@ -608,6 +608,15 @@ the 429 the limiter already declares rather than a 503 — a second status would
 collide with `Concurrency` on any route carrying both, and `CompatibleWith`
 would refuse to compile it.
 
+The time is a `Clock`, read once per `check`: `SystemClock` unless
+`Quotas::with_clock` names another. It returns the time since the Unix epoch
+rather than an `Instant`, because windows are indexed from the epoch so that
+processes sharing a store agree on where each one starts. The seam exists for
+the half of a limiter that regresses quietly — a spent window *refilling* —
+which a test can otherwise prove only by sleeping. It is a type parameter
+rather than a value read from the context, so a limiter's clock is fixed where
+it is built and the context type stays the application's.
+
 One thing worth knowing about the two halves. The 429's headers ride on
 `Responses`; a success's ride on `Adds`. They never co-occur on one response,
 because a short-circuit never calls `with_headers` — so the conflict check,

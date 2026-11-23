@@ -5,6 +5,7 @@ use std::{borrow::Cow, time::Duration};
 use crate::{
     http,
     middleware::rate_limit::{
+        clock::{Clock, SystemClock},
         decision::{
             Allowance, Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit,
         },
@@ -198,25 +199,45 @@ enum Outcome {
 /// );
 /// # let _ = limit;
 /// ```
+///
+/// The time is read from `Clk`, the [`SystemClock`] unless
+/// [`with_clock`](Self::with_clock) names another.
 #[derive(Debug)]
-pub struct Quotas<K, S> {
+pub struct Quotas<K, S, Clk = SystemClock> {
     key: K,
     store: S,
+    clock: Clk,
     enforced: Vec<Quota>,
     policies: Vec<QuotaPolicy>,
     on_store_failure: StoreFailure,
 }
 
 impl<K, S> Quotas<K, S> {
-    /// Counts against `key`, in `store`.
+    /// Counts against `key`, in `store`, on the wall clock.
     #[must_use]
     pub fn new(key: K, store: S) -> Self {
         Self {
             key,
             store,
+            clock: SystemClock,
             enforced: Vec::new(),
             policies: Vec::new(),
             on_store_failure: StoreFailure::default(),
+        }
+    }
+}
+
+impl<K, S, Clk> Quotas<K, S, Clk> {
+    /// Reads the time from `clock` instead, keeping everything else.
+    #[must_use]
+    pub fn with_clock<T: Clock>(self, clock: T) -> Quotas<K, S, T> {
+        Quotas {
+            key: self.key,
+            store: self.store,
+            clock,
+            enforced: self.enforced,
+            policies: self.policies,
+            on_store_failure: self.on_store_failure,
         }
     }
 
@@ -236,7 +257,7 @@ impl<K, S> Quotas<K, S> {
     }
 }
 
-impl<K, S: RateLimitStore> Quotas<K, S> {
+impl<K, S: RateLimitStore, Clk> Quotas<K, S, Clk> {
     /// What `quota` decides for `partition` at `now`, spending nothing.
     async fn decide(&self, quota: &Quota, partition: &str, now: Duration) -> Outcome {
         let window_ms = quota.window.as_millis().max(1);
@@ -279,11 +300,12 @@ impl<K, S: RateLimitStore> Quotas<K, S> {
     }
 }
 
-impl<C, K, S> RateLimitPolicy<C> for Quotas<K, S>
+impl<C, K, S, Clk> RateLimitPolicy<C> for Quotas<K, S, Clk>
 where
     C: Sync + 'static,
     K: RateLimitKey<C>,
     S: RateLimitStore,
+    Clk: Clock,
 {
     fn advertised(&self) -> &[QuotaPolicy] {
         &self.policies
@@ -307,9 +329,7 @@ where
             ));
         };
 
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
+        let now = self.clock.now();
 
         // Two passes: decide against every quota, then spend only if none
         // refused. A request one quota refuses spends no other, or a client held
