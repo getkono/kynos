@@ -382,6 +382,12 @@ the two apart. An externally tagged enum names its variant as a key rather
 than a tag, so it has no `Tagged`. A variant serde skips when serializing is
 left out of `VARIANTS`, since no document carries it.
 
+Under `openapi32`, `Event::tagged` is bounded on it, and the `TaggedEvent` it
+makes has no name of its own to set. A stream of them is the one event stream
+whose every name is known, so its `itemSchema` describes `event` as a required
+`enum` of `VARIANTS`; a stream of `Event`s, which name themselves or not at
+all, keeps a bare optional `string`.
+
 ### Why untagged is refused
 
 `oneOf` without a discriminator is not a decoding rule. It says a payload

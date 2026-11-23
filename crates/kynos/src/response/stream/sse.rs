@@ -25,7 +25,7 @@ use crate::{
         codec::{ok, with_content_type},
         stream::records::RecordBuffer,
     },
-    schema::{Schema, registry::Registry},
+    schema::{Schema, Tagged, registry::Registry},
 };
 
 /// A Server-Sent Events response.
@@ -279,16 +279,23 @@ impl<T> Event<T> {
     }
 }
 
-impl<T: serde::Serialize + Schema> Event<T> {
+impl<T: Tagged> Event<T> {
     /// Creates an event named by its payload's serde tag.
     ///
-    /// The name is the value serde writes under `#[serde(tag = "...")]`, the
-    /// renames applied, so the tag is spelled once and the event's name
-    /// cannot drift from it. The payload is an internally or adjacently
-    /// tagged enum, or a struct carrying its own `tag`.
+    /// The name is the value serde writes the tag with, the renames applied,
+    /// read from `T`'s [`Tagged`], which `#[derive(Schema)]` implements for an
+    /// internally or adjacently tagged enum and a struct carrying its own
+    /// `tag`. The tag is spelled once and the event's name cannot drift from
+    /// it, and a payload serde writes untagged does not compile.
+    ///
+    /// The event is a [`TaggedEvent`], which has no name of its own to set, so
+    /// a stream of them describes every name its events can carry.
     ///
     /// ```
-    /// use kynos::{Schema, response::stream::sse::Event};
+    /// use kynos::{
+    ///     Schema,
+    ///     response::stream::sse::{Event, SseItem},
+    /// };
     /// use serde::Serialize;
     ///
     /// #[derive(Schema, Serialize)]
@@ -298,99 +305,101 @@ impl<T: serde::Serialize + Schema> Event<T> {
     ///     ShuttingDown,
     /// }
     ///
-    /// let event = Event::tagged(ServerEvent::Tick {
+    /// let tick = Event::tagged(ServerEvent::Tick {
     ///     fingerprint: "0123456789abcdef".to_owned(),
-    /// });
-    /// assert_eq!(event.event.as_deref(), Some("tick"));
+    /// })
+    /// .id("1");
+    /// let Ok(sent) = tick.into_event();
+    /// assert_eq!(sent.event.as_deref(), Some("tick"));
     ///
-    /// let event = Event::tagged(ServerEvent::ShuttingDown);
-    /// assert_eq!(event.event.as_deref(), Some("shutting_down"));
-    /// # // The other two shapes the derive describes a tag for.
-    /// # #[derive(Schema, Serialize)]
-    /// # #[serde(tag = "t", content = "c")]
-    /// # enum Adjacent { Moved(u8) }
-    /// # assert_eq!(Event::tagged(Adjacent::Moved(1)).event.as_deref(), Some("Moved"));
-    /// # #[derive(Schema, Serialize)]
-    /// # #[serde(tag = "type", rename = "ping")]
-    /// # struct Ping { at: u64 }
-    /// # assert_eq!(Event::tagged(Ping { at: 1 }).event.as_deref(), Some("ping"));
+    /// let Ok(sent) = Event::tagged(ServerEvent::ShuttingDown).into_event();
+    /// assert_eq!(sent.event.as_deref(), Some("shutting_down"));
     /// ```
     ///
-    /// # Panics
+    /// A payload serde writes untagged, here an externally tagged enum, has
+    /// no [`Tagged`]; name its event with `Event::new(data).event(name)`:
     ///
-    /// Panics if `data` does not begin with a string member, as anything
-    /// serde does not write as an object, an externally tagged enum
-    /// included, does not. Serde writes a tag first, so this is caught on
-    /// the first event of a misused type.
+    /// ```compile_fail
+    /// use kynos::{Schema, response::stream::sse::Event};
+    /// use serde::Serialize;
     ///
-    /// A struct whose first field is a string is indistinguishable from a
-    /// tag on the wire, so with debug assertions on this also panics where
-    /// `T`'s [`Schema`] does not name that member as its tag: as an enum's
-    /// `discriminator`, or as a struct's tag property's `const`.
+    /// #[derive(Schema, Serialize)]
+    /// enum ServerEvent {
+    ///     Tick { fingerprint: String },
+    /// }
+    ///
+    /// let _ = Event::tagged(ServerEvent::Tick {
+    ///     fingerprint: "0123456789abcdef".to_owned(),
+    /// });
+    /// ```
     #[must_use]
-    pub fn tagged(data: T) -> Self {
-        let Some((member, name)) = leading_member(&data) else {
-            panic!(
-                "`Event::tagged` names an event by its payload's serde tag, and this payload \
-                 writes none: tag its type with `#[serde(tag = \"...\")]`, or name the event \
-                 with `Event::new(data).event(name)`"
-            );
-        };
-        debug_assert!(
-            describes_tag::<T>(&member, &name),
-            "`Event::tagged` read `{member}` as this payload's serde tag, but its schema does \
-             not describe a tag there: tag its type with `#[serde(tag = \"...\")]`, or name \
-             the event with `Event::new(data).event(name)`"
-        );
-
-        Self::new(data).event(name)
+    pub fn tagged(data: T) -> TaggedEvent<T> {
+        TaggedEvent {
+            data,
+            id: None,
+            retry: None,
+            comment: None,
+        }
     }
 }
 
-/// Whether `T`'s own schema names `member` as the tag whose value is `name`.
+/// One Server-Sent Event named by its payload's serde tag, made by
+/// [`Event::tagged`].
 ///
-/// An enum's names it as its `discriminator`; a struct carrying a `tag`, which
-/// has no branches to discriminate, as a property whose `const` is `name`.
-fn describes_tag<T: Schema>(member: &str, name: &str) -> bool {
-    let kynos_openapi::Schema::Object(schema) = T::schema(&mut Registry::new()) else {
-        return false;
-    };
-
-    schema
-        .discriminator
-        .as_ref()
-        .is_some_and(|discriminator| discriminator.property_name == member)
-        || schema.properties.get(member).is_some_and(|property| {
-            property.as_object().is_some_and(|property| {
-                property
-                    .const_value
-                    .as_ref()
-                    .is_some_and(|value| value.as_str() == Some(name))
-            })
-        })
+/// Its name is always `data`'s [`Tagged::variant`], so it has none of its own
+/// to set. That is what lets a stream of them describe its names: the `event`
+/// field of its `itemSchema` is an `enum` of `T`'s
+/// [`VARIANTS`](Tagged::VARIANTS), and required, where an [`Event`]'s is any
+/// string it may omit.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaggedEvent<T> {
+    /// The event payload, written as JSON, whose tag names the event.
+    pub data: T,
+    /// The event id, which a client returns as `Last-Event-ID` on reconnect.
+    pub id: Option<String>,
+    /// How long a client should wait before reconnecting.
+    ///
+    /// The format carries whole milliseconds, so any sub-millisecond remainder
+    /// is rounded up on the wire.
+    pub retry: Option<std::time::Duration>,
+    /// A comment sent before the event data, if any.
+    pub comment: Option<String>,
 }
 
-/// The first member `data` serializes, as its key and its string value.
-///
-/// Serde writes an internal or adjacent tag as the first member of the
-/// object, so this is the tag where there is one. Serialization stops at that
-/// member, which costs no more than the tag itself whatever the payload
-/// holds. `None` when `data` is not an object, or its first member is not a
-/// string.
-fn leading_member<T: serde::Serialize + ?Sized>(data: &T) -> Option<(String, String)> {
-    let mut found = None;
-    // Every path ends in `Stop`, the one that found the member included.
-    let _ = data.serialize(leading::Leading { found: &mut found });
-    found
+impl<T> TaggedEvent<T> {
+    /// Sets the event identifier.
+    #[must_use]
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    /// Sets how long a client should wait before reconnecting.
+    ///
+    /// The format carries whole milliseconds, so any sub-millisecond remainder
+    /// is rounded up on the wire.
+    #[must_use]
+    pub fn retry(mut self, retry: std::time::Duration) -> Self {
+        self.retry = Some(retry);
+        self
+    }
+
+    /// Adds an SSE comment to this event.
+    #[must_use]
+    pub fn comment(mut self, comment: impl Into<String>) -> Self {
+        self.comment = Some(comment.into());
+        self
+    }
 }
 
-/// What an [`Sse`] stream yields: an [`Event`], or a `Result` of one.
+/// What an [`Sse`] stream yields: an [`Event`] or a [`TaggedEvent`], or a
+/// `Result` of either.
 ///
 /// A bare event is a stream that cannot fail, so it needs no `Ok` around each
 /// item and no `Infallible` in its type. An `Err` ends the body after the
 /// last whole event, and is reported to the connection as the body's error.
 ///
-/// Sealed: these two are the whole set.
+/// Sealed: these four are the whole set.
 pub trait SseItem: sealed::Sealed {
     /// The payload each event carries.
     type Data;
@@ -407,15 +416,40 @@ pub trait SseItem: sealed::Sealed {
     fn into_event(self) -> Result<Event<Self::Data>, Self::Error>;
 }
 
-/// Closes [`SseItem`], so a third item shape cannot change what the two
-/// existing ones mean.
+/// Closes [`SseItem`], so another item shape cannot change what the existing
+/// ones mean.
 mod sealed {
-    /// The private supertrait.
-    pub trait Sealed {}
+    /// The private supertrait, carrying what a stream of the item describes.
+    pub trait Sealed {
+        /// Every name an event of this item is sent under, or `None` where
+        /// the name is the stream's own to choose, or to leave out.
+        fn names() -> Option<&'static [&'static str]>;
+    }
 }
 
-impl<T> sealed::Sealed for Event<T> {}
-impl<T, E> sealed::Sealed for Result<Event<T>, E> {}
+impl<T> sealed::Sealed for Event<T> {
+    fn names() -> Option<&'static [&'static str]> {
+        None
+    }
+}
+
+impl<T, E> sealed::Sealed for Result<Event<T>, E> {
+    fn names() -> Option<&'static [&'static str]> {
+        None
+    }
+}
+
+impl<T: Tagged> sealed::Sealed for TaggedEvent<T> {
+    fn names() -> Option<&'static [&'static str]> {
+        Some(T::VARIANTS)
+    }
+}
+
+impl<T: Tagged, E> sealed::Sealed for Result<TaggedEvent<T>, E> {
+    fn names() -> Option<&'static [&'static str]> {
+        Some(T::VARIANTS)
+    }
+}
 
 impl<T> SseItem for Event<T> {
     type Data = T;
@@ -432,6 +466,37 @@ impl<T, E: Into<BoxError>> SseItem for Result<Event<T>, E> {
 
     fn into_event(self) -> Self {
         self
+    }
+}
+
+impl<T: Tagged> SseItem for TaggedEvent<T> {
+    type Data = T;
+    type Error = std::convert::Infallible;
+
+    fn into_event(self) -> Result<Event<T>, Self::Error> {
+        Ok(self.named())
+    }
+}
+
+impl<T: Tagged, E: Into<BoxError>> SseItem for Result<TaggedEvent<T>, E> {
+    type Data = T;
+    type Error = E;
+
+    fn into_event(self) -> Result<Event<T>, E> {
+        self.map(TaggedEvent::named)
+    }
+}
+
+impl<T: Tagged> TaggedEvent<T> {
+    /// The event this one is sent as, named by its payload's variant.
+    fn named(self) -> Event<T> {
+        Event {
+            event: Some(self.data.variant().to_owned()),
+            data: self.data,
+            id: self.id,
+            retry: self.retry,
+            comment: self.comment,
+        }
     }
 }
 
@@ -668,8 +733,11 @@ where
     <S::Item as SseItem>::Data: Schema,
 {
     // OpenAPI 3.2 describes `text/event-stream` as parsed events, so the item is
-    // the event and the JSON payload hangs off `data`'s `contentSchema`.
+    // the event and the JSON payload hangs off `data`'s `contentSchema`. A
+    // tagged event always carries its name, one of the payload's tag values.
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let names = <S::Item as sealed::Sealed>::names();
+
         let mut data = SchemaObject {
             ty: Some(TypeSet::One(SchemaType::String)),
             ..SchemaObject::default()
@@ -687,7 +755,17 @@ where
             ty: Some(TypeSet::One(SchemaType::Object)),
             ..SchemaObject::default()
         };
-        event.required = Some(vec!["data".to_owned()]);
+        let mut name = SchemaObject {
+            ty: Some(TypeSet::One(SchemaType::String)),
+            ..SchemaObject::default()
+        };
+        let mut required = vec!["data".to_owned()];
+        if let Some(names) = names {
+            name.enumeration = Some(names.iter().map(|&name| name.into()).collect());
+            required.push("event".to_owned());
+        }
+
+        event.required = Some(required);
         event.properties = [
             (
                 "data".to_owned(),
@@ -696,7 +774,7 @@ where
             // The format gives no type to any field but `retry`.
             (
                 "event".to_owned(),
-                kynos_openapi::Schema::of_type(SchemaType::String),
+                kynos_openapi::Schema::Object(Box::new(name)),
             ),
             (
                 "id".to_owned(),
@@ -716,9 +794,6 @@ where
         )
     }
 }
-
-// Private: it serves only `leading_member`.
-mod leading;
 
 #[cfg(test)]
 mod tests;
