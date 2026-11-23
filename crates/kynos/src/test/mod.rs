@@ -2361,8 +2361,6 @@ impl TestResponse {
         )
     }
 
-    /// `type_uri` joined to the problem base where it is a slug, and as
-    /// given where it has a scheme or the client set no base.
     /// Takes the string member `name` out of a problem document's `members`.
     #[track_caller]
     fn problem_string(&self, members: &mut Map<String, Value>, name: &str) -> Option<String> {
@@ -2377,6 +2375,8 @@ impl TestResponse {
         }
     }
 
+    /// `type_uri` joined to the problem base where it is a slug, and as
+    /// given where it has a scheme or the client set no base.
     fn problem_type<'t>(&self, type_uri: &'t str) -> std::borrow::Cow<'t, str> {
         match &self.problem_base {
             Some(base) if !has_scheme(type_uri) => format!("{base}{type_uri}").into(),
