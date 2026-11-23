@@ -78,6 +78,11 @@ advice copied from another framework, or reasoned without a measurement, is
 what this page exists to replace. kynos-bench has not yet recorded those
 results, so none of that advice is here, and nothing below tunes a cost.
 
+kynos-bench runs on a Linux rig. Nothing it records speaks for another
+operating system or for a shape it has not measured; its
+[methodology](https://github.com/getkono/kynos-bench/blob/master/docs/METHODOLOGY.md)
+says what it measures.
+
 ### Operating system limits
 
 - Size the hard `RLIMIT_NOFILE` for the connection cap: `LimitNOFILE=` under
@@ -197,8 +202,3 @@ router under an `internal` tag instead, so a client generator can skip it by
 tag. No route attribute serves an operation while leaving it out of `paths`;
 [routing.md](routing.md#why-no-served-operation-is-left-out-of-paths) says
 why.
-
-kynos-bench runs on a Linux rig. Nothing it records speaks for another
-operating system or for a shape it has not measured; its
-[methodology](https://github.com/getkono/kynos-bench/blob/master/docs/METHODOLOGY.md)
-says what it measures.
