@@ -36,6 +36,7 @@ the section for the release that ships it.
 | `.peer(..)` on every request so a test reads one client whether built `test::TestClient::new` or `through_server` | nothing: both send from `127.0.0.1:0`; `with_peer` once where the address itself matters | #1391 |
 | A second build of the router, through your own `Service` constructor, to get a `Service` for `server::Server::new` after `test::TestClient::new` took the first | `test::TestClient::new(service.clone())`, then `server::Server::new(service)`: a clone shares the built router, its context and its mounted docs | #1390 |
 | A `middleware::decompression::Decompression` on each operation that reads a body, or a group split from its resource's head-only operations, so a `GET` or `DELETE` declares no 400, 413 or 415 it never sends | one `Decompression` over the resource's group: it runs and is declared only on the operations reading a body | #1451 |
+| A merge-patch `Nullable<T>` of your own, with hand-written `Deserialize`, `Schema`, `schema::constraints::Numeric` and `Textual` impls | `Nullable<T>` (`schema::Nullable`), still beside `#[serde(default)]`, which the `Schema` derive now refuses to compile without, where a member missing one was listed in `required` | #1411 |
 
 ## 0.5 to 0.6
 
