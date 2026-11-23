@@ -2173,6 +2173,69 @@ async fn one_trigger_begins_and_forces_every_clone() {
     }
 }
 
+/// A clone whose wait was polled and then left pending, as a worker's pinned
+/// `begun` in a `select!` loop busy running a job, holds up no other clone:
+/// a server given one still begins on the trigger, and another clone still
+/// sees the begin and the force.
+#[tokio::test]
+async fn a_parked_clone_holds_up_no_other_clone() {
+    use std::{future::Future, task::Poll};
+
+    /// Polls `wait` once, answering whether it is still pending.
+    async fn pending_once(wait: std::pin::Pin<&mut impl Future>) -> bool {
+        let mut wait = Some(wait);
+        std::future::poll_fn(|cx| {
+            let wait = wait.take().expect("polled once");
+            Poll::Ready(wait.poll(cx).is_pending())
+        })
+        .await
+    }
+
+    let (begin_sender, begin_receiver) = tokio::sync::oneshot::channel();
+    let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async move {
+        let _ = begin_receiver.await;
+        Ok(Box::pin(async move {
+            let _ = force_receiver.await;
+        }) as crate::server::shutdown::ForceFuture)
+    }));
+    let parked = shutdown.clone();
+    let parked_begun = std::pin::pin!(parked.begun());
+    assert!(
+        pending_once(parked_begun).await,
+        "the trigger has not fired"
+    );
+
+    let server = tokio::spawn(
+        crate::server::Server::new(test_service())
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(shutdown.clone())
+            .serve(),
+    );
+    tokio::task::yield_now().await;
+    let _ = begin_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(5), shutdown.begun())
+        .await
+        .expect("the begin passes the parked clone")
+        .expect("the trigger began");
+    tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        .await
+        .expect("the server begins past the parked clone")
+        .expect("server task joins")
+        .expect("an idle server drains cleanly");
+
+    let parked_forced = std::pin::pin!(parked.forced());
+    assert!(
+        pending_once(parked_forced).await,
+        "the trigger has not forced"
+    );
+    let _ = force_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(5), shutdown.forced())
+        .await
+        .expect("the force passes the parked clone")
+        .expect("the trigger forced");
+}
+
 /// A clone awaited with no server drives the trigger itself, a waiter dropped
 /// mid-wait hands the trigger to the next, and a begun trigger answers a
 /// clone made later at once.
