@@ -42,6 +42,16 @@ struct provide is the same ambiguity as two fields of one type, and it stays
 a compile error, reported by coherence at both sources rather than by the
 derive, which sees only one of them.
 
+The forwarded implementations are emitted beside the inner struct, so they
+follow two rules of where code is written. `via` is field access from that
+module, so its fields must be visible there: a private field is, from the
+module declaring the context and its children, which is where an inner
+struct usually sits. And they take the inner struct's generics, which are
+the only ones the derive can declare: from tokens alone it cannot tell
+whether the `S` in `for = App<S>` is a parameter or a type, so a context
+generic over a parameter the inner struct lacks stops at `rustc`'s "cannot
+find type `S`" and writes its implementations by hand.
+
 **`Provides<T>` is synchronous and infallible.** The reason is not simplicity.
 [`Describe::describe`](../crates/kynos/src/extract/describe.rs) is a static
 method that cannot name the context type, so it can never see — and therefore

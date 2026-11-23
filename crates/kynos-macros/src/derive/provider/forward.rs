@@ -97,6 +97,8 @@ impl Forward {
     ) -> TokenStream {
         let Self { target, via } = self;
         let name = &input.ident;
+        // Only this struct's generics can be declared: whether a name in
+        // `target` is a parameter or a type is unknowable from its tokens.
         let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
         let inner = quote_spanned!(via.span()=> &#via);
         // The field the conflicting implementation forwards, by name.

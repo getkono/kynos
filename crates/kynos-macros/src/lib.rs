@@ -1351,6 +1351,11 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 /// asking for it could not say which it meant. `via` is a path of fields,
 /// written without `self`; a method call, a missing `for` or `via`, and one
 /// context named twice are rejected.
+///
+/// The implementations are emitted beside the inner struct, so the fields
+/// `via` names must be visible there, and they take the inner struct's
+/// generics: a context generic over a parameter the inner struct lacks
+/// cannot be named in `for`.
 #[proc_macro_derive(Provider, attributes(provide, provider))]
 pub fn derive_provider(item: TokenStream) -> TokenStream {
     derive::run(item, derive::provider::expand_inner)
