@@ -30,6 +30,7 @@ the section for the release that ships it.
 | `TcpListener::bind`, `tokio::spawn(server.listener(..).serve())`, a hand-formatted request head and a status-line parser, to test what only a listener answers | `test::TestClient::connect(&running)` over `server::BoundServer::spawn`'s handle, then `running.shutdown()` | #1389 |
 | A `test::Coverage` newtype behind an `Arc`, whose only method calls `assert_declared_responses_covered(&my_document())` | `test::Coverage::for_document(my_document())`, a `.clone()` of it to each harness, and `assert_covered()` once | #1388 |
 | A `middleware::rate_limit::decision::RateLimitPolicy` written by hand only so a test can move the time its windows count against | `middleware::rate_limit::quota::Quotas::new(key, store).with_clock(clock)`, where `clock` implements `middleware::rate_limit::clock::Clock` | #1392 |
+| A `middleware::decompression::Decompression` on each operation that reads a body, or a group split from its resource's head-only operations, so a `GET` or `DELETE` declares no 400, 413 or 415 it never sends | one `Decompression` over the resource's group: it runs and is declared only on the operations reading a body | #1451 |
 
 ## 0.5 to 0.6
 

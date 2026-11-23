@@ -18,7 +18,7 @@ use crate::{
     extract::body::limit::{BodyLimit, Capped, collect_capped},
     http::{self, body::Body},
     middleware::{
-        Continued, Interceptor, Next,
+        Continued, Covers, Interceptor, Next,
         compression::codec::{
             Coding, DrainError, YIELD_ABOVE, decoded_capacity, drain, zstd_decoder_window,
         },
@@ -313,6 +313,25 @@ pub(crate) fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// # }
 /// ```
 ///
+/// # What it covers
+///
+/// Only the operations whose body something beneath it reads, by its
+/// [`Covers::BodyReading`], as
+/// [`BodySize`](crate::middleware::limits::body_size::BodySize) covers them: a
+/// handler whose last argument is a body extractor such as `Json<T>`, or an
+/// interceptor mounted beneath this one that may read the body, by its
+/// [`READS_BODY`](Interceptor::READS_BODY). Mounted over a group, it leaves the
+/// group's head-only operations — a `GET` by id, a `DELETE`, a `POST` that only
+/// triggers an action — exactly as they were: it does not run on them, so a
+/// coded body sent to one is ignored with the rest of that body, and they
+/// declare none of its 400, 413 and 415. A router's own `Decompression` leaves
+/// the router's fallbacks alone too.
+///
+/// Where it does run it reads the whole body, so it keeps its own
+/// [`READS_BODY`](Interceptor::READS_BODY) at `true`: an application's own
+/// interceptor covering [`Covers::BodyReading`] mounted above it stays on every
+/// operation it runs on.
+///
 /// # The limit replaces `BodySize`
 ///
 /// A cap measured before decoding is not a cap: a megabyte of gzip inflates to
@@ -514,6 +533,8 @@ where
     type Reads = ();
     type Adds = ();
     type Short = Undecodable<U, M, L>;
+
+    const COVERS: Covers = Covers::BodyReading;
 
     async fn intercept(
         &self,
