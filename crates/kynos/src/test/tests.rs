@@ -944,3 +944,187 @@ fn assert_send<T: Send>(_: &T) {}
 /// What a shared client is for: a request sent from a spawned task, through
 /// the `&TestClient` an `Arc` hands it. Compiled, never run.
 const _: fn(&super::TestClient<()>) = |client| assert_send(&client.get("/").send());
+
+/// A stream is read from a spawned task as a response is, through the same
+/// shared client. Compiled, never run.
+const _: fn(&super::TestClient<()>) = |client| assert_send(&client.get("/").send_streaming());
+
+/// How a `TestStream` reads a body that arrives in frames: what each read
+/// returns, and when the body is filed for `assert_conformance`.
+mod streaming {
+    use std::{collections::VecDeque, sync::Mutex};
+
+    use bytes::{Bytes, BytesMut};
+
+    use crate::{
+        http::{HeaderMap, Method, Response, StatusCode, Uri, body::Body},
+        test::{Observed, TestEvent, TestStream},
+    };
+
+    /// Frames handed out one per poll, in order.
+    struct Frames(VecDeque<Bytes>);
+
+    impl futures_core::Stream for Frames {
+        type Item = Result<Bytes, std::convert::Infallible>;
+
+        fn poll_next(
+            mut self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Option<Self::Item>> {
+            std::task::Poll::Ready(self.0.pop_front().map(Ok))
+        }
+    }
+
+    /// A client's record holding one exchange whose body has not ended.
+    fn record() -> Mutex<Vec<Observed>> {
+        Mutex::new(vec![Observed {
+            method: Method::GET,
+            target: "/feed".to_owned(),
+            uri: Uri::from_static("/feed"),
+            status: StatusCode::OK,
+            headers: HeaderMap::new(),
+            body: None,
+        }])
+    }
+
+    /// A 200 answering `GET /feed` with `body`, filed in `observed`.
+    fn stream(body: Body, observed: &Mutex<Vec<Observed>>) -> TestStream<'_> {
+        let (parts, body) = Response::new(body).into_parts();
+        TestStream {
+            method: Method::GET,
+            path: "/feed".to_owned(),
+            parts,
+            body: Some(body),
+            received: BytesMut::new(),
+            read: 0,
+            observed,
+            record: 0,
+        }
+    }
+
+    /// `text` cut into frames at `cuts`, which ascend.
+    fn framed(text: &'static str, cuts: &[usize]) -> Body {
+        let mut frames = VecDeque::new();
+        let mut start = 0;
+        for &cut in cuts.iter().chain([&text.len()]) {
+            frames.push_back(Bytes::from_static(&text.as_bytes()[start..cut]));
+            start = cut;
+        }
+        Body::from_stream(Frames(frames))
+    }
+
+    /// A feed with a keep-alive between events, a multi-line value, every
+    /// field, and a last record the body ends before terminating.
+    const FEED: &str = "event: tick\nid: 1\ndata: a\n\n: ping\n\n\
+                        data: b\ndata: c\nretry: 50\n\n\ndata: d";
+
+    /// The events `FEED` carries, written out rather than parsed.
+    fn feed_events() -> Vec<TestEvent> {
+        vec![
+            TestEvent {
+                data: "a".to_owned(),
+                event: Some("tick".to_owned()),
+                id: Some("1".to_owned()),
+                retry: None,
+            },
+            TestEvent {
+                data: "b\nc".to_owned(),
+                retry: Some(50),
+                ..TestEvent::default()
+            },
+            TestEvent {
+                data: "d".to_owned(),
+                ..TestEvent::default()
+            },
+        ]
+    }
+
+    /// Where the transport splits a body changes no event: every placement
+    /// of two cuts, delimiters and multi-line values split included, reads
+    /// as the events the whole feed carries, and then as the end.
+    #[tokio::test]
+    async fn events_read_the_same_wherever_the_frames_split() {
+        for first in 0..=FEED.len() {
+            for second in first..=FEED.len() {
+                let observed = record();
+                let mut stream = stream(framed(FEED, &[first, second]), &observed);
+                let mut events = Vec::new();
+                while let Some(event) = stream.next_event().await {
+                    events.push(event);
+                }
+                assert_eq!(events, feed_events(), "cut at {first} and {second}");
+                assert_eq!(stream.next_event().await, None);
+            }
+        }
+    }
+
+    /// One position serves both reads: a chunk after an event is what the
+    /// event's frame held beyond it, and the next frame after that.
+    #[tokio::test]
+    async fn a_chunk_after_an_event_is_the_rest_of_its_frame() {
+        let observed = record();
+        let mut stream = stream(framed("data: a\n\ndata: b", &[11]), &observed);
+
+        assert_eq!(
+            stream.next_event().await.map(|event| event.data),
+            Some("a".to_owned())
+        );
+        assert_eq!(stream.next_chunk().await, Some(Bytes::from_static(b"da")));
+        assert_eq!(
+            stream.next_chunk().await,
+            Some(Bytes::from_static(b"ta: b"))
+        );
+        assert_eq!(stream.next_chunk().await, None);
+        assert_eq!(stream.next_event().await, None);
+    }
+
+    /// The body is filed once it ends, whole, and not before: until then
+    /// conformance has only the head to hold.
+    #[tokio::test]
+    async fn the_body_is_filed_once_it_ends() {
+        let observed = record();
+        let mut stream = stream(framed("data: a\n\ndata: b\n\n", &[9]), &observed);
+
+        assert!(stream.next_event().await.is_some());
+        assert_eq!(observed.lock().unwrap()[0].body, None);
+        assert!(stream.next_event().await.is_some());
+        assert_eq!(stream.next_event().await, None);
+        assert_eq!(
+            observed.lock().unwrap()[0].body,
+            Some(Bytes::from_static(b"data: a\n\ndata: b\n\n"))
+        );
+    }
+
+    /// `finish` returns every octet, the ones already read included, and
+    /// files them.
+    #[tokio::test]
+    async fn finish_returns_the_whole_body() {
+        let observed = record();
+        let mut stream = stream(framed(FEED, &[3, 30]), &observed);
+
+        assert!(stream.next_event().await.is_some());
+        let response = stream.finish().await;
+
+        assert_eq!(response.text(), FEED);
+        assert_eq!(response.events(), feed_events());
+        assert_eq!(
+            observed.lock().unwrap()[0].body,
+            Some(Bytes::from_static(FEED.as_bytes()))
+        );
+    }
+
+    /// A body failing part-way fails the read, naming the exchange.
+    #[tokio::test]
+    #[should_panic(
+        expected = "GET /feed -> 200: the response body failed part-way: connection reset"
+    )]
+    async fn a_body_failing_part_way_fails_the_read() {
+        let observed = record();
+        let mut stream = stream(
+            Body::failed_after(Bytes::from_static(b"data: a"), "connection reset"),
+            &observed,
+        );
+
+        let _ = stream.next_event().await;
+    }
+}

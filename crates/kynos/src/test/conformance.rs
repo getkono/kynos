@@ -6,6 +6,7 @@
 
 mod representation;
 
+use bytes::Bytes;
 use kynos_openapi::{
     Document, Method, RefOr, Responses, StatusPattern,
     model::{body::mime_names, parameter::header::is_ignored_header},
@@ -84,7 +85,9 @@ pub(super) fn conformance(document: &Document, record: &Observed) -> Vec<String>
 ///
 /// A response declaring no `content` is a claim too: any octets or any
 /// `Content-Type` under it is reported. A HEAD carries no content (RFC 9110
-/// section 9.3.2), so only its `Content-Type` is held to the declaration.
+/// section 9.3.2), so only its `Content-Type` is held to the declaration. A
+/// body the test hung up on before it ended is held to nothing but that
+/// `Content-Type` either, since its octets are not all known.
 fn body_conformance(
     document: &Document,
     response: &kynos_openapi::Response,
@@ -92,17 +95,21 @@ fn body_conformance(
 ) -> Vec<String> {
     let observed = media_type(&record.headers);
 
+    // `None` where the test hung up first: only the head is known.
+    let length = record.body.as_ref().map(Bytes::len);
+
     if response.content.is_empty() {
-        if record.body.is_empty() && observed.is_none() {
+        if length.unwrap_or(0) == 0 && observed.is_none() {
             return Vec::new();
         }
 
         return vec![format!(
             "the description declares no content, but {} was sent",
-            match (&observed, record.body.len()) {
-                (Some(media_type), 0) => format!("a `{media_type}` head with no body"),
-                (Some(media_type), len) => format!("a {len}-byte `{media_type}` body"),
-                (None, len) => format!("a {len}-byte body with no `Content-Type`"),
+            match (&observed, length) {
+                (Some(media_type), None) => format!("a `{media_type}` head"),
+                (Some(media_type), Some(0)) => format!("a `{media_type}` head with no body"),
+                (Some(media_type), Some(len)) => format!("a {len}-byte `{media_type}` body"),
+                (None, len) => format!("a {}-byte body with no `Content-Type`", len.unwrap_or(0)),
             }
         )];
     }
@@ -138,13 +145,10 @@ fn body_conformance(
 
     // RFC 9110 section 9.3.2: a HEAD's content is never sent.
     if record.method == crate::http::Method::HEAD {
-        if record.body.is_empty() {
-            return Vec::new();
-        }
-        return vec![format!(
-            "a {}-byte body was sent in response to a HEAD",
-            record.body.len()
-        )];
+        return match length {
+            None | Some(0) => Vec::new(),
+            Some(len) => vec![format!("a {len}-byte body was sent in response to a HEAD")],
+        };
     }
 
     let Some(schema) = representation.schema.as_ref() else {
@@ -155,7 +159,10 @@ fn body_conformance(
         return Vec::new();
     }
 
-    let instance = match serde_json::from_slice::<Value>(&record.body) {
+    let Some(body) = &record.body else {
+        return Vec::new();
+    };
+    let instance = match serde_json::from_slice::<Value>(body) {
         Ok(instance) => instance,
         Err(error) => return vec![format!("the body is not valid JSON: {error}")],
     };

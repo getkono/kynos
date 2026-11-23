@@ -17,7 +17,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 use kynos_openapi::{
     Document, Method, model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
@@ -48,7 +48,9 @@ struct Observed {
     uri: Uri,
     status: StatusCode,
     headers: HeaderMap,
-    body: Bytes,
+    /// The whole body, or `None` while a [`TestStream`] has not read to its
+    /// end, which it never will once dropped.
+    body: Option<Bytes>,
 }
 
 /// Sends requests to a [`Service`] directly, or through a configured
@@ -301,6 +303,40 @@ impl<C> TestClient<C> {
         }
     }
 
+    /// Records one exchange as its head arrived, into the shared coverage
+    /// too, and returns where it was observed, for a [`TestStream`] to file
+    /// the body under once it ends.
+    fn record(
+        &self,
+        method: &HttpMethod,
+        target: &str,
+        uri: Uri,
+        parts: &::http::response::Parts,
+        body: Option<Bytes>,
+    ) -> usize {
+        if let Some(coverage) = &self.coverage {
+            push(
+                coverage,
+                Exchange {
+                    method: method.clone(),
+                    uri: uri.clone(),
+                    status: parts.status,
+                },
+            );
+        }
+
+        let mut recorded = self.recorded();
+        recorded.push(Observed {
+            method: method.clone(),
+            target: target.to_owned(),
+            uri,
+            status: parts.status,
+            headers: parts.headers.clone(),
+            body,
+        });
+        recorded.len() - 1
+    }
+
     /// Reads back what has been observed so far.
     fn recorded(&self) -> std::sync::MutexGuard<'_, Vec<Observed>> {
         self.observed
@@ -384,8 +420,8 @@ impl<C: 'static> TestClient<C> {
     /// - Listener-only settings do not apply: the connection limit, TCP
     ///   keepalive, and graceful shutdown and its timeout.
     /// - Each connection carries one request and closes once its response
-    ///   body has been read; a dropped [`send`](TestRequest::send) closes it
-    ///   without draining.
+    ///   body has been read; a dropped [`send`](TestRequest::send) or
+    ///   [`TestStream`] closes it without draining.
     /// - The connection is recorded between [`TestRequest::peer`], the
     ///   client's [`with_peer`](Self::with_peer), or `127.0.0.1:0` where
     ///   neither is set, and a local `127.0.0.1:0`.
@@ -676,7 +712,7 @@ pub struct TestRequest<'a, C> {
     cookies: Vec<(String, String)>,
 }
 
-impl<C> TestRequest<'_, C> {
+impl<'a, C> TestRequest<'a, C> {
     /// Sets a header.
     ///
     /// # Panics
@@ -961,7 +997,95 @@ impl<C> TestRequest<'_, C> {
     /// when the response body fails part-way through, or, for a client built
     /// [`through_server`](TestClient::through_server), when the connection
     /// ends without a response.
-    pub async fn send(mut self) -> TestResponse {
+    pub async fn send(self) -> TestResponse {
+        let Answered {
+            client,
+            method,
+            path,
+            uri,
+            response,
+        } = self.answered().await;
+
+        let (parts, body) = response.into_parts();
+        let bytes = body
+            .collect()
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "{method} {path} -> {}: the response body failed part-way: {error}",
+                    parts.status.as_u16()
+                )
+            })
+            .to_bytes();
+
+        client.record(&method, &path, uri, &parts, Some(bytes.clone()));
+
+        TestResponse {
+            method,
+            path,
+            response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
+            body: bytes,
+        }
+    }
+
+    /// Sends the request, and returns as soon as the response head arrives,
+    /// with the body still arriving.
+    ///
+    /// For a body that does not end on its own, an event stream or a long
+    /// poll: a test reads an event, acts, and reads the next, then
+    /// [`finish`](TestStream::finish)es the body or drops the stream, which
+    /// hangs up as a departing client does.
+    ///
+    /// The exchange is recorded once its head arrives, so a dropped stream
+    /// counts toward [`TestClient::assert_declared_responses_covered`] and a
+    /// shared [`Coverage`]. [`TestClient::assert_conformance`] checks its
+    /// status and fields, and its body once the stream has read the body to
+    /// its end, by [`finish`](TestStream::finish) or by reading until `None`.
+    ///
+    /// ```
+    /// use kynos::{Router, test::TestClient};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let client = TestClient::new(Router::<()>::new().build(())?);
+    /// let mut stream = client.get("/").send_streaming().await;
+    /// assert_eq!(stream.status(), 501);
+    /// while let Some(chunk) = stream.next_chunk().await {
+    ///     assert!(!chunk.is_empty());
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`send`](Self::send) does before the head arrives.
+    pub async fn send_streaming(self) -> TestStream<'a> {
+        let Answered {
+            client,
+            method,
+            path,
+            uri,
+            response,
+        } = self.answered().await;
+
+        let (parts, body) = response.into_parts();
+        let record = client.record(&method, &path, uri, &parts, None);
+
+        TestStream {
+            method,
+            path,
+            parts,
+            body: Some(body),
+            received: BytesMut::new(),
+            read: 0,
+            observed: &client.observed,
+            record,
+        }
+    }
+
+    /// Sends the request, and returns once the response head arrives.
+    async fn answered(mut self) -> Answered<'a, C> {
         #[cfg(feature = "server")]
         if let (RequestBody::StalledAfter(first), Some(length)) = (&self.body, self.content_length)
         {
@@ -1020,45 +1144,12 @@ impl<C> TestRequest<'_, C> {
                 )
             });
 
-        let (parts, body) = response.into_parts();
-        let bytes = body
-            .collect()
-            .await
-            .unwrap_or_else(|error| {
-                panic!(
-                    "{} {} -> {}: the response body failed part-way: {error}",
-                    self.method,
-                    self.path,
-                    parts.status.as_u16()
-                )
-            })
-            .to_bytes();
-
-        if let Some(coverage) = &self.client.coverage {
-            push(
-                coverage,
-                Exchange {
-                    method: self.method.clone(),
-                    uri: uri.clone(),
-                    status: parts.status,
-                },
-            );
-        }
-
-        self.client.recorded().push(Observed {
-            method: self.method.clone(),
-            target: self.path.clone(),
-            uri,
-            status: parts.status,
-            headers: parts.headers.clone(),
-            body: bytes.clone(),
-        });
-
-        TestResponse {
+        Answered {
+            client: self.client,
             method: self.method,
             path: self.path,
-            response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
-            body: bytes,
+            uri,
+            response,
         }
     }
 
@@ -1109,6 +1200,176 @@ impl<C> TestRequest<'_, C> {
                      nothing bounds the wait on the paused clock"
                 )
             })
+    }
+}
+
+/// A request answered as far as its head, with the client that sent it.
+struct Answered<'a, C> {
+    client: &'a TestClient<C>,
+    method: HttpMethod,
+    path: String,
+    uri: Uri,
+    response: Response,
+}
+
+/// A response whose body a test reads as it arrives, from
+/// [`TestRequest::send_streaming`].
+///
+/// [`next_chunk`](Self::next_chunk) and [`next_event`](Self::next_event)
+/// read from one position, so each octet is returned once, by whichever
+/// reads it first. Dropping the stream closes the body unread, as a client
+/// that hangs up does: an operation's stream is dropped, and a connection
+/// built [`through_server`](TestClient::through_server) closes.
+///
+/// Every panic a method here raises opens with the request and its status,
+/// as [`TestResponse`]'s do.
+#[derive(Debug)]
+pub struct TestStream<'a> {
+    method: HttpMethod,
+    /// The target as the test wrote it.
+    path: String,
+    parts: ::http::response::Parts,
+    /// `None` once the body has ended.
+    body: Option<Body>,
+    /// Every octet that has arrived, read or not, for [`Self::finish`].
+    received: BytesMut,
+    /// Where in `received` the octets nothing has read yet begin.
+    read: usize,
+    /// The client's record, where the body is filed once it ends.
+    observed: &'a Mutex<Vec<Observed>>,
+    /// This exchange's place in `observed`.
+    record: usize,
+}
+
+impl TestStream<'_> {
+    /// The status code.
+    #[must_use]
+    pub fn status(&self) -> StatusCode {
+        self.parts.status
+    }
+
+    /// The first value of a response header, as text.
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.parts
+            .headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+    }
+
+    /// The octets that arrived next and nothing has read yet: the next body
+    /// frame, or what is left of one [`next_event`](Self::next_event) read
+    /// part of. `None` once the body has ended.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the body fails part-way.
+    pub async fn next_chunk(&mut self) -> Option<Bytes> {
+        if self.read == self.received.len() && !self.pull().await {
+            return None;
+        }
+        let chunk = Bytes::copy_from_slice(&self.received[self.read..]);
+        self.read = self.received.len();
+        Some(chunk)
+    }
+
+    /// The next Server-Sent Event, parsed as [`TestResponse::events`] parses
+    /// one, and skipping records that are only comments (keep-alives) as it
+    /// does. Waits for as many frames as the event spans. `None` once the
+    /// body has ended.
+    ///
+    /// Read to its end, a body yields the events `events` reads from the
+    /// same octets, a record left unterminated at the end included.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the body fails part-way, or a record is not UTF-8.
+    pub async fn next_event(&mut self) -> Option<TestEvent> {
+        let delimiter = EVENT_DELIMITER.as_bytes();
+        loop {
+            let unread = &self.received[self.read..];
+            if let Some(at) = unread
+                .windows(delimiter.len())
+                .position(|window| window == delimiter)
+            {
+                let start = self.read;
+                self.read += at + delimiter.len();
+                if let Some(event) = parse_event(self.record_text(start, start + at)) {
+                    return Some(event);
+                }
+            } else if !self.pull().await {
+                // The body ended: what is left is its last record.
+                let start = self.read;
+                self.read = self.received.len();
+                return parse_event(self.record_text(start, self.read));
+            }
+        }
+    }
+
+    /// Reads the rest of the body, and returns the whole response, every
+    /// octet [`next_chunk`](Self::next_chunk) and
+    /// [`next_event`](Self::next_event) already read included, as
+    /// [`TestRequest::send`] would have.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the body fails part-way.
+    pub async fn finish(mut self) -> TestResponse {
+        while self.pull().await {}
+        let body = self.received.freeze();
+        TestResponse {
+            method: self.method,
+            path: self.path,
+            response: Response::from_parts(self.parts, Body::from_bytes(body.clone())),
+            body,
+        }
+    }
+
+    /// Waits for the next frame carrying octets and appends them, or files
+    /// the whole body with the client and returns `false` once it ends.
+    async fn pull(&mut self) -> bool {
+        let Some(body) = &mut self.body else {
+            return false;
+        };
+        loop {
+            match body.frame().await {
+                // A trailers frame, or an empty one, carries no octets.
+                Some(Ok(frame)) => match frame.into_data() {
+                    Ok(data) if !data.is_empty() => {
+                        self.received.extend_from_slice(&data);
+                        return true;
+                    }
+                    _ => {}
+                },
+                Some(Err(error)) => panic!(
+                    "{}: the response body failed part-way: {error}",
+                    self.exchange()
+                ),
+                None => break,
+            }
+        }
+        self.body = None;
+        self.observed
+            .lock()
+            .expect("a test client whose recorder panicked cannot be written to")[self.record]
+            .body = Some(Bytes::copy_from_slice(&self.received));
+        false
+    }
+
+    /// The record between `start` and `end` of what arrived, as text.
+    fn record_text(&self, start: usize, end: usize) -> &str {
+        std::str::from_utf8(&self.received[start..end])
+            .unwrap_or_else(|_| panic!("{}: an event record is not text", self.exchange()))
+    }
+
+    /// The request and the status it received, as every panic here opens.
+    fn exchange(&self) -> String {
+        format!(
+            "{} {} -> {}",
+            self.method,
+            self.path,
+            self.parts.status.as_u16()
+        )
     }
 }
 
@@ -1610,7 +1871,8 @@ impl TestResponse {
 
     /// The Server-Sent Events this response carries, parsed.
     ///
-    /// The body is already drained, so the feed under test must be bounded.
+    /// The body is already drained, so the feed under test must be bounded;
+    /// [`TestRequest::send_streaming`] reads one that is not as it arrives.
     /// Comment lines (keep-alives) are dropped, as a client ignores them.
     #[must_use]
     pub fn events(&self) -> Vec<TestEvent> {
