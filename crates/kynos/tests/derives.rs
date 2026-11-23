@@ -537,6 +537,99 @@ fn the_provider_derive_supplies_every_field_it_was_not_told_to_skip() {
     assert_eq!(provides(&app), (Pool(7), Cache("local")));
 }
 
+/// Admits every token, so the scheme a context routes to it is observable.
+#[derive(Clone, Debug, PartialEq)]
+struct Gate(&'static str);
+
+impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer, C> for Gate {
+    async fn authenticate(
+        &self,
+        _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
+        _: kynos::security::Head<'_>,
+        _: &C,
+    ) -> Result<String, kynos::error::rejection::AuthRejection> {
+        Ok(self.0.to_owned())
+    }
+}
+
+impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u32>, C> for Gate {
+    async fn authenticate(
+        &self,
+        _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
+        _: kynos::security::Head<'_>,
+        _: &C,
+    ) -> Result<u32, kynos::error::rejection::AuthRejection> {
+        Ok(0)
+    }
+}
+
+#[derive(kynos::Provider)]
+struct Guarded {
+    pool: Pool,
+    /// Kept back, as `authenticates` alone implies, and repeated for a second
+    /// scheme.
+    #[provide(authenticates = kynos::security::schemes::Bearer)]
+    #[provide(authenticates = kynos::security::schemes::Bearer<u32>)]
+    gate: Gate,
+    /// Handed out as well, which `provided` opts back in.
+    #[provide(authenticates = kynos::security::schemes::Bearer<u64>, provided)]
+    shared: Shared,
+}
+
+/// The `provided` authenticator, distinct from `Gate` so both fields can be
+/// told apart.
+#[derive(Clone, Debug, PartialEq)]
+struct Shared(Gate);
+
+impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u64>, C> for Shared {
+    async fn authenticate(
+        &self,
+        _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
+        _: kynos::security::Head<'_>,
+        _: &C,
+    ) -> Result<u64, kynos::error::rejection::AuthRejection> {
+        Ok(0)
+    }
+}
+
+fn authenticators<C>(context: &C) -> (&Gate, &Gate, &Shared)
+where
+    C: kynos::security::Authenticates<kynos::security::schemes::Bearer, Authenticator = Gate>
+        + kynos::security::Authenticates<kynos::security::schemes::Bearer<u32>, Authenticator = Gate>
+        + kynos::security::Authenticates<
+            kynos::security::schemes::Bearer<u64>,
+            Authenticator = Shared,
+        > + kynos::di::Provides<Pool>
+        + kynos::di::Provides<Shared>,
+{
+    (
+        kynos::security::Authenticates::<kynos::security::schemes::Bearer>::authenticator(context),
+        kynos::security::Authenticates::<kynos::security::schemes::Bearer<u32>>::authenticator(
+            context,
+        ),
+        kynos::security::Authenticates::<kynos::security::schemes::Bearer<u64>>::authenticator(
+            context,
+        ),
+    )
+}
+
+#[test]
+fn authenticates_borrows_the_field_for_each_scheme_it_names() {
+    let app = Guarded {
+        pool: Pool(1),
+        gate: Gate("gate"),
+        shared: Shared(Gate("shared")),
+    };
+    let (bearer, numbered, shared) = authenticators(&app);
+    assert_eq!(bearer, &Gate("gate"));
+    assert_eq!(numbered, &Gate("gate"));
+    assert_eq!(shared, &Shared(Gate("shared")));
+    assert_eq!(
+        <Guarded as kynos::di::Provides<Shared>>::provide(&app),
+        Shared(Gate("shared"))
+    );
+}
+
 /// An HTTP authentication scheme knows its own challenge, so a 401 and the
 /// description cannot disagree about what a client should do next.
 #[test]

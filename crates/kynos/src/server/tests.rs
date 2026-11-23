@@ -1242,6 +1242,61 @@ fn a_failed_listener_is_named_as_its_transport_writes_it() {
     }
 }
 
+/// `io_error` is the variant's own `io::Error`, the one `source` reaches by
+/// downcast, for exactly the five variants holding one; every other variant
+/// answers `None`.
+#[test]
+fn io_error_is_the_source_of_exactly_the_variants_holding_one() {
+    use std::error::Error as _;
+
+    use crate::server::error::ServerError;
+
+    let failure = || std::io::Error::from_raw_os_error(98);
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
+    let carrying = [
+        ServerError::Resolve {
+            address: "localhost:8080".into(),
+            source: failure(),
+        },
+        ServerError::Bind {
+            address,
+            source: failure(),
+        },
+        ServerError::Listener(failure()),
+        ServerError::Accept {
+            address: address.into(),
+            source: failure(),
+        },
+        ServerError::Signal(failure()),
+    ];
+    for error in &carrying {
+        let carried = error.io_error().expect("this variant holds an I/O error");
+        let source = error
+            .source()
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .expect("its source is that I/O error");
+        assert!(std::ptr::eq(carried, source), "{error:?}");
+        assert_eq!(carried.raw_os_error(), Some(98), "{error:?}");
+    }
+
+    let bare = [
+        ServerError::NoListeners,
+        ServerError::InvalidConfiguration("invalid"),
+        ServerError::AcceptLoop { panicked: true },
+        ServerError::ShutdownTimeout {
+            timeout: std::time::Duration::ZERO,
+        },
+        ServerError::ShutdownForced,
+        #[cfg(feature = "tls")]
+        ServerError::MutualTlsConflict,
+        #[cfg(feature = "tls")]
+        ServerError::Tls(crate::server::tls::error::TlsError::TicketCipher),
+    ];
+    for error in &bare {
+        assert!(error.io_error().is_none(), "{error:?}");
+    }
+}
+
 /// A listener tokio already owns is handed over through its own `into_std`.
 #[tokio::test]
 async fn prepare_accepts_a_tokio_listener_through_into_std() {
