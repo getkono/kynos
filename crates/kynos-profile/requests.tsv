@@ -1,6 +1,6 @@
 # Written by `mise run profile:record`; read by `mise run profile:requests`.
 # toolchain: rustc 1.97.1 (8bab26f4f 2026-07-14)
-# host: Intel(R) Xeon(R) 6975P-C, valgrind-3.27.1
+# host: AMD EPYC 9V74 80-Core Processor, valgrind-3.27.1
 # trend: connection_h2 connection_tls form_echo rate_limit request_id_random
 benchmark	program_instructions	heap_blocks	heap_bytes
 alloc_counter_agreement.capture	2680	5	1108
@@ -39,8 +39,8 @@ connection_h1.kept	12774	14	10129
 connection_h1.plaintext	13954	27	36361
 connection_h1.second	11510	11	1801
 connection_h2.plaintext	39383	40	37105
-connection_h2.second	32351	14	2613
-connection_tls.full	69592	183	71740
+connection_h2.second	32352	14	2613
+connection_tls.full	69607	183	71740
 connection_tls.resumed	74738	197	71500
 connection_tls.second	19208	17	2131
 extract.auth_401	5207	12	2191
@@ -54,7 +54,7 @@ extract.one_of	39549	43	5850
 extract.query_unused_8	8061	9	1838
 extract.querystring	6369	12	1897
 extract.text_body	3937	9	2017
-form_echo.form_echo	137006	67	14374
+form_echo.form_echo	137010	67	14374
 interceptors.body_size	4187	14	2954
 interceptors.body_timeout	4807	14	2386
 interceptors.cache_hit	4261	10	2380
@@ -65,14 +65,14 @@ interceptors.cors_preflight	4593	12	1757
 interceptors.cors_simple	5229	13	2066
 interceptors.csrf	39601	44	6426
 interceptors.decompress_gzip	82481	51	59750
-interceptors.request_id_counter	4944	16	2722
+interceptors.request_id_counter	5436	20	3022
 interceptors.security_headers	4715	13	2162
 interceptors.set_cookies	5360	18	2426
 interceptors.timeout	4425	12	2330
 interceptors.unchecked_layer	4238	14	2546
 rate_limit.rate_limit	9204	27	3702
-realistic.stack_typical	18552	28	6564
-request_id_random.request_id_random	5741	16	2730
+realistic.stack_typical	19047	32	6864
+request_id_random.request_id_random	6233	20	3030
 respond.binary_full	5054	13	2704
 respond.conditional_304	5053	12	2806
 respond.created	3844	11	1850
@@ -104,10 +104,10 @@ scope.catch_panics_router	3612	12	2210
 scope.endpoint_layers_4	4468	16	3674
 scope.group_layers_4	4222	15	3354
 scope.observer_noop	4059	12	1922
-scope.trace_nosub	4107	12	1922
-scope.trace_span_nosub	3956	12	2018
-scope.trace_span_sub	4647	12	2018
-scope.trace_sub	4760	12	1922
+scope.trace_nosub	4110	12	1922
+scope.trace_span_nosub	3957	12	2018
+scope.trace_span_sub	4670	12	2018
+scope.trace_sub	4448	12	1922
 statics.assets_hit	4591	13	2108
 statics.docs_json	2439	8	1692
 stream.binary_stream_16	3777	9	1740
