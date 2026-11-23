@@ -37,6 +37,7 @@
 //! | `i64`, `u64` | `integer`/`int64`, `uint64`; of their bounds only `u64`'s `minimum: 0` survives an `f64`, so it is the only one stated |
 //! | `f32`, `f64` | `number`/`float`, `number`/`double` |
 //! | `Option<T>` | `T`, widened to admit `null` |
+//! | [`Nullable<T>`](Nullable) | `T`, widened to admit `null`, and never `required` |
 //! | `Box<T>`, `Arc<T>`, `&T`, `Cow<'_, T>` | `T`, under `T`'s own component name |
 //! | `Vec<T>`, `VecDeque<T>`, `[T]` | `array` with `items` |
 //! | `[T; N]` | `array` of exactly `N` |
@@ -173,8 +174,9 @@ pub trait Schema {
     /// since no bound was consulted.
     ///
     /// Only the decoded type's own answer counts: a member whose type names
-    /// another one breaks a bound under the type holding it. `Option`, `Box`,
-    /// `Arc`, `&T` and `Cow` are their `T` and answer as it does.
+    /// another one breaks a bound under the type holding it. `Option`,
+    /// `Nullable`, `Box`, `Arc`, `&T` and `Cow` are their `T` and answer as it
+    /// does.
     ///
     /// `#[derive(Schema)]` sets it with `#[schema(constraint_problem = ...)]`
     /// on the type.
@@ -576,6 +578,123 @@ impl std::fmt::Display for UnknownVariant {
 }
 
 impl std::error::Error for UnknownVariant {}
+
+/// A member of a JSON Merge Patch (RFC 7396): left out, sent as `null`, or
+/// sent with a value.
+///
+/// RFC 7396 §2 reads the three apart: a member left out leaves the target
+/// alone, `null` removes it, and a value replaces it. `Option<T>` cannot hold
+/// all three, so a clearable member is a `Nullable<T>`:
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::schema::Nullable;
+///
+/// #[derive(kynos::Schema, serde::Deserialize)]
+/// struct EntryPatch {
+///     #[serde(default)]
+///     #[schema(max_length = 10_000)]
+///     notes: Nullable<String>,
+/// }
+///
+/// let mut notes = Some("draft".to_owned());
+///
+/// let patch: EntryPatch = serde_json::from_str("{}").unwrap();
+/// patch.notes.apply_to(&mut notes);
+/// assert_eq!(notes.as_deref(), Some("draft"));
+///
+/// let patch: EntryPatch = serde_json::from_str(r#"{"notes": null}"#).unwrap();
+/// patch.notes.apply_to(&mut notes);
+/// assert_eq!(notes, None);
+/// # }
+/// ```
+///
+/// Its schema is `T`'s, widened to admit `null`, as `Option<T>`'s is, and a
+/// `#[schema(...)]` bound applies to the value alone.
+///
+/// serde reads a member left out as [`Absent`](Self::Absent) only under
+/// `#[serde(default)]`, on the field or its struct: without one, serde hands
+/// the missing member to the type as `null`, which would clear it. A
+/// `Nullable` field serde reads without a default is therefore refused by
+/// `#[derive(Schema)]`, and with one it is never `required`. The derive
+/// recognises the type by its last path segment, so an alias of it is not
+/// recognised. A `Nullable` member serde reads with no derive in between, such
+/// as a hand-written `Deserialize`, owes the same default.
+///
+/// It is read and never written: it has no `Serialize`, since `Absent` has no
+/// value to write and a response states each member it carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Nullable<T> {
+    /// Left out of the patch: the target member is left alone.
+    #[default]
+    Absent,
+    /// Sent as `null`: the target member is removed.
+    Null,
+    /// Sent with a value: the target member is replaced.
+    Value(T),
+}
+
+impl<T> Nullable<T> {
+    /// Whether the member was left out.
+    #[must_use]
+    pub const fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    /// Whether the member was sent as `null`.
+    #[must_use]
+    pub const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    /// The value sent, or `None` where the member was left out or `null`.
+    #[must_use]
+    pub const fn as_value(&self) -> Option<&T> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Absent | Self::Null => None,
+        }
+    }
+
+    /// Borrows the value, keeping which of the three this is.
+    #[must_use]
+    pub const fn as_ref(&self) -> Nullable<&T> {
+        match self {
+            Self::Absent => Nullable::Absent,
+            Self::Null => Nullable::Null,
+            Self::Value(value) => Nullable::Value(value),
+        }
+    }
+
+    /// Maps the value, keeping which of the three this is.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Nullable<U> {
+        match self {
+            Self::Absent => Nullable::Absent,
+            Self::Null => Nullable::Null,
+            Self::Value(value) => Nullable::Value(f(value)),
+        }
+    }
+
+    /// Applies the member to `target` as RFC 7396 does: left out leaves it
+    /// alone, `null` clears it, and a value replaces it.
+    pub fn apply_to(self, target: &mut Option<T>) {
+        match self {
+            Self::Absent => {}
+            Self::Null => *target = None,
+            Self::Value(value) => *target = Some(value),
+        }
+    }
+}
+
+/// `null` is [`Null`](Nullable::Null) and anything else `T`'s value. A member
+/// left out reaches this as `null` too, unless `#[serde(default)]` fills it
+/// with [`Absent`](Nullable::Absent) first.
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Nullable<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<T>::deserialize(deserializer).map(|value| value.map_or(Self::Null, Self::Value))
+    }
+}
 
 /// Whether `schema`'s `type` names `null`, whatever its other keywords say.
 pub(crate) fn type_admits_null(schema: &OpenApiSchema) -> bool {

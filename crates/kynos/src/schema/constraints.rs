@@ -15,7 +15,7 @@
 //! [`Numeric`], [`Textual`], [`Items`] or [`UniqueItems`] — so a bound on a type
 //! that cannot hold it is a compile error. Like the keyword, each one applies
 //! only to a value of its kind: an absent `Option` is `null` and satisfies
-//! every bound.
+//! every bound, as does a [`Nullable`] left out or sent as `null`.
 //!
 //! `content_encoding` and `content_media_type` are the two keys that are not
 //! bounds: JSON Schema makes `contentEncoding` and `contentMediaType`
@@ -41,6 +41,8 @@ use std::{
 };
 
 use kynos_openapi::Schema as OpenApiSchema;
+
+use crate::schema::Nullable;
 
 /// Constraints attached to a field by `#[derive(Schema)]`.
 ///
@@ -747,14 +749,20 @@ impl<T> UniqueItems for BTreeSet<T> {
     }
 }
 
-/// Emits each keyword trait for `Option`, which is `null` when absent, and
-/// for the wrappers with no wire form of their own.
+/// Emits each keyword trait for `Option` and `Nullable`, which hold no value
+/// when absent or `null`, and for the wrappers with no wire form of their own.
 macro_rules! through {
     ($($trait:ident :: $method:ident -> $output:ty),+ $(,)?) => {
         $(
             impl<T: $trait> $trait for Option<T> {
                 fn $method(&self) -> Option<$output> {
                     self.as_ref().and_then(T::$method)
+                }
+            }
+
+            impl<T: $trait> $trait for Nullable<T> {
+                fn $method(&self) -> Option<$output> {
+                    self.as_value().and_then(T::$method)
                 }
             }
 
@@ -782,6 +790,12 @@ through!(
 impl<T: Textual> Textual for Option<T> {
     fn text(&self) -> Option<&str> {
         self.as_ref().and_then(T::text)
+    }
+}
+
+impl<T: Textual> Textual for Nullable<T> {
+    fn text(&self) -> Option<&str> {
+        self.as_value().and_then(T::text)
     }
 }
 

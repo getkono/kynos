@@ -1,4 +1,4 @@
-//! Transparent wrappers, and the one that adds nullability.
+//! Transparent wrappers, and the two that add nullability.
 
 use std::{borrow::Cow, sync::Arc};
 
@@ -8,7 +8,7 @@ use kynos_openapi::{
 };
 
 use crate::schema::{
-    Schema,
+    Nullable, Schema,
     constraints::{ConstraintProblem, Pointer, Violations},
     flatten::{AdmitsAny, ClosedFlatten, Flatten, OpenMap},
     impls::with_object,
@@ -58,6 +58,22 @@ impl<T: Schema> Schema for Option<T> {
 
     fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
         if let Some(value) = self {
+            value.check_constraints(at, violations);
+        }
+    }
+}
+
+/// A merge-patch member, described as `Option<T>` is: whether it may be left
+/// out is the `required` list's answer, which the derive gives it.
+impl<T: Schema> Schema for Nullable<T> {
+    const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = T::CONSTRAINT_PROBLEM;
+
+    fn schema(registry: &mut Registry) -> OpenApiSchema {
+        Option::<T>::schema(registry)
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        if let Nullable::Value(value) = self {
             value.check_constraints(at, violations);
         }
     }
