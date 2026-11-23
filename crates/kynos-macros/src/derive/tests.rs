@@ -7033,6 +7033,12 @@ mod provider {
                 ),
                 "`gate` and `fallback` both authenticate",
             ),
+        ]
+    }
+
+    /// The container grammar, `#[provider(for = .., via = ..)]`.
+    fn forward_ledger() -> Vec<Case> {
+        vec![
             case(
                 "a forward naming no path, which could not reach the struct",
                 quote::quote!(
@@ -7146,6 +7152,7 @@ mod provider {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(forward_ledger(), expand_inner);
     }
 
     /// `authenticates` repeats across lists as within one, so a second
@@ -7237,7 +7244,7 @@ mod provider {
                 include_str!("provider/forward.rs"),
             ]
             .concat(),
-            ledger().len() - IN_ATTRIBUTE,
+            ledger().len() + forward_ledger().len() - IN_ATTRIBUTE,
         );
     }
 }

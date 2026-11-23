@@ -102,7 +102,7 @@ impl Forward {
         // The field the conflicting implementation forwards, by name.
         let at = |field: &Field| field.ident.as_ref().expect("named fields").span();
 
-        let provides = provided.iter().map(|field| {
+        let supplies = provided.iter().map(|field| {
             let ty = &field.ty;
             quote_spanned! {at(field)=>
                 impl #impl_generics ::kynos::di::Provides<#ty> for #target #where_clause {
@@ -129,7 +129,7 @@ impl Forward {
             }
         });
 
-        quote!(#(#provides)* #(#authenticates)*)
+        quote!(#(#supplies)* #(#authenticates)*)
     }
 }
 
