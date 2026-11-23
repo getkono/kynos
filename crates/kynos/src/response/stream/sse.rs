@@ -43,21 +43,48 @@ use crate::{
 /// }
 /// ```
 ///
-/// `S` is a [`Stream`](super::Stream) of [`Event`]s, and that re-export is how a
-/// handler names it without a `futures-core` dependency of its own:
+/// `S` is a [`Stream`](super::Stream) of [`SseItem`]s, and that re-export is
+/// how a handler names it without a `futures-core` dependency of its own. A
+/// stream that cannot fail yields each [`Event`] as it is:
 ///
 /// ```no_run
-/// use std::convert::Infallible;
 /// use kynos::response::stream::{
 ///     Stream,
 ///     sse::{Event, Sse},
 /// };
 ///
 /// fn events(
-///     ticks: impl Stream<Item = Result<Event<u32>, Infallible>>,
-/// ) -> Sse<impl Stream<Item = Result<Event<u32>, Infallible>>> {
+///     ticks: impl Stream<Item = Event<u32>> + Send + 'static,
+/// ) -> Sse<impl Stream<Item = Event<u32>> + Send + 'static> {
 ///     Sse::new(ticks)
 /// }
+/// # fn answers(
+/// #     ticks: impl Stream<Item = Event<u32>> + Send + 'static,
+/// # ) -> impl kynos::response::IntoResponse + kynos::response::Responses {
+/// #     events(ticks)
+/// # }
+/// ```
+///
+/// One that can yields `Result<Event<T>, E>`, and its first `Err` ends the
+/// body there, since the status was sent with the head:
+///
+/// ```no_run
+/// use std::io;
+/// use kynos::response::stream::{
+///     Stream,
+///     sse::{Event, Sse},
+/// };
+///
+/// fn events(
+///     reads: impl Stream<Item = Result<Event<u32>, io::Error>> + Send + 'static,
+/// ) -> Sse<impl Stream<Item = Result<Event<u32>, io::Error>> + Send + 'static> {
+///     Sse::new(reads)
+/// }
+/// # fn answers(
+/// #     reads: impl Stream<Item = Result<Event<u32>, io::Error>> + Send + 'static,
+/// # ) -> impl kynos::response::IntoResponse + kynos::response::Responses {
+/// #     events(reads)
+/// # }
 /// ```
 ///
 /// # Disconnect and backpressure
@@ -252,6 +279,162 @@ impl<T> Event<T> {
     }
 }
 
+impl<T: serde::Serialize + Schema> Event<T> {
+    /// Creates an event named by its payload's serde tag.
+    ///
+    /// The name is the value serde writes under `#[serde(tag = "...")]`, the
+    /// renames applied, so the tag is spelled once and the event's name
+    /// cannot drift from it. The payload is an internally or adjacently
+    /// tagged enum, or a struct carrying its own `tag`.
+    ///
+    /// ```
+    /// use kynos::{Schema, response::stream::sse::Event};
+    /// use serde::Serialize;
+    ///
+    /// #[derive(Schema, Serialize)]
+    /// #[serde(tag = "kind", rename_all = "snake_case")]
+    /// enum ServerEvent {
+    ///     Tick { fingerprint: String },
+    ///     ShuttingDown,
+    /// }
+    ///
+    /// let event = Event::tagged(ServerEvent::Tick {
+    ///     fingerprint: "0123456789abcdef".to_owned(),
+    /// });
+    /// assert_eq!(event.event.as_deref(), Some("tick"));
+    ///
+    /// let event = Event::tagged(ServerEvent::ShuttingDown);
+    /// assert_eq!(event.event.as_deref(), Some("shutting_down"));
+    /// # // The other two shapes the derive describes a tag for.
+    /// # #[derive(Schema, Serialize)]
+    /// # #[serde(tag = "t", content = "c")]
+    /// # enum Adjacent { Moved(u8) }
+    /// # assert_eq!(Event::tagged(Adjacent::Moved(1)).event.as_deref(), Some("Moved"));
+    /// # #[derive(Schema, Serialize)]
+    /// # #[serde(tag = "type", rename = "ping")]
+    /// # struct Ping { at: u64 }
+    /// # assert_eq!(Event::tagged(Ping { at: 1 }).event.as_deref(), Some("ping"));
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if `data` does not begin with a string member, as anything
+    /// serde does not write as an object, an externally tagged enum
+    /// included, does not. Serde writes a tag first, so this is caught on
+    /// the first event of a misused type.
+    ///
+    /// A struct whose first field is a string is indistinguishable from a
+    /// tag on the wire, so with debug assertions on this also panics where
+    /// `T`'s [`Schema`] does not name that member as its tag: as an enum's
+    /// `discriminator`, or as a struct's tag property's `const`.
+    #[must_use]
+    pub fn tagged(data: T) -> Self {
+        let Some((member, name)) = leading_member(&data) else {
+            panic!(
+                "`Event::tagged` names an event by its payload's serde tag, and this payload \
+                 writes none: tag its type with `#[serde(tag = \"...\")]`, or name the event \
+                 with `Event::new(data).event(name)`"
+            );
+        };
+        debug_assert!(
+            describes_tag::<T>(&member, &name),
+            "`Event::tagged` read `{member}` as this payload's serde tag, but its schema does \
+             not describe a tag there: tag its type with `#[serde(tag = \"...\")]`, or name \
+             the event with `Event::new(data).event(name)`"
+        );
+
+        Self::new(data).event(name)
+    }
+}
+
+/// Whether `T`'s own schema names `member` as the tag whose value is `name`.
+///
+/// An enum's names it as its `discriminator`; a struct carrying a `tag`, which
+/// has no branches to discriminate, as a property whose `const` is `name`.
+fn describes_tag<T: Schema>(member: &str, name: &str) -> bool {
+    let kynos_openapi::Schema::Object(schema) = T::schema(&mut Registry::new()) else {
+        return false;
+    };
+
+    schema
+        .discriminator
+        .as_ref()
+        .is_some_and(|discriminator| discriminator.property_name == member)
+        || schema.properties.get(member).is_some_and(|property| {
+            property.as_object().is_some_and(|property| {
+                property
+                    .const_value
+                    .as_ref()
+                    .is_some_and(|value| value.as_str() == Some(name))
+            })
+        })
+}
+
+/// The first member `data` serializes, as its key and its string value.
+///
+/// Serde writes an internal or adjacent tag as the first member of the
+/// object, so this is the tag where there is one. Serialization stops at that
+/// member, which costs no more than the tag itself whatever the payload
+/// holds. `None` when `data` is not an object, or its first member is not a
+/// string.
+fn leading_member<T: serde::Serialize + ?Sized>(data: &T) -> Option<(String, String)> {
+    let mut found = None;
+    // Every path ends in `Stop`, the one that found the member included.
+    let _ = data.serialize(leading::Leading { found: &mut found });
+    found
+}
+
+/// What an [`Sse`] stream yields: an [`Event`], or a `Result` of one.
+///
+/// A bare event is a stream that cannot fail, so it needs no `Ok` around each
+/// item and no `Infallible` in its type. An `Err` ends the body after the
+/// last whole event, and is reported to the connection as the body's error.
+///
+/// Sealed: these two are the whole set.
+pub trait SseItem: sealed::Sealed {
+    /// The payload each event carries.
+    type Data;
+
+    /// The error that ends the stream; [`Infallible`](std::convert::Infallible)
+    /// for a bare event.
+    type Error: Into<BoxError>;
+
+    /// The event this item carries, or the error that ends the stream.
+    ///
+    /// # Errors
+    ///
+    /// The item's own error, which a bare event never has.
+    fn into_event(self) -> Result<Event<Self::Data>, Self::Error>;
+}
+
+/// Closes [`SseItem`], so a third item shape cannot change what the two
+/// existing ones mean.
+mod sealed {
+    /// The private supertrait.
+    pub trait Sealed {}
+}
+
+impl<T> sealed::Sealed for Event<T> {}
+impl<T, E> sealed::Sealed for Result<Event<T>, E> {}
+
+impl<T> SseItem for Event<T> {
+    type Data = T;
+    type Error = std::convert::Infallible;
+
+    fn into_event(self) -> Result<Event<T>, Self::Error> {
+        Ok(self)
+    }
+}
+
+impl<T, E: Into<BoxError>> SseItem for Result<Event<T>, E> {
+    type Data = T;
+    type Error = E;
+
+    fn into_event(self) -> Self {
+        self
+    }
+}
+
 /// The events, framed as the `text/event-stream` bytes that carry them.
 ///
 /// The stream is held boxed so that it can be polled without a projection:
@@ -313,11 +496,11 @@ fn heartbeat_record(comment: &str) -> bytes::Bytes {
     record.freeze()
 }
 
-impl<S, T, E> futures_core::Stream for Records<S>
+impl<S> futures_core::Stream for Records<S>
 where
-    S: futures_core::Stream<Item = Result<Event<T>, E>>,
-    T: serde::Serialize,
-    E: Into<BoxError>,
+    S: futures_core::Stream,
+    S::Item: SseItem,
+    <S::Item as SseItem>::Data: serde::Serialize,
 {
     type Item = Result<bytes::Bytes, BoxError>;
 
@@ -344,7 +527,11 @@ where
 
         // Events first: each resets the silence, so a busy stream sends no comment.
         match records.events.as_mut().poll_next(context) {
-            Poll::Ready(Some(Ok(event))) => {
+            Poll::Ready(Some(item)) => {
+                let event = match item.into_event() {
+                    Ok(event) => event,
+                    Err(error) => return Poll::Ready(Some(Err(error.into()))),
+                };
                 if let Some(keep_alive) = records.keep_alive.as_mut() {
                     keep_alive.restart();
                 }
@@ -353,7 +540,6 @@ where
                     records.buffer.record(|record| encode(record, data, &event)),
                 ));
             }
-            Poll::Ready(Some(Err(error))) => return Poll::Ready(Some(Err(error.into()))),
             Poll::Ready(None) => return Poll::Ready(None),
             Poll::Pending => {}
         }
@@ -450,11 +636,11 @@ fn field(record: &mut bytes::BytesMut, name: &str, value: &[u8]) {
     push(rest);
 }
 
-impl<S, T, E> IntoResponse for Sse<S>
+impl<S> IntoResponse for Sse<S>
 where
-    S: futures_core::Stream<Item = Result<Event<T>, E>> + Send + 'static,
-    T: serde::Serialize,
-    E: Into<BoxError> + 'static,
+    S: futures_core::Stream + Send + 'static,
+    S::Item: SseItem,
+    <S::Item as SseItem>::Data: serde::Serialize,
 {
     fn into_response(self) -> Response {
         let records = Records {
@@ -475,10 +661,11 @@ where
     }
 }
 
-impl<S, T, E> Responses for Sse<S>
+impl<S> Responses for Sse<S>
 where
-    S: futures_core::Stream<Item = Result<Event<T>, E>>,
-    T: Schema,
+    S: futures_core::Stream,
+    S::Item: SseItem,
+    <S::Item as SseItem>::Data: Schema,
 {
     // OpenAPI 3.2 describes `text/event-stream` as parsed events, so the item is
     // the event and the JSON payload hangs off `data`'s `contentSchema`.
@@ -488,7 +675,7 @@ where
             ..SchemaObject::default()
         };
         data.content_media_type = Some(mime_names::APPLICATION_JSON.to_owned());
-        data.content_schema = Some(Box::new(registry.resolve::<T>()));
+        data.content_schema = Some(Box::new(registry.resolve::<<S::Item as SseItem>::Data>()));
 
         let mut retry = SchemaObject {
             ty: Some(TypeSet::One(SchemaType::Integer)),
@@ -529,6 +716,9 @@ where
         )
     }
 }
+
+// Private: it serves only `leading_member`.
+mod leading;
 
 #[cfg(test)]
 mod tests;
