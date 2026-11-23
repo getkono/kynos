@@ -6981,12 +6981,87 @@ mod provider {
                 ),
                 "`skip` is already set",
             ),
+            case(
+                "`skip` beside `provided`, which says the field both is and is not handed out",
+                quote::quote!(
+                    struct App {
+                        #[provide(skip, provided, authenticates = Bearer)]
+                        gate: Gate,
+                    }
+                ),
+                "`skip` and `provided` contradict each other",
+            ),
+            case(
+                "`skip` beside `authenticates`, which already implies it",
+                quote::quote!(
+                    struct App {
+                        #[provide(skip, authenticates = Bearer)]
+                        gate: Gate,
+                    }
+                ),
+                "`authenticates` already keeps the field from being handed out",
+            ),
+            case(
+                "`provided` on a field authenticating nothing, which it cannot opt back in",
+                quote::quote!(
+                    struct App {
+                        #[provide(provided)]
+                        pool: Pool,
+                    }
+                ),
+                "this field authenticates no scheme",
+            ),
+            case(
+                "one field naming a scheme twice",
+                quote::quote!(
+                    struct App {
+                        #[provide(authenticates = Bearer, authenticates = Bearer)]
+                        gate: Gate,
+                    }
+                ),
+                "`gate` already authenticates",
+            ),
+            case(
+                "two fields authenticating one scheme, which would emit two implementations",
+                quote::quote!(
+                    struct App {
+                        #[provide(authenticates = Bearer)]
+                        gate: Gate,
+                        #[provide(authenticates = Bearer)]
+                        fallback: Gate,
+                    }
+                ),
+                "`gate` and `fallback` both authenticate",
+            ),
         ]
     }
 
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+    }
+
+    /// `authenticates` repeats across lists as within one, so a second
+    /// `#[provide(...)]` adds a scheme rather than being refused as a repeat,
+    /// and `provided` is what keeps an authenticator handed out.
+    #[test]
+    fn authenticates_repeats_and_provided_opts_back_in() {
+        let input = syn::parse2(quote::quote!(
+            struct App {
+                #[provide(authenticates = Bearer)]
+                #[provide(authenticates = Basic, provided)]
+                gate: Gate,
+                #[provide(authenticates = ApiKey)]
+                keys: Keys,
+            }
+        ))
+        .expect("the input parses");
+        let expanded = expand_inner(&input)
+            .expect("the grammar admits it")
+            .to_string();
+        assert_eq!(expanded.matches("Authenticates <").count(), 3, "{expanded}");
+        assert!(expanded.contains("Provides < Gate >"), "{expanded}");
+        assert!(!expanded.contains("Provides < Keys >"), "{expanded}");
     }
 
     /// A key outside the grammar is refused whatever its shape, a qualified

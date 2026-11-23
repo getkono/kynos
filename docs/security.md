@@ -367,6 +367,35 @@ it out also lets one authorizer serve every scheme sharing a scope type,
 `impl<S, C> Authorizer<S, C, Grant>`. What stays out of reach is one generic
 over every scope type, which would include `Unscoped`.
 
+### A context field names the scheme it authenticates
+
+`#[provide(authenticates = S)]` on a `#[derive(Provider)]` field emits
+`Authenticates<S>` borrowing that field, once per scheme it names. The field is
+then kept back from injection, since an authenticator is borrowed rather than
+cloned per request and need not be `Clone`; `provided` hands it out as well.
+
+```rust
+#[derive(Provider)]
+struct App {
+    #[provide(authenticates = AccessToken, provided)]
+    keys: Keys,
+    #[provide(authenticates = Basic<Credentials>)]
+    passwords: Passwords,
+}
+```
+
+| Refused | Why |
+| --- | --- |
+| `skip` beside `authenticates` | Two spellings of one thing; the field reads the same either way, so only one is accepted |
+| `skip` beside `provided` | The field cannot be both handed out and not |
+| `provided` with no `authenticates` | Every other field is handed out already, so it would say nothing |
+| One scheme named twice, on one field or two | A scheme has one authenticator, and a second would be a coherence error naming neither field |
+
+A blanket `impl<C: Provides<A>> Authenticates<S> for C` was the alternative. It
+needs the authenticator provided, which clones it per request, and it overlaps
+every hand-written impl. Writing the impl by hand stays the way to borrow an
+authenticator the context does not hold as a field.
+
 ### A scheme's default scopes are enforced where declared
 
 `SecurityScheme::scopes()` is written into every requirement naming the scheme,
