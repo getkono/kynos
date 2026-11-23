@@ -20,6 +20,9 @@ pub(super) struct Markers {
     pub(super) extension: Option<Span>,
     /// `#[problem(headers)]`: the field holds the failure's header group.
     pub(super) headers: Option<Span>,
+    /// `#[problem(retry_after)]`: the field holds the delay `Retry-After`
+    /// sends.
+    pub(super) retry_after: Option<Span>,
 }
 
 /// Where a `#[problem(...)]` list is written, which decides its legal members.
@@ -148,6 +151,13 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                         span,
                         "`headers` marks the field holding the header group a failure sends, so \
                          it belongs on that field, whose type is the group",
+                    ));
+                }
+                "retry_after" => {
+                    return Err(syn::Error::new(
+                        span,
+                        "`retry_after` marks the field holding the delay a failure sends as \
+                         `Retry-After`, so it belongs on that field, a `Duration`",
                     ));
                 }
                 other => {
@@ -286,9 +296,9 @@ fn constant_value(value: &Expr) -> bool {
     }
 }
 
-/// Checks each field's `#[problem(...)]` markers: `extension` or `headers`,
-/// each once, and `extension` only on a named field, which has a member name
-/// RFC 9457 does not define.
+/// Checks each field's `#[problem(...)]` markers: `extension`, `headers` or
+/// `retry_after`, each once, and `extension` only on a named field, which has
+/// a member name RFC 9457 does not define.
 /// Returns what each field carries, in declaration order.
 pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<Vec<Markers>> {
     let named = matches!(fields, Fields::Named(_));
@@ -315,7 +325,7 @@ pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<Vec<Markers>> 
                     }
                     // A marker is bare; a value would otherwise reach only
                     // syn's "expected `,`".
-                    "extension" | "headers"
+                    "extension" | "headers" | "retry_after"
                         if meta.input.peek(syn::Token![=])
                             || meta.input.peek(syn::token::Paren) =>
                     {
@@ -347,12 +357,13 @@ pub(super) fn check_field_markers(fields: &Fields) -> syn::Result<Vec<Markers>> 
                         markers.extension = Some(attr.span());
                     }
                     "headers" => markers.headers = Some(attr.span()),
+                    "retry_after" => markers.retry_after = Some(attr.span()),
                     other => {
                         return Err(unknown(
                             &meta.path,
                             other,
-                            "a field's `#[problem(...)]` grammar, which is `extension` or \
-                             `headers`",
+                            "a field's `#[problem(...)]` grammar, which is `extension`, \
+                             `headers` or `retry_after`",
                         ));
                     }
                 }

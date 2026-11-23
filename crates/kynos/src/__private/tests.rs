@@ -1,7 +1,7 @@
 use crate::{
     __private::{
         path::path_parameter_mismatch,
-        problem::{union, union_len},
+        problem::{names_retry_after, union, union_len},
         uri::{
             decode_path_value, decode_query_component, encode_ext_value, encode_query_component,
             endpoint_uri_with_path, query_pairs,
@@ -19,6 +19,21 @@ fn a_status_union_keeps_each_status_once_in_first_order() {
     const LEN: usize = union_len(PARTS);
 
     assert_eq!(union::<LEN>(PARTS), [404, 410, 409, 422]);
+}
+
+/// A group names `Retry-After` in any case, among other names, and a name
+/// that only shares its prefix or its length is another field.
+#[test]
+fn a_group_names_retry_after_in_any_case() {
+    assert!(names_retry_after(&["ratelimit", "Retry-After"]));
+    assert!(names_retry_after(&["retry-after"]));
+
+    assert!(!names_retry_after(&[]));
+    assert!(!names_retry_after(&[
+        "retry-afters",
+        "retry-afte",
+        "retry_after"
+    ]));
 }
 
 struct Params;

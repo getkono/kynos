@@ -30,8 +30,9 @@ use crate::{
 /// may retry at once.
 ///
 /// A [`HeaderParams`] group, so attaching one is declaring one. Return it
-/// through [`WithHeaders`](crate::response::headers::WithHeaders), or hold it
-/// in a failure's `#[problem(headers)]` field.
+/// through [`WithHeaders`](crate::response::headers::WithHeaders), hold it in a
+/// failure's `#[problem(headers)]` field, or mark a failure's `Duration` field
+/// `#[problem(retry_after)]`, which sends and declares this group from it.
 ///
 /// ```
 /// use std::time::Duration;

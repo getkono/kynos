@@ -1,4 +1,4 @@
-error: `extention` is not part of a field's `#[problem(...)]` grammar, which is `extension` or `headers`
+error: `extention` is not part of a field's `#[problem(...)]` grammar, which is `extension`, `headers` or `retry_after`
   --> tests/ui/macros/problem_unknown_qualified_and_repeated_keys.rs:13:19
    |
 13 |         #[problem(extention)]

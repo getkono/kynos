@@ -47,7 +47,7 @@ pub(super) fn variant_of(
 
     if let Some(span) = markers
         .iter()
-        .find_map(|marked| marked.extension.or(marked.headers))
+        .find_map(|marked| marked.extension.or(marked.headers).or(marked.retry_after))
     {
         return Err(syn::Error::new(
             span,

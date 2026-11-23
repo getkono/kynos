@@ -705,6 +705,28 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// status alone, required only where every failure answering with that status
 /// sends it. `WithHeaders` stays for a group every status sends.
 ///
+/// `Retry-After` is the delay itself: one field may say
+/// `#[problem(retry_after)]`, its type a `Duration`, or an `Option<Duration>`
+/// sent only when it holds one:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum LoginError {
+///     #[error("{detail}")]
+///     #[problem(status = 429, title = "Too many login attempts")]
+///     Throttled {
+///         detail: &'static str,
+///         #[problem(retry_after)]
+///         wait: Duration,
+///     },
+/// }
+/// ```
+///
+/// It is sent and declared as `kynos::http::retry_after::RetryAfter` is, as
+/// Kynos's own 429s and 503s send it: whole seconds rounded up, described as a
+/// string. It joins the failure's `headers` group, which may then not name
+/// `Retry-After` itself.
+///
 /// A variant holding one field of another `ApiError` type may answer as that
 /// error instead of declaring a status, so failures many operations share are
 /// declared once. `thiserror`'s `#[error(transparent)]` already says the
@@ -728,7 +750,8 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// that type's statuses and responses join the enum's; a status both declare
 /// is described once, naming every type that reaches it. It declares no
 /// `status`, `title` or `type` of its own, publishes no `extension`, sends no
-/// `headers` of its own, and its field's type cannot name the enum's generic
+/// `headers` or `retry_after` of its own, and its field's type cannot name the
+/// enum's generic
 /// parameters, since the statuses are a `const`.
 ///
 /// A status opts an `#[error(transparent)]` variant out: one declaring
