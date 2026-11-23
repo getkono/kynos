@@ -16,7 +16,7 @@ use crate::{
         common::wrapped,
         schema::{
             aliases::named_string, attributes::constraints, check::value::value_checks,
-            container::constraint_problem,
+            group_attributes,
         },
     },
     doc::doc_string,
@@ -27,11 +27,11 @@ use crate::{
 /// holding a bound answers for it, as a body's type does for its members, so
 /// a group reads alike through its parameter extractor and `QueryString`.
 ///
-/// Read as the `Schema` derive reads it, a bounded group deriving that too;
-/// a malformed attribute is that derive's to report, once, so it reads as
-/// none here.
-pub(crate) fn group_problem(input: &DeriveInput) -> Option<Expr> {
-    constraint_problem(input).ok().flatten()
+/// Read as the `Schema` derive reads it, refusing a malformed `#[schema(...)]`
+/// on the group or a field as that derive does, since each parameter derive
+/// registers the attribute and may stand without it.
+pub(crate) fn group_problem(input: &DeriveInput) -> syn::Result<Option<Expr>> {
+    group_attributes(input)
 }
 
 /// Where the problem a group answers every field's broken bound with comes from.
@@ -41,9 +41,6 @@ pub(crate) enum Group<'a> {
     None,
     /// The [`group_problem`] its attribute names.
     Named(&'a Expr),
-    /// Its own `Schema::CONSTRAINT_PROBLEM`, however written, else each field
-    /// type's: a `QueryParams` group is a `Schema`, read as `QueryString` does.
-    OfSelf,
 }
 
 impl<'a> From<Option<&'a Expr>> for Group<'a> {
@@ -204,9 +201,6 @@ fn carried(param: &Param<'_>) -> TokenStream2 {
     match param.group {
         Group::None => typed,
         Group::Named(group) => quote!(::core::option::Option::Some(#group)),
-        Group::OfSelf => quote! {
-            ::core::option::Option::or(<Self as ::kynos::schema::Schema>::CONSTRAINT_PROBLEM, #typed)
-        },
     }
 }
 
@@ -225,10 +219,10 @@ pub(crate) fn constraint_problems_body(params: &[Param<'_>]) -> TokenStream2 {
     let checked = params.iter().filter(|param| param.fixed.is_none());
     let named: Vec<TokenStream2> = match group {
         Group::Named(_) => checked.take(1).map(carried).collect(),
-        _ => checked.map(typed).collect(),
+        Group::None => checked.map(typed).collect(),
     };
     let count = named.len();
-    let flattened = quote! {
+    quote! {
         // Typed, so a group with no checked field still names its element.
         let named: [
             ::core::option::Option<::kynos::schema::constraints::ConstraintProblem>;
@@ -237,15 +231,6 @@ pub(crate) fn constraint_problems_body(params: &[Param<'_>]) -> TokenStream2 {
         ::core::iter::Iterator::collect(::core::iter::Iterator::flatten(
             ::core::iter::IntoIterator::into_iter(named),
         ))
-    };
-    match group {
-        Group::OfSelf if count > 0 => quote! {
-            match <Self as ::kynos::schema::Schema>::CONSTRAINT_PROBLEM {
-                ::core::option::Option::Some(problem) => ::std::vec![problem],
-                ::core::option::Option::None => { #flattened }
-            }
-        },
-        _ => flattened,
     }
 }
 

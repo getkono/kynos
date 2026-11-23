@@ -561,13 +561,21 @@ pub enum ConstraintDetail {
 /// JSON Schema bounds are numbers, so a value is compared as an `f64`: an
 /// `i64` or `u64` past 2^53 is compared at the nearest `f64`, which is how the
 /// bound itself is written in the description.
+///
+/// A field of a type serde writes as a number but which holds none itself is
+/// described as one with `#[schema(as = u64)]`, or another number type: its
+/// check converts the value through `From<&F>`, or the function a
+/// `via = path` beside it names, and holds the number to the bound. An impl
+/// whose `number` returns `None` for every value checks nothing.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a number, so a numeric bound cannot apply to it",
     label = "not a number",
     note = "`minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and `multiple_of` \
             apply to the integer and float types, and to an `Option`, `Box` or `Arc` of one; \
             implement `kynos::schema::constraints::Numeric` for a newtype that is a number on \
-            the wire"
+            the wire",
+    note = "or, on a `Schema` field whose serde form is a number, describe it as one with \
+            `#[schema(as = u64)]`, converting through `From<&{Self}>` or `via = path`"
 )]
 pub trait Numeric {
     /// This value as a JSON number, or `None` where it is `null`.
@@ -579,12 +587,21 @@ pub trait Numeric {
 ///
 /// A length is counted in Unicode code points, as JSON Schema counts it, not
 /// in bytes.
+///
+/// A field of a type serde writes as a string but which holds none itself,
+/// such as a hash written as hex, is described as one with
+/// `#[schema(as = String)]`: its check converts the value through
+/// `From<&F>`, or the function a `via = path` beside it names, and holds the
+/// string to the bound. An impl whose `text` returns `None` for every value
+/// checks nothing, so a bound on it is described and never enforced.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not a string, so a string bound cannot apply to it",
     label = "not a string",
     note = "`min_length`, `max_length`, `pattern`, `content_encoding` and `content_media_type` \
             apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement \
-            `kynos::schema::constraints::Textual` for a newtype that is a string on the wire"
+            `kynos::schema::constraints::Textual` for a newtype that is a string on the wire",
+    note = "or, on a `Schema` field whose serde form is a string, describe it as one with \
+            `#[schema(as = String)]`, converting through `From<&{Self}>` or `via = path`"
 )]
 pub trait Textual {
     /// This value as a JSON string, or `None` where it is `null`.
@@ -592,11 +609,18 @@ pub trait Textual {
 }
 
 /// A value `min_items` and `max_items` apply to.
+///
+/// A field of a type serde writes as an array but which is no sequence itself
+/// is described as one with `#[schema(as = Vec<T>)]`: its check converts the
+/// value through `From<&F>`, or the function a `via = path` beside it names,
+/// and holds the sequence to the bound.
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an array, so an item bound cannot apply to it",
     label = "not an array",
     note = "`min_items` and `max_items` apply to sequences and sets, and to an `Option`, `Box` \
-            or `Arc` of one"
+            or `Arc` of one",
+    note = "or, on a `Schema` field whose serde form is an array, describe it as one with \
+            `#[schema(as = Vec<T>)]`, converting through `From<&{Self}>` or `via = path`"
 )]
 pub trait Items {
     /// How many items this array holds, or `None` where it is `null`.

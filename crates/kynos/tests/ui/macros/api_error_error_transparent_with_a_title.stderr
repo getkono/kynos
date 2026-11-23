@@ -1,0 +1,5 @@
+error: `#[error(transparent)]` makes variant `Lookup` answer as the error it holds, whose title, type and extension members are that error's. Declare `#[problem(status = ...)]` beside them for a failure of its own, or drop them
+  --> tests/ui/macros/api_error_error_transparent_with_a_title.rs:15:13
+   |
+15 |     #[error(transparent)]
+   |             ^^^^^^^^^^^
