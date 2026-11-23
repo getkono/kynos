@@ -30,6 +30,30 @@ pub enum RouterError {
         path: String,
     },
 
+    /// An operation takes no guard while another operation of its
+    /// [`Group`](crate::router::group::Group) takes one, and does not declare
+    /// that it is public.
+    ///
+    /// A guard is each handler's own argument, so a handler that leaves it out
+    /// compiles and is served to anyone, and its operation is described
+    /// without `security`. Among guarded siblings that is a forgotten guard
+    /// far more often than an intent. An operation meant to be reached
+    /// without a credential says so with `#[kynos::public]`, or
+    /// [`EndpointBuilder::public`](crate::router::endpoint::builder::EndpointBuilder::public).
+    ///
+    /// Reported once per such operation, located at it.
+    #[error(
+        "operation `{method} {path}` takes no guard while another operation in its group takes \
+         one; take the guard, or mark the operation `#[kynos::public]` if it is meant to be \
+         reached without a credential"
+    )]
+    UnguardedOperation {
+        /// The operation's method.
+        method: kynos_openapi::Method,
+        /// The `paths` key it is at.
+        path: String,
+    },
+
     /// An interceptor's short circuit declared statuses its responses do not
     /// describe, or the reverse.
     ///

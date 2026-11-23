@@ -144,6 +144,34 @@ pub fn operation(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand_generic(attribute, item)
 }
 
+/// Declares that an operation takes no guard on purpose.
+///
+/// A group whose operations take a guard refuses to build around one that
+/// takes none, since a forgotten guard argument compiles and is served to
+/// anyone. An operation meant to be reached without a credential, such as the
+/// one issuing it, says so here:
+///
+/// ```ignore
+/// /// Exchange a password for a session token.
+/// #[kynos::post("/sessions")]
+/// #[kynos::public]
+/// async fn create_session(Json(login): Json<Login>) -> Result<Json<Session>, LoginError> {
+///     todo!()
+/// }
+/// ```
+///
+/// It goes beside a route attribute, above or below it, and takes no
+/// arguments. It changes nothing on the wire or in the description, and on a
+/// handler taking a guard it is a compile error, since `MaybeAuth` is how a
+/// guarded operation admits anonymous callers. `EndpointBuilder::public` is
+/// the builder's spelling.
+#[proc_macro_attribute]
+pub fn public(attribute: TokenStream, item: TokenStream) -> TokenStream {
+    route::attrs::expand_public(&attribute.into(), item.into())
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
 /// Collects operations for mounting.
 ///
 /// Operations sharing a path are merged into one Path Item, so `routes![list,

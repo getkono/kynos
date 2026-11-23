@@ -101,6 +101,10 @@ where
         H::__GUARDED
     }
 
+    fn __public(&self) -> bool {
+        self.public
+    }
+
     // This operation's recovery covers its guard wherever the guard runs.
     fn __guard_ahead(
         &self,

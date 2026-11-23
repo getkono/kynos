@@ -23,6 +23,7 @@ pub use kynos::options
 pub use kynos::patch
 pub use kynos::path
 pub use kynos::post
+pub use kynos::public
 pub use kynos::put
 pub use kynos::query
 pub use kynos::routes
@@ -8345,6 +8346,7 @@ pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::depreca
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::description(self, &'static str) -> Self
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::intercept<N: kynos::middleware::Interceptor<C>>(self, N) -> kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, kynos::middleware::stack::Cons<N, I>> where C: core::marker::Sync + 'static, I: kynos::middleware::stack::CompatibleWith<N, C>
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::operation_id(self, &'static str) -> Self
+pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::public(self) -> Self
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::summary(self, &'static str) -> Self
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::tag<T: kynos::router::operation::Tag>(self) -> Self
 impl<C, H: kynos::handler::Handler<C, A>, A> kynos::router::endpoint::builder::EndpointBuilder<C, H, A, kynos::middleware::catch_panic::Propagate, ()>
@@ -8375,6 +8377,7 @@ pub const kynos::router::endpoint::meta::EndpointMeta::METHOD: &'static str
 pub const kynos::router::endpoint::meta::EndpointMeta::OPERATION_ID: &'static str
 pub const kynos::router::endpoint::meta::EndpointMeta::PATH: &'static str
 pub const kynos::router::endpoint::meta::EndpointMeta::PATH_VARIABLES: &'static [&'static str]
+pub const kynos::router::endpoint::meta::EndpointMeta::PUBLIC: bool
 pub const kynos::router::endpoint::meta::EndpointMeta::SUMMARY: core::option::Option<&'static str>
 pub const kynos::router::endpoint::meta::EndpointMeta::TAGS: &'static [kynos::router::operation::DeclaredTag]
 pub trait kynos::router::endpoint::meta::EndpointUri: kynos::router::endpoint::meta::EndpointMeta
@@ -8502,6 +8505,9 @@ pub kynos::router::error::RouterError::ShortCircuitMismatch::declared: alloc::ve
 pub kynos::router::error::RouterError::ShortCircuitMismatch::described: alloc::vec::Vec<u16>
 pub kynos::router::error::RouterError::ShortCircuitMismatch::name: alloc::string::String
 pub kynos::router::error::RouterError::Spec(kynos_openapi::validate::violation::SpecError)
+pub kynos::router::error::RouterError::UnguardedOperation
+pub kynos::router::error::RouterError::UnguardedOperation::method: kynos_openapi::model::paths::method::Method
+pub kynos::router::error::RouterError::UnguardedOperation::path: alloc::string::String
 impl core::clone::Clone for kynos::router::error::RouterError
 pub fn kynos::router::error::RouterError::clone(&self) -> kynos::router::error::RouterError
 impl core::cmp::Eq for kynos::router::error::RouterError

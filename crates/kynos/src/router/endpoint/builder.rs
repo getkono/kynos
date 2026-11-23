@@ -54,6 +54,7 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     description: Option<&'static str>,
     tags: Vec<DeclaredTag>,
     deprecated: bool,
+    public: bool,
     interceptors: Vec<Arc<dyn ErasedInterceptor<C>>>,
 
     // `fn() -> _` keeps the parameters out of this builder's auto traits. `I`
@@ -95,6 +96,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             description: None,
             tags: Vec::new(),
             deprecated: false,
+            public: false,
             interceptors: Vec::new(),
             _private: PhantomData,
         }
@@ -111,6 +113,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             description: self.description,
             tags: self.tags,
             deprecated: self.deprecated,
+            public: self.public,
             interceptors: self.interceptors,
             _private: PhantomData,
         }
@@ -199,6 +202,70 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     #[must_use]
     pub fn deprecated(mut self) -> Self {
         self.deprecated = true;
+        self
+    }
+
+    /// Declares that the operation takes no guard on purpose.
+    ///
+    /// A [`Group`](crate::router::group::Group) whose operations take a guard
+    /// refuses to build around one that takes none, since that is what a
+    /// forgotten guard argument looks like; this is how an operation that is
+    /// meant to be reachable without a credential, such as the one issuing
+    /// it, says so. It changes nothing else: the description and the request
+    /// path are the same with it and without it. `#[kynos::public]` is the
+    /// route attribute's spelling.
+    ///
+    /// Only for a handler that takes no guard. On one that does, it fails to
+    /// compile, since an operation cannot be both:
+    ///
+    /// ```compile_fail,E0080
+    /// # use kynos::{
+    /// #     error::rejection::AuthRejection, openapi,
+    /// #     router::endpoint::builder::EndpointBuilder,
+    /// #     security::{Authenticates, Authenticator, Head, auth::Auth, schemes::Bearer},
+    /// #     security::carrier::{BearerToken, presented::Presented},
+    /// # };
+    /// # struct Tokens;
+    /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+    /// #     async fn authenticate(
+    /// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
+    /// #     ) -> Result<String, AuthRejection> {
+    /// #         Err(AuthRejection::unauthenticated())
+    /// #     }
+    /// # }
+    /// # struct App;
+    /// # impl Authenticates<Bearer> for App {
+    /// #     type Authenticator = Tokens;
+    /// #     fn authenticator(&self) -> &Tokens { &Tokens }
+    /// # }
+    /// async fn revoke(caller: Auth<Bearer>) -> kynos::response::status::NoContent {
+    ///     kynos::response::status::NoContent
+    /// }
+    ///
+    /// let endpoint = EndpointBuilder::<App, _, _>::new(
+    ///     openapi::Method::Delete,
+    ///     openapi::PathTemplate::parse("/sessions/current").expect("valid path"),
+    ///     revoke,
+    /// )
+    /// .public();
+    /// # let _ = endpoint;
+    /// ```
+    #[must_use]
+    pub fn public(self) -> Self {
+        const {
+            assert!(
+                !H::__GUARDED,
+                "`public` declares that an operation takes no guard, and this handler takes one; \
+                 remove `public`, or the guard argument"
+            );
+        };
+        self.declared_public()
+    }
+
+    /// [`public`](EndpointBuilder::public) without its check, for `from_meta`,
+    /// which refuses a guarded handler in the attribute's words instead.
+    pub(crate) fn declared_public(mut self) -> Self {
+        self.public = true;
         self
     }
 

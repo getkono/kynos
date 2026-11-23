@@ -30,6 +30,17 @@ use crate::{
 /// each interceptor's contribution is merged into each operation's description
 /// — so attaching authentication to a group documents it on every operation
 /// underneath.
+///
+/// # A guard is taken by all or declared absent
+///
+/// A guard is each handler's argument rather than the group's, so the
+/// operations of a group may differ in what they require. Where some take a
+/// guard, building the router refuses each one that takes none with
+/// [`RouterError::UnguardedOperation`], unless it is declared public with
+/// `#[kynos::public]` or
+/// [`EndpointBuilder::public`](crate::router::endpoint::builder::EndpointBuilder::public):
+/// a handler that forgot its guard argument compiles, and is served to
+/// anyone. A group in which no operation takes a guard is not checked.
 pub struct Group<C, P = Propagate, I = (), S = ()> {
     // `pub(super)`: the router mounting a group destructures it.
     pub(super) prefix: String,
@@ -524,6 +535,30 @@ pub(super) fn covering<T: Clone>(
     let guard_at = guard_first.map(|at| interceptors[..at].iter().filter(covers).count());
 
     (covering, guard_at)
+}
+
+/// The refusal of `mounted` where its group holds a guarded operation and it
+/// neither takes a guard nor is declared public, located at the operation.
+#[must_use]
+pub(super) fn unguarded<C: 'static>(mounted: &super::Mounted<C>) -> Option<Violation<RouterError>> {
+    let endpoint = &mounted.endpoint;
+    if !mounted.group_guarded || endpoint.guarded() || endpoint.public() {
+        return None;
+    }
+
+    let method = endpoint.method();
+    let path = mounted.path.as_str();
+    Some(install::error_at(
+        format!(
+            "{}/{}",
+            install::path_location(path),
+            method.as_wire_str().to_lowercase()
+        ),
+        RouterError::UnguardedOperation {
+            method,
+            path: path.to_owned(),
+        },
+    ))
 }
 
 /// The statuses a [`kynos_openapi::Responses`] value declares as exact codes.

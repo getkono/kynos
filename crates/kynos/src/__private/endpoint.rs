@@ -44,5 +44,17 @@ where
     for tag in M::TAGS {
         builder = builder.with_tag(*tag);
     }
+    // The builder's own check, in the attribute's words: `public` refuses a
+    // guarded handler however it is called.
+    const {
+        assert!(
+            !(M::PUBLIC && H::__GUARDED),
+            "`#[kynos::public]` declares that an operation takes no guard, and this handler \
+             takes one; remove the attribute, or the guard argument"
+        );
+    };
+    if M::PUBLIC {
+        builder = builder.declared_public();
+    }
     builder
 }

@@ -272,8 +272,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             #[cfg(feature = "server")]
             cx.declare_body_stall(self.body_stall != Some(false));
 
-            // The one place that sees every scope's tags, the endpoint's own
-            // included.
+            // The one place that sees every scope's tags, the endpoint's own included.
             tag_metadata.extend(cx.declared_tags().iter().map(DeclaredTag::metadata));
 
             let operation = cx.finish();
@@ -291,6 +290,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 }
                 operation
             };
+            violations.extend(super::group::unguarded(mounted));
 
             let item: &mut PathItem = paths.items.entry(key.clone()).or_default();
             if item.set_operation(method, operation).is_some() {

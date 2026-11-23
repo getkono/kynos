@@ -168,8 +168,10 @@ async fn feed(MaybeAuth(holder): MaybeAuth<UploadKey>) -> Text {
     )
 }
 
-/// Takes no guard at all.
+/// Takes no guard at all, and says so, as its group's guarded operations
+/// require.
 #[kynos::get("/open")]
+#[kynos::public]
 async fn open() -> NoContent {
     NoContent
 }

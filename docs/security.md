@@ -98,6 +98,32 @@ Moving the guard into an interceptor of the application's own, which this
 replaces, checks twice and has to restate the guard's challenges to keep them
 `required` in the merged 401.
 
+### A group's operations take a guard or declare that they do not
+
+A handler that leaves its guard argument out compiles, is served to anyone,
+and is described without `security`. Nothing about it looks wrong on its own,
+so the router looks at its neighbours: where any operation of a `Group` takes a
+guard, building the router refuses every operation of that group that takes
+none with `RouterError::UnguardedOperation`, located at the operation.
+
+- **Public is declared, not inferred.** An operation meant to be reached
+  without a credential, such as the one issuing it, says so with
+  `#[kynos::public]` beside its route attribute, or `EndpointBuilder::public`.
+  It changes nothing on the wire or in the
+  description; it only answers the question the refusal asks.
+- **A guarded operation cannot be public.** Declaring it on a handler taking a
+  guard fails to compile. `MaybeAuth` is how a guarded operation admits
+  anonymous callers, and the description says so.
+- **Any guard counts.** `Auth`, `MaybeAuth` and `Scoped` alike, whatever their
+  schemes: which guard an operation needs is the handler's to say, and only
+  its absence is the mistake.
+- **The group is the scope.** Two groups, and the operations a router mounts
+  directly, are not compared: a router's root holding a health check beside a
+  guarded group is the usual shape, not a mistake. The refusal follows the
+  operation into a router that nests or merges it.
+- **An endpoint with no handler is not refused.** An asset or a reference page
+  has no guard argument to forget.
+
 ### A scheme says where its credential travels, once
 
 `#[derive(SecurityScheme)]` writes two implementations from one attribute.

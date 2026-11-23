@@ -585,6 +585,48 @@ fn each_route_attribute_writes_its_own_method() {
     assert_eq!(<described_thing as EndpointMeta>::METHOD, "PATCH");
 }
 
+/// Declared public above its route attribute.
+#[kynos::public]
+#[kynos::post("/sessions")]
+async fn create_session() -> NoContent {
+    NoContent
+}
+
+/// Declared public below its route attribute.
+#[kynos::get("/status")]
+#[kynos::public]
+async fn status() -> NoContent {
+    NoContent
+}
+
+/// `#[kynos::public]` reaches `EndpointMeta::PUBLIC` written on either side of
+/// the route attribute, and through `routes!` lets a group holding a guarded
+/// operation build, where an unmarked sibling does not.
+#[test]
+fn the_public_attribute_declares_an_operation_unguarded_on_purpose() {
+    use kynos::router::{endpoint::meta::EndpointMeta, group::Group};
+
+    const {
+        assert!(<create_session as EndpointMeta>::PUBLIC);
+        assert!(<status as EndpointMeta>::PUBLIC);
+        assert!(!<health as EndpointMeta>::PUBLIC);
+    };
+
+    let marked = kynos::Router::<App>::new().group(Group::new("/v1").mount(kynos::routes![
+        guarded_create,
+        create_session,
+        status
+    ]));
+    assert!(marked.build(App { pool: Pool(1) }).is_ok());
+
+    let unmarked = kynos::Router::<App>::new()
+        .group(Group::new("/v1").mount(kynos::routes![guarded_create, health]));
+    assert!(matches!(
+        unmarked.build(App { pool: Pool(1) }),
+        Err(kynos::Error::Invalid { .. })
+    ));
+}
+
 // The count that ties the cases above to the attributes `kynos-macros`
 // actually declares lives in `ledger.rs`, for the reason stated there: reading
 // the sibling crate's source leaves this package, so the target carrying that
