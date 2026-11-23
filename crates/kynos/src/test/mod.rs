@@ -1615,47 +1615,8 @@ impl TestResponse {
     #[must_use]
     pub fn events(&self) -> Vec<TestEvent> {
         self.text()
-            .split("\n\n")
-            .filter(|record| !record.trim().is_empty())
-            .filter_map(|record| {
-                let mut event = TestEvent::default();
-                let mut data: Vec<&str> = Vec::new();
-                let mut carried = false;
-
-                for line in record.lines() {
-                    let Some((name, value)) = line.split_once(':') else {
-                        continue;
-                    };
-                    let value = value.strip_prefix(' ').unwrap_or(value);
-
-                    match name {
-                        // Comments (empty name) and unknown fields fall to `_`.
-                        "data" => {
-                            data.push(value);
-                            carried = true;
-                        }
-                        "id" => {
-                            event.id = Some(value.to_owned());
-                            carried = true;
-                        }
-                        "event" => {
-                            event.event = Some(value.to_owned());
-                            carried = true;
-                        }
-                        "retry" => {
-                            event.retry = value.parse().ok();
-                            carried = true;
-                        }
-                        _ => {}
-                    }
-                }
-
-                // A record that was only comments is a keep-alive, not an event.
-                carried.then(|| {
-                    event.data = data.join("\n");
-                    event
-                })
-            })
+            .split(EVENT_DELIMITER)
+            .filter_map(parse_event)
             .collect()
     }
 
@@ -1752,6 +1713,50 @@ fn responses(count: usize) -> String {
     } else {
         format!("{count} responses")
     }
+}
+
+/// What ends one Server-Sent Event record: the blank line after its fields.
+const EVENT_DELIMITER: &str = "\n\n";
+
+/// The event one record between [`EVENT_DELIMITER`]s carries, or `None` for
+/// a record that is blank or only comments: a keep-alive, not an event.
+fn parse_event(record: &str) -> Option<TestEvent> {
+    let mut event = TestEvent::default();
+    let mut data: Vec<&str> = Vec::new();
+    let mut carried = false;
+
+    for line in record.lines() {
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        let value = value.strip_prefix(' ').unwrap_or(value);
+
+        match name {
+            // Comments (empty name) and unknown fields fall to `_`.
+            "data" => {
+                data.push(value);
+                carried = true;
+            }
+            "id" => {
+                event.id = Some(value.to_owned());
+                carried = true;
+            }
+            "event" => {
+                event.event = Some(value.to_owned());
+                carried = true;
+            }
+            "retry" => {
+                event.retry = value.parse().ok();
+                carried = true;
+            }
+            _ => {}
+        }
+    }
+
+    carried.then(|| {
+        event.data = data.join("\n");
+        event
+    })
 }
 
 /// One Server-Sent Event, parsed, as a test reads it.
