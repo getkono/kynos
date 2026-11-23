@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 
-use kynos_openapi::{Components, Method, Operation, RefOr, Response};
+use kynos_openapi::{Components, Method, Operation, Parameter, ParameterIn, RefOr, Response};
 
 use super::install::{error_at, path_location};
 use super::{Arc, Mounted, PathItem, Paths, RouterError, Violation, build, dispatch};
@@ -98,13 +98,23 @@ pub(super) fn described_operations<C: 'static>(mounted: &[Mounted<C>]) -> Vec<(&
 /// A response referenced from `components` whose target carries content is
 /// inlined without it, keeping the reference's own overrides; any other
 /// reference stays, since it names nothing to remove.
+///
+/// The `Range` and `If-Range` parameters and the 206 and 416 responses are
+/// dropped: range handling is defined for `GET` alone (RFC 9110 section
+/// 14.2), so the router ignores the fields on a `HEAD` and answers it with
+/// neither status.
 pub(super) fn derived_head(
     mut get: Operation,
     operation_id: &str,
     components: &Components,
 ) -> Operation {
     get.operation_id = Some(operation_id.to_owned());
+    get.parameters
+        .retain(|parameter| !is_range(parameter, components));
     let responses = &mut get.responses;
+    for status in RANGE_STATUSES {
+        responses.responses.shift_remove(status);
+    }
     for response in responses
         .default_response
         .iter_mut()
@@ -113,6 +123,33 @@ pub(super) fn derived_head(
         without_content(response, components);
     }
     get
+}
+
+/// The statuses only a ranged `GET` answers: 206 Partial Content and 416
+/// Range Not Satisfiable (RFC 9110 sections 15.3.7 and 15.5.17).
+const RANGE_STATUSES: [&str; 2] = ["206", "416"];
+
+/// The request headers only a ranged `GET` reads: `Range`, and `If-Range`,
+/// which a request without `Range` has ignored (RFC 9110 section 13.1.5).
+const RANGE_FIELDS: [&str; 2] = ["range", "if-range"];
+
+/// Whether `parameter`, or the one in `components` it references, is one of
+/// [`RANGE_FIELDS`].
+fn is_range(parameter: &RefOr<Parameter>, components: &Components) -> bool {
+    let parameter = match parameter {
+        RefOr::Item(parameter) => Some(parameter),
+        RefOr::Ref(reference) => reference
+            .location
+            .strip_prefix("#/components/parameters/")
+            .and_then(|name| components.parameters.get(name))
+            .and_then(RefOr::as_item),
+    };
+    parameter.is_some_and(|parameter| {
+        parameter.location == ParameterIn::Header
+            && RANGE_FIELDS
+                .iter()
+                .any(|field| parameter.name.eq_ignore_ascii_case(field))
+    })
 }
 
 /// `response` with its content removed, inlining a carrying target.

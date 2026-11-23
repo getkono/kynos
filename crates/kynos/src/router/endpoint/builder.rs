@@ -286,7 +286,9 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// 9110 section 9.3.2); this only puts that `HEAD` in the description, so
     /// a client generated from it can call it. The `HEAD` is the `GET`'s
     /// operation, its parameters, security and every response's headers
-    /// included, with no response carrying content, and it runs the `GET`'s
+    /// included, with no response carrying content and no range handling,
+    /// which is defined for `GET` alone (RFC 9110 section 14.2): no `Range` or
+    /// `If-Range` parameter and no 206 or 416. It runs the `GET`'s
     /// handler under the same interceptors, which see it as `operation_id`.
     /// `#[kynos::get(.., head)]` is the route attribute's spelling.
     ///

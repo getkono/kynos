@@ -426,9 +426,11 @@ response to a HEAD carries content, whatever answered it.
 
 `#[kynos::get(.., head)]`, or `EndpointBuilder::describe_head`, describes that
 HEAD as an operation of its own: the GET's, as the router finished it, with no
-response carrying content and every header kept. It is opt-in because a default
-would add an operation, and an `operationId`, for every `GET` in every
-document. A bare `head` names it after the handler (`get_file` describes
+response carrying content and every header kept. Range handling is defined for
+GET alone (RFC 9110 §14.2) and a HEAD's `Range` is ignored, so the GET's
+`Range` and `If-Range` and its 206 and 416 are left out. It is opt-in because
+a default would add an operation, and an `operationId`, for every `GET` in
+every document. A bare `head` names it after the handler (`get_file` describes
 `head_file`); beside an explicit `operation_id` it is named, `head = "..."`.
 It runs the GET's handler under the GET's chain, so `Allow`, the implemented
 set and every CORS scope read as they do for an undescribed HEAD, while

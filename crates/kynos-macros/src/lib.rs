@@ -47,7 +47,8 @@ use proc_macro::TokenStream;
 /// `head` describes the `HEAD` this `GET` already answers (RFC 9110 section
 /// 9.3.2) as an operation of its own, so a generated client can call it
 /// without a second handler: the `GET`'s operation with no response carrying
-/// content, its headers kept, run by this handler. A bare `head` names it
+/// content or range handling, its headers kept, run by this handler, as
+/// `EndpointBuilder::describe_head` says. A bare `head` names it
 /// after the handler, `get_file` describing `head_file` and any other name `n`
 /// describing `head_n`; beside an explicit `operation_id` it must be named,
 /// with `head = "headFile"`. Only `GET` takes it, and a path that also declares
