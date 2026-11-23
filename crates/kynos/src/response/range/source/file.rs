@@ -138,8 +138,14 @@ async fn blocking<T: Send + 'static>(
 /// One positional read into `buffer` from `offset`, retried where a signal
 /// interrupted it.
 fn read_at(file: &File, buffer: &mut [u8], offset: u64) -> io::Result<usize> {
+    retrying(|| positional(file, buffer, offset))
+}
+
+/// Repeats `read` until it answers anything but
+/// [`Interrupted`](io::ErrorKind::Interrupted).
+fn retrying(mut read: impl FnMut() -> io::Result<usize>) -> io::Result<usize> {
     loop {
-        match positional(file, buffer, offset) {
+        match read() {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             read => return read,
         }
