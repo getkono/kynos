@@ -288,7 +288,8 @@ fn first_named(tokens: TokenStream2, params: &[String]) -> Option<String> {
 
 /// The URI identifying this failure's *type*, if the declaration gives one.
 ///
-/// An explicit `type` wins, else `base` plus the name as a slug; with neither,
+/// An explicit `type` wins, else `base` plus the name as a slug, `base =
+/// default` reading the crate's `kynos::problem_base!`; with neither,
 /// the problem keeps RFC 9457's `about:blank`.
 fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> Option<TypeUri> {
     if let Some(uri) = &args.type_uri {
@@ -299,6 +300,12 @@ fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> Option<Typ
         Base::Literal(base) => TypeUri::Literal(format!("{base}{slug}")),
         Base::Const(path) => TypeUri::Joined {
             base: path.clone(),
+            slug,
+        },
+        // The item `kynos::problem_base!` declares, spanned to `default` so a
+        // crate declaring none is told so there.
+        Base::Default(span) => TypeUri::Joined {
+            base: syn::parse_quote_spanned!(*span=> crate::__KYNOS_PROBLEM_BASE),
             slug,
         },
     })

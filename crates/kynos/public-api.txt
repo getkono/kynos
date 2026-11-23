@@ -11018,6 +11018,8 @@ pub fn kynos::unchecked::UncheckedHandler::call(&self, kynos::http::Request, &C)
 impl<C, F, Fut> kynos::unchecked::UncheckedHandler<C> for F where C: core::marker::Sync + 'static, F: core::ops::function::Fn(kynos::http::Request) -> Fut + core::marker::Send + core::marker::Sync + 'static, Fut: core::future::future::Future<Output = kynos::http::Response> + core::marker::Send
 pub fn F::call(&self, kynos::http::Request, &C) -> impl core::future::future::Future<Output = kynos::http::Response> + core::marker::Send
 pub fn kynos::unchecked::captured<'r>(&'r kynos::http::Request, &str) -> core::option::Option<alloc::borrow::Cow<'r, str>>
+pub macro kynos::problem_base!
+pub macro kynos::problem_type!
 pub macro kynos::stack!
 #[non_exhaustive] pub enum kynos::Error
 pub kynos::Error::Contribution(kynos::middleware::contribution::ContributionConflict)

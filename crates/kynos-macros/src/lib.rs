@@ -634,7 +634,11 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// struct declares its one status on the type instead; `base` always belongs on
 /// the type, since it is the prefix every variant's type URI shares. It is a
 /// string literal or, where several types share one prefix, a path to a
-/// `const` of type `&str`: `#[problem(base = crate::PROBLEM_BASE)]`.
+/// `const` of type `&str`: `#[problem(base = crate::PROBLEM_BASE)]`. A crate
+/// publishing under one prefix declares it once with `kynos::problem_base!`,
+/// and each type opts in with `#[problem(base = default)]`, which is a compile
+/// error at `default` in a crate declaring none. A type without `base` stays
+/// at `about:blank`.
 ///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
 /// A type without a `Display` is rejected at the derive.

@@ -4891,7 +4891,7 @@ mod api_error {
                     #[problem(status = 404, base = 42)]
                     struct StoreError;
                 ),
-                "`base` is a string literal, or the path to a `const`",
+                "`base` is a string literal, the path to a `const`",
             ),
             case(
                 "`extension` on the type, when it marks a field",
