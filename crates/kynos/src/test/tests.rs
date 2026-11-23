@@ -955,23 +955,28 @@ mod streaming {
     use std::{collections::VecDeque, sync::Mutex};
 
     use bytes::{Bytes, BytesMut};
+    use http_body::Frame;
 
     use crate::{
-        http::{HeaderMap, Method, Response, StatusCode, Uri, body::Body},
+        http::{
+            HeaderMap, HeaderValue, Method, Response, StatusCode, Uri,
+            body::{Body, BoxError},
+        },
         test::{Observed, TestEvent, TestStream},
     };
 
     /// Frames handed out one per poll, in order.
-    struct Frames(VecDeque<Bytes>);
+    struct Frames(VecDeque<Frame<Bytes>>);
 
-    impl futures_core::Stream for Frames {
-        type Item = Result<Bytes, std::convert::Infallible>;
+    impl http_body::Body for Frames {
+        type Data = Bytes;
+        type Error = BoxError;
 
-        fn poll_next(
-            mut self: std::pin::Pin<&mut Self>,
+        fn poll_frame(
+            self: std::pin::Pin<&mut Self>,
             _: &mut std::task::Context<'_>,
-        ) -> std::task::Poll<Option<Self::Item>> {
-            std::task::Poll::Ready(self.0.pop_front().map(Ok))
+        ) -> std::task::Poll<Option<Result<Frame<Bytes>, Self::Error>>> {
+            std::task::Poll::Ready(self.get_mut().0.pop_front().map(Ok))
         }
     }
 
@@ -1007,10 +1012,12 @@ mod streaming {
         let mut frames = VecDeque::new();
         let mut start = 0;
         for &cut in cuts.iter().chain([&text.len()]) {
-            frames.push_back(Bytes::from_static(&text.as_bytes()[start..cut]));
+            frames.push_back(Frame::data(Bytes::from_static(
+                &text.as_bytes()[start..cut],
+            )));
             start = cut;
         }
-        Body::from_stream(Frames(frames))
+        Body::from_body(Frames(frames))
     }
 
     /// A feed with a keep-alive between events, a multi-line value, every
@@ -1076,6 +1083,42 @@ mod streaming {
         );
         assert_eq!(stream.next_chunk().await, None);
         assert_eq!(stream.next_event().await, None);
+    }
+
+    /// A frame carrying no octets is not a chunk: an empty data frame and a
+    /// trailers frame are passed over, and the end follows the last octets.
+    #[tokio::test]
+    async fn a_chunk_is_never_an_empty_or_trailers_frame() {
+        let mut trailers = HeaderMap::new();
+        trailers.insert("checksum", HeaderValue::from_static("abc"));
+        let frames = Frames(
+            [
+                Frame::data(Bytes::from_static(b"a")),
+                Frame::data(Bytes::new()),
+                Frame::data(Bytes::from_static(b"b")),
+                Frame::trailers(trailers),
+            ]
+            .into(),
+        );
+        let observed = record();
+        let mut stream = stream(Body::from_body(frames), &observed);
+
+        assert_eq!(stream.next_chunk().await, Some(Bytes::from_static(b"a")));
+        assert_eq!(stream.next_chunk().await, Some(Bytes::from_static(b"b")));
+        assert_eq!(stream.next_chunk().await, None);
+    }
+
+    /// An event record that is not UTF-8 fails the read, naming the exchange.
+    #[tokio::test]
+    #[should_panic(expected = "GET /feed -> 200: an event record is not text")]
+    async fn an_event_record_that_is_not_text_fails_the_read() {
+        let observed = record();
+        let mut stream = stream(
+            Body::from_bytes(Bytes::from_static(b"data: \xff\n\n")),
+            &observed,
+        );
+
+        let _ = stream.next_event().await;
     }
 
     /// The body is filed once it ends, whole, and not before: until then
