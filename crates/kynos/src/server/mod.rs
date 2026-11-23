@@ -1070,7 +1070,7 @@ impl<C: 'static> BoundServer<C> {
         Running {
             service: Arc::clone(&self.service),
             local_addrs: self.local_addrs.clone(),
-            #[cfg(feature = "tls")]
+            #[cfg(all(feature = "tls", feature = "test-util"))]
             tls: self.config.tls.is_some(),
             trigger,
             task: tokio::spawn(self.serve()),
@@ -1087,8 +1087,9 @@ pub struct Running<C> {
     /// The service every connection shares, as `serve` holds it.
     service: Arc<Service<C>>,
     local_addrs: Vec<SocketAddr>,
-    /// Whether the TCP listeners speak TLS.
-    #[cfg(feature = "tls")]
+    /// Whether the TCP listeners speak TLS, which only the test client's
+    /// plaintext `connect` reads.
+    #[cfg(all(feature = "tls", feature = "test-util"))]
     tls: bool,
     /// Never sent: dropping it is the trigger.
     trigger: oneshot::Sender<Infallible>,
