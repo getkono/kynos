@@ -606,7 +606,10 @@ async fn a_completion_measures_up_to_the_last_frame_not_the_head() {
 
 /// Records where each hook found the context, and what it read from it.
 #[derive(Clone, Default)]
-struct Contexts(Arc<Mutex<Vec<(&'static str, usize, u32)>>>);
+struct Contexts(Arc<Mutex<Vec<Handed>>>);
+
+/// A hook's name, the context's address, and the pool it read.
+type Handed = (&'static str, usize, u32);
 
 impl Contexts {
     fn push(&self, hook: &'static str, context: &App) {
