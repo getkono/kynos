@@ -353,16 +353,22 @@ impl<C> Service<C> {
     ///
     /// ```no_run
     /// # use kynos::{router::service::Service, unchecked::UncheckedService};
-    /// fn tower<C: Send + Sync + 'static>(service: Service<C>) -> UncheckedService<C> {
+    /// fn tower<C: Send + Sync + 'static>(service: Service<C>) -> kynos::Result<UncheckedService<C>> {
     ///     service.into_tower_unchecked()
     /// }
     /// ```
-    #[must_use]
-    pub fn into_tower_unchecked(mut self) -> UncheckedService<C> {
-        self.mark_opaque(kynos_openapi::OpaqueReason::UntypedLayer);
-        UncheckedService {
+    ///
+    /// # Errors
+    ///
+    /// With `docs`, `Error::DescriptionShared` when the router mounts a docs
+    /// reference and a clone of this service is still alive: the flags would
+    /// reach the bytes the clone's reference serves, but not the clone's own
+    /// document.
+    pub fn into_tower_unchecked(mut self) -> crate::Result<UncheckedService<C>> {
+        self.mark_opaque(kynos_openapi::OpaqueReason::UntypedLayer)?;
+        Ok(UncheckedService {
             service: Arc::new(self),
-        }
+        })
     }
 }
 

@@ -34,6 +34,7 @@ the section for the release that ships it.
 | `assert_eq!(resp.status().as_u16(), 401, "a revoked token is dead")`, which drops the body from the failure | `resp.assert_status_because(401, "a revoked token is dead")` | #1391 |
 | An `assert_problem(resp, status, slug)` wrapper formatting `BASE + slug` | `test::TestClient::new(service).with_problem_base(BASE)` once, then `resp.assert_problem(403, "insufficient-scope")` | #1391 |
 | `.peer(..)` on every request so a test reads one client whether built `test::TestClient::new` or `through_server` | nothing: both send from `127.0.0.1:0`; `with_peer` once where the address itself matters | #1391 |
+| A second build of the router, through your own `Service` constructor, to get a `Service` for `server::Server::new` after `test::TestClient::new` took the first | `test::TestClient::new(service.clone())`, then `server::Server::new(service)`: a clone shares the built router, its context and its mounted docs | #1390 |
 
 ## 0.5 to 0.6
 
