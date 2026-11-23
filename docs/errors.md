@@ -627,7 +627,9 @@ in without deliberately leaking it.
 What the operation *declares* for that 403 depends on whether a **type** named
 the URI. `AuthRejection` itself carries no scope set, so its 403 stays the
 shared `Problem` component — the only claim true of both bodies it may carry,
-and what `Auth<S>` and `MaybeAuth<S>` therefore declare.
+and what `Auth<S>` and `MaybeAuth<S>` therefore declare, unless every member
+of `S` is a `Scoped<_, R>` whose sets name one URI: that 403 narrows as
+`Scoped<S, R>`'s does, read from the members by the guard's own description.
 
 `ScopedRejection<R>` is the same two failures read against the scope set that
 demanded them, and it is what `Scoped<S, R>` raises. Where `R` names a
