@@ -9895,6 +9895,10 @@ pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::opti
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::schema::unchecked::Unchecked<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::schema::unchecked::Unchecked<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
+pub trait kynos::schema::Tagged
+pub const kynos::schema::Tagged::TAG: &'static str
+pub const kynos::schema::Tagged::VARIANTS: &'static [&'static str]
+pub fn kynos::schema::Tagged::variant(&self) -> &'static str
 pub fn kynos::schema::instantiation_name(&str, &[core::option::Option<kynos_openapi::model::components::ComponentName>]) -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub mod kynos::security
 pub mod kynos::security::auth

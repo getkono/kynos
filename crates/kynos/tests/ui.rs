@@ -168,6 +168,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ),
         ("Schema", "schema/serde_json_value.stderr"),
         ("ShortCircuit", "traits/short_circuit.stderr"),
+        ("Tagged", "traits/tagged.stderr"),
         ("Textual", "macros/schema_length_bound_on_a_number.stderr"),
         (
             "UniqueItems",

@@ -367,6 +367,21 @@ schema, and the derive refuses each:
   limit serde's own check of an enum's internal tag has too. A flattened type
   writing a key named as the tag gets a schema serde's document does not meet.
 
+### The tag as a type
+
+The derive also implements `schema::Tagged` for every type whose schema names
+a tag: an internally or adjacently tagged enum, and a tagged struct. It carries
+what the schema's tag property holds, as constants — `TAG`, the member, and
+`VARIANTS`, each value serde writes — and `variant(&self)`, the value one
+value is written with, read by a `match` rather than by serializing it.
+
+It exists so a bound can say "this type is tagged". A tag is otherwise
+invisible to the type system, and serde writes a struct whose first field is
+a string exactly as it writes a tag, so reading it from the wire cannot tell
+the two apart. An externally tagged enum names its variant as a key rather
+than a tag, so it has no `Tagged`. A variant serde skips when serializing is
+left out of `VARIANTS`, since no document carries it.
+
 ### Why untagged is refused
 
 `oneOf` without a discriminator is not a decoding rule. It says a payload

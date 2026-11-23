@@ -1,0 +1,17 @@
+error[E0277]: `Update` is not written under a serde tag
+  --> tests/ui/traits/tagged.rs:14:17
+   |
+14 |     is_tagged::<Update>();
+   |                 ^^^^^^ untagged
+   |
+help: the trait `kynos::schema::Tagged` is not implemented for `Update`
+  --> tests/ui/traits/tagged.rs:7:1
+   |
+ 7 | enum Update {
+   | ^^^^^^^^^^^
+   = note: tag it with `#[serde(tag = "...")]` and derive `kynos::Schema`, which implements `Tagged` for an internally or adjacently tagged enum and a tagged named struct
+note: required by a bound in `is_tagged`
+  --> tests/ui/traits/tagged.rs:11:17
+   |
+11 | fn is_tagged<T: Tagged>() {}
+   |                 ^^^^^^ required by this bound in `is_tagged`

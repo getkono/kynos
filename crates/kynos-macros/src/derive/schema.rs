@@ -49,6 +49,7 @@ pub(crate) mod members;
 mod pattern;
 mod refusals;
 mod shape;
+mod tagged;
 
 use attributes::{
     constraints, field_read_name, is_described, is_flattened, is_open, is_phantom, is_required,
@@ -148,10 +149,12 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let check = check::body(input, &container);
     let kinds = kinds::newtype(input, &container, &generics);
     let flatten = flatten::emit(input, &container, &generics);
+    let tagged = tagged::emit(input, &container, &struct_name(input, &container));
 
     Ok(quote! {
         #flatten
         #kinds
+        #tagged
 
         // The impl names the type, so a `#[deprecated]` type would otherwise warn
         // at its own definition (as serde's derives also allow).
@@ -221,22 +224,25 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// The `schema` body for whatever shape the type has.
 fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
     let described = match &input.data {
-        Data::Struct(data) => {
-            let name = container
-                .rename
-                .clone()
-                .unwrap_or_else(|| input.ident.unraw().to_string());
-            described(
-                struct_body(&data.fields, container, &name),
-                container.doc.as_deref(),
-            )
-        }
+        Data::Struct(data) => described(
+            struct_body(&data.fields, container, &struct_name(input, container)),
+            container.doc.as_deref(),
+        ),
         Data::Enum(data) => described(enum_body(data, container), container.doc.as_deref()),
         // Refused at the top of `expand_inner`.
         Data::Union(_) => quote!(<::kynos::openapi::Schema as ::core::default::Default>::default()),
     };
 
     deprecate(described, is_deprecated(&input.attrs))
+}
+
+/// The name serde writes a struct's `#[serde(tag = "...")]` with: its
+/// container `rename`, else its identifier without a raw identifier's `r#`.
+fn struct_name(input: &DeriveInput, container: &Container) -> String {
+    container
+        .rename
+        .clone()
+        .unwrap_or_else(|| input.ident.unraw().to_string())
 }
 
 /// Marks the schema deprecated, where the item said so and the schema can say it.
