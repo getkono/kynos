@@ -10538,6 +10538,7 @@ pub kynos::server::error::ServerError::ShutdownTimeout::timeout: core::time::Dur
 pub kynos::server::error::ServerError::Signal(std::io::error::Error)
 pub kynos::server::error::ServerError::Tls(kynos::server::tls::error::TlsError)
 impl kynos::server::error::ServerError
+pub const fn kynos::server::error::ServerError::io_error(&self) -> core::option::Option<&std::io::error::Error>
 pub const fn kynos::server::error::ServerError::is_requested_shutdown(&self) -> bool
 impl core::convert::From<kynos::server::error::ServerError> for kynos::error::Error
 pub fn kynos::error::Error::from(kynos::server::error::ServerError) -> Self
