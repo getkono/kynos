@@ -17,6 +17,36 @@ use http_body::Body as HttpBody;
 
 use super::body::{Framed, RequestBody};
 
+std::thread_local! {
+    static LOCATION: std::cell::Cell<Option<(String, u32)>> = const { std::cell::Cell::new(None) };
+}
+
+/// The file and line `fail` panicked at, as the panic hook reads them.
+fn location(fail: impl FnOnce()) -> (String, u32) {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|info| {
+        let location = info.location().expect("a panic raised here has a location");
+        LOCATION.set(Some((location.file().to_owned(), location.line())));
+    }));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(fail));
+    std::panic::set_hook(hook);
+    assert!(outcome.is_err(), "the statement did not panic");
+    LOCATION.take().expect("the hook read the panic")
+}
+
+/// Asserts the statement panics, reported at the line it is written on, as
+/// `#[track_caller]` carries a failure out of the helper that raised it.
+macro_rules! fails_here {
+    ($($statement:tt)*) => {
+        assert_eq!(
+            $crate::test::tests::location(|| { $($statement)*; }),
+            (file!().to_owned(), line!()),
+            "`{}` reports another location",
+            stringify!($($statement)*)
+        )
+    };
+}
+
 fn framed(bytes: &'static str, remaining: Option<u64>) -> Framed {
     Framed {
         body: RequestBody::Whole(Bytes::from_static(bytes.as_bytes())),
@@ -1385,6 +1415,188 @@ mod assertions {
             setting(&[]).assert_cookie_cleared("sid");
         }
     }
+
+    /// Each assertion's failure points at the line of the test that made it,
+    /// which an editor and a backtrace-free report jump to, rather than into
+    /// this module.
+    mod located {
+        use super::{PROBLEM, received};
+        use crate::{http::StatusCode, router::service::Service, test::Coverage};
+
+        #[test]
+        fn a_failed_response_assertion_points_at_its_caller() {
+            let missing = received(StatusCode::NOT_FOUND, &[], b"not here");
+            fails_here!(missing.assert_status(200));
+            fails_here!(missing.assert_status(StatusCode::OK));
+            fails_here!(missing.assert_status(99));
+            fails_here!(missing.assert_status_because(200, "listed"));
+            fails_here!(let _ = received(StatusCode::NOT_FOUND, &[], b"").expect_status(200));
+            fails_here!(missing.assert_problem_type("about:blank"));
+            fails_here!(missing.assert_problem(404, "about:blank"));
+            fails_here!(let _ = missing.problem());
+            fails_here!(missing.assert_header("location", "/"));
+            fails_here!(missing.assert_no_header("a b"));
+            fails_here!(missing.assert_cookie("sid", "1"));
+            fails_here!(missing.assert_redirect("/"));
+            fails_here!(missing.assert_part(0, 1, 2));
+
+            let typed = received(
+                StatusCode::NOT_FOUND,
+                &[PROBLEM],
+                br#"{"type":1,"status":1}"#,
+            );
+            fails_here!(typed.assert_problem_type("about:blank"));
+            fails_here!(let _ = typed.problem());
+            let numbered = received(StatusCode::NOT_FOUND, &[PROBLEM], br#"{"status":1}"#);
+            fails_here!(let _ = numbered.problem());
+        }
+
+        #[cfg(feature = "cookie")]
+        #[test]
+        fn a_failed_cookie_assertion_points_at_its_caller() {
+            let cleared = received(StatusCode::OK, &[("set-cookie", "sid=; Max-Age=0")], b"");
+            fails_here!(cleared.assert_cookie_set("sid"));
+            fails_here!(cleared.assert_cookie_set("theme"));
+            fails_here!(cleared.assert_cookie_cleared("theme"));
+        }
+
+        /// A client and a coverage record fail where they are asserted on,
+        /// not where they recorded.
+        #[tokio::test]
+        async fn a_failed_description_assertion_points_at_its_caller() {
+            let document: kynos_openapi::Document = serde_json::from_value(serde_json::json!({
+                "openapi": "3.1.0",
+                "info": { "title": "Test", "version": "1" },
+                "paths": { "/things": { "get": { "responses": { "200": { "description": "" } } } } }
+            }))
+            .expect("a description");
+            let service = Service::<()>::new(document.clone(), |_| async {
+                let mut response = crate::http::Response::new(crate::http::body::Body::empty());
+                *response.status_mut() = StatusCode::NOT_FOUND;
+                response
+            });
+            let coverage = Coverage::new();
+            let client = crate::test::TestClient::new(service).with_coverage(&coverage);
+            client.get("/things").send().await;
+
+            fails_here!(client.assert_conformance());
+            fails_here!(client.assert_declared_responses_covered());
+            fails_here!(coverage.assert_declared_responses_covered(&document));
+            fails_here!(coverage.assert_covered());
+            let bound = Coverage::for_document(document);
+            fails_here!(bound.assert_covered());
+        }
+    }
+}
+
+/// A test's own mistake, an argument HTTP cannot carry or a response read as
+/// what it is not, is reported at the test's line, as a failed assertion is.
+mod misuse_located {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bytes::Bytes;
+
+    use crate::{
+        Router,
+        http::{Method, StatusCode},
+        test::{Coverage, IntoStatus, TestClient, TestResponse},
+    };
+
+    fn client() -> TestClient<()> {
+        TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        )
+    }
+
+    /// A stream that ends at once.
+    struct Ended;
+
+    impl futures_core::Stream for Ended {
+        type Item = Bytes;
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Bytes>> {
+            Poll::Ready(None)
+        }
+    }
+
+    #[test]
+    fn a_client_given_what_http_cannot_carry_points_at_its_caller() {
+        fails_here!(let _ = client().with_default_header("a b", "x"));
+        fails_here!(let _ = client().with_default_cookie("a", "b\nc"));
+        fails_here!(let _ = client().with_problem_base("errors/"));
+        fails_here!(let _ = client().method("a b", "/"));
+        fails_here!(let _ = client().method("post", "/"));
+        fails_here!(let _ = 1000.into_status());
+        fails_here!(Coverage::new().record(&Method::GET, "a b", StatusCode::OK));
+    }
+
+    #[test]
+    fn a_request_given_what_http_cannot_carry_points_at_its_caller() {
+        let client = client();
+        fails_here!(let _ = client.get("/").header("a b", "x"));
+        fails_here!(let _ = client.get("/").header("a", "b\nc"));
+        fails_here!(let _ = client.get("/").bearer("a\nb"));
+        fails_here!(let _ = client.get("/").header_bytes("a b", b"x"));
+        fails_here!(let _ = client.get("/").header_bytes("a", b"b\nc"));
+        fails_here!(let _ = client.get("/").body("a\nb", ""));
+        fails_here!(let _ = client.get("/").body_stream("a\nb", Ended));
+        // A map keyed by what JSON cannot key, and a form value nested past
+        // what a form encodes.
+        #[cfg(feature = "json")]
+        let unkeyed = std::collections::BTreeMap::from([((), 1)]);
+        #[cfg(feature = "json")]
+        fails_here!(let _ = client.get("/").json(&unkeyed));
+        #[cfg(feature = "form")]
+        let nested = [("a", [[1]])];
+        #[cfg(feature = "form")]
+        fails_here!(let _ = client.get("/").query_string(&nested));
+        #[cfg(feature = "form")]
+        fails_here!(let _ = client.get("/").form(&nested));
+    }
+
+    #[cfg(feature = "server")]
+    #[test]
+    fn a_server_setting_a_server_refuses_points_at_its_caller() {
+        let zero = Some(std::time::Duration::ZERO);
+        fails_here!(let _ = client().with_request_body_idle_timeout(zero));
+        let server = crate::server::Server::new(client().service().clone());
+        let refused = server.request_body_idle_timeout(zero);
+        fails_here!(let _ = TestClient::through_server(refused));
+
+        let client = client();
+        fails_here!(let _ = client.get("/").stalled_body("a\nb"));
+        fails_here!(let _ = client.get("/").stalled_after("a\nb", ""));
+    }
+
+    #[test]
+    fn a_response_read_as_what_it_is_not_points_at_its_caller() {
+        let response = TestResponse {
+            method: Method::GET,
+            path: "/things".to_owned(),
+            response: crate::http::Response::new(crate::http::body::Body::empty()),
+            body: Bytes::from_static(b"\xff"),
+            problem_base: None,
+        };
+        fails_here!(let _ = response.text());
+        fails_here!(let _ = response.events());
+        #[cfg(feature = "json")]
+        fails_here!(let _ = response.json::<u8>());
+        #[cfg(feature = "json")]
+        fails_here!(let _ = crate::test::TestEvent::default().json::<u8>());
+
+        let problem = TestResponse {
+            body: Bytes::from_static(br#"{"count":"many"}"#),
+            ..response
+        }
+        .problem();
+        fails_here!(let _ = problem.extension::<u8>("type"));
+        fails_here!(let _ = problem.extension::<u8>("count"));
+    }
 }
 
 /// What `TestClient::method` reads a method from: a name as the method it
@@ -1841,6 +2053,16 @@ mod connected {
     async fn a_connected_client_refuses_an_idle_timeout_of_its_own() {
         let running = spawned(Server::new(answering())).await;
         let _ = TestClient::connect(&running).with_request_body_idle_timeout(None);
+    }
+
+    /// Each refusal is reported at the test's line, not inside the client.
+    #[tokio::test]
+    async fn a_connected_clients_refusal_points_at_its_caller() {
+        let running = spawned(Server::new(answering())).await;
+        let peer = address("192.0.2.7:80");
+        fails_here!(let _ = TestClient::connect(&running).with_peer(peer));
+        fails_here!(let _ = TestClient::connect(&running).get("/").peer(peer));
+        fails_here!(let _ = TestClient::connect(&running).with_request_body_idle_timeout(None));
     }
 
     #[tokio::test]
