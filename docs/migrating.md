@@ -36,6 +36,7 @@ the section for the release that ships it.
 | `.peer(..)` on every request so a test reads one client whether built `test::TestClient::new` or `through_server` | nothing: both send from `127.0.0.1:0`; `with_peer` once where the address itself matters | #1391 |
 | A second build of the router, through your own `Service` constructor, to get a `Service` for `server::Server::new` after `test::TestClient::new` took the first | `test::TestClient::new(service.clone())`, then `server::Server::new(service)`: a clone shares the built router, its context and its mounted docs | #1390 |
 | A `middleware::decompression::Decompression` on each operation that reads a body, or a group split from its resource's head-only operations, so a `GET` or `DELETE` declares no 400, 413 or 415 it never sends | one `Decompression` over the resource's group: it runs and is declared only on the operations reading a body | #1451 |
+| `.cookie("sid", &token)` beside every other `.cookie(..)` in a signed-in test, since a request's own cookies replaced a `with_default_header("cookie", ..)` whole | `test::TestClient::new(service).with_default_cookie("sid", &token)`: a request's own cookies join it, and one named `sid` is sent instead | #1400 |
 
 ## 0.5 to 0.6
 

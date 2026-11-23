@@ -389,6 +389,82 @@ mod defaults {
     fn a_problem_base_with_no_scheme_panics() {
         let _ = client().with_problem_base("errors.example.com/");
     }
+
+    /// A request's own cookies join the client's rather than replacing them,
+    /// and one it names itself is sent instead of the client's, once.
+    #[test]
+    fn default_cookies_join_a_requests_own_which_win_by_name() {
+        let client = client()
+            .with_default_cookie("session", "abc123")
+            .with_default_cookie("theme", "light");
+        let request = client
+            .get("/a")
+            .cookie("theme", "dark")
+            .cookie("lang", "en");
+
+        assert_eq!(
+            request.cookie_field().as_deref(),
+            Some("session=abc123; theme=dark; lang=en")
+        );
+        assert_eq!(
+            client.get("/b").cookie_field().as_deref(),
+            Some("session=abc123; theme=light")
+        );
+    }
+
+    /// A second default under one name replaces the first where it stood.
+    #[test]
+    fn a_second_default_cookie_for_a_name_replaces_the_first() {
+        let client = client()
+            .with_default_cookie("a", "1")
+            .with_default_cookie("b", "2")
+            .with_default_cookie("a", "3");
+
+        assert_eq!(client.get("/a").cookie_field().as_deref(), Some("a=3; b=2"));
+    }
+
+    /// A `Cookie` field the request writes itself is sent as written, and a
+    /// request with no cookies anywhere sends none.
+    #[test]
+    fn a_requests_own_cookie_field_wins_over_default_cookies() {
+        let client = client().with_default_cookie("session", "abc123");
+        let request = client.get("/a").header("cookie", "raw=1");
+
+        assert_eq!(request.cookie_field(), None);
+        assert_eq!(
+            request.headers.get(header::COOKIE),
+            Some(&HeaderValue::from_static("raw=1"))
+        );
+        assert_eq!(self::client().get("/a").cookie_field(), None);
+    }
+
+    /// Either default would silently replace the other, so the second one
+    /// given is refused, in both orders.
+    #[test]
+    #[should_panic(
+        expected = "`with_default_cookie` would replace the client's `Cookie` \
+                               default header"
+    )]
+    fn a_default_cookie_beside_a_default_cookie_header_panics() {
+        let _ = client()
+            .with_default_header("Cookie", "session=abc123")
+            .with_default_cookie("theme", "dark");
+    }
+
+    #[test]
+    #[should_panic(expected = "a `Cookie` default header would replace the client's \
+                               `with_default_cookie`s")]
+    fn a_default_cookie_header_beside_a_default_cookie_panics() {
+        let _ = client()
+            .with_default_cookie("theme", "dark")
+            .with_default_header("cookie", "session=abc123");
+    }
+
+    #[test]
+    #[should_panic(expected = "`a=b\nc` is not a header value")]
+    fn a_default_cookie_no_field_can_carry_panics() {
+        let _ = client().with_default_cookie("a", "b\nc");
+    }
 }
 
 /// An in-process response carries the `Content-Length` a connection frames it

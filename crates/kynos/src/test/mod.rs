@@ -68,6 +68,8 @@ pub struct TestClient<C> {
     peer: Option<std::net::SocketAddr>,
     /// The fields every request starts from.
     headers: HeaderMap,
+    /// The cookies every request sends beside its own, by name.
+    cookies: Vec<(String, String)>,
     /// What a problem type with no scheme is joined to, for every response.
     problem_base: Option<Arc<str>>,
     /// What [`Transport::Direct`] holds a request body to between frames.
@@ -110,6 +112,7 @@ impl<C> TestClient<C> {
             coverage: None,
             peer: None,
             headers: HeaderMap::new(),
+            cookies: Vec::new(),
             problem_base: None,
             #[cfg(feature = "server")]
             request_body_idle_timeout: IdleTimeout::Default,
@@ -250,15 +253,72 @@ impl<C> TestClient<C> {
     /// wrote it: [`TestRequest::header`], [`bearer`](TestRequest::bearer) for
     /// `Authorization`, a body's `Content-Type`, or the `Cookie` field
     /// [`cookie`](TestRequest::cookie) assembles. A second call naming the
-    /// same field replaces the first.
+    /// same field replaces the first. A default cookie that a request's own
+    /// cookies should join rather than replace is
+    /// [`with_default_cookie`](Self::with_default_cookie).
     ///
     /// # Panics
     ///
-    /// Panics when `name` or `value` is not one HTTP can carry.
+    /// Panics when `name` or `value` is not one HTTP can carry, and when
+    /// `name` is `Cookie` on a client given a
+    /// [`with_default_cookie`](Self::with_default_cookie), whose cookies the
+    /// field would silently replace.
     #[must_use]
     pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
         let (name, value) = field(name, value);
+        assert!(
+            name != crate::http::header::COOKIE || self.cookies.is_empty(),
+            "a `Cookie` default header would replace the client's `with_default_cookie`s; \
+             give the client each cookie by `with_default_cookie` instead"
+        );
         self.headers.insert(name, value);
+        self
+    }
+
+    /// Sends the cookie `name=value` on every request, beside the request's
+    /// own [`cookie`](TestRequest::cookie)s.
+    ///
+    /// The cookies join one `Cookie` field (RFC 6265 section 5.4), the
+    /// client's first, in the order they were given. A request's own cookie
+    /// of the same name is sent instead of the client's, so a signed-in
+    /// client can still send one request as another user. A second call
+    /// naming the same cookie replaces the first. A request that writes the
+    /// `Cookie` field itself, through [`TestRequest::header`], sends that
+    /// field and none of these.
+    ///
+    /// ```
+    /// # async fn run(service: kynos::router::service::Service<()>) {
+    /// use kynos::test::TestClient;
+    ///
+    /// let client = TestClient::new(service).with_default_cookie("session", "abc123");
+    /// // Sends `Cookie: session=abc123; theme=dark`.
+    /// client.get("/me").cookie("theme", "dark").send().await;
+    /// // Sends `Cookie: session=other`.
+    /// client.get("/me").cookie("session", "other").send().await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name=value` is not a header value, and on a client given
+    /// a `Cookie` [`with_default_header`](Self::with_default_header), which
+    /// these would silently replace.
+    #[must_use]
+    pub fn with_default_cookie(mut self, name: &str, value: &str) -> Self {
+        assert!(
+            !self.headers.contains_key(crate::http::header::COOKIE),
+            "`with_default_cookie` would replace the client's `Cookie` default header; \
+             give the client each cookie by `with_default_cookie` instead"
+        );
+        let pair = format!("{name}={value}");
+        assert!(
+            HeaderValue::from_str(&pair).is_ok(),
+            "`{pair}` is not a header value"
+        );
+        match self.cookies.iter_mut().find(|(set, _)| set == name) {
+            Some((_, set)) => value.clone_into(set),
+            None => self.cookies.push((name.to_owned(), value.to_owned())),
+        }
         self
     }
 
@@ -1062,7 +1122,9 @@ impl<'a, C> TestRequest<'a, C> {
     /// Sends a cookie.
     ///
     /// Accumulated rather than set: RFC 6265 section 5.4 puts every cookie in
-    /// one `Cookie` field separated by `; `.
+    /// one `Cookie` field separated by `; `. The client's
+    /// [`with_default_cookie`](TestClient::with_default_cookie)s join it,
+    /// less any this names.
     /// A name or value that leaves that field no header value panics in
     /// [`send`](Self::send), not here.
     #[must_use]
@@ -1355,6 +1417,34 @@ impl<'a, C> TestRequest<'a, C> {
         }
     }
 
+    /// The `Cookie` field this request sends in place of any it carries, or
+    /// `None` to send the one it carries.
+    ///
+    /// The client's default cookies, less those the request names itself,
+    /// then the request's own. Without cookies of its own, a `Cookie` field
+    /// the request wrote itself wins whole: none of the client's is a
+    /// default header, which [`TestClient::with_default_cookie`] refuses.
+    fn cookie_field(&self) -> Option<String> {
+        if self.cookies.is_empty()
+            && (self.client.cookies.is_empty()
+                || self.headers.contains_key(crate::http::header::COOKIE))
+        {
+            return None;
+        }
+        let defaults = self
+            .client
+            .cookies
+            .iter()
+            .filter(|(name, _)| !self.cookies.iter().any(|(own, _)| own == name));
+        Some(
+            defaults
+                .chain(&self.cookies)
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
+    }
+
     /// Sends the request, and returns once the response head arrives.
     async fn answered(mut self) -> Answered<'a, C> {
         #[cfg(feature = "server")]
@@ -1373,6 +1463,7 @@ impl<'a, C> TestRequest<'a, C> {
         let idle = self.client.request_body_idle_limit(self.body.is_stalled());
         #[cfg(not(feature = "server"))]
         let idle = None;
+        let jar = self.cookie_field();
         let body = match (self.body, self.content_length) {
             (RequestBody::Whole(bytes), None) => Body::from_bytes(bytes),
             (body, remaining) => Body::from_body(Framed {
@@ -1388,13 +1479,7 @@ impl<'a, C> TestRequest<'a, C> {
             .parse::<Uri>()
             .unwrap_or_else(|_| panic!("`{}` is not a request target", self.path));
         *request.uri_mut() = uri.clone();
-        if !self.cookies.is_empty() {
-            let jar = self
-                .cookies
-                .iter()
-                .map(|(name, value)| format!("{name}={value}"))
-                .collect::<Vec<_>>()
-                .join("; ");
+        if let Some(jar) = jar {
             self.headers.insert(
                 crate::http::header::COOKIE,
                 HeaderValue::from_str(&jar).expect("a cookie a test wrote"),

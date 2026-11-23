@@ -11144,6 +11144,7 @@ pub fn kynos::test::TestClient<C>::put(&self, &str) -> kynos::test::TestRequest<
 pub fn kynos::test::TestClient<C>::query(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::trace(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::with_coverage(self, &kynos::test::Coverage) -> Self
+pub fn kynos::test::TestClient<C>::with_default_cookie(self, &str, &str) -> Self
 pub fn kynos::test::TestClient<C>::with_default_header(self, &str, &str) -> Self
 pub fn kynos::test::TestClient<C>::with_peer(self, core::net::socket_addr::SocketAddr) -> Self
 pub fn kynos::test::TestClient<C>::with_problem_base(self, &str) -> Self
