@@ -35,6 +35,7 @@ the section for the release that ships it.
 | An `assert_problem(resp, status, slug)` wrapper formatting `BASE + slug` | `test::TestClient::new(service).with_problem_base(BASE)` once, then `resp.assert_problem(403, "insufficient-scope")` | #1391 |
 | `.peer(..)` on every request so a test reads one client whether built `test::TestClient::new` or `through_server` | nothing: both send from `127.0.0.1:0`; `with_peer` once where the address itself matters | #1391 |
 | A `#[kynos::head]` twin whose body calls the same function as the `#[kynos::get]`, only so the document describes the HEAD | `#[kynos::get(.., head)]` on the GET alone, or `head = "..."` beside an explicit `operation_id`; a twin left beside it is refused, `HeadDescribedTwice` | #1394 |
+| A second build of the router, through your own `Service` constructor, to get a `Service` for `server::Server::new` after `test::TestClient::new` took the first | `test::TestClient::new(service.clone())`, then `server::Server::new(service)`: a clone shares the built router, its context and its mounted docs | #1390 |
 
 ## 0.5 to 0.6
 

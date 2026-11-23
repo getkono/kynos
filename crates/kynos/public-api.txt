@@ -559,6 +559,7 @@ impl<R> core::panic::unwind_safe::RefUnwindSafe for kynos::error::rejection::Sco
 impl<R> core::panic::unwind_safe::UnwindSafe for kynos::error::rejection::ScopedRejection<R> where R: core::panic::unwind_safe::UnwindSafe
 #[non_exhaustive] pub enum kynos::error::Error
 pub kynos::error::Error::Contribution(kynos::middleware::contribution::ContributionConflict)
+pub kynos::error::Error::DescriptionShared
 pub kynos::error::Error::InstantiationName(alloc::boxed::Box<kynos::schema::registry::InstantiationNameRefusal>)
 pub kynos::error::Error::Invalid
 pub kynos::error::Error::Invalid::violations: alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>
@@ -5972,6 +5973,7 @@ pub use kynos::prelude::routes
 pub use kynos::prelude::trace
 #[non_exhaustive] pub enum kynos::prelude::Error
 pub kynos::prelude::Error::Contribution(kynos::middleware::contribution::ContributionConflict)
+pub kynos::prelude::Error::DescriptionShared
 pub kynos::prelude::Error::InstantiationName(alloc::boxed::Box<kynos::schema::registry::InstantiationNameRefusal>)
 pub kynos::prelude::Error::Invalid
 pub kynos::prelude::Error::Invalid::violations: alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>
@@ -8925,7 +8927,9 @@ impl<C> kynos::router::service::Service<C>
 pub fn kynos::router::service::Service<C>::call(&self, kynos::http::Request) -> impl core::future::future::Future<Output = kynos::http::Response> + core::marker::Send + '_
 pub fn kynos::router::service::Service<C>::openapi(&self) -> &kynos_openapi::model::document::Document
 impl<C> kynos::router::service::Service<C>
-pub fn kynos::router::service::Service<C>::into_tower_unchecked(self) -> kynos::unchecked::UncheckedService<C>
+pub fn kynos::router::service::Service<C>::into_tower_unchecked(self) -> kynos::error::Result<kynos::unchecked::UncheckedService<C>>
+impl<C> core::clone::Clone for kynos::router::service::Service<C>
+pub fn kynos::router::service::Service<C>::clone(&self) -> Self
 impl<C> core::fmt::Debug for kynos::router::service::Service<C>
 pub fn kynos::router::service::Service<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<C> core::marker::Freeze for kynos::router::service::Service<C>
@@ -11348,6 +11352,7 @@ pub macro kynos::problem_type!
 pub macro kynos::stack!
 #[non_exhaustive] pub enum kynos::Error
 pub kynos::Error::Contribution(kynos::middleware::contribution::ContributionConflict)
+pub kynos::Error::DescriptionShared
 pub kynos::Error::InstantiationName(alloc::boxed::Box<kynos::schema::registry::InstantiationNameRefusal>)
 pub kynos::Error::Invalid
 pub kynos::Error::Invalid::violations: alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>
