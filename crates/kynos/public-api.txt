@@ -7603,6 +7603,24 @@ impl<S, M, T> core::marker::UnsafeUnpin for kynos::response::range::served::Serv
 impl<S, M, T> core::panic::unwind_safe::RefUnwindSafe for kynos::response::range::served::Served<S, M, T> where T: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe
 impl<S, M, T> core::panic::unwind_safe::UnwindSafe for kynos::response::range::served::Served<S, M, T> where T: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe
 pub mod kynos::response::range::source
+pub mod kynos::response::range::source::file
+pub struct kynos::response::range::source::file::FileSource
+impl kynos::response::range::source::file::FileSource
+pub const fn kynos::response::range::source::file::FileSource::metadata(&self) -> &std::fs::Metadata
+pub async fn kynos::response::range::source::file::FileSource::new(std::fs::File) -> std::io::error::Result<Self>
+impl core::fmt::Debug for kynos::response::range::source::file::FileSource
+pub fn kynos::response::range::source::file::FileSource::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl kynos::response::range::source::ByteSource for kynos::response::range::source::file::FileSource
+pub type kynos::response::range::source::file::FileSource::Error = std::io::error::Error
+pub async fn kynos::response::range::source::file::FileSource::complete_length(&self) -> core::result::Result<u64, Self::Error>
+pub async fn kynos::response::range::source::file::FileSource::read_span(&self, u64, u64) -> core::result::Result<bytes::bytes::Bytes, Self::Error>
+impl core::marker::Freeze for kynos::response::range::source::file::FileSource
+impl core::marker::Send for kynos::response::range::source::file::FileSource
+impl core::marker::Sync for kynos::response::range::source::file::FileSource
+impl core::marker::Unpin for kynos::response::range::source::file::FileSource
+impl core::marker::UnsafeUnpin for kynos::response::range::source::file::FileSource
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::response::range::source::file::FileSource
+impl core::panic::unwind_safe::UnwindSafe for kynos::response::range::source::file::FileSource
 pub struct kynos::response::range::source::InMemory(_)
 impl kynos::response::range::source::InMemory
 pub const fn kynos::response::range::source::InMemory::new(bytes::bytes::Bytes) -> Self
@@ -7661,6 +7679,10 @@ impl kynos::response::range::source::ByteSource for kynos::response::range::sour
 pub type kynos::response::range::source::InMemory::Error = core::convert::Infallible
 pub async fn kynos::response::range::source::InMemory::complete_length(&self) -> core::result::Result<u64, Self::Error>
 pub async fn kynos::response::range::source::InMemory::read_span(&self, u64, u64) -> core::result::Result<bytes::bytes::Bytes, Self::Error>
+impl kynos::response::range::source::ByteSource for kynos::response::range::source::file::FileSource
+pub type kynos::response::range::source::file::FileSource::Error = std::io::error::Error
+pub async fn kynos::response::range::source::file::FileSource::complete_length(&self) -> core::result::Result<u64, Self::Error>
+pub async fn kynos::response::range::source::file::FileSource::read_span(&self, u64, u64) -> core::result::Result<bytes::bytes::Bytes, Self::Error>
 pub mod kynos::response::range::spec
 #[non_exhaustive] pub enum kynos::response::range::spec::Ignored
 pub kynos::response::range::spec::Ignored::Absent
