@@ -1,0 +1,34 @@
+error[E0080]: evaluation panicked: `#[kynos::public]` declares that an operation takes no guard, and this handler takes one; remove the attribute, or the guard argument
+ --> $RUST/core/src/panic.rs
+  |
+  |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+  |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `kynos::__private::endpoint::from_meta::<App, revoke_session, fn(kynos::prelude::Auth<kynos::security::schemes::Bearer>) -> impl std::future::Future<Output = kynos::prelude::NoContent> {revoke_session}, (kynos::handler::Guarded, kynos::prelude::Auth<kynos::security::schemes::Bearer>)>::{constant#0}` failed here
+  |
+ ::: src/__private/endpoint.rs
+  |
+  | /         assert!(
+  | |             !(M::PUBLIC && H::__GUARDED),
+  | |             "`#[kynos::public]` declares that an operation takes no guard, and this handler \
+  | |              takes one; remove the attribute, or the guard argument"
+  | |         );
+  | |_________- in this macro invocation
+
+note: erroneous constant encountered
+ --> src/__private/endpoint.rs
+  |
+  | /     const {
+  | |         assert!(
+  | |             !(M::PUBLIC && H::__GUARDED),
+  | |             "`#[kynos::public]` declares that an operation takes no guard, and this handler \
+  | |              takes one; remove the attribute, or the guard argument"
+  | |         );
+  | |     };
+  | |_____^
+
+note: the above error was encountered while instantiating `fn kynos::__private::endpoint::from_meta::<App, revoke_session, fn(Auth<Bearer>) -> impl Future<Output = NoContent> {revoke_session}, (Guarded, Auth<Bearer>)>`
+  --> tests/ui/antipattern/public_on_a_guarded_handler.rs:50:40
+   |
+50 |     let _ = Router::<App>::new().mount(kynos::routes![revoke_session]);
+   |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::routes` (in Nightly builds, run with -Z macro-backtrace for more info)

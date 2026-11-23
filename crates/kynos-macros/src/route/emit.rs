@@ -7,7 +7,11 @@ use syn::{ItemFn, LitStr};
 use crate::{
     derive::common::optional,
     doc::{doc_texts, is_deprecated},
-    route::{args::RouteArgs, attrs::split_doc, uri::endpoint_uri_impl},
+    route::{
+        args::RouteArgs,
+        attrs::{split_doc, take_public},
+        uri::endpoint_uri_impl,
+    },
 };
 
 /// Emits the endpoint type alongside the original handler.
@@ -19,6 +23,12 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
         .map_err(|error| syn::Error::new(args.path.span(), error.to_string()))?
         .variables()
         .to_vec();
+
+    // Read and removed: `#[kynos::public]` written below the route attribute
+    // would otherwise expand on its own once this one has.
+    let mut function = function.clone();
+    let public = take_public(&mut function.attrs)?;
+    let function = &function;
 
     let name = &function.sig.ident;
     let visibility = &function.vis;
@@ -81,6 +91,7 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
             const SUMMARY: ::core::option::Option<&'static str> = #summary;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
             const DEPRECATED: bool = #deprecated;
+            const PUBLIC: bool = #public;
             const TAGS: &'static [::kynos::router::operation::DeclaredTag] = #tags;
         }
 

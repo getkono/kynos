@@ -692,6 +692,221 @@ mod map_openapi {
     }
 }
 
+/// A group whose operations take a guard refuses one that takes none, unless
+/// it is declared public; the group is the scope, wherever it ends up mounted.
+mod mixed_guards {
+    use kynos_openapi::{Method, PathTemplate, Severity, Violation};
+
+    use super::{Router, RouterError, handled};
+    use crate::{
+        error::rejection::AuthRejection,
+        http::{Request, Response},
+        router::{
+            endpoint::{Endpoint, builder::EndpointBuilder},
+            group::Group,
+            install::path_location,
+            operation::OperationCx,
+        },
+        security::{
+            Authenticates, Authenticator, Head,
+            auth::{Auth, MaybeAuth},
+            carrier::{BearerToken, presented::Presented},
+            schemes::Bearer,
+        },
+    };
+
+    struct Tokens;
+
+    impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+        async fn authenticate(
+            &self,
+            _: Presented<BearerToken>,
+            _: Head<'_>,
+            _: &C,
+        ) -> Result<String, AuthRejection> {
+            Err(AuthRejection::unauthenticated())
+        }
+    }
+
+    struct App;
+
+    impl Authenticates<Bearer> for App {
+        type Authenticator = Tokens;
+
+        fn authenticator(&self) -> &Tokens {
+            &Tokens
+        }
+    }
+
+    async fn guarded(caller: Auth<Bearer>) -> crate::response::status::NoContent {
+        let _ = caller;
+        crate::response::status::NoContent
+    }
+
+    async fn optionally_guarded(caller: MaybeAuth<Bearer>) -> crate::response::status::NoContent {
+        let _ = caller;
+        crate::response::status::NoContent
+    }
+
+    /// An operation `$method $path` served by `$handler`.
+    macro_rules! op {
+        ($method:ident, $path:literal, $handler:expr) => {
+            EndpointBuilder::<App, _, _>::new(
+                Method::$method,
+                PathTemplate::parse($path).expect("a usable path template"),
+                $handler,
+            )
+        };
+    }
+
+    /// The `UnguardedOperation` violations `router` reports.
+    fn unguarded(router: &Router<App>) -> Vec<Violation<RouterError>> {
+        router
+            .validate()
+            .expect("a describable router")
+            .into_iter()
+            .filter(|violation| matches!(violation.error, RouterError::UnguardedOperation { .. }))
+            .collect()
+    }
+
+    fn refused(path: &str, method: Method) -> Violation<RouterError> {
+        Violation {
+            location: format!(
+                "{}/{}",
+                path_location(path),
+                method.as_wire_str().to_lowercase()
+            ),
+            severity: Severity::Error,
+            error: RouterError::UnguardedOperation {
+                method,
+                path: path.to_owned(),
+            },
+        }
+    }
+
+    /// `/v1` with one guarded operation and two that take no guard, the way a
+    /// group with a forgotten guard argument looks.
+    fn mixed() -> Group<App> {
+        Group::new("/v1")
+            .mount(op!(Get, "/torrents", guarded))
+            .mount(op!(Post, "/torrents", handled))
+            .mount(op!(Get, "/pool", handled))
+    }
+
+    /// Each unguarded operation is refused at its own operation, and the
+    /// guarded one is not, so `build` fails naming exactly the two.
+    #[test]
+    fn a_group_refuses_each_operation_without_its_guard() {
+        let router = Router::<App>::new().group(mixed());
+
+        assert_eq!(
+            unguarded(&router),
+            [
+                refused("/v1/torrents", Method::Post),
+                refused("/v1/pool", Method::Get)
+            ]
+        );
+        let Err(crate::Error::Invalid { violations }) = router.build(App) else {
+            panic!("a group with a forgotten guard must not build");
+        };
+        assert_eq!(
+            violations
+                .iter()
+                .filter(|violation| matches!(
+                    violation.error,
+                    RouterError::UnguardedOperation { .. }
+                ))
+                .count(),
+            2
+        );
+    }
+
+    /// The control: declaring them public is what lets the same group build.
+    #[test]
+    fn an_operation_declared_public_is_not_refused() {
+        let group = Group::new("/v1")
+            .mount(op!(Get, "/torrents", guarded))
+            .mount(op!(Post, "/sessions", handled).public());
+        let router = Router::<App>::new().group(group);
+
+        assert_eq!(unguarded(&router), []);
+        assert!(router.build(App).is_ok());
+    }
+
+    /// Any guard counts, an optional one included: `MaybeAuth` declares
+    /// anonymous access in the description already.
+    #[test]
+    fn a_group_whose_operations_all_take_a_guard_builds() {
+        let group = Group::new("/v1")
+            .mount(op!(Get, "/torrents", guarded))
+            .mount(op!(Get, "/pool", optionally_guarded));
+
+        assert_eq!(unguarded(&Router::<App>::new().group(group)), []);
+    }
+
+    /// Nothing to forget in a group where nothing is guarded, nor between
+    /// groups, nor at the router's root, whose operations share no scope
+    /// that could have been meant to guard them.
+    #[test]
+    fn only_operations_sharing_a_group_are_compared() {
+        let router = Router::<App>::new()
+            .mount(op!(Get, "/health", handled))
+            .group(Group::new("/v1").mount(op!(Get, "/torrents", guarded)))
+            .group(Group::new("/public").mount(op!(Get, "/status", handled)));
+
+        assert_eq!(unguarded(&router), []);
+    }
+
+    /// The refusal follows the operation into a router that absorbs it, at
+    /// the path it is served at.
+    #[test]
+    fn the_refusal_is_located_where_the_operation_ends_up() {
+        let inner = Router::<App>::new().group(mixed());
+        let router = Router::<App>::new().nest("/api", inner);
+
+        assert_eq!(
+            unguarded(&router),
+            [
+                refused("/api/v1/torrents", Method::Post),
+                refused("/api/v1/pool", Method::Get)
+            ]
+        );
+    }
+
+    /// An endpoint with no handler, such as an asset, has no guard argument
+    /// to forget, so it is not refused among guarded siblings.
+    #[test]
+    fn an_endpoint_without_a_handler_is_not_refused() {
+        struct Fixed(PathTemplate);
+
+        impl Endpoint<App> for Fixed {
+            fn method(&self) -> Method {
+                Method::Get
+            }
+
+            fn path(&self) -> &PathTemplate {
+                &self.0
+            }
+
+            fn describe(&self, _: &mut OperationCx<'_>) {}
+
+            async fn call(&self, _: Request, _: &App) -> Response {
+                Response::default()
+            }
+        }
+
+        let mut fixed = crate::router::endpoint::set::Endpoints::new();
+        fixed.push(Fixed(
+            PathTemplate::parse("/logo.svg").expect("a usable path template"),
+        ));
+        let group = Group::new("/v1")
+            .mount(op!(Get, "/torrents", guarded))
+            .mount(fixed);
+
+        assert_eq!(unguarded(&Router::<App>::new().group(group)), []);
+    }
+}
+
 /// One case per variant of [`RouterError`], what a router's violation says is
 /// wrong.
 mod router_errors {
@@ -707,6 +922,7 @@ mod router_errors {
         match error {
             RouterError::Spec(_) => "Spec",
             RouterError::DuplicateOperation { .. } => "DuplicateOperation",
+            RouterError::UnguardedOperation { .. } => "UnguardedOperation",
             RouterError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
             RouterError::RouteConflict { .. } => "RouteConflict",
             RouterError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
@@ -734,6 +950,15 @@ mod router_errors {
                 },
                 "operation `GET /users` is described more than once; a path item holds one \
                  operation per method",
+            ),
+            (
+                RouterError::UnguardedOperation {
+                    method: Method::Post,
+                    path: "/v1/sessions".to_owned(),
+                },
+                "operation `POST /v1/sessions` takes no guard while another operation in its \
+                 group takes one; take the guard, or mark the operation `#[kynos::public]` if it \
+                 is meant to be reached without a credential",
             ),
             (
                 RouterError::ShortCircuitMismatch {
@@ -812,6 +1037,7 @@ mod router_errors {
         let declared: BTreeSet<&str> = [
             "Spec",
             "DuplicateOperation",
+            "UnguardedOperation",
             "ShortCircuitMismatch",
             "RouteConflict",
             "InvalidRoutePattern",

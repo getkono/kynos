@@ -49,6 +49,15 @@ pub trait EndpointMeta {
     /// Whether the handler carried `#[deprecated]`.
     const DEPRECATED: bool;
 
+    /// Whether the handler carried `#[kynos::public]`, declaring that it takes
+    /// no guard on purpose, as
+    /// [`EndpointBuilder::public`](crate::router::endpoint::builder::EndpointBuilder::public)
+    /// does.
+    ///
+    /// Defaults to `false`, so an implementation written before it existed
+    /// declares nothing it did not.
+    const PUBLIC: bool = false;
+
     /// The tags the route attribute named, in declaration order.
     ///
     /// Empty when it named none. The innermost of the four places a tag can be
