@@ -15,6 +15,7 @@
 //!
 //! prefix := "<URI prefix>"
 //!         | <path to a `const` of type `&str`>
+//!         | default                                the crate's `kynos::problem_base!`
 //! member := status = <400..=599>                   required, exactly once
 //!         | title = "<human-readable summary>"
 //!         | type = "<absolute URI>"

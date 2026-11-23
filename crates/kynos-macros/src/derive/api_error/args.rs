@@ -65,10 +65,13 @@ pub(super) struct Constant {
 /// name of: the problem already sends each under its own meaning.
 const REGISTERED: [&str; 5] = ["type", "title", "status", "detail", "instance"];
 
-/// What `base` named: a prefix written out, or a `const` holding one.
+/// What `base` named: a prefix written out, a `const` holding one, or the
+/// crate's `kynos::problem_base!`.
 pub(super) enum Base {
     Literal(String),
     Const(ExprPath),
+    /// `base = default`, at the span of `default`.
+    Default(Span),
 }
 
 /// Reads one item's `#[problem(...)]` lists, validating every member.
@@ -171,7 +174,8 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
     Ok(args)
 }
 
-/// What a type's `base = ...` names: a string literal, or a path to a `const`.
+/// What a type's `base = ...` names: a string literal, a path to a `const`, or
+/// `default`.
 fn base(meta: &ParseNestedMeta<'_>) -> syn::Result<Base> {
     let mut base = meta.value()?.parse::<Expr>()?;
     // A `macro_rules!` fragment arrives wrapped in an invisible group; a
@@ -184,10 +188,16 @@ fn base(meta: &ParseNestedMeta<'_>) -> syn::Result<Base> {
             lit: Lit::Str(literal),
             ..
         }) => Ok(Base::Literal(literal.value())),
+        // `default` is no keyword, so it parses as a path; a `const` named so
+        // would break the naming convention, which is what frees the word.
+        Expr::Path(path) if path.qself.is_none() && path.path.is_ident("default") => {
+            Ok(Base::Default(path.span()))
+        }
         Expr::Path(path) => Ok(Base::Const(path)),
         other => Err(syn::Error::new(
             other.span(),
-            "`base` is a string literal, or the path to a `const` of type `&str` holding one",
+            "`base` is a string literal, the path to a `const` of type `&str` holding one, or \
+             `default` for the crate's `kynos::problem_base!`",
         )),
     }
 }

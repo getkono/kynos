@@ -4720,6 +4720,28 @@ macro_rules! forwarded_base {
 
 forwarded_base!(ForwardedLiteralError, "https://errors.example.com/");
 forwarded_base!(ForwardedConstError, PROBLEM_BASE);
+forwarded_base!(ForwardedDefaultError, default);
+
+// The prefix `base = default` and `problem_type!` read, at the crate root.
+kynos::problem_base!(PROBLEM_BASE);
+
+/// `LookupError` under the crate's `problem_base!`, and generic, as
+/// `SharedLookupError` is.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = default)]
+enum DefaultLookupError<T: std::fmt::Debug> {
+    #[error("no user with that id")]
+    #[problem(
+        status = 404,
+        type = "https://errors.example.com/user-unknown",
+        title = "User unknown"
+    )]
+    UserUnknown(std::marker::PhantomData<T>),
+
+    #[error("no tenant with that slug")]
+    #[problem(status = 404, title = "Tenant unknown")]
+    TenantUnknown,
+}
 
 /// Two failures answering with one status, neither naming a type and the enum
 /// declaring no `base`, so both publish `about:blank`. The schema is one
@@ -5764,8 +5786,30 @@ fn a_base_naming_a_const_publishes_what_the_literal_does() {
     );
 }
 
-/// A `base` forwarded through a `macro_rules!` fragment, literal or path, is
-/// read as the one written directly.
+/// `base = default` publishes what the crate's `problem_base!` written out as
+/// the `base` does, on the wire and in the description, still borrowed; and
+/// `problem_type!` names the URI a variant of that slug publishes.
+#[test]
+fn a_default_base_publishes_what_the_crate_problem_base_does() {
+    use kynos::error::problem::IntoProblem;
+    use std::borrow::Cow;
+
+    let joined = DefaultLookupError::<u8>::TenantUnknown.into_problem();
+    assert_eq!(joined.type_uri, "https://errors.example.com/tenant-unknown");
+    assert!(matches!(joined.type_uri, Cow::Borrowed(_)));
+    assert_eq!(joined.type_uri, kynos::problem_type!("tenant-unknown"));
+
+    let typed = DefaultLookupError::<u8>::UserUnknown(std::marker::PhantomData).into_problem();
+    assert_eq!(typed.type_uri, "https://errors.example.com/user-unknown");
+
+    assert_eq!(
+        emitted_responses::<DefaultLookupError<u8>>(),
+        emitted_responses::<LookupError>()
+    );
+}
+
+/// A `base` forwarded through a `macro_rules!` fragment, literal, path or
+/// `default`, is read as the one written directly.
 #[test]
 fn a_base_forwarded_through_a_macro_is_read_as_written() {
     use kynos::error::problem::IntoProblem;
@@ -5773,6 +5817,7 @@ fn a_base_forwarded_through_a_macro_is_read_as_written() {
     for problem in [
         ForwardedLiteralError::TenantUnknown.into_problem(),
         ForwardedConstError::TenantUnknown.into_problem(),
+        ForwardedDefaultError::TenantUnknown.into_problem(),
     ] {
         assert_eq!(
             problem.type_uri,

@@ -58,12 +58,17 @@ use kynos::{
 };
 use serde::{Deserialize, Serialize};
 
+// The prefix every problem type below hangs under, said once at the crate
+// root. Each derive opts in with `base = default`, and `problem_type!` joins it
+// with a slug where no derive names the type.
+kynos::problem_base!("https://errors.example.com/");
+
 /// The problem a value breaking a bound it declares answers with, in the same
 /// catalogue as `Invalid`'s but a type of its own, since a broken bound sends
 /// `errors` where `Invalid` sends `field`. Named once, whole: its title, a 422
 /// for a query parameter as for a body, and a detail naming the first failure.
 const BOUND_BROKEN: ConstraintProblem =
-    ConstraintProblem::of_type("https://errors.example.com/bound-broken")
+    ConstraintProblem::of_type(kynos::problem_type!("bound-broken"))
         .titled("Bound broken")
         .unprocessable()
         .with_detail(ConstraintDetail::FirstFailure);
@@ -123,7 +128,7 @@ struct RowMissing(u64);
 #[derive(Debug, thiserror::Error, ApiError)]
 #[error("`{field}` is not a valid value")]
 #[problem(
-    base = "https://errors.example.com/",
+    base = default,
     status = 422,
     title = "Validation failed"
 )]
@@ -135,9 +140,10 @@ struct Invalid {
 
 /// What the API says when the store cannot do what was asked.
 ///
-/// One variant per failure a consumer should be able to tell apart. The
-/// `base` is the prefix every variant's `type` URI shares, so a client can
-/// branch on a stable identifier rather than on prose.
+/// One variant per failure a consumer should be able to tell apart.
+/// `base = default` hangs every variant's `type` URI under the crate's
+/// `problem_base!`, so a client can branch on a stable identifier rather than
+/// on prose.
 ///
 /// `OverQuota` reaches a client as this, which is the shape every error in the
 /// service takes:
@@ -156,7 +162,7 @@ struct Invalid {
 /// beside the registered members rather than nested under them, which is what
 /// RFC 9457 calls an extension.
 #[derive(Debug, thiserror::Error, ApiError)]
-#[problem(base = "https://errors.example.com/")]
+#[problem(base = default)]
 enum StoreError {
     /// `#[from]` is what makes the `?` in `get_user` compile. Its message is
     /// the row's, and its status is its own, so it is not transparent.
@@ -248,7 +254,7 @@ struct MaintenanceWindow {
 /// handler mentions still reaches a client in the shape all the others do.
 #[derive(Debug, thiserror::Error, ApiError)]
 #[error("the store is being migrated")]
-#[problem(base = "https://errors.example.com/", status = 503)]
+#[problem(base = default, status = 503)]
 struct Draining;
 
 impl<C: Sync + 'static> Interceptor<C> for MaintenanceWindow {
