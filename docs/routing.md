@@ -531,3 +531,22 @@ worse than the honest absence, and the honest absence costs a client nothing: a
 consumer that meets an undocumented 404 has met the HTTP default, not a
 surprise. The same reasoning is why `FallbackPolicy` chooses only the *shape* of
 the body — an RFC 9457 problem document or nothing — and not its status.
+
+### Why no served operation is left out of `paths`
+
+An operation the application would rather not publish, such as a `/metrics`
+scrape, is still one the listener serves, and a document leaving it out is no
+longer true of that listener. Recording the omission in an annotation would not
+restore that: every consumer that does not read it sees a service with one
+operation fewer than it has. So no route attribute omits a typed operation, and
+`route_unchecked`, which serves a route with no `paths` entry, stamps the whole
+document non-authoritative in exchange: it exists for routes Kynos cannot
+describe, not for one it would rather not publish.
+
+The document describes a router, so an operation leaves a document by leaving
+its router. An internal operation goes on a second router, served on a second
+listener the public cannot reach, where its own document describes it;
+[production.md](production.md#internal-operations) shows the two sharing a
+context and one shutdown. Where only one listener is available, the operation
+stays in the public document under an `internal` tag, which client generators
+can filter on.

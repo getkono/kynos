@@ -162,6 +162,33 @@ results, so none of that advice is here, and nothing below tunes a cost.
   (`terminationGracePeriodSeconds`); widen the window rather than shortening
   the drain where in-flight requests need it.
 
+### Internal operations
+
+An operation no API client should call, such as a Prometheus `/metrics`
+scrape, belongs on a router of its own, served by a second `Server` on an
+address only the internal network reaches. The public document then leaves it
+out because the public listener does not serve it, and the internal router's
+own document describes it, checked by `build` like any other. Both routers take
+the context that holds what they share, such as the metrics registry, and both
+servers take one `Shutdown`, so one signal drains them together:
+
+```rust
+let shutdown = Shutdown::signals();
+let api = Router::new().mount(public_routes()).build(context.clone())?;
+let ops = Router::new().mount(kynos::routes![render_metrics]).build(context)?;
+let (public, internal) = tokio::join!(
+    Server::new(api).bind(public_address).graceful_shutdown(shutdown.clone()).serve(),
+    Server::new(ops).bind(internal_address).graceful_shutdown(shutdown).serve(),
+);
+public.and(internal)
+```
+
+Where the deployment exposes one port only, mount the operation on the public
+router under an `internal` tag instead, so a client generator can skip it by
+tag. No route attribute serves an operation while leaving it out of `paths`;
+[routing.md](routing.md#why-no-served-operation-is-left-out-of-paths) says
+why.
+
 kynos-bench runs on a Linux rig. Nothing it records speaks for another
 operating system or for a shape it has not measured; its
 [methodology](https://github.com/getkono/kynos-bench/blob/master/docs/METHODOLOGY.md)
