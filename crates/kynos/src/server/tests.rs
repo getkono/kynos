@@ -2099,6 +2099,202 @@ async fn a_failing_shutdown_trigger_ends_serving_with_its_error() {
     assert!(matches!(&error, crate::Error::Server(error) if !error.is_requested_shutdown()));
 }
 
+/// Clones of one trigger are one trigger: its begin reaches two servers and a
+/// task awaiting `begun`, and its force ends both drains and resolves the
+/// task's `forced`.
+#[cfg(feature = "http1")]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn one_trigger_begins_and_forces_every_clone() {
+    let (begin_sender, begin_receiver) = tokio::sync::oneshot::channel();
+    let (force_sender, force_receiver) = tokio::sync::oneshot::channel();
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async move {
+        let _ = begin_receiver.await;
+        Ok(Box::pin(async move {
+            let _ = force_receiver.await;
+        }) as crate::server::shutdown::ForceFuture)
+    }));
+    let task = shutdown.clone();
+
+    let mut servers = Vec::new();
+    let mut clients = Vec::new();
+    for _ in 0..2 {
+        let (service, started, release) = blocking_service();
+        let bound = crate::server::Server::new(service)
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .shutdown_timeout(std::time::Duration::from_secs(25))
+            .graceful_shutdown(shutdown.clone())
+            .prepare()
+            .await
+            .expect("loopback listener binds");
+        let address = bound.local_addrs()[0];
+        servers.push(tokio::spawn(bound.serve()));
+        clients.push((
+            tokio::task::spawn_blocking(move || request_http1(address)),
+            release,
+        ));
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .expect("the request reaches the handler");
+    }
+    drop(shutdown);
+
+    let _ = begin_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(5), task.begun())
+        .await
+        .expect("the task sees the begin")
+        .expect("the trigger began");
+    tokio::task::yield_now().await;
+    assert!(
+        servers.iter().all(|server| !server.is_finished()),
+        "both servers drain their request"
+    );
+
+    let _ = force_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(5), task.forced())
+        .await
+        .expect("the task sees the force")
+        .expect("the trigger forced");
+    for server in servers {
+        let error = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+            .await
+            .expect("the force ends the drain promptly")
+            .expect("server task joins")
+            .expect_err("the forced drain is reported");
+        assert!(
+            matches!(
+                &error,
+                crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
+            ),
+            "{error:?}"
+        );
+    }
+    for (client, _release) in clients {
+        client.await.expect("client task joins");
+    }
+}
+
+/// A clone awaited with no server drives the trigger itself, a waiter dropped
+/// mid-wait hands the trigger to the next, and a begun trigger answers a
+/// clone made later at once.
+#[tokio::test]
+async fn a_clone_drives_its_trigger_without_a_server() {
+    let (begin_sender, begin_receiver) = tokio::sync::oneshot::channel::<()>();
+    let shutdown = crate::server::shutdown::Shutdown::on(async move {
+        let _ = begin_receiver.await;
+    });
+    let first = shutdown.clone();
+    drop(shutdown);
+    tokio::select! {
+        biased;
+        _ = first.begun() => panic!("the trigger has not fired"),
+        () = std::future::ready(()) => {}
+    }
+
+    let second = first.clone();
+    let waiter = tokio::spawn(async move { second.begun().await });
+    let _ = begin_sender.send(());
+    tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+        .await
+        .expect("the trigger reaches the waiter")
+        .expect("waiter joins")
+        .expect("the trigger began");
+
+    let later = first.clone();
+    tokio::select! {
+        biased;
+        begun = later.begun() => begun.expect("the trigger began"),
+        () = std::future::ready(()) => panic!("a begun trigger answers at once"),
+    }
+    tokio::select! {
+        biased;
+        _ = later.forced() => panic!("`Shutdown::on` never forces"),
+        () = std::future::ready(()) => {}
+    }
+}
+
+/// A trigger that fails reports its failure to every clone, and to a server
+/// given one, rather than leaving the others waiting.
+#[tokio::test]
+async fn every_clone_reports_a_failing_trigger() {
+    use std::io;
+
+    let shutdown = crate::server::shutdown::Shutdown::new(Box::pin(async {
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "no signal for you",
+        ))
+    }));
+    let begun = shutdown
+        .begun()
+        .await
+        .expect_err("the failure reaches `begun`");
+    let forced = shutdown
+        .clone()
+        .forced()
+        .await
+        .expect_err("the failure reaches `forced`");
+    for error in [&begun, &forced] {
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "no signal for you");
+    }
+
+    let error = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::server::Server::new(test_service())
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .graceful_shutdown(shutdown)
+            .serve(),
+    )
+    .await
+    .expect("a failed trigger ends serving")
+    .expect_err("the failed trigger is reported");
+    let crate::Error::Server(crate::server::error::ServerError::Signal(source)) = &error else {
+        panic!("not a signal failure: {error:?}");
+    };
+    assert_eq!(source.to_string(), "no signal for you");
+}
+
+/// `Shutdown::signals` over real signals with no server: one `SIGTERM`
+/// begins it for every clone, and a second forces it for every clone.
+///
+/// The signals go to this process alone, which nextest gives this test to
+/// itself. The first poll of a clone installs the listeners, so it precedes
+/// the first signal.
+#[cfg(unix)]
+#[tokio::test(flavor = "current_thread")]
+async fn a_termination_signal_reaches_every_clone() {
+    use rustix::process::{Signal, getpid, kill_process};
+
+    let shutdown = crate::server::shutdown::Shutdown::signals();
+    let other = shutdown.clone();
+    tokio::select! {
+        biased;
+        _ = shutdown.begun() => panic!("no signal has been sent"),
+        () = std::future::ready(()) => {}
+    }
+
+    kill_process(getpid(), Signal::TERM).expect("the first signal is sent");
+    for clone in [&shutdown, &other] {
+        tokio::time::timeout(std::time::Duration::from_secs(5), clone.begun())
+            .await
+            .expect("the first signal begins shutdown")
+            .expect("the listeners installed");
+    }
+    tokio::select! {
+        biased;
+        _ = other.forced() => panic!("one signal does not force"),
+        () = std::future::ready(()) => {}
+    }
+
+    kill_process(getpid(), Signal::TERM).expect("the second signal is sent");
+    for clone in [&shutdown, &other] {
+        tokio::time::timeout(std::time::Duration::from_secs(5), clone.forced())
+            .await
+            .expect("the second signal forces shutdown")
+            .expect("the listeners installed");
+    }
+}
+
 /// `Shutdown::signals` over real signals: the first `SIGTERM` stops the
 /// listener while a request drains, and a second forces the drain to end.
 ///
@@ -8380,4 +8576,14 @@ fn assert_send_sync<T: Send + Sync>() {}
 fn a_server_and_its_shutdown_trigger_are_send_and_sync() {
     assert_send_sync::<super::shutdown::Shutdown>();
     assert_send_sync::<super::Server<()>>();
+}
+
+/// A trigger's waits can be awaited on a spawned task.
+#[test]
+fn a_shutdown_triggers_waits_are_send() {
+    fn assert_send<T: Send>(_: T) {}
+
+    let shutdown = super::shutdown::Shutdown::on(async {});
+    assert_send(shutdown.begun());
+    assert_send(shutdown.forced());
 }
