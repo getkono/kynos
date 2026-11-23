@@ -4612,6 +4612,30 @@ impl<R> core::marker::UnsafeUnpin for kynos::middleware::limits::timeout::Timeou
 impl<R> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::limits::timeout::Timeout<R>
 impl<R> core::panic::unwind_safe::UnwindSafe for kynos::middleware::limits::timeout::Timeout<R>
 pub mod kynos::middleware::rate_limit
+pub mod kynos::middleware::rate_limit::clock
+pub struct kynos::middleware::rate_limit::clock::SystemClock
+impl core::clone::Clone for kynos::middleware::rate_limit::clock::SystemClock
+pub fn kynos::middleware::rate_limit::clock::SystemClock::clone(&self) -> kynos::middleware::rate_limit::clock::SystemClock
+impl core::default::Default for kynos::middleware::rate_limit::clock::SystemClock
+pub fn kynos::middleware::rate_limit::clock::SystemClock::default() -> kynos::middleware::rate_limit::clock::SystemClock
+impl core::fmt::Debug for kynos::middleware::rate_limit::clock::SystemClock
+pub fn kynos::middleware::rate_limit::clock::SystemClock::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::middleware::rate_limit::clock::SystemClock
+impl kynos::middleware::rate_limit::clock::Clock for kynos::middleware::rate_limit::clock::SystemClock
+pub fn kynos::middleware::rate_limit::clock::SystemClock::now(&self) -> core::time::Duration
+impl core::marker::Freeze for kynos::middleware::rate_limit::clock::SystemClock
+impl core::marker::Send for kynos::middleware::rate_limit::clock::SystemClock
+impl core::marker::Sync for kynos::middleware::rate_limit::clock::SystemClock
+impl core::marker::Unpin for kynos::middleware::rate_limit::clock::SystemClock
+impl core::marker::UnsafeUnpin for kynos::middleware::rate_limit::clock::SystemClock
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::clock::SystemClock
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::clock::SystemClock
+pub trait kynos::middleware::rate_limit::clock::Clock: core::marker::Send + core::marker::Sync + 'static
+pub fn kynos::middleware::rate_limit::clock::Clock::now(&self) -> core::time::Duration
+impl kynos::middleware::rate_limit::clock::Clock for kynos::middleware::rate_limit::clock::SystemClock
+pub fn kynos::middleware::rate_limit::clock::SystemClock::now(&self) -> core::time::Duration
+impl<T: kynos::middleware::rate_limit::clock::Clock + ?core::marker::Sized> kynos::middleware::rate_limit::clock::Clock for alloc::sync::Arc<T>
+pub fn alloc::sync::Arc<T>::now(&self) -> core::time::Duration
 pub mod kynos::middleware::rate_limit::decision
 #[non_exhaustive] pub enum kynos::middleware::rate_limit::decision::Decision
 pub kynos::middleware::rate_limit::decision::Decision::Allow(kynos::middleware::rate_limit::decision::Allowance)
@@ -4751,9 +4775,9 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::dec
 pub trait kynos::middleware::rate_limit::decision::RateLimitPolicy<C>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::middleware::rate_limit::decision::RateLimitPolicy::advertised(&self) -> &[kynos::middleware::rate_limit::decision::QuotaPolicy]
 pub fn kynos::middleware::rate_limit::decision::RateLimitPolicy::check(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> impl core::future::future::Future<Output = kynos::middleware::rate_limit::decision::Decision> + core::marker::Send
-impl<C, K, S> kynos::middleware::rate_limit::decision::RateLimitPolicy<C> for kynos::middleware::rate_limit::quota::Quotas<K, S> where C: core::marker::Sync + 'static, K: kynos::middleware::rate_limit::key::RateLimitKey<C>, S: kynos::middleware::rate_limit::store::RateLimitStore
-pub fn kynos::middleware::rate_limit::quota::Quotas<K, S>::advertised(&self) -> &[kynos::middleware::rate_limit::decision::QuotaPolicy]
-pub async fn kynos::middleware::rate_limit::quota::Quotas<K, S>::check(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> kynos::middleware::rate_limit::decision::Decision
+impl<C, K, S, Clk> kynos::middleware::rate_limit::decision::RateLimitPolicy<C> for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where C: core::marker::Sync + 'static, K: kynos::middleware::rate_limit::key::RateLimitKey<C>, S: kynos::middleware::rate_limit::store::RateLimitStore, Clk: kynos::middleware::rate_limit::clock::Clock
+pub fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::advertised(&self) -> &[kynos::middleware::rate_limit::decision::QuotaPolicy]
+pub async fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::check(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> kynos::middleware::rate_limit::decision::Decision
 pub mod kynos::middleware::rate_limit::headers
 pub struct kynos::middleware::rate_limit::headers::RateLimitFields
 pub kynos::middleware::rate_limit::headers::RateLimitFields::limits: alloc::vec::Vec<kynos::middleware::rate_limit::decision::ServiceLimit>
@@ -4951,23 +4975,25 @@ impl core::marker::Unpin for kynos::middleware::rate_limit::quota::Quota
 impl core::marker::UnsafeUnpin for kynos::middleware::rate_limit::quota::Quota
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::quota::Quota
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::quota::Quota
-pub struct kynos::middleware::rate_limit::quota::Quotas<K, S>
+pub struct kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>
+impl<K, S, Clk> kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>
+pub fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::on_store_failure(self, kynos::middleware::rate_limit::store::StoreFailure) -> Self
+pub fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::quota(self, kynos::middleware::rate_limit::quota::Quota) -> Self
+pub fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::with_clock<T: kynos::middleware::rate_limit::clock::Clock>(self, T) -> kynos::middleware::rate_limit::quota::Quotas<K, S, T>
 impl<K, S> kynos::middleware::rate_limit::quota::Quotas<K, S>
 pub fn kynos::middleware::rate_limit::quota::Quotas<K, S>::new(K, S) -> Self
-pub fn kynos::middleware::rate_limit::quota::Quotas<K, S>::on_store_failure(self, kynos::middleware::rate_limit::store::StoreFailure) -> Self
-pub fn kynos::middleware::rate_limit::quota::Quotas<K, S>::quota(self, kynos::middleware::rate_limit::quota::Quota) -> Self
-impl<C, K, S> kynos::middleware::rate_limit::decision::RateLimitPolicy<C> for kynos::middleware::rate_limit::quota::Quotas<K, S> where C: core::marker::Sync + 'static, K: kynos::middleware::rate_limit::key::RateLimitKey<C>, S: kynos::middleware::rate_limit::store::RateLimitStore
-pub fn kynos::middleware::rate_limit::quota::Quotas<K, S>::advertised(&self) -> &[kynos::middleware::rate_limit::decision::QuotaPolicy]
-pub async fn kynos::middleware::rate_limit::quota::Quotas<K, S>::check(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> kynos::middleware::rate_limit::decision::Decision
-impl<K: core::fmt::Debug, S: core::fmt::Debug> core::fmt::Debug for kynos::middleware::rate_limit::quota::Quotas<K, S>
-pub fn kynos::middleware::rate_limit::quota::Quotas<K, S>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<K, S> core::marker::Freeze for kynos::middleware::rate_limit::quota::Quotas<K, S> where K: core::marker::Freeze, S: core::marker::Freeze
-impl<K, S> core::marker::Send for kynos::middleware::rate_limit::quota::Quotas<K, S> where K: core::marker::Send, S: core::marker::Send
-impl<K, S> core::marker::Sync for kynos::middleware::rate_limit::quota::Quotas<K, S> where K: core::marker::Sync, S: core::marker::Sync
-impl<K, S> core::marker::Unpin for kynos::middleware::rate_limit::quota::Quotas<K, S> where K: core::marker::Unpin, S: core::marker::Unpin
-impl<K, S> core::marker::UnsafeUnpin for kynos::middleware::rate_limit::quota::Quotas<K, S> where K: core::marker::UnsafeUnpin, S: core::marker::UnsafeUnpin
-impl<K, S> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::quota::Quotas<K, S> where K: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe
-impl<K, S> core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::quota::Quotas<K, S> where K: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe
+impl<C, K, S, Clk> kynos::middleware::rate_limit::decision::RateLimitPolicy<C> for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where C: core::marker::Sync + 'static, K: kynos::middleware::rate_limit::key::RateLimitKey<C>, S: kynos::middleware::rate_limit::store::RateLimitStore, Clk: kynos::middleware::rate_limit::clock::Clock
+pub fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::advertised(&self) -> &[kynos::middleware::rate_limit::decision::QuotaPolicy]
+pub async fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::check(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> kynos::middleware::rate_limit::decision::Decision
+impl<K: core::fmt::Debug, S: core::fmt::Debug, Clk: core::fmt::Debug> core::fmt::Debug for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>
+pub fn kynos::middleware::rate_limit::quota::Quotas<K, S, Clk>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<K, S, Clk> core::marker::Freeze for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where K: core::marker::Freeze, S: core::marker::Freeze, Clk: core::marker::Freeze
+impl<K, S, Clk> core::marker::Send for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where K: core::marker::Send, S: core::marker::Send, Clk: core::marker::Send
+impl<K, S, Clk> core::marker::Sync for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where K: core::marker::Sync, S: core::marker::Sync, Clk: core::marker::Sync
+impl<K, S, Clk> core::marker::Unpin for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where K: core::marker::Unpin, S: core::marker::Unpin, Clk: core::marker::Unpin
+impl<K, S, Clk> core::marker::UnsafeUnpin for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where K: core::marker::UnsafeUnpin, S: core::marker::UnsafeUnpin, Clk: core::marker::UnsafeUnpin
+impl<K, S, Clk> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where K: core::panic::unwind_safe::RefUnwindSafe, S: core::panic::unwind_safe::RefUnwindSafe, Clk: core::panic::unwind_safe::RefUnwindSafe
+impl<K, S, Clk> core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::quota::Quotas<K, S, Clk> where K: core::panic::unwind_safe::UnwindSafe, S: core::panic::unwind_safe::UnwindSafe, Clk: core::panic::unwind_safe::UnwindSafe
 pub mod kynos::middleware::rate_limit::refusal
 pub struct kynos::middleware::rate_limit::refusal::RateLimited<T>
 pub kynos::middleware::rate_limit::refusal::RateLimited::limit: u64
@@ -11112,7 +11138,7 @@ pub fn kynos::test::TestClient<C>::assert_declared_responses_covered(&self)
 pub fn kynos::test::TestClient<C>::delete(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::get(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::head(&self, &str) -> kynos::test::TestRequest<'_, C>
-pub fn kynos::test::TestClient<C>::method(&self, http::method::Method, &str) -> kynos::test::TestRequest<'_, C>
+pub fn kynos::test::TestClient<C>::method(&self, impl kynos::test::IntoMethod, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::new(kynos::router::service::Service<C>) -> Self
 pub fn kynos::test::TestClient<C>::options(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::patch(&self, &str) -> kynos::test::TestRequest<'_, C>
@@ -11123,6 +11149,7 @@ pub fn kynos::test::TestClient<C>::trace(&self, &str) -> kynos::test::TestReques
 pub fn kynos::test::TestClient<C>::with_coverage(self, &kynos::test::Coverage) -> Self
 pub fn kynos::test::TestClient<C>::with_default_header(self, &str, &str) -> Self
 pub fn kynos::test::TestClient<C>::with_peer(self, core::net::socket_addr::SocketAddr) -> Self
+pub fn kynos::test::TestClient<C>::with_problem_base(self, &str) -> Self
 pub fn kynos::test::TestClient<C>::with_request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::test::TestClient<C>
 pub fn kynos::test::TestClient<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
@@ -11217,6 +11244,7 @@ pub fn kynos::test::TestResponse::assert_problem(&self, impl kynos::test::IntoSt
 pub fn kynos::test::TestResponse::assert_problem_type(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_redirect(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_status(&self, impl kynos::test::IntoStatus) -> &Self
+pub fn kynos::test::TestResponse::assert_status_because(&self, impl kynos::test::IntoStatus, impl core::fmt::Display) -> &Self
 pub fn kynos::test::TestResponse::bytes(&self) -> &bytes::bytes::Bytes
 pub fn kynos::test::TestResponse::cookies(&self) -> alloc::vec::Vec<(&str, &str)>
 pub fn kynos::test::TestResponse::events(&self) -> alloc::vec::Vec<kynos::test::TestEvent>
@@ -11256,6 +11284,14 @@ impl<'a> core::marker::Unpin for kynos::test::TestStream<'a>
 impl<'a> core::marker::UnsafeUnpin for kynos::test::TestStream<'a>
 impl<'a> !core::panic::unwind_safe::RefUnwindSafe for kynos::test::TestStream<'a>
 impl<'a> !core::panic::unwind_safe::UnwindSafe for kynos::test::TestStream<'a>
+pub trait kynos::test::IntoMethod: kynos::test::sealed::SealedMethod
+pub fn kynos::test::IntoMethod::into_method(self) -> http::method::Method
+impl kynos::test::IntoMethod for &http::method::Method
+pub fn &http::method::Method::into_method(self) -> http::method::Method
+impl kynos::test::IntoMethod for &str
+pub fn &str::into_method(self) -> http::method::Method
+impl kynos::test::IntoMethod for http::method::Method
+pub fn http::method::Method::into_method(self) -> http::method::Method
 pub trait kynos::test::IntoStatus: kynos::test::sealed::Sealed
 pub fn kynos::test::IntoStatus::into_status(self) -> http::status::StatusCode
 impl kynos::test::IntoStatus for http::status::StatusCode

@@ -2,6 +2,7 @@ use std::{fmt, marker::PhantomData, time::Duration};
 
 use super::{
     Legacy, RateLimit, RateLimitSpelling, Structured,
+    clock::Clock,
     decision::{Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders, SF_INTEGER_MAX},
     key::Shared,
@@ -825,6 +826,84 @@ async fn a_refusal_waits_out_the_longest_denial_in_either_quota_order() {
         assert!(longest > Duration::from_secs(2), "{denial:?}");
         assert_eq!(denial.retry_after, longest, "{denial:?}");
     }
+}
+
+// --- A window refilling on a clock the test moves ---------------------------
+
+/// A clock that reads whatever millisecond the test last set.
+#[derive(Debug, Default)]
+struct Manual(std::sync::atomic::AtomicU64);
+
+impl Manual {
+    fn set(&self, millis: u64) {
+        self.0.store(millis, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Clock for Manual {
+    fn now(&self) -> Duration {
+        Duration::from_millis(self.0.load(std::sync::atomic::Ordering::Relaxed))
+    }
+}
+
+/// A store that counts, in memory.
+#[derive(Debug, Default)]
+struct Counting(std::sync::Mutex<std::collections::HashMap<String, u64>>);
+
+impl RateLimitStore for Counting {
+    type Error = Unavailable;
+
+    async fn read(&self, key: &str) -> Result<u64, Self::Error> {
+        let counters = self.0.lock().expect("no test panics while holding this");
+        Ok(counters.get(key).copied().unwrap_or(0))
+    }
+
+    async fn increment(&self, key: &str, by: u64, _: Duration) -> Result<u64, Self::Error> {
+        let mut counters = self.0.lock().expect("no test panics while holding this");
+        let counter = counters.entry(key.to_owned()).or_insert(0);
+        *counter += by;
+        Ok(*counter)
+    }
+}
+
+/// A spent window refuses for as long as the clock stays inside it, and the
+/// client that waits out the `Retry-After` it was given is admitted again —
+/// with no sleep, since the clock is the one `with_clock` named.
+#[tokio::test]
+async fn a_spent_window_refills_once_the_clock_passes_its_retry_after() {
+    // A window boundary, so the first window is wholly ahead of the clock.
+    const START: u64 = 1_700_000_000_000;
+
+    let clock = std::sync::Arc::new(Manual::default());
+    let quotas = Quotas::new(Shared("everyone".into()), Counting::default())
+        .quota(Quota::new("refill", 2, WINDOW))
+        .with_clock(std::sync::Arc::clone(&clock));
+    let check = || async {
+        let request = http::Request::new(Body::empty());
+        quotas
+            .check(&request, Route::new("/", "op", Method::Get), &())
+            .await
+    };
+
+    clock.set(START);
+    for _ in 0..2 {
+        assert!(matches!(check().await, Decision::Allow(_)));
+    }
+    let Decision::Deny(denial) = check().await else {
+        panic!("a third request inside a window of two is refused");
+    };
+
+    clock.set(START + 999);
+    assert!(
+        matches!(check().await, Decision::Deny(_)),
+        "the spent window has not ended"
+    );
+
+    clock.set(START + u64::try_from(denial.retry_after.as_millis()).expect("a short wait"));
+    assert!(
+        matches!(check().await, Decision::Allow(_)),
+        "{denial:?} was waited out"
+    );
 }
 
 // --- What the shipped keys and quotas state --------------------------------

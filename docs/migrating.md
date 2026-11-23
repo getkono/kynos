@@ -29,6 +29,11 @@ the section for the release that ships it.
 | A variant copied from another `ApiError` enum, and a `match` or `let ... else { unreachable!() }` moving a value across | `#[problem(variant_of = Other::Variant)]` on the variant, and `Narrow::try_from(other)` | #1378 |
 | `TcpListener::bind`, `tokio::spawn(server.listener(..).serve())`, a hand-formatted request head and a status-line parser, to test what only a listener answers | `test::TestClient::connect(&running)` over `server::BoundServer::spawn`'s handle, then `running.shutdown()` | #1389 |
 | A `test::Coverage` newtype behind an `Arc`, whose only method calls `assert_declared_responses_covered(&my_document())` | `test::Coverage::for_document(my_document())`, a `.clone()` of it to each harness, and `assert_covered()` once | #1388 |
+| A `middleware::rate_limit::decision::RateLimitPolicy` written by hand only so a test can move the time its windows count against | `middleware::rate_limit::quota::Quotas::new(key, store).with_clock(clock)`, where `clock` implements `middleware::rate_limit::clock::Clock` | #1392 |
+| `http::Method::from_bytes(name.as_bytes()).unwrap()` before `test::TestClient::method(..)`, for a table of cases naming each method as text | `client.method("POST", path)`: `method` takes any `test::IntoMethod`, a `Method`, a `&Method` or a name | #1391 |
+| `assert_eq!(resp.status().as_u16(), 401, "a revoked token is dead")`, which drops the body from the failure | `resp.assert_status_because(401, "a revoked token is dead")` | #1391 |
+| An `assert_problem(resp, status, slug)` wrapper formatting `BASE + slug` | `test::TestClient::new(service).with_problem_base(BASE)` once, then `resp.assert_problem(403, "insufficient-scope")` | #1391 |
+| `.peer(..)` on every request so a test reads one client whether built `test::TestClient::new` or `through_server` | nothing: both send from `127.0.0.1:0`; `with_peer` once where the address itself matters | #1391 |
 
 ## 0.5 to 0.6
 
