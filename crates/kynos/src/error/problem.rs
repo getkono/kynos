@@ -577,9 +577,10 @@ pub(crate) fn titled(mut held: Responses, written: &[u16]) -> Responses {
 /// the branch carries none, since another description is about to be written
 /// over the one that said it.
 ///
-/// [`narrowed_response`] leaves a lone branch untitled because its description
-/// is its title; the branches of a `oneOf`, a titled branch, and any schema
-/// that is not a narrowed branch are left as they are.
+/// [`narrowed_response`] leaves a lone branch untitled only where its
+/// description is exactly its title, so that description is the title restored;
+/// the branches of a `oneOf`, a titled branch, and any schema that is not a
+/// narrowed branch are left as they are.
 pub(crate) fn title_lone_branch(response: &mut Response) {
     let Some(description) = &response.description else {
         return;
@@ -595,13 +596,14 @@ pub(crate) fn title_lone_branch(response: &mut Response) {
 }
 
 /// [`narrowed_response`] under a `description` already written; a lone
-/// branch carries its summary as its title only where `lone_title` says the
-/// description does not already say it.
+/// branch carries its summary as its title where `written` says the
+/// declaration wrote the description, or where the description is not exactly
+/// that summary and so does not already say it.
 fn described_response(
     problem: &OpenApiSchema,
     description: String,
     branches: &[Branch<'_>],
-    lone_title: bool,
+    written: bool,
 ) -> Response {
     let distinct = distinct(branches);
 
@@ -610,7 +612,14 @@ fn described_response(
             "a status narrows to the failures answering with it: no caller passes an \
              empty branch list"
         ),
-        [only] => narrowed_branch(problem, only, only.summary.filter(|_| lone_title)),
+        // A URI several failures share composes a description joining their
+        // summaries, which says none of them as the branch's title.
+        [only] => narrowed_branch(
+            problem,
+            only,
+            only.summary
+                .filter(|summary| written || *summary != description),
+        ),
         several => object(SchemaObject {
             one_of: Some(
                 several
@@ -666,6 +675,9 @@ fn distinct<'a>(branches: &[Branch<'a>]) -> Vec<Narrowed<'a>> {
             });
             continue;
         };
+
+        // The first summary given, though an earlier failure gave none.
+        narrowed.summary = narrowed.summary.or(*summary);
 
         // Required only where every failure publishing the URI sends it.
         for (name, _, required) in &mut narrowed.members {

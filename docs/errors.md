@@ -455,9 +455,10 @@ Two rules follow from what is actually on the wire:
   the schema's alone, and the description still names every variant, since
   prose is under no exactly-one rule. Where two or more distinct URIs survive,
   the surviving branch takes the summary declared first as its `title`; where
-  the dedup leaves *one*, there is no `oneOf` and the single `allOf` carries no
-  `title` at all — the description already says the only thing that status
-  publishes. The one branch must match what each of those variants sends, so
+  the dedup leaves *one*, there is no `oneOf`, and the single `allOf` carries
+  that `title` only where the description is not that very summary: one
+  variant's summary is already the description, while summaries the
+  description joins say none of them as the branch's. The one branch must match what each of those variants sends, so
   it declares every extension member any of them does, a member they type
   differently as an `anyOf` of the types, constants of one type as an `enum`
   of their values, and requires a member only where every one of them sends
