@@ -1,6 +1,6 @@
 # Written by `mise run profile:record`; read by `mise run profile:requests`.
 # toolchain: rustc 1.97.1 (8bab26f4f 2026-07-14)
-# host: AMD EPYC 9V45 96-Core Processor, valgrind-3.27.1
+# host: AMD EPYC 9V74 80-Core Processor, valgrind-3.27.1
 # trend: connection_h2 connection_tls form_echo rate_limit request_id_random
 benchmark	program_instructions	heap_blocks	heap_bytes
 alloc_counter_agreement.capture	2691	5	1100
@@ -39,14 +39,14 @@ connection_h1.kept	12784	14	10121
 connection_h1.plaintext	13964	27	36353
 connection_h1.second	11520	11	1793
 connection_h2.plaintext	39391	40	37097
-connection_h2.second	32359	14	2605
+connection_h2.second	32357	14	2605
 connection_tls.full	69602	183	71732
-connection_tls.resumed	74733	197	71492
+connection_tls.resumed	74748	197	71492
 connection_tls.second	19218	17	2123
-extract.auth_401	5221	12	2255
-extract.auth_apikey	2987	10	2138
-extract.auth_basic	4125	12	2240
-extract.auth_bearer	3359	10	2140
+extract.auth_401	5328	12	2255
+extract.auth_apikey	2999	10	2138
+extract.auth_basic	4137	12	2240
+extract.auth_bearer	3375	10	2140
 extract.bounds	5787	9	1830
 extract.cookies	3127	10	1815
 extract.inject	2320	9	1801
@@ -58,7 +58,7 @@ form_echo.form_echo	137016	67	14366
 interceptors.body_size	3551	11	1842
 interceptors.body_timeout	4817	14	2378
 interceptors.cache_hit	4271	10	2372
-interceptors.cache_miss	8837	20	3472
+interceptors.cache_miss	8829	20	3472
 interceptors.compression_default	7079	12	2498
 interceptors.concurrency	4035	13	2786
 interceptors.cors_preflight	4601	12	1749
@@ -70,8 +70,8 @@ interceptors.security_headers	4725	13	2154
 interceptors.set_cookies	5370	18	2418
 interceptors.timeout	4435	12	2322
 interceptors.unchecked_layer	4248	14	2538
-rate_limit.rate_limit	9214	27	3694
-realistic.stack_typical	18384	29	5824
+rate_limit.rate_limit	9225	27	3694
+realistic.stack_typical	18400	29	5824
 request_id_random.request_id_random	6243	20	3022
 respond.binary_full	5064	13	2696
 respond.conditional_304	5063	12	2798
