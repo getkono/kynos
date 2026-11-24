@@ -8,9 +8,14 @@
 
 use kynos::{
     Router,
+    extract::params::query::Query,
     http::{StatusCode, header},
     middleware::cookies::SetCookies,
-    response::{cookie::Cookie, status::NoContent},
+    response::{
+        cookie::{Cookie, SetCookieHeaders},
+        headers::WithHeaders,
+        status::NoContent,
+    },
 };
 
 #[path = "support/mod.rs"]
@@ -21,6 +26,38 @@ use support::get;
 #[kynos::get("/visit")]
 async fn visit() -> NoContent {
     NoContent
+}
+
+/// Who is signing in.
+#[derive(kynos::Schema, kynos::QueryParams, serde::Deserialize)]
+struct SignIn {
+    user: String,
+}
+
+/// Sets a cookie minted from the request, as a sign-in hands out a session.
+#[kynos::get("/sign-in")]
+async fn sign_in(
+    Query(SignIn { user }): Query<SignIn>,
+) -> WithHeaders<NoContent, SetCookieHeaders> {
+    WithHeaders::new(
+        NoContent,
+        Cookie::new("sid", format!("token-for-{user}"))
+            .path("/")
+            .http_only()
+            .into(),
+    )
+}
+
+/// Sets the cookies an iterator yields, collected into one group.
+#[kynos::get("/preferences")]
+async fn preferences() -> WithHeaders<NoContent, SetCookieHeaders> {
+    WithHeaders::new(
+        NoContent,
+        [("theme", "dark"), ("locale", "en-GB")]
+            .into_iter()
+            .map(|(name, value)| Cookie::new(name, value).path("/"))
+            .collect(),
+    )
 }
 
 /// Every `Set-Cookie` a response was given, in order.
@@ -50,6 +87,39 @@ async fn two_cookies_reach_the_wire_as_two_fields() {
     assert_eq!(
         cookies_on(&reply),
         ["locale=en-GB; Path=/", "theme=dark; Path=/"]
+    );
+}
+
+/// A handler sets the cookie it minted itself, with no interceptor: the same
+/// group `SetCookies` adds, built from one `Cookie`.
+#[tokio::test]
+async fn a_handler_sets_a_cookie_it_minted_for_the_request() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![sign_in])
+        .build(())
+        .expect("a describable router");
+
+    let reply = get(&service, "/sign-in?user=ada").call().await;
+
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+    assert_eq!(cookies_on(&reply), ["sid=token-for-ada; Path=/; HttpOnly"]);
+}
+
+/// A collected iterator sends each cookie as its own field, in the order it
+/// yielded them rather than any sorted one.
+#[tokio::test]
+async fn a_handler_collects_cookies_into_fields_in_yield_order() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![preferences])
+        .build(())
+        .expect("a describable router");
+
+    let reply = get(&service, "/preferences").call().await;
+
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        cookies_on(&reply),
+        ["theme=dark; Path=/", "locale=en-GB; Path=/"]
     );
 }
 

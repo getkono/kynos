@@ -2,66 +2,11 @@
 
 use std::convert::Infallible;
 
-use kynos_openapi::model::schema::types::SchemaType;
-
 use crate::{
-    extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http,
     middleware::{Continued, Interceptor, Next},
-    response::cookie::Cookie,
-    schema::registry::Registry,
+    response::cookie::{Cookie, SetCookieHeaders},
 };
-
-/// What a [`SetCookies`] writes onto a response.
-///
-/// `REPEATABLE` is `true`: RFC 6265 forbids comma-joining two `Set-Cookie`
-/// values, so each cookie is sent as its own field.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct SetCookieHeaders {
-    /// The cookies this response sets.
-    pub cookies: Vec<Cookie>,
-}
-
-impl HeaderParams for SetCookieHeaders {
-    const NAMES: &'static [&'static str] = &["set-cookie"];
-    const REPEATABLE: bool = true;
-
-    fn response_headers(
-        registry: &mut Registry,
-    ) -> kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>> {
-        let _ = registry;
-
-        // OpenAPI keys response headers by name, so repetition is said in prose.
-        let mut headers = kynos_openapi::Map::new();
-        headers.insert(
-            "Set-Cookie".to_owned(),
-            kynos_openapi::RefOr::Item(
-                kynos_openapi::Header::new(kynos_openapi::Schema::of_type(SchemaType::String))
-                    .with_description(
-                        "A cookie this response sets. The field may appear more than once, which \
-                         this document has no way to say: OpenAPI keys response headers by name.",
-                    ),
-            ),
-        );
-        headers
-    }
-}
-
-/// Refuses the whole group where any one cookie has no
-/// [`Cookie::encode`] spelling, rather than sending the others without it.
-impl EncodeHeaders for SetCookieHeaders {
-    fn encode(&self) -> Result<Vec<(http::HeaderName, http::HeaderValue)>, UnencodableHeader> {
-        self.cookies
-            .iter()
-            .map(|cookie| {
-                cookie
-                    .encode()
-                    .map(|value| (http::header::SET_COOKIE, value))
-                    .ok_or_else(|| UnencodableHeader::new(http::header::SET_COOKIE))
-            })
-            .collect()
-    }
-}
 
 /// Where a response's cookies come from.
 ///
@@ -114,6 +59,12 @@ where
 ///
 /// Not a session, not a signed jar, not a CSRF token. The first two are
 /// application policy — see [`response::cookie`](crate::response::cookie).
+///
+/// Nor is it how a handler sets a cookie it mints per request, such as a
+/// session credential, since a source sees the request but not what the
+/// handler decided. The handler returns that one as a
+/// [`SetCookieHeaders`] in a
+/// [`WithHeaders`](crate::response::headers::WithHeaders).
 #[derive(Clone, Debug)]
 pub struct SetCookies<S> {
     source: S,

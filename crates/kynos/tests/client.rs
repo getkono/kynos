@@ -108,17 +108,16 @@ async fn probe_options() -> NoContent {
 
 /// Sets two cookies, which HTTP forbids comma-joining into one field.
 #[kynos::get("/session")]
-async fn session() -> WithHeaders<NoContent, kynos::middleware::cookies::SetCookieHeaders> {
+async fn session() -> WithHeaders<NoContent, kynos::response::cookie::SetCookieHeaders> {
     WithHeaders::new(
         NoContent,
-        kynos::middleware::cookies::SetCookieHeaders {
-            cookies: vec![
-                Cookie::new("session", "abc123")
-                    .http_only()
-                    .same_site(SameSite::Strict),
-                Cookie::new("theme", "dark").path("/"),
-            ],
-        },
+        vec![
+            Cookie::new("session", "abc123")
+                .http_only()
+                .same_site(SameSite::Strict),
+            Cookie::new("theme", "dark").path("/"),
+        ]
+        .into(),
     )
 }
 

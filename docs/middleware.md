@@ -1254,6 +1254,14 @@ instead of shipping unasserted.
 `SetCookies` writes cookies. It does not sign them, encrypt them, or keep a
 session, and none of the three is a gap to close later.
 
+Nor does it set the cookie a handler mints per request, such as the session a
+sign-in hands out: a `CookieSource` sees the request, not what the handler
+decided. The handler returns that cookie itself, as
+`WithHeaders<T, response::cookie::SetCookieHeaders>` built from the `Cookie`
+with `into()`. It is the group `SetCookies` adds, so it is described, written
+and refused the same way, and the description declares `Set-Cookie` on that
+operation alone.
+
 A cookie carrying a credential is a
 [`SecurityScheme`](../crates/kynos/src/security/mod.rs) rather than a parameter
 — `extract::params::cookie` has said so since it landed — and signing or

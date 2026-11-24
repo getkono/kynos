@@ -6,11 +6,11 @@
 //!
 //! # What is here and what is not
 //!
-//! A [`Cookie`]; it is sent by
-//! [`SetCookies`](crate::middleware::cookies::SetCookies) on every response an
-//! operation produces, or as a
-//! [`SetCookieHeaders`](crate::middleware::cookies::SetCookieHeaders) response
-//! header group on one. Not a signed jar, not an encrypted one,
+//! A [`Cookie`], and [`SetCookieHeaders`], the response header group that sends
+//! cookies. A handler returns that group in a
+//! [`WithHeaders`](crate::response::headers::WithHeaders) for a cookie it mints
+//! per request; [`SetCookies`](crate::middleware::cookies::SetCookies) adds it
+//! to every response an operation produces. Not a signed jar, not an encrypted one,
 //! and not a session store: a cookie carrying a credential is a
 //! [`SecurityScheme`](crate::security::SecurityScheme), and sessions belong to
 //! a layer above Kynos.
@@ -18,6 +18,8 @@
 use std::{borrow::Cow, time::Duration};
 
 use crate::http::HeaderValue;
+
+mod header;
 
 /// When a cookie may accompany a cross-site request.
 ///
@@ -48,6 +50,9 @@ impl SameSite {
 }
 
 /// One `Set-Cookie` value.
+///
+/// A response sends it as a [`SetCookieHeaders`], which a cookie converts into
+/// with `into()`.
 ///
 /// ```
 /// use kynos::response::cookie::{Cookie, SameSite};
@@ -182,6 +187,9 @@ impl Cookie {
     /// octets together, where an attribute is unrepresentable, or where a
     /// `__Host-` cookie names a `Domain` or a `Path` other than `/`. Both
     /// prefixes are matched in any case, as a user agent matches them.
+    ///
+    /// A handler need not call this to send the cookie: a [`SetCookieHeaders`]
+    /// does, and answers 500 where it returns `None`.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
         if !crate::http::is_token(self.name.as_bytes()) || !is_cookie_value(&self.value) {
@@ -254,6 +262,72 @@ impl Cookie {
         }
 
         HeaderValue::from_str(&rendered).ok()
+    }
+}
+
+/// The `Set-Cookie` fields one response sends.
+///
+/// A handler sets a cookie minted for this request, such as a session
+/// credential, by returning it in
+/// [`WithHeaders`](crate::response::headers::WithHeaders); the description then
+/// declares `Set-Cookie` on that operation. A cookie every response of an
+/// operation sets belongs in
+/// [`SetCookies`](crate::middleware::cookies::SetCookies) instead, which adds
+/// this same group.
+///
+/// ```
+/// use kynos::response::{
+///     cookie::{Cookie, SameSite, SetCookieHeaders},
+///     headers::WithHeaders,
+///     status::NoContent,
+/// };
+///
+/// async fn login() -> WithHeaders<NoContent, SetCookieHeaders> {
+///     let token = "minted-per-request";
+///     let session = Cookie::new("sid", token)
+///         .path("/")
+///         .http_only()
+///         .same_site(SameSite::Strict);
+///
+///     WithHeaders::new(NoContent, session.into())
+/// }
+/// ```
+///
+/// One cookie converts with `into()`, as does a `Vec` of them, and an iterator
+/// of cookies collects into one.
+///
+/// `REPEATABLE` is `true`: RFC 6265 forbids comma-joining two `Set-Cookie`
+/// values, so each cookie is sent as its own field. Where any cookie has no
+/// [`Cookie::encode`] spelling, the response is answered with a 500 in its
+/// place and none of the cookies is set.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SetCookieHeaders {
+    /// The cookies this response sets.
+    pub cookies: Vec<Cookie>,
+}
+
+/// The one cookie a response sets.
+impl From<Cookie> for SetCookieHeaders {
+    fn from(cookie: Cookie) -> Self {
+        Self {
+            cookies: vec![cookie],
+        }
+    }
+}
+
+/// Each cookie, sent as its own field in this order.
+impl From<Vec<Cookie>> for SetCookieHeaders {
+    fn from(cookies: Vec<Cookie>) -> Self {
+        Self { cookies }
+    }
+}
+
+/// Each cookie, sent as its own field in this order.
+impl FromIterator<Cookie> for SetCookieHeaders {
+    fn from_iter<I: IntoIterator<Item = Cookie>>(cookies: I) -> Self {
+        Self {
+            cookies: cookies.into_iter().collect(),
+        }
     }
 }
 

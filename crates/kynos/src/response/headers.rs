@@ -20,6 +20,10 @@ use crate::{
 /// `Retry-After` on a 429, belongs on that failure's field as
 /// `#[problem(headers)]`, which `#[derive(ApiError)]` declares under that
 /// failure's status alone.
+///
+/// A cookie this response sets is the group
+/// [`SetCookieHeaders`](crate::response::cookie::SetCookieHeaders), built from
+/// a [`Cookie`](crate::response::cookie::Cookie) with `into()`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WithHeaders<T, H> {
     /// The response body.
