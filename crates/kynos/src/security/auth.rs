@@ -12,10 +12,11 @@ use kynos_openapi::{
 };
 
 use crate::{
-    error::rejection::{GuardRejection, auth_responses, guard_error_responses},
+    error::rejection::{AuthRejection, GuardRejection, auth_responses, guard_error_responses},
     extract::describe::Describe,
     http::{HeaderValue, Parts, StatusCode},
     router::operation::OperationCx,
+    schema::registry::Registry,
     security::{
         Guard, Scope,
         requirement::{self, CheckedBy, Requirement, Scopable, ScopeCheckedBy},
@@ -119,12 +120,12 @@ impl<S: Requirement> Describe for Auth<S> {
     /// [`Scopes::FORBIDDEN_TYPE`], since a bare scheme's authorizer may refuse
     /// with any problem type.
     fn describe(operation: &mut OperationCx<'_>) {
-        describe_auth::<S>(operation, &kynos_openapi::Responses::new());
+        describe_auth::<S>(operation, guard_error_responses::<AuthRejection>);
     }
 }
 
 /// [`Auth<S>`]'s description, declaring `own` beside its refusals.
-fn describe_auth<S: Requirement>(operation: &mut OperationCx<'_>, own: &kynos_openapi::Responses) {
+fn describe_auth<S: Requirement>(operation: &mut OperationCx<'_>, own: ErrorResponses) {
     let security = S::declare(operation);
     declare_reads::<S>(operation, false);
     declare_requirement::<S>(operation, security, own);
@@ -140,8 +141,10 @@ where
     type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
 
     fn __describe(operation: &mut OperationCx<'_>) {
-        let own = guard_error_responses::<<S as CheckedBy<C>>::Error>(operation.registry());
-        describe_auth::<S>(operation, &own);
+        describe_auth::<S>(
+            operation,
+            guard_error_responses::<<S as CheckedBy<C>>::Error>,
+        );
     }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
@@ -199,15 +202,12 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
     /// Declares its 403 as [`Auth`] does, narrowed to
     /// [`Requirement::forbidden_type`].
     fn describe(operation: &mut OperationCx<'_>) {
-        describe_maybe_auth::<S>(operation, &kynos_openapi::Responses::new());
+        describe_maybe_auth::<S>(operation, guard_error_responses::<AuthRejection>);
     }
 }
 
 /// [`MaybeAuth<S>`]'s description, declaring `own` beside its refusals.
-fn describe_maybe_auth<S: Requirement>(
-    operation: &mut OperationCx<'_>,
-    own: &kynos_openapi::Responses,
-) {
+fn describe_maybe_auth<S: Requirement>(operation: &mut OperationCx<'_>, own: ErrorResponses) {
     let mut security = vec![SecurityRequirement::anonymous()];
     security.extend(S::declare(operation));
     // An anonymous request reads none of them.
@@ -225,8 +225,10 @@ where
     type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
 
     fn __describe(operation: &mut OperationCx<'_>) {
-        let own = guard_error_responses::<<S as CheckedBy<C>>::Error>(operation.registry());
-        describe_maybe_auth::<S>(operation, &own);
+        describe_maybe_auth::<S>(
+            operation,
+            guard_error_responses::<<S as CheckedBy<C>>::Error>,
+        );
     }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
@@ -451,14 +453,14 @@ impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
 
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        describe_scoped::<S, R>(operation, &kynos_openapi::Responses::new());
+        describe_scoped::<S, R>(operation, guard_error_responses::<AuthRejection>);
     }
 }
 
 /// [`Scoped<S, R>`]'s description, declaring `own` beside its refusals.
 fn describe_scoped<S: Scopable, R: Scopes<Scope = S::Scope>>(
     operation: &mut OperationCx<'_>,
-    own: &kynos_openapi::Responses,
+    own: ErrorResponses,
 ) {
     let security = S::declare_scoped(operation, R::REQUIRED);
     declare_reads::<S>(operation, false);
@@ -487,8 +489,10 @@ where
     type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
 
     fn __describe(operation: &mut OperationCx<'_>) {
-        let own = guard_error_responses::<<S as CheckedBy<C>>::Error>(operation.registry());
-        describe_scoped::<S, R>(operation, &own);
+        describe_scoped::<S, R>(
+            operation,
+            guard_error_responses::<<S as CheckedBy<C>>::Error>,
+        );
     }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
@@ -502,9 +506,14 @@ where
     }
 }
 
+/// What the error a guard's schemes fail with declares, given the guard's own
+/// refusals: [`guard_error_responses`] for that error, and for
+/// [`AuthRejection`] where only the context-free [`Describe`] runs.
+type ErrorResponses = fn(&mut Registry, &kynos_openapi::Responses) -> kynos_openapi::Responses;
+
 /// Sets the operation's `security` to the guard's, and declares how it refuses:
-/// its own 401, 403 and 503 as `refusals` allows, joined with `own`, what the
-/// error its schemes fail with declares.
+/// its own 401, 403 and 503 as `refusals` allows, joined with what `own` says
+/// the error its schemes fail with declares beside them.
 ///
 /// `security` is the guard's whole list, set once rather than appended to.
 fn declare(
@@ -512,7 +521,7 @@ fn declare(
     challenges: Challenges,
     security: Vec<SecurityRequirement>,
     refusals: Refusals,
-    own: &kynos_openapi::Responses,
+    own: ErrorResponses,
 ) {
     // Before the header: `add_response_header` invents a thin 401 when none is
     // declared, and merging cannot replace an existing response. `own` joins
@@ -524,7 +533,8 @@ fn declare(
         refusals.unavailable,
         true,
     );
-    crate::response::headers::union_from(&mut responses, own);
+    let own = own(operation.registry(), &responses);
+    crate::response::headers::union_from(&mut responses, &own);
     operation.add_responses(&responses);
 
     // RFC 9110 section 15.5.2: a 401 MUST carry a challenge. A scheme that
@@ -578,7 +588,7 @@ fn declare_reads<S: Requirement>(operation: &mut OperationCx<'_>, optional: bool
 fn declare_requirement<S: Requirement>(
     operation: &mut OperationCx<'_>,
     security: Vec<SecurityRequirement>,
-    own: &kynos_openapi::Responses,
+    own: ErrorResponses,
 ) {
     let challenges = Challenges {
         unauthenticated: S::challenge(),

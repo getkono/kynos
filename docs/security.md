@@ -620,7 +620,11 @@ enum SessionError {
   covers. Only the context names the authenticator, so this half is declared
   through the handler, which knows the context, rather than through the guard's
   context-free `Describe`. `AuthRejection` adds nothing there, so an
-  authenticator naming it describes exactly what it did before.
+  authenticator naming it describes exactly what it did before. Nor does one
+  the error holds in a transparent variant: under a guard it declares the
+  guard's own refusals, not its wide 403, which would win the union and erase
+  a scope set's `FORBIDDEN_TYPE`. So the two spellings describe the same 401,
+  403 and 503, and the error's own statuses join them.
 - **One error per guard.** `AnyOf` and `AllOf` answer whichever scheme refused,
   as one type, so every scheme they name fails with the same `Error`; two that
   differ do not compile.
@@ -647,7 +651,8 @@ while any one forbids, since each one's authenticator is consulted.
   `Rejection::responses` after its `Describe`: `AuthRejection` knows no scheme
   and would put the 403 back. Its `Responses`, the one a hand-written extractor
   reaches, still declares it. An authenticator's own error is declared whole,
-  403 included where it has one, since no scheme constrains it.
+  a 403 of its own included, since no scheme constrains it; an `AuthRejection`
+  it holds declares only what the guard does.
 
 ### What Kynos does not verify
 

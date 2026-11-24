@@ -1273,6 +1273,11 @@ impl IntoResponse for AuthRejection {
 ///
 /// Its statuses are the ones its `Responses` declares, the 401 and the 403;
 /// the 503 is declared by the guard whose scheme opts in to it.
+///
+/// Under a guard it declares what the guard declares for it, its 403 narrowed
+/// to the scope set's [`Scopes::FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE)
+/// or left out where no scheme forbids: the wide 403 of its own `Responses`
+/// would win the union and erase that narrowing.
 impl crate::__private::problem::HeldError for AuthRejection {
     const STATUSES: &'static [u16] = &[401, 403];
 
@@ -1288,7 +1293,10 @@ impl crate::__private::problem::HeldError for AuthRejection {
 
     #[inline]
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        <Self as Responses>::responses(registry)
+        match registry.held_auth() {
+            Some(declared) => declared.clone(),
+            None => <Self as Responses>::responses(registry),
+        }
     }
 }
 
@@ -1510,18 +1518,25 @@ impl<E: Responses> Responses for GuardRejection<E> {
     }
 }
 
-/// What a guard whose schemes fail with `E` declares beside
-/// [`auth_responses`]: nothing for [`AuthRejection`], whose statuses
-/// `auth_responses` declares as far as the schemes allow, and every response
-/// `E` declares for the application's own error, whose statuses no scheme
+/// What a guard whose schemes fail with `E` declares beside `refusals`, its
+/// own [`auth_responses`]: nothing for [`AuthRejection`], whose statuses
+/// `refusals` declares as far as the schemes allow, and every response `E`
+/// declares for the application's own error, whose statuses no scheme
 /// constrains.
+///
+/// An `AuthRejection` `E` holds declares `refusals` there, so the guard's
+/// narrowing survives the union rather than losing to its wide 403.
 pub(crate) fn guard_error_responses<E: Responses + 'static>(
     registry: &mut Registry,
+    refusals: &kynos_openapi::Responses,
 ) -> kynos_openapi::Responses {
     if std::any::TypeId::of::<E>() == std::any::TypeId::of::<AuthRejection>() {
         return kynos_openapi::Responses::new();
     }
-    E::__served_responses(registry)
+    let outer = registry.hold_auth(Some(refusals.clone()));
+    let responses = E::__served_responses(registry);
+    registry.hold_auth(outer);
+    responses
 }
 
 /// The 401 and the 403 left wide: what a hand-written extractor erroring with

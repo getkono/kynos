@@ -740,7 +740,9 @@ every problem document wins outright*. So a handler merges no guard
 rejection's `Responses`, and every guard raises one `GuardRejection<E>`, which
 carries the challenge it owes, whatever its scope set. An authenticator's own
 `Error` is the exception: no scheme constrains it, so the guard declares every
-response it declares beside its own.
+response it declares beside its own, except that an `AuthRejection` it holds in
+a transparent variant declares the guard's own refusals there, so its wide 403
+cannot win.
 
 The rest of the reasoning is in
 [`security.md`](security.md#a-403-may-name-itself-a-401-may-not).
