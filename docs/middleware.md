@@ -1376,7 +1376,9 @@ the status choose the closing event's level instead, so a 5xx can be logged at
 `ERROR` and found by an error filter, without an observer of its own that
 logs the line again. Only the closing event reads it, since the opening
 event and the span begin before any status exists. It works the same in
-either call order: `level` never replaces the rule.
+either call order: `level` never replaces the rule. A request abandoned before
+its response head closes with a `request abandoned` event at `level`, since it
+has no status for the rule to read.
 
 It takes a `fn(StatusCode) -> Level` and not a closure, so `Trace` stays one
 type that clones and prints with `Debug`. A rule fixed in the framework,
