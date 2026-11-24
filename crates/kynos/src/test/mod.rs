@@ -11,6 +11,8 @@ mod body;
 mod conformance;
 #[cfg(feature = "cookie")]
 pub mod cookie;
+#[cfg(feature = "multipart")]
+pub mod multipart;
 
 #[cfg(test)]
 mod tests;
@@ -1520,6 +1522,27 @@ impl<'a, C> TestRequest<'a, C> {
             kynos_openapi::model::body::mime_names::APPLICATION_FORM_URLENCODED,
             Bytes::from(encoded.into_bytes()),
         )
+    }
+
+    /// Sets a `multipart/form-data` body, and the `Content-Type` naming the
+    /// delimiter it is framed by.
+    ///
+    /// `form` is a [`TestMultipart`](multipart::TestMultipart) assembled
+    /// part by part, or a value of a type deriving `MultipartForm`, written as
+    /// a [`MultipartForm`](crate::extract::body::multipart::MultipartForm)
+    /// response writes it. The delimiter is one no part contains, so a part's
+    /// octets are never mistaken for framing.
+    #[cfg(feature = "multipart")]
+    #[must_use]
+    pub fn multipart(
+        mut self,
+        form: impl crate::response::codec::multipart::IntoMultipart,
+    ) -> Self {
+        let (content_type, body) = crate::response::codec::multipart::encode(form.into_parts());
+        self.body = RequestBody::Whole(body);
+        self.headers
+            .insert(crate::http::header::CONTENT_TYPE, content_type);
+        self
     }
 
     /// Sends the request.

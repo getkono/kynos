@@ -772,6 +772,107 @@ async fn a_form_body_is_sent_as_a_form() {
     assert_eq!(seen.query.as_deref(), Some("weekly"));
 }
 
+/// A multipart body is framed, labelled with its delimiter, and decodable by
+/// `MultipartForm`, whether assembled part by part or written from the type
+/// the handler reads; a part holding what a hand-picked delimiter would be
+/// arrives whole.
+#[cfg(feature = "multipart")]
+mod multipart {
+    use kynos::{
+        Router,
+        extract::body::multipart::{FilePart, MultipartForm},
+        prelude::*,
+        test::{TestClient, multipart::TestMultipart},
+    };
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, PartialEq, Schema, kynos::MultipartForm)]
+    struct Import {
+        source: String,
+        file: FilePart,
+    }
+
+    /// What arrived, as text.
+    #[derive(Debug, PartialEq, Schema, Serialize, Deserialize)]
+    struct Received {
+        source: String,
+        file_name: Option<String>,
+        content_type: Option<String>,
+        bytes: String,
+    }
+
+    #[kynos::post("/imports")]
+    async fn import(MultipartForm(import): MultipartForm<Import>) -> Json<Received> {
+        Json(Received {
+            source: import.source,
+            file_name: import.file.file_name,
+            content_type: import.file.content_type,
+            bytes: String::from_utf8(import.file.bytes.to_vec()).expect("UTF-8 octets"),
+        })
+    }
+
+    fn client() -> TestClient<()> {
+        TestClient::new(
+            Router::<()>::new()
+                .mount(kynos::routes![import])
+                .build(())
+                .expect("a describable router"),
+        )
+    }
+
+    /// Octets that open with what the encoder's first delimiter would be.
+    const FRAMING: &str = "--kynos-boundary-0000000000000000\r\n";
+
+    #[tokio::test]
+    async fn a_multipart_body_assembled_part_by_part_is_read_by_its_decoder() {
+        let response = client()
+            .post("/imports")
+            .multipart(TestMultipart::new().text("source", "mal_xml").file(
+                "file",
+                "list.xml",
+                "application/xml",
+                FRAMING,
+            ))
+            .send()
+            .await;
+
+        response.assert_status(200);
+        assert_eq!(
+            response.json::<Received>(),
+            Received {
+                source: "mal_xml".to_owned(),
+                file_name: Some("list.xml".to_owned()),
+                content_type: Some("application/xml".to_owned()),
+                bytes: FRAMING.to_owned(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_multipart_body_written_from_its_type_is_read_by_its_decoder() {
+        let sent = Import {
+            source: "csv".to_owned(),
+            file: FilePart {
+                file_name: Some("list.csv".to_owned()),
+                content_type: Some("text/csv".to_owned()),
+                bytes: "a,b".into(),
+            },
+        };
+        let response = client().post("/imports").multipart(sent).send().await;
+
+        response.assert_status(200);
+        assert_eq!(
+            response.json::<Received>(),
+            Received {
+                source: "csv".to_owned(),
+                file_name: Some("list.csv".to_owned()),
+                content_type: Some("text/csv".to_owned()),
+                bytes: "a,b".to_owned(),
+            }
+        );
+    }
+}
+
 /// A refusal the framework renders is asserted as a problem whole, and its
 /// `errors` extension read as the type that wrote it rather than as raw JSON.
 #[tokio::test]
