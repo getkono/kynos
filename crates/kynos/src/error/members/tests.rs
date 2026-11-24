@@ -509,7 +509,7 @@ impl ProblemPolicy for Headless {
 
     fn identity(origin: ProblemOrigin, status: StatusCode) -> Option<ProblemIdentity> {
         match (origin, status) {
-            (ProblemOrigin::Interceptor, StatusCode::PAYLOAD_TOO_LARGE) => {
+            (ProblemOrigin::Refusal, StatusCode::PAYLOAD_TOO_LARGE) => {
                 Some(ProblemIdentity::new("urn:test:oversized", "Send less"))
             }
             (ProblemOrigin::Panic, _) => {
@@ -543,7 +543,7 @@ async fn a_refusal_reads_no_request_and_keeps_the_fields_it_writes() {
             "type": "urn:test:oversized",
             "title": "Send less",
             "status": 413,
-            "code": "Interceptor-413-urn:test:oversized----",
+            "code": "Refusal-413-urn:test:oversized----",
             "request_id": "-",
             "tenant": "-",
         })

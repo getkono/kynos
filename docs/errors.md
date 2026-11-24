@@ -803,7 +803,7 @@ interceptor's `Reads` header group answers with, an asset endpoint's 416, the
 404, 405 and 501 under `FallbackPolicy::Problem`, a CORS preflight's 405 and
 501 for an `OPTIONS` that is not one, and the 400 a `QUERY` naming no media
 type gets. And two rendered after the head is gone, under
-`ProblemOrigin::Interceptor` and `ProblemOrigin::Panic`:
+`ProblemOrigin::Refusal` and `ProblemOrigin::Panic`:
 
 - The refusal of every interceptor Kynos ships — `BodySizeExceeded`,
   `BodyRefused`, `TimedOut`, `AtCapacity`, `RateLimited`, `RateLimitedFields`,

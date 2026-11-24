@@ -74,11 +74,11 @@ pub kynos::error::members::ProblemOrigin::ByteRange
 pub kynos::error::members::ProblemOrigin::Content
 pub kynos::error::members::ProblemOrigin::CookieValue
 pub kynos::error::members::ProblemOrigin::HeaderField
-pub kynos::error::members::ProblemOrigin::Interceptor
 pub kynos::error::members::ProblemOrigin::Negotiation
 pub kynos::error::members::ProblemOrigin::Panic
 pub kynos::error::members::ProblemOrigin::PathParameter
 pub kynos::error::members::ProblemOrigin::QueryParameter
+pub kynos::error::members::ProblemOrigin::Refusal
 pub kynos::error::members::ProblemOrigin::Routing
 pub kynos::error::members::ProblemOrigin::Transport
 impl core::clone::Clone for kynos::error::members::ProblemOrigin

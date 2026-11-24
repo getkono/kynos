@@ -89,7 +89,7 @@ impl ProblemPolicy for AppProblems {
         match (origin, status) {
             (ProblemOrigin::Authentication, StatusCode::UNAUTHORIZED) => Some(UNAUTHENTICATED),
             (ProblemOrigin::Content, StatusCode::UNSUPPORTED_MEDIA_TYPE) => Some(UNSUPPORTED),
-            (ProblemOrigin::Interceptor, StatusCode::PAYLOAD_TOO_LARGE) => Some(OVERSIZED),
+            (ProblemOrigin::Refusal, StatusCode::PAYLOAD_TOO_LARGE) => Some(OVERSIZED),
             (ProblemOrigin::Panic, _) => Some(CRASHED),
             _ => None,
         }
@@ -1055,7 +1055,7 @@ async fn an_interceptor_s_refusal_is_rendered_under_the_policy() {
     assert_eq!(problem["type"], OVERSIZED.type_uri(), "{problem}");
     assert_eq!(problem["title"], OVERSIZED.title(), "{problem}");
     assert_eq!(problem["detail"], "the request body exceeds 64 bytes");
-    assert_eq!(problem["code"], "Interceptor-413", "{problem}");
+    assert_eq!(problem["code"], "Refusal-413", "{problem}");
     assert_eq!(problem["request_id"], "-", "{problem}");
 
     let declared = declared_problem(&document, "/open", "413");
@@ -1086,7 +1086,7 @@ async fn a_refusal_naming_its_own_type_keeps_it_under_the_policy() {
     let problem: Value = refused.json();
     assert_eq!(problem["type"], "urn:test:problem:throttled", "{problem}");
     assert_eq!(problem["title"], "Too Many Requests", "{problem}");
-    assert_eq!(problem["code"], "Interceptor-429", "{problem}");
+    assert_eq!(problem["code"], "Refusal-429", "{problem}");
     assert_eq!(refused.header("retry-after"), Some("3"));
 
     let declared = declared_problem(&document, "/open", "429");
@@ -1138,14 +1138,14 @@ async fn every_refusal_kynos_ships_carries_the_members() {
         refused_code(UntrustedHost::<()>::new).await,
     ];
     let mut expected = vec![
-        "Interceptor-413",
-        "Interceptor-408",
-        "Interceptor-408",
-        "Interceptor-503",
-        "Interceptor-429",
-        "Interceptor-429",
-        "Interceptor-403",
-        "Interceptor-421",
+        "Refusal-413",
+        "Refusal-408",
+        "Refusal-408",
+        "Refusal-503",
+        "Refusal-429",
+        "Refusal-429",
+        "Refusal-403",
+        "Refusal-421",
     ];
 
     #[cfg(feature = "compression")]
@@ -1154,7 +1154,7 @@ async fn every_refusal_kynos_ships_carries_the_members() {
 
         codes.push(refused_code(NotAcceptable::<()>::new).await);
         codes.push(refused_code(Undecodable::<(), (), ()>::unsupported_coding).await);
-        expected.extend(["Interceptor-406", "Interceptor-415"]);
+        expected.extend(["Refusal-406", "Refusal-415"]);
     }
 
     assert_eq!(codes, expected);

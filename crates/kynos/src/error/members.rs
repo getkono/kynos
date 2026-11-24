@@ -122,8 +122,9 @@ pub enum ProblemOrigin {
     /// [`BodySizeExceeded`](crate::middleware::limits::body_size::BodySizeExceeded),
     /// [`RateLimited`](crate::middleware::rate_limit::refusal::RateLimited)
     /// and the rest. Rendered after the interceptor gave the request away, so
-    /// [`ProblemCx`] holds no request head for it.
-    Interceptor,
+    /// [`ProblemCx`] holds no request head for it. Not named `Interceptor`,
+    /// which the trait is, for the reason above.
+    Refusal,
     /// A panic a recovery branch caught, answered with a 500. Rendered after
     /// the request moved into the future that unwound, so [`ProblemCx`]
     /// holds no request head for it.
@@ -135,7 +136,7 @@ pub enum ProblemOrigin {
 /// Read by [`ProblemPolicy::members`]. The request is the head the operation
 /// saw, so an extension an interceptor inserted, such as a request ID, is
 /// there to read; every accessor reading it answers `None` for
-/// [`ProblemOrigin::Interceptor`] and [`ProblemOrigin::Panic`], which are
+/// [`ProblemOrigin::Refusal`] and [`ProblemOrigin::Panic`], which are
 /// rendered after the request is gone.
 #[derive(Debug)]
 pub struct ProblemCx<'a> {
@@ -507,7 +508,7 @@ pub(crate) fn refused(
     policy: Option<Policy>,
     finish: impl FnOnce(&mut Response),
 ) -> Response {
-    match render_for(problem, ProblemOrigin::Interceptor, None, policy) {
+    match render_for(problem, ProblemOrigin::Refusal, None, policy) {
         Rendered::Kept(mut response) => {
             finish(&mut response);
             response

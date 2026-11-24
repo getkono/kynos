@@ -523,7 +523,7 @@ pub(crate) fn served_refusal_response<T: ProblemType>(
     let problem = registry.resolve::<Problem>();
     let identity = match T::TYPE_URI {
         Some(_) => (None, None),
-        None => declared_identity(registry, ProblemOrigin::Interceptor, status, served),
+        None => declared_identity(registry, ProblemOrigin::Refusal, status, served),
     };
     let (uri, title) = match identity {
         (Some(uri), title) => (Some(uri), title),

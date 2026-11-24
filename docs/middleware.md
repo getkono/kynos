@@ -708,7 +708,7 @@ RateLimit::new(policy).problem_type::<Throttled>()
 `ShortCircuit` implementations that have no problem document to name.
 
 **A builder overrides the router's policy.** `Router::problems` installs one
-`ProblemPolicy` whose identity for `ProblemOrigin::Interceptor` types every
+`ProblemPolicy` whose identity for `ProblemOrigin::Refusal` types every
 refusal above that would otherwise send `about:blank`, and whose members every
 one carries; a builder here names the more specific type for its own
 interceptor, and the members are added all the same. A `Short` an application
