@@ -487,9 +487,10 @@ async fn a_head_states_no_length_of_zero() {
     }
 }
 
-/// Records what an observer is handed once a response exists: the operation
-/// it names, the status, and the content length the response states exactly,
-/// or `None` where it states none.
+/// Records every hook an observer is handed, in order: each request's method
+/// and operation on arrival; its response's method, operation, status and the
+/// content length it states exactly, or `None` where it states none; and how
+/// the request ended, its body completed or dropped, or the request abandoned.
 #[derive(Clone, Default)]
 struct Endings(Arc<Mutex<Vec<String>>>);
 
