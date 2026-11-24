@@ -317,6 +317,10 @@ fn each_bodiless_router_answer_carries_exactly_its_fields() {
 ///
 /// Linux's alone, as a ceiling, since the width is the compiler's layout over
 /// platform types; the relation below holds everywhere.
+///
+/// Keeping the request's method for an observer, after the chain has consumed
+/// the request, costs nothing here: a method a description can declare sits
+/// in the routing tag's padding, and any other token behind a pointer.
 const BOXED_DISPATCH_FUTURE_BYTES: usize = 432;
 
 /// The design property under the ceiling, and the one that survives a change

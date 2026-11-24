@@ -2401,6 +2401,67 @@ async fn every_clone_reports_a_failing_trigger() {
     assert_eq!(source.to_string(), "no signal for you");
 }
 
+/// A trigger whose future panics wakes every parked clone, so each panics on
+/// its next poll rather than staying parked with nothing left to wake it.
+#[test]
+fn a_panicking_trigger_wakes_every_parked_clone() {
+    use std::{
+        panic::{AssertUnwindSafe, catch_unwind},
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        task::{Context, Poll, Wake, Waker},
+    };
+
+    struct Wakes(AtomicUsize);
+    impl Wake for Wakes {
+        fn wake(self: Arc<Self>) {
+            self.0.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    let mut polls = 0;
+    let shutdown = crate::server::shutdown::Shutdown::on(std::future::poll_fn(move |_| {
+        polls += 1;
+        assert!(polls < 2, "the trigger panics");
+        Poll::Pending
+    }));
+    let parked = shutdown.clone();
+    let wakes = Arc::new(Wakes(AtomicUsize::new(0)));
+    let parked_waker = Waker::from(Arc::clone(&wakes));
+    let mut parked_begun = Box::pin(parked.begun());
+    assert!(
+        parked_begun
+            .as_mut()
+            .poll(&mut Context::from_waker(&parked_waker))
+            .is_pending(),
+        "the trigger has not fired"
+    );
+    assert_eq!(
+        wakes.0.load(Ordering::SeqCst),
+        0,
+        "nothing has woken it yet"
+    );
+
+    let mut begun = Box::pin(shutdown.begun());
+    catch_unwind(AssertUnwindSafe(|| {
+        begun.as_mut().poll(&mut Context::from_waker(Waker::noop()))
+    }))
+    .expect_err("the trigger's panic reaches the clone polling it");
+    assert_ne!(
+        wakes.0.load(Ordering::SeqCst),
+        0,
+        "the panic wakes the parked clone"
+    );
+    catch_unwind(AssertUnwindSafe(|| {
+        parked_begun
+            .as_mut()
+            .poll(&mut Context::from_waker(&parked_waker))
+    }))
+    .expect_err("the woken clone panics on its next poll");
+}
+
 /// `Shutdown::signals` over real signals with no server: one `SIGTERM`
 /// begins it for every clone, and a second forces it for every clone.
 ///

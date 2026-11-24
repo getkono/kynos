@@ -1574,23 +1574,16 @@ mod streamed_failure {
     struct Disconnects(Arc<AtomicUsize>, Arc<Mutex<Vec<u64>>>);
 
     impl Observer<()> for Disconnects {
-        fn on_response(
-            &self,
-            _: &kynos::http::Response,
-            _: Option<Route<'_>>,
-            _: std::time::Duration,
-            (): &(),
-        ) {
-        }
+        fn on_response(&self, _: &kynos::middleware::Exchange<'_>, (): &()) {}
 
-        fn on_complete(&self, _: Option<Route<'_>>, completion: &Completion) {
+        fn on_complete(&self, _: Option<Route<'_>>, completion: &Completion, (): &()) {
             self.1
                 .lock()
                 .expect("an unpoisoned record")
                 .push(completion.body_bytes);
         }
 
-        fn on_disconnect(&self, _: Option<Route<'_>>, _: std::time::Duration) {
+        fn on_disconnect(&self, _: Option<Route<'_>>, _: std::time::Duration, (): &()) {
             self.0.fetch_add(1, Ordering::SeqCst);
         }
     }

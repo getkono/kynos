@@ -13,16 +13,15 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
 use kynos::{
     Router,
     error::rejection::AuthRejection,
     extract::{body::text::Text, params::query::Query},
-    http::{Request, Response, StatusCode, header},
+    http::{Request, StatusCode, header},
     middleware::{
-        Continued, Covers, Interceptor, Next, Observer,
+        Continued, Covers, Exchange, Interceptor, Next, Observer,
         limits::body_size::{BodySize, BodySizeExceeded},
     },
     response::status::NoContent,
@@ -145,9 +144,9 @@ struct Heard(Arc<AtomicUsize>);
 impl Observer<Gate> for Heard {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &Gate) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, _: &Gate) {}
+    fn on_response(&self, _: &Exchange<'_>, _: &Gate) {}
 
-    fn on_panic(&self, _: &(dyn Any + Send), _: Option<Route<'_>>) {
+    fn on_panic(&self, _: &(dyn Any + Send), _: Option<Route<'_>>, _: &Gate) {
         self.0.fetch_add(1, Ordering::SeqCst);
     }
 }

@@ -52,14 +52,13 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
 
 use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header},
-    middleware::{Continued, Interceptor, Next, Observer},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
+    middleware::{Continued, Exchange, Interceptor, Next, Observer},
     prelude::*,
     response::status::NoContent,
     router::{operation::Route, service::Service},
@@ -525,14 +524,8 @@ impl Observer<()> for Unheard {
         let _ = (request, route, context);
     }
 
-    fn on_response(
-        &self,
-        response: &Response,
-        route: Option<Route<'_>>,
-        elapsed: Duration,
-        context: &(),
-    ) {
-        let _ = (response, route, elapsed, context);
+    fn on_response(&self, exchange: &Exchange<'_>, context: &()) {
+        let _ = (exchange, context);
     }
 }
 

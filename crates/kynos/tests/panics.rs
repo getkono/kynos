@@ -18,13 +18,12 @@ use std::{
     any::Any,
     convert::Infallible,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use kynos::{
     Router,
-    http::{Request, Response, StatusCode},
-    middleware::{Continued, Interceptor, Next, Observer},
+    http::{Request, StatusCode},
+    middleware::{Abandonment, Continued, Exchange, Interceptor, Next, Observer},
     openapi::{Method as OpenApiMethod, PathTemplate},
     response::status::NoContent,
     router::{endpoint::builder::EndpointBuilder, group::Group, operation::Route},
@@ -166,9 +165,9 @@ impl Heard {
 impl Observer<()> for Heard {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, (): &()) {}
+    fn on_response(&self, _: &Exchange<'_>, (): &()) {}
 
-    fn on_panic(&self, _: &(dyn Any + Send), route: Option<Route<'_>>) {
+    fn on_panic(&self, _: &(dyn Any + Send), route: Option<Route<'_>>, (): &()) {
         let path = route.map_or_else(|| "<unmatched>".to_owned(), |route| route.path().to_owned());
         self.0.lock().expect("an unpoisoned record").push(path);
     }
@@ -260,17 +259,40 @@ impl Observer<()> for Log {
         self.push("request".to_owned());
     }
 
-    fn on_response(&self, response: &Response, _: Option<Route<'_>>, _: Duration, (): &()) {
-        self.push(format!("response {}", response.status().as_u16()));
+    fn on_response(&self, exchange: &Exchange<'_>, (): &()) {
+        self.push(format!("response {}", exchange.response.status().as_u16()));
     }
 
-    fn on_panic(&self, payload: &(dyn Any + Send), _: Option<Route<'_>>) {
+    fn on_abandoned(&self, abandonment: &Abandonment<'_>, (): &()) {
+        let path = abandonment
+            .route
+            .map_or("<unmatched>", |route| route.path());
+        self.push(format!("abandoned {path}"));
+    }
+
+    fn on_panic(&self, payload: &(dyn Any + Send), _: Option<Route<'_>>, (): &()) {
         let message = payload
             .downcast_ref::<&str>()
             .copied()
             .expect("a panic! with a literal message carries a `&str`");
         self.push(format!("panic {message}"));
     }
+}
+
+/// A panic nothing recovers ends the request with no response, so an observer
+/// hears it abandoned under the operation it unwound out of, and neither a
+/// recovered panic nor a response.
+#[test]
+fn an_unrecovered_panic_is_reported_as_an_abandoned_request() {
+    let log = Log::default();
+    let service = Router::<()>::new()
+        .mount(kynos::routes![boom])
+        .observe(log.clone())
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(outcome(&service, "/boom"), Err(()));
+    assert_eq!(log.events(), ["request", "abandoned /boom"]);
 }
 
 /// What a recovered panic answers with: a problem document naming the status
@@ -524,9 +546,9 @@ struct Exploded;
 
 #[cfg(feature = "unchecked")]
 impl tower::Service<Request> for Exploded {
-    type Response = Response;
+    type Response = kynos::http::Response;
     type Error = Infallible;
-    type Future = std::future::Ready<Result<Response, Infallible>>;
+    type Future = std::future::Ready<Result<kynos::http::Response, Infallible>>;
 
     fn poll_ready(
         &mut self,

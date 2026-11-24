@@ -2,7 +2,7 @@
 
 use crate::{
     http,
-    middleware::{Observer, request_id::AssignedId},
+    middleware::{Abandonment, Exchange, Observer, request_id::AssignedId},
     router::operation::Route,
 };
 
@@ -13,7 +13,11 @@ use crate::{
 /// only when it has an identifier to name. The opening event's `method` is the
 /// request's; the closing one's is the matched operation's, so it joins with
 /// `operation_id` on its own line: `GET` for a `HEAD` that a `GET` answers, and
-/// the same placeholder as `matched_path` where nothing matched.
+/// the request's own where nothing matched.
+///
+/// A request dropped before its response head closes with a `request
+/// abandoned` event instead, at the opening event's level, carrying the same
+/// `method`, `matched_path` and `operation_id` and the `latency` to the drop.
 ///
 /// Handler bodies use plain `tracing::info!` and inherit whatever span the
 /// application established. A 5xx a derived `ApiError` answers with logs its
@@ -343,22 +347,17 @@ impl<C> Observer<C> for Trace {
         );
     }
 
-    fn on_response(
-        &self,
-        response: &http::Response,
-        route: Option<Route<'_>>,
-        elapsed: std::time::Duration,
-        context: &C,
-    ) {
+    fn on_response(&self, exchange: &Exchange<'_>, context: &C) {
         let _ = context;
+        let (response, route) = (exchange.response, exchange.route);
 
         emit!(
             self.closing(response.status()),
-            method = %route.map_or(UNMATCHED, |route| route.method().as_wire_str()),
+            method = %closing_method(exchange.method, route),
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
             status = response.status().as_u16(),
-            latency = ?elapsed,
+            latency = ?exchange.elapsed,
             request_id = AssignedId::of_response(response)
                 .and_then(AssignedId::as_str)
                 .unwrap_or_default(),
@@ -366,7 +365,27 @@ impl<C> Observer<C> for Trace {
         );
     }
 
-    fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
+    fn on_abandoned(&self, abandonment: &Abandonment<'_>, context: &C) {
+        let _ = context;
+        let route = abandonment.route;
+
+        emit!(
+            self.level,
+            method = %closing_method(abandonment.method, route),
+            matched_path = route.map_or(UNMATCHED, |route| route.path()),
+            operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
+            latency = ?abandonment.elapsed,
+            "request abandoned",
+        );
+    }
+
+    fn on_panic(
+        &self,
+        payload: &(dyn std::any::Any + Send),
+        route: Option<Route<'_>>,
+        context: &C,
+    ) {
+        let _ = context;
         // Always `ERROR`, so no level filter hides a panic.
         tracing::error!(
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
@@ -375,6 +394,12 @@ impl<C> Observer<C> for Trace {
             "handler panicked",
         );
     }
+}
+
+/// The `method` a closing event names: the matched operation's, so it joins
+/// with `operation_id`, and the request's own where nothing matched.
+fn closing_method<'a>(method: &'a http::Method, route: Option<Route<'_>>) -> &'a str {
+    route.map_or(method.as_str(), |route| route.method().as_wire_str())
 }
 
 /// What a panic payload says, when it is one of the two shapes `panic!` makes.
