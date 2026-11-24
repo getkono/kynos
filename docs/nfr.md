@@ -1276,12 +1276,13 @@ either, once, so an in-flight gauge raised in `on_request` and lowered in
 owns a drop guard from routing to its response head, and dropped before that
 head, polled or not, it reports `on_abandoned` instead, a panic nothing
 recovers included. Every request carries the 24 bytes of the method the guard
-keeps, in the boxed dispatch future above; only where an observer is mounted
-is the method copied and the guard's report owed, and copying a standard
-method never allocates. The `scope.observer_noop`, `scope.trace_nosub` and
-`scope.trace_sub` rows of
-[`requests.tsv`](../crates/kynos-profile/requests.tsv) price the observed side
-with the rest of observing.
+keeps, in the boxed dispatch future above, and about fifty program
+instructions to build and drop the guard, observed or not, and no block; only
+where an observer is mounted is the method copied and the guard's report owed,
+a few dozen instructions more, and copying a standard method never allocates.
+Every row of [`requests.tsv`](../crates/kynos-profile/requests.tsv) prices the
+first; the `scope.observer_noop`, `scope.trace_nosub` and `scope.trace_sub`
+rows price the observed side with the rest of observing.
 
 The module is not merely unwritten, though. Shipping one would put this
 framework's release schedule in front of the OpenTelemetry project's, and would
