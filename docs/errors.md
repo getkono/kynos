@@ -132,11 +132,14 @@ enum StoreError {
 | --- | --- | --- |
 | type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
 | type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
-| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
+| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it; or a parenthesized list of them, converting into each and answering as the first |
+| type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds and `Error` with its source; no `#[error(...)]` beside it |
+| type | `from` | beside `transparent` on an enum, every variant's `from` |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`; implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
+| variant | `from` | on a transparent variant, generate `From` the error it holds, as `thiserror`'s `#[from]` would; never beside that `#[from]`, and one variant per held type |
 | variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
@@ -154,10 +157,12 @@ receive.
 
 There is no de-camel-casing of variant names anywhere.
 
-`detail` comes from `Display`, which is why the derive requires it and why
-`thiserror` is the expected companion: the `#[error("...")]` a Rust reader
-already writes is the sentence an API consumer receives, rather than a second
-one that can drift from it.
+`detail` comes from `Display`, which is why the derive requires it of a type
+declaring a failure of its own, and why `thiserror` is the expected companion:
+the `#[error("...")]` a Rust reader already writes is the sentence an API
+consumer receives, rather than a second one that can drift from it. A type
+whose every variant is transparent reads no `Display` of its own, so the derive
+requires none.
 
 **A server failure's cause goes to the log, not the wire.** RFC 9457 section 5
 keeps implementation detail out of a problem, so a 5xx's `Display` says what
@@ -285,7 +290,8 @@ slug in `const` items, so it cannot drift from the prefix the derives use.
 
 **A shared failure is declared once.** A variant marked `transparent` holds
 another `ApiError` — failures many operations share, such as validation or a
-missing parent resource — and `thiserror`'s `#[from]` converts into it. Its
+missing parent resource — and `thiserror`'s `#[from]`, or `from` below,
+converts into it. Its
 problem is the held error's, and that type's statuses and responses join the
 enum's: the `const` is the union in declaration order, and a status both sides
 declare is unioned rather than replaced, so the description names every type
@@ -301,6 +307,46 @@ rather than read either way, since the held error's would silently replace it.
 Where the held type is no `ApiError`, the compile error says so and names both
 ways out. A transparent variant's message being its field's is `thiserror`'s
 rule, so the implication follows it rather than any guess about the type.
+
+**An enum of held errors alone is transparent whole.** Every operation having
+its own error type leaves many enums whose every variant hands over:
+
+```rust
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum AddItemError {
+    ListNotFound(ListNotFound),
+    Internal(Internal),
+}
+```
+
+`transparent` on the enum makes each variant transparent, and the derive
+implements the enum's `Display` delegating to the error each variant holds,
+and `std::error::Error` whose `source` is that error's own, which is what
+`thiserror`'s `#[error(transparent)]` on every variant would. A type named an
+error that is no `Error` would surprise whoever boxes it or hands it to `?` in
+a function returning another error, so both come together; the enum must be
+`Debug`, as every `Error` is, and each held error an `Error`.
+It is said on the enum rather than implied by every variant being transparent:
+`Display` and `Error` are the enum's, and implied ones would collide with a
+hand-written or `thiserror` one, and fail to compile over a held error with no
+`Display` or `Error` of its own, such as a refusal Kynos ships. An
+`#[error(...)]` beside it is refused for the first reason, an `Error` written
+by hand conflicts with the derive's, and such a refusal is held by a variant
+marked `transparent` in an enum that is not. An enum of transparent variants
+that is not transparent whole needs no `Display` either, since no failure of
+its own reads one, and gets no `Error`.
+
+**`from` is asked for, not implied.** `#[problem(from)]` on a transparent
+variant generates `From` the error it holds, so `?` carries that error in;
+beside `transparent` on the enum, `#[problem(transparent, from)]`, it does so
+for every variant. A `From` for every transparent variant would collide with
+the `thiserror` `#[from]` every existing enum already writes, with a
+hand-written one, and with itself where two variants hold one type, each
+breaking code that compiled. So `from` beside `#[from]` on the field is refused
+naming the duplicate, as are two variants it would build from one type, and
+`from` on a variant that is not transparent: a failure of its own converts
+however its own fields say.
 
 **An operation that cannot fail every way names a subset.** A rejection
 type's statuses are declared on every operation returning it, so a `HEAD`
@@ -330,6 +376,16 @@ subset holds. A derive sees one item, so the wider enum publishes what a subset
 reads as hidden inherent items, and `subset_of` names a derived `ApiError`
 enum, a subset included. A per-operation exclusion was rejected, because it
 moves the guarantee from the type to a run-time check.
+
+A helper's failure two operations share is a subset of both enums:
+`#[problem(subset_of = (PutEntryError, LogPlaysError))]` generates `From` into
+each, so `?` carries it into either operation's error. A subset answers with
+one problem, so it answers and is described as the first enum listed, and a
+`const` asserts that each of its variants answers with the same statuses in
+every enum listed: converted into either, the failure declares what it sends.
+A title or type that differs between the two is the first's, which is why the
+order is written rather than guessed. An empty list, or one naming an enum
+twice, is refused.
 
 **A variant shared with a wider enum is taken, not copied.** An enum that also
 fails its own ways is no subset, but one of its variants can be the wider
@@ -377,11 +433,17 @@ or twice, giving one no value or one that is neither a literal nor a path, or
 naming a field the failure already publishes; a `const` value whose type is not
 `Serialize` is a compile error at the path, with a case in
 [`tests/ui/macros`](../crates/kynos/tests/ui/macros). A `subset_of` on a variant or a struct, beside another key,
-naming the subset's generic parameter, or over a variant or field with a
-`#[problem(...)]` of its own is a compile error with a case in both. So is a
+naming the subset's generic parameter, naming an empty list or one enum twice,
+or over a variant or field with a `#[problem(...)]` of its own is a compile
+error with a case in both, and a listed enum disagreeing on a variant's
+statuses is one in a `const`. So is a
 `variant_of` on the type, beside another key, over a field with a
 `#[problem(...)]`, naming no enum, naming the enum's generic parameter, or
-taking a wider variant another variant already takes. What `base`, `title`,
+taking a wider variant another variant already takes. So is a transparent
+enum beside an `#[error(...)]`, or over a variant saying `transparent` again or
+taking a `variant_of`; and a `from` on a struct, on an enum not transparent
+whole, on a variant not transparent, beside `#[from]`, or building two
+variants from one type. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.

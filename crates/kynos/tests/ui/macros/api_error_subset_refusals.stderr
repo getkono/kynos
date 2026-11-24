@@ -1,35 +1,47 @@
 error: `subset_of` names the wider error every variant converts into, so it belongs on the enum rather than on one variant
-  --> tests/ui/macros/api_error_subset_refusals.rs:26:15
+  --> tests/ui/macros/api_error_subset_refusals.rs:27:15
    |
-26 |     #[problem(subset_of = ChunkRejection)]
+27 |     #[problem(subset_of = ChunkRejection)]
    |               ^^^^^^^^^
 
 error: `subset_of` takes some of a wider enum's variants, so it belongs on an enum
-  --> tests/ui/macros/api_error_subset_refusals.rs:31:11
+  --> tests/ui/macros/api_error_subset_refusals.rs:32:11
    |
-31 | #[problem(subset_of = ChunkRejection)]
+32 | #[problem(subset_of = ChunkRejection)]
    |           ^^^^^^^^^
 
-error: a subset answers with the wider enum's declarations, so `subset_of` takes no `status`, `title`, `type`, `base`, `extension` or `describe` of its own
-  --> tests/ui/macros/api_error_subset_refusals.rs:35:11
+error: a subset answers with the wider enum's declarations, so `subset_of` takes no `status`, `title`, `type`, `base`, `extension`, `describe`, `transparent` or `from` of its own
+  --> tests/ui/macros/api_error_subset_refusals.rs:36:11
    |
-35 | #[problem(subset_of = ChunkRejection, base = "https://errors.example.com/")]
+36 | #[problem(subset_of = ChunkRejection, base = "https://errors.example.com/")]
    |           ^^^^^^^^^
 
 error: a subset's statuses are a `const`, which cannot depend on the type's generic parameter `T`; name a concrete wider error
-  --> tests/ui/macros/api_error_subset_refusals.rs:41:23
+  --> tests/ui/macros/api_error_subset_refusals.rs:42:23
    |
-41 | #[problem(subset_of = Wrapped<T>)]
+42 | #[problem(subset_of = Wrapped<T>)]
    |                       ^^^^^^^
 
 error: a subset's variant answers as the wider enum's variant `Conflict`, whose status, title, type and field markers it takes; drop this `#[problem(...)]`
-  --> tests/ui/macros/api_error_subset_refusals.rs:49:5
+  --> tests/ui/macros/api_error_subset_refusals.rs:50:5
    |
-49 |     #[problem(status = 409)]
+50 |     #[problem(status = 409)]
    |     ^
 
 error: a subset's variant answers as the wider enum's variant `NotFound`, whose status, title, type and field markers it takes; drop this `#[problem(...)]`
-  --> tests/ui/macros/api_error_subset_refusals.rs:57:9
+  --> tests/ui/macros/api_error_subset_refusals.rs:58:9
    |
-57 |         #[problem(extension)]
+58 |         #[problem(extension)]
    |         ^
+
+error: `subset_of = ()` names no wider enum; name one, or several as `(Wide, Other)`
+  --> tests/ui/macros/api_error_subset_refusals.rs:64:11
+   |
+64 | #[problem(subset_of = ())]
+   |           ^^^^^^^^^
+
+error: `subset_of` already names `ChunkRejection`, and a subset converts into each enum once
+  --> tests/ui/macros/api_error_subset_refusals.rs:70:40
+   |
+70 | #[problem(subset_of = (ChunkRejection, ChunkRejection))]
+   |                                        ^^^^^^^^^^^^^^

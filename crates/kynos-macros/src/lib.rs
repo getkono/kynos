@@ -705,7 +705,8 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// at `about:blank`.
 ///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
-/// A type without a `Display` is rejected at the derive.
+/// A type declaring a failure of its own without a `Display` is rejected at
+/// the derive; one whose every variant is transparent reads none.
 ///
 /// With the `trace` feature, a failure declaring a 5xx is logged as it is
 /// turned into a response: one `ERROR` event on the `kynos::error` target with
@@ -829,6 +830,46 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// refused, since the held error's would replace it. A held type that is no
 /// `ApiError` is reported as such, naming both ways out.
 ///
+/// An enum of held errors alone says `#[problem(transparent)]` once, on the
+/// enum, and needs no `thiserror`: every variant is transparent, and the
+/// derive implements `Display` delegating to the error each holds, and
+/// `std::error::Error` whose `source` is that error's own, as `thiserror`'s
+/// `#[error(transparent)]` would:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(transparent)]
+/// enum AddItemError {
+///     ListNotFound(ListNotFound),
+///     Internal(Internal),
+/// }
+/// ```
+///
+/// The enum must then be `Debug` and each held error an `Error`; one that is
+/// not, such as a refusal Kynos ships, is held by a variant marked
+/// `transparent` instead. A variant saying `transparent` again or taking a
+/// `variant_of`, and an `#[error(...)]`, which would implement `Display` and
+/// `Error` a second time, are refused; an `Error` written by hand beside it
+/// conflicts with the derive's. A struct has no variant to hand over, so takes
+/// no `transparent`.
+///
+/// `from` beside a variant's `transparent`, or on a variant `#[error(transparent)]`
+/// makes transparent, generates `From` the error it holds, so `?` carries that
+/// error in; beside `transparent` on the enum, every variant's:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(transparent, from)]
+/// enum AddItemError {
+///     ListNotFound(ListNotFound),
+///     Internal(Internal),
+/// }
+/// ```
+///
+/// It is refused on a variant that is not transparent, on an enum that is not
+/// transparent whole, beside `thiserror`'s `#[from]`, which implements the
+/// same `From`, and on two variants holding one type.
+///
 /// A status's description joins the `title` of every variant answering with
 /// it, in declaration order. An enum writes its own with `describe`, which
 /// leaves each variant's `title` on the wire and on its branch of the schema:
@@ -878,6 +919,13 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// declares only its variants' statuses, each described as the wider enum
 /// describes the variants it keeps. The wider enum is a derived `ApiError`
 /// enum, a subset included, and cannot name the subset's generic parameters.
+///
+/// A helper's failure shared by several operations' enums is a subset of
+/// each: `#[problem(subset_of = (PutEntryError, LogPlaysError))]` generates
+/// `From` into every enum listed, each once. It answers and is described as
+/// the first, and each variant must answer with the same statuses in every
+/// enum listed, which a `const` asserts, so where it is converted to cannot
+/// change what it declares.
 ///
 /// One variant shared with a wider enum, in an enum that also fails its own
 /// ways, says `#[problem(variant_of = Wide::Variant)]`:

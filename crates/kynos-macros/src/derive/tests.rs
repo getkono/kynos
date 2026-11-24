@@ -5631,12 +5631,34 @@ mod api_error {
     fn transparent_ledger() -> Vec<Case> {
         vec![
             case(
-                "`transparent` on the type, when it hands over one variant",
+                "`transparent` on a struct, which has no variant to hand over",
                 quote::quote!(
                     #[problem(transparent)]
                     struct StoreError(LookupError);
                 ),
-                "belongs on a variant of an enum",
+                "a struct has no variant to hand over",
+            ),
+            case(
+                "a transparent enum beside `thiserror`, which would display it and be an `Error` twice",
+                quote::quote!(
+                    #[problem(transparent)]
+                    enum StoreError {
+                        #[error(transparent)]
+                        Lookup(LookupError),
+                    }
+                ),
+                "would implement `Display` and `Error` a second time",
+            ),
+            case(
+                "a variant of a transparent enum saying `transparent` again",
+                quote::quote!(
+                    #[problem(transparent)]
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup(LookupError),
+                    }
+                ),
+                "the enum is transparent, so variant `Lookup` already answers",
             ),
             case(
                 "a transparent variant that also declares a status",
@@ -5815,7 +5837,28 @@ mod api_error {
                         NotFound,
                     }
                 ),
-                "takes no `status`, `title`, `type`, `base`, `extension` or `describe` of its own",
+                "takes no `status`, `title`, `type`, `base`, `extension`, `describe`, \
+                 `transparent` or `from` of its own",
+            ),
+            case(
+                "`subset_of` naming an empty list",
+                quote::quote!(
+                    #[problem(subset_of = ())]
+                    enum HeadRejection {
+                        NotFound,
+                    }
+                ),
+                "names no wider enum",
+            ),
+            case(
+                "`subset_of` naming one wider enum twice",
+                quote::quote!(
+                    #[problem(subset_of = (ChunkRejection, PutRejection, ChunkRejection))]
+                    enum HeadRejection {
+                        NotFound,
+                    }
+                ),
+                "already names `ChunkRejection`",
             ),
             case(
                 "`subset_of` naming the subset's generic parameter",
@@ -6034,6 +6077,7 @@ mod api_error {
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
+        each_case_is_refused(from_ledger(), expand_inner);
         each_case_is_refused(subset_ledger(), expand_inner);
         each_case_is_refused(variant_of_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
@@ -6075,6 +6119,179 @@ mod api_error {
         );
     }
 
+    /// The refusals of `#[problem(from)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn from_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`from` on an enum that is not transparent whole",
+                quote::quote!(
+                    #[problem(from)]
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup(LookupError),
+                    }
+                ),
+                "needs `transparent` beside it",
+            ),
+            case(
+                "`from` on a variant declaring a failure of its own",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 503, from)]
+                        Store(std::io::Error),
+                    }
+                ),
+                "variant `Store` is not transparent",
+            ),
+            case(
+                "`from` beside `thiserror`'s `#[from]`, which implements the same `From`",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(from)]
+                        Lookup(#[from] LookupError),
+                    }
+                ),
+                "`thiserror`'s `#[from]` implements the `From`",
+            ),
+            case(
+                "two variants built from one type",
+                quote::quote!(
+                    #[problem(transparent, from)]
+                    enum StoreError {
+                        User(LookupError),
+                        Tenant(LookupError),
+                    }
+                ),
+                "variant `User` is already built from `LookupError`",
+            ),
+        ]
+    }
+
+    /// `from` reaches the refusals `transparent` shares with it, and a
+    /// `from` on a variant taking a wider variant is no transparent one.
+    #[test]
+    fn from_is_refused_wherever_transparent_is_or_says_it_twice() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`from` on a struct",
+                    quote::quote!(
+                        #[problem(status = 404, from)]
+                        struct StoreError(LookupError);
+                    ),
+                    "a struct has no variant to hand over",
+                ),
+                case(
+                    "`from` on a variant of an enum saying `from` already",
+                    quote::quote!(
+                        #[problem(transparent, from)]
+                        enum StoreError {
+                            #[problem(from)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "the enum is transparent, so variant `Lookup` already answers",
+                ),
+                case(
+                    "`from` on a variant taking a wider variant",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(variant_of = Wide::Lookup, from)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "variant `Lookup` is not transparent",
+                ),
+                case(
+                    "`from` beside `subset_of`",
+                    quote::quote!(
+                        #[problem(subset_of = Wide, from)]
+                        enum StoreError {
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "`transparent` or `from` of its own",
+                ),
+            ],
+            expand_inner,
+        );
+
+        for (description, accepted) in [
+            (
+                "`from` on an explicitly transparent variant",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent, from)]
+                        Lookup(LookupError),
+                    }
+                ),
+            ),
+            (
+                "`from` on a variant `#[error(transparent)]` makes transparent",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(from)]
+                        Lookup(LookupError),
+                    }
+                ),
+            ),
+        ] {
+            let input = syn::parse2(accepted).expect("the case itself must parse");
+            assert!(
+                expand_inner(&input).is_ok(),
+                "{description} must be accepted"
+            );
+        }
+    }
+
+    /// A transparent enum's refusals each cover more than their ledger row:
+    /// a variant taking a wider variant, one declaring a status, and an
+    /// `#[error(...)]` on the enum rather than a variant.
+    #[test]
+    fn a_transparent_enum_refuses_what_each_variant_would_contradict() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a variant of a transparent enum taking a wider variant",
+                    quote::quote!(
+                        #[problem(transparent)]
+                        enum StoreError {
+                            #[problem(variant_of = Wide::Lookup)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "the enum is transparent, so variant `Lookup` already answers",
+                ),
+                case(
+                    "a variant of a transparent enum declaring a status",
+                    quote::quote!(
+                        #[problem(transparent)]
+                        enum StoreError {
+                            #[problem(status = 404)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answers as the error it holds",
+                ),
+                case(
+                    "a transparent enum with `thiserror`'s `#[error(...)]` on itself",
+                    quote::quote!(
+                        #[problem(transparent)]
+                        #[error("store failed")]
+                        enum StoreError {
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "would implement `Display` and `Error` a second time",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// The rows refusing a key written twice and a key outside the grammar,
     /// for the item and for a field, which `attribute::Keys::read` and
     /// `attribute::unknown` raise, and a status out of range and a second
@@ -6090,6 +6307,7 @@ mod api_error {
                 include_str!("api_error/args.rs"),
                 include_str!("api_error/emit.rs"),
                 include_str!("api_error/fields.rs"),
+                include_str!("api_error/transparent.rs"),
                 include_str!("api_error/outcomes.rs"),
                 include_str!("api_error/subset.rs"),
                 include_str!("api_error/variant_of.rs"),
@@ -6098,6 +6316,7 @@ mod api_error {
             .concat(),
             ledger().len()
                 + transparent_ledger().len()
+                + from_ledger().len()
                 + subset_ledger().len()
                 + variant_of_ledger().len()
                 + headers_ledger().len()

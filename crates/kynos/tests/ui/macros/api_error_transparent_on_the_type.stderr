@@ -1,4 +1,4 @@
-error: `transparent` hands one variant to the error it holds, so it belongs on a variant of an enum
+error: `transparent` and `from` hand a variant to the error it holds, so they belong on an enum or one of its variants; a struct has no variant to hand over
   --> tests/ui/macros/api_error_transparent_on_the_type.rs:13:11
    |
 13 | #[problem(transparent)]

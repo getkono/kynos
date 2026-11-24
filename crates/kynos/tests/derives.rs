@@ -6196,6 +6196,153 @@ fn error_transparent_answers_as_the_held_error_unless_a_status_opts_out() {
     );
 }
 
+/// Transparent whole, and no `thiserror`: each variant answers, and the enum
+/// displays, as the error it holds. Generic, so its `Display` is implemented
+/// inside a generic `impl`; one variant holds its error in a named field.
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum SharedWhole<const N: usize> {
+    Lookup(LookupError),
+    Invalid { source: ValidationFailed },
+}
+
+/// Held errors alone, no enum `Display`: no failure of its own reads one for
+/// `detail`, so the derive asks for none.
+#[derive(Debug, ApiError)]
+enum SharedUndisplayed {
+    #[problem(transparent)]
+    Lookup(LookupError),
+}
+
+/// A transparent enum's `Display`, problem and statuses are each its held
+/// error's, and an enum of held errors alone compiles with no `Display`.
+#[test]
+fn a_transparent_enum_answers_and_displays_as_the_error_it_holds() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    let invalid = || ValidationFailed {
+        field: "name".to_owned(),
+    };
+    let whole = SharedWhole::<0>::Invalid { source: invalid() };
+    assert_eq!(whole.to_string(), invalid().to_string());
+    assert_eq!(
+        SharedWhole::<0>::Lookup(LookupError::TenantUnknown).to_string(),
+        "no tenant with that slug"
+    );
+    assert_eq!(
+        serde_json::to_value(whole.into_problem()).expect("a problem serializes"),
+        serde_json::to_value(invalid().into_problem()).expect("a problem serializes"),
+    );
+    assert_eq!(SharedWhole::<0>::STATUSES, SharedOnly::<0>::STATUSES);
+    assert_eq!(SharedUndisplayed::STATUSES, LookupError::STATUSES);
+}
+
+/// A held error with a source of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the journal could not be written")]
+#[problem(status = 503)]
+struct JournalUnwritable(#[source] std::io::Error);
+
+/// Transparent whole over a held error with a source and one without.
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum SharedSourced {
+    Journal(JournalUnwritable),
+    Lookup(LookupError),
+}
+
+/// A transparent enum is an `Error` whose source is the held error's own,
+/// not the held error, as `thiserror`'s `#[error(transparent)]` reads: the
+/// enum is that error, so a chain walked from it never names it twice.
+#[test]
+fn a_transparent_enum_is_an_error_whose_source_is_the_held_error_s() {
+    use std::error::Error;
+
+    let sourced: Box<dyn Error> = Box::new(SharedSourced::Journal(JournalUnwritable(
+        std::io::Error::other("disk gone"),
+    )));
+    assert_eq!(sourced.to_string(), "the journal could not be written");
+    assert_eq!(
+        sourced
+            .source()
+            .expect("the held error's source")
+            .to_string(),
+        "disk gone"
+    );
+    assert!(
+        SharedSourced::Lookup(LookupError::TenantUnknown)
+            .source()
+            .is_none()
+    );
+}
+
+/// `from` on a variant `#[error(transparent)]` makes transparent, beside a
+/// failure of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ConvertedPause {
+    #[error(transparent)]
+    #[problem(from)]
+    Lookup(LookupError),
+
+    #[error("the torrent is already paused")]
+    #[problem(status = 409)]
+    AlreadyPaused,
+}
+
+/// `from` on a transparent enum, every variant built from what it holds,
+/// one through a named field, inside a generic `impl`.
+#[derive(Debug, ApiError)]
+#[problem(transparent, from)]
+enum SharedFrom<const N: usize> {
+    Lookup(LookupError),
+    Invalid { source: ValidationFailed },
+}
+
+/// `from` on one transparent variant and not the other, without `thiserror`.
+#[derive(Debug, ApiError)]
+enum PartlyFrom {
+    #[problem(transparent, from)]
+    Lookup(LookupError),
+
+    #[problem(transparent)]
+    Invalid(ValidationFailed),
+}
+
+/// `?` carries a held error into each variant `from` builds, without
+/// `thiserror`'s `#[from]`.
+#[test]
+fn from_builds_a_transparent_variant_from_the_error_it_holds() {
+    fn lookup<E: From<LookupError>>() -> Result<(), E> {
+        Err(LookupError::TenantUnknown)?;
+        Ok(())
+    }
+
+    assert!(matches!(
+        lookup::<ConvertedPause>(),
+        Err(ConvertedPause::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        lookup::<SharedFrom<0>>(),
+        Err(SharedFrom::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        lookup::<PartlyFrom>(),
+        Err(PartlyFrom::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        SharedFrom::<0>::from(ValidationFailed {
+            field: "name".to_owned(),
+        }),
+        SharedFrom::Invalid { source } if source.field == "name"
+    ));
+    assert!(matches!(
+        PartlyFrom::Invalid(ValidationFailed {
+            field: "name".to_owned()
+        }),
+        PartlyFrom::Invalid(_)
+    ));
+}
+
 /// The wider enum `subset_of` cases narrow: an extension member, a status two
 /// variants share, a header group on one of two variants sharing a status,
 /// and a transparent variant whose 404 joins one of its own.
@@ -6524,6 +6671,68 @@ fn a_subset_names_a_generic_or_parenthesized_wider_enum() {
     assert_eq!(
         emitted_responses::<ParenthesizedSubset>(),
         emitted_responses::<ConflictSubset>()
+    );
+}
+
+/// A second wider enum sharing two of `ChunkRejection`'s variants, each with
+/// the same statuses, and failing a way of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum PutChunkRejection {
+    #[error("no chunk {id}")]
+    #[problem(status = 404, title = "Chunk unknown")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+    },
+
+    #[error("chunks are unavailable")]
+    #[problem(status = 503)]
+    Unavailable(#[problem(headers)] RetryAfter),
+
+    #[error("the chunk is too large")]
+    #[problem(status = 413)]
+    TooLarge,
+}
+
+/// A helper's failure shared by two operations' enums: a subset of both.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = (ChunkRejection, PutChunkRejection))]
+enum SharedChunkLookup {
+    NotFound { id: u64 },
+    Unavailable(RetryAfter),
+}
+
+/// A subset of several enums converts into each, and answers, declares and
+/// is described as the first it names.
+#[test]
+fn a_subset_of_several_enums_converts_into_each_and_answers_as_the_first() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    assert!(matches!(
+        ChunkRejection::from(SharedChunkLookup::NotFound { id: 3 }),
+        ChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        PutChunkRejection::from(SharedChunkLookup::NotFound { id: 3 }),
+        PutChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        PutChunkRejection::from(SharedChunkLookup::Unavailable(RetryAfter {
+            retry_after: 9
+        })),
+        PutChunkRejection::Unavailable(RetryAfter { retry_after: 9 })
+    ));
+
+    assert_eq!(SharedChunkLookup::STATUSES, &[404, 503]);
+    assert_eq!(
+        serde_json::to_value(SharedChunkLookup::NotFound { id: 3 }.into_problem())
+            .expect("a problem serializes"),
+        serde_json::to_value(ChunkRejection::NotFound { id: 3 }.into_problem())
+            .expect("a problem serializes"),
+    );
+    assert_eq!(
+        emitted_responses::<SharedChunkLookup>()["404"],
+        emitted_responses::<NotFoundAlone>()["404"]
     );
 }
 

@@ -235,6 +235,19 @@ enum ResolveError {
     Deleted,
 }
 
+/// What deleting a user fails with: failures declared elsewhere, and none of
+/// its own.
+///
+/// `transparent` on the enum makes each variant answer, and the enum display,
+/// as the error it holds, so it needs no `thiserror`; `from` lets `?` carry
+/// each held error in.
+#[derive(Debug, ApiError)]
+#[problem(transparent, from)]
+enum DeleteError {
+    Invalid(Invalid),
+    Store(StoreError),
+}
+
 /// Refuses everything while the store is being migrated.
 ///
 /// The fourth way a status reaches an operation. Because this can answer before
@@ -323,6 +336,21 @@ async fn create_user(Json(user): Json<User>) -> Result<Created<Json<User>>, Stor
     ))
 }
 
+/// Deletes a user.
+///
+/// Documents 404, 409, 422, 429 and 507 by holding `StoreError` and
+/// `Invalid`, and says none of them itself.
+#[kynos::delete("/users/{id}")]
+async fn delete_user(Path(path): Path<UserPath>) -> Result<NoContent, DeleteError> {
+    if path.id == 0 {
+        Err(Invalid {
+            field: "id".to_owned(),
+        })?;
+    }
+    load(path.id).map_err(StoreError::from)?;
+    Ok(NoContent)
+}
+
 fn load(id: u64) -> Result<User, RowMissing> {
     Err(RowMissing(id))
 }
@@ -366,7 +394,12 @@ async fn main() -> kynos::Result<()> {
         // shapes the 501 for a method nothing here implements.
         .not_found(FallbackPolicy::Problem)
         .method_not_allowed(FallbackPolicy::Problem)
-        .mount(kynos::routes![get_user, list_users, create_user]);
+        .mount(kynos::routes![
+            get_user,
+            list_users,
+            create_user,
+            delete_user
+        ]);
 
     // Every status any of this can answer with is in here, and none of them was
     // written down twice: 404, 409, 422, 429 and 507 from `StoreError`, 429

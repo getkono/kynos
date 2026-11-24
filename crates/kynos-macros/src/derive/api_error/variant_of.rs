@@ -93,6 +93,7 @@ pub(super) fn variant_of(
         held,
         ty,
         of: Some(of),
+        from: None,
     })
 }
 

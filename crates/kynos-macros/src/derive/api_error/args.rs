@@ -40,7 +40,12 @@ pub(super) struct ProblemArgs {
     pub(super) title: Option<String>,
     pub(super) type_uri: Option<String>,
     pub(super) base: Option<Base>,
+    /// `transparent`: on a variant, it answers as the error it holds; on an
+    /// enum, every variant does, and the enum displays as what it holds.
     pub(super) transparent: Option<Span>,
+    /// `from`: on a transparent variant, `From` its held error builds it; on
+    /// a transparent enum, every variant's.
+    pub(super) from: Option<Span>,
     /// `subset_of`: the wider `ApiError` enum this one is a subset of.
     pub(super) subset_of: Option<(Type, Span)>,
     /// `variant_of`: the variant of a wider `ApiError` enum this variant is.
@@ -132,16 +137,12 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                          `subset_of`",
                     ));
                 }
-                "transparent" if position == Position::Variant => {
-                    args.transparent = Some(span);
-                }
-                "transparent" => {
-                    return Err(syn::Error::new(
-                        span,
-                        "`transparent` hands one variant to the error it holds, so it belongs on \
-                         a variant of an enum",
-                    ));
-                }
+                // On an enum, every variant; a struct's is refused where the
+                // outcomes are read, since only there is the item's kind known.
+                "transparent" => args.transparent = Some(span),
+                // Checked against what it sits beside where the outcomes are
+                // read, as `transparent` is.
+                "from" => args.from = Some(span),
                 "describe" => args.described = Some((written::parse(&meta, position)?, span)),
                 "extension" if meta.input.peek(syn::token::Paren) => {
                     constants(&meta, &mut args.constants)?;
@@ -205,18 +206,6 @@ fn base(meta: &ParseNestedMeta<'_>) -> syn::Result<Base> {
              `default` for the crate's `kynos::problem_base!`",
         )),
     }
-}
-
-/// The span of `thiserror`'s `#[error(transparent)]` among `attrs`: the item
-/// displays as the one field it holds, which a variant declaring no status of
-/// its own also answers as.
-pub(super) fn error_transparent(attrs: &[Attribute]) -> Option<Span> {
-    attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("error"))
-        .filter_map(|attr| attr.parse_args::<syn::Ident>().ok())
-        .find(|ident| ident == "transparent")
-        .map(|ident| ident.span())
 }
 
 /// Reads the `name = value` pairs of an item's `extension(...)` list into
