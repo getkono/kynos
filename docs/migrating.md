@@ -17,7 +17,9 @@ This is a guide, not a contract: nothing here is normative.
 
 A feature request's optional **Replaces** field names the downstream code the
 feature makes unnecessary. When that issue ships, its answer becomes a row in
-the section for the release that ships it.
+the section for the release that ships it. A release checks every `feat` entry
+for its row, as [`releasing.md`](releasing.md#what-the-pipeline-does-not-check)
+says.
 
 ## 0.6 to 0.7
 
