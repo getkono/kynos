@@ -423,28 +423,73 @@ struct Location {
 /// one of `on_response` and `on_abandoned` follows each `on_request`.
 struct Pending<C: Send + Sync + 'static> {
     dispatch: Arc<Dispatch<C>>,
-    routed: Result<Location, Unanswered>,
-    /// `None` where no observer is mounted, and once a response was reported.
-    owed: Option<Owed>,
+    routing: Routing,
+    /// When the request arrived: `None` where no observer is mounted, since
+    /// only an observer reads the clock, and once a response was reported.
+    started: Option<Instant>,
 }
 
-/// What an observer reads off a request that no longer exists by the time it
-/// is answered, kept only where one is mounted.
-struct Owed {
-    started: Instant,
-    /// Copied off the request, which the chain consumes; a standard method,
-    /// or an extension token of up to 15 bytes, copies without allocating.
-    method: crate::http::Method,
+/// Where routing sent a request, with the method it arrived with.
+///
+/// The method is kept because the chain consumes the request, and a `HEAD`'s
+/// answer and every observer still read it. A method a description can
+/// declare sits in the tag's padding, so this is as wide as a [`Location`]
+/// and its tag.
+#[derive(Debug)]
+enum Routing {
+    /// The operation at the location answers it.
+    Matched(Location, Method),
+    /// No operation answers it, though a description could declare its
+    /// method.
+    Unanswered(Unanswered, Method),
+    /// Its method is a token no description can declare, always answered by
+    /// [`Unanswered::Method`] naming no path: a 501. Boxed, so that every
+    /// other request carries a pointer's width for it rather than the
+    /// token's, and boxed observed or not, so that no state holds a request
+    /// an observer cannot name.
+    Unimplemented(Box<crate::http::Method>),
+}
+
+impl Routing {
+    /// Where the operation answering the request sits, if one does.
+    fn at(&self) -> Option<Location> {
+        match self {
+            Self::Matched(at, _) => Some(*at),
+            Self::Unanswered(..) | Self::Unimplemented(_) => None,
+        }
+    }
+
+    /// Whether the request is a `HEAD`, whose answer sends no content.
+    fn is_head(&self) -> bool {
+        match self {
+            Self::Matched(_, method) | Self::Unanswered(_, method) => *method == Method::Head,
+            Self::Unimplemented(_) => false,
+        }
+    }
+
+    /// The method the request arrived with.
+    fn arrived(&self) -> crate::http::Method {
+        match self {
+            Self::Matched(_, method) | Self::Unanswered(_, method) => {
+                // Never allocates: every wire name is one of `http`'s
+                // constants or a token short enough for it to inline.
+                crate::http::Method::from_bytes(method.as_wire_str().as_bytes())
+                    .expect("a wire name is a method token")
+            }
+            Self::Unimplemented(token) => crate::http::Method::clone(token),
+        }
+    }
 }
 
 impl<C: Send + Sync + 'static> Drop for Pending<C> {
     fn drop(&mut self) {
-        let Some(owed) = self.owed.take() else {
+        let Some(started) = self.started.take() else {
             return;
         };
 
-        let route = self.routed.ok().map(|at| self.dispatch.route_at(at));
-        let abandonment = Abandonment::new(&owed.method, route, owed.started.elapsed());
+        let method = self.routing.arrived();
+        let route = self.routing.at().map(|at| self.dispatch.route_at(at));
+        let abandonment = Abandonment::new(&method, route, started.elapsed());
         for observer in &self.dispatch.observers {
             observer.on_abandoned(&abandonment, &self.dispatch.context);
         }
@@ -468,76 +513,75 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         self: Arc<Self>,
         mut request: Request,
     ) -> impl Future<Output = Response> + Send + 'static {
-        // Only an observer reads the clock or the method.
-        let owed = (!self.observers.is_empty()).then(|| Owed {
-            started: Instant::now(),
-            method: request.method().clone(),
-        });
-        // Whatever answers a HEAD sends no content.
-        let head = request.method() == crate::http::Method::HEAD;
-        let routed = self.route(&mut request);
+        let started = (!self.observers.is_empty()).then(Instant::now);
+        let routing = self.route(&mut request);
         let mut pending = Pending {
             dispatch: self,
-            routed,
-            owed,
+            routing,
+            started,
         };
 
         async move {
             let this = &pending.dispatch;
             let response = 'served: {
-                let at = match pending.routed {
-                    Ok(at) => at,
-                    // Without interceptors nothing waits, so a fallback costs
-                    // only its answer and its observers.
-                    Err(unanswered) if this.interceptors.is_empty() => {
-                        break 'served this.answer(unanswered, &request);
-                    }
-                    Err(unanswered) => {
-                        let terminal = FallbackTerminal {
-                            dispatch: Arc::clone(this),
-                            unanswered,
-                        };
-                        break 'served this
-                            .chain(
-                                &this.interceptors,
-                                &terminal,
-                                None,
-                                this.catch_panics,
+                // Matched in place rather than into a `Result` of its own,
+                // which the future would keep a slot for across the chain.
+                let unanswered = 'unanswered: {
+                    let at = match pending.routing {
+                        Routing::Matched(at, _) => at,
+                        Routing::Unanswered(unanswered, _) => break 'unanswered unanswered,
+                        Routing::Unimplemented(_) => {
+                            break 'unanswered Unanswered::Method { path: None };
+                        }
+                    };
+
+                    let operation = &this.paths[at.path].operations[at.position];
+
+                    // A layer wraps the operation after routing, where an
+                    // interceptor runs.
+                    #[cfg(feature = "unchecked")]
+                    if !operation.unchecked_layers.is_empty() {
+                        let layered = if operation.catch_panics {
+                            Self::recovering_layers(Arc::clone(this), at, request)
+                        } else {
+                            crate::unchecked::through_layers(
+                                Arc::clone(this),
+                                at.path,
+                                at.position,
                                 request,
                             )
-                            .await;
+                        };
+                        break 'served match layered.await {
+                            Ok(response) => response,
+                            Err(never) => match never {},
+                        };
                     }
+
+                    break 'served this.run(operation, this.route_at(at), request).await;
                 };
 
-                let operation = &this.paths[at.path].operations[at.position];
-
-                // A layer wraps the operation after routing, where an
-                // interceptor runs.
-                #[cfg(feature = "unchecked")]
-                if !operation.unchecked_layers.is_empty() {
-                    let layered = if operation.catch_panics {
-                        Self::recovering_layers(Arc::clone(this), at, request)
-                    } else {
-                        crate::unchecked::through_layers(
-                            Arc::clone(this),
-                            at.path,
-                            at.position,
-                            request,
-                        )
-                    };
-                    break 'served match layered.await {
-                        Ok(response) => response,
-                        Err(never) => match never {},
-                    };
+                // Without interceptors nothing waits, so a fallback costs only
+                // its answer and its observers.
+                if this.interceptors.is_empty() {
+                    break 'served this.answer(unanswered, &request);
                 }
 
-                this.run(operation, this.route_at(at), request).await
+                let terminal = FallbackTerminal {
+                    dispatch: Arc::clone(this),
+                    unanswered,
+                };
+                this.chain(
+                    &this.interceptors,
+                    &terminal,
+                    None,
+                    this.catch_panics,
+                    request,
+                )
+                .await
             };
 
-            let owed = pending.owed.take();
-            pending
-                .dispatch
-                .finish(response, pending.routed.ok(), owed, head)
+            let started = pending.started.take();
+            pending.dispatch.finish(response, &pending.routing, started)
         }
     }
 
@@ -574,9 +618,22 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     ///
     /// Records what routing learned on the request and tells every observer
     /// about it, so all that is left of serving it is the waiting.
-    fn route(&self, request: &mut Request) -> Result<Location, Unanswered> {
-        let method = Method::from_wire_str(request.method().as_str());
+    fn route(&self, request: &mut Request) -> Routing {
+        let Some(method) = Method::from_wire_str(request.method().as_str()) else {
+            // RFC 9110 section 15.6.2: a 501 is about the server, not the
+            // resource, so no path is matched first.
+            self.unrouted(Unanswered::Method { path: None }, request);
+            return Routing::Unimplemented(Box::new(request.method().clone()));
+        };
 
+        match self.locate(method, request) {
+            Ok(at) => Routing::Matched(at, method),
+            Err(unanswered) => Routing::Unanswered(unanswered, method),
+        }
+    }
+
+    /// [`route`](Self::route), for a `method` a description can declare.
+    fn locate(&self, method: Method, request: &mut Request) -> Result<Location, Unanswered> {
         // Captures are ranges rather than borrows, so the request stays mutable.
         let (index, captures) = {
             let path = request.uri().path();
@@ -601,9 +658,9 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
         let entry = &self.paths[index];
 
-        let Some(position) = method.and_then(|method| entry.position(method)) else {
+        let Some(position) = entry.position(method) else {
             #[cfg(feature = "openapi32")]
-            if method == Some(Method::Options) && entry.answers_options() {
+            if method == Method::Options && entry.answers_options() {
                 return Err(self.unrouted(Unanswered::Options { path: index }, request));
             }
 
@@ -640,10 +697,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     }
 
     /// Whether some operation in the service answers `method`.
-    ///
-    /// `None` is a token no description can declare, which nothing answers.
-    fn implements(&self, method: Option<Method>) -> bool {
-        method.is_some_and(|method| self.implemented.contains(&method))
+    fn implements(&self, method: Method) -> bool {
+        self.implemented.contains(&method)
     }
 
     /// Where `request` came from, as far as the trusted proxies say.
@@ -811,25 +866,27 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// mid-response, is reported; without, nothing is added. A HEAD response sheds its content
     /// first, so an observer sees what the peer will.
     ///
-    /// `owed` is `None` exactly when no observer is mounted, since only an
+    /// `started` is `None` exactly when no observer is mounted, since only an
     /// observer reads it.
     fn finish(
         self: &Arc<Self>,
         response: Response,
-        at: Option<Location>,
-        owed: Option<Owed>,
-        head: bool,
+        routing: &Routing,
+        started: Option<Instant>,
     ) -> Response {
-        let response = if head {
+        // Whatever answers a HEAD sends no content.
+        let response = if routing.is_head() {
             without_content(response)
         } else {
             response
         };
 
-        let Some(Owed { started, method }) = owed else {
+        let Some(started) = started else {
             return response;
         };
 
+        let method = routing.arrived();
+        let at = routing.at();
         let route = at.map(|at| self.route_at(at));
         let exchange = Exchange::new(&method, &response, route, started.elapsed());
         for observer in &self.observers {

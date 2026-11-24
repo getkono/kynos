@@ -650,7 +650,8 @@ async fn a_request_dropped_before_its_response_is_reported_abandoned() {
 
 /// The future `Service::call` returns has already routed the request and told
 /// every observer of it, so dropping it unpolled abandons that request too,
-/// matched or not.
+/// matched or not, and with the token it arrived with where no description
+/// can declare its method.
 #[tokio::test]
 async fn a_request_never_polled_is_reported_abandoned() {
     let endings = Endings::default();
@@ -658,10 +659,15 @@ async fn a_request_never_polled_is_reported_abandoned() {
         .observe(endings.clone())
         .build(App::new())
         .expect("a describable router");
+    let purge = Method::from_bytes(b"PURGE").expect("a method token");
 
-    for target in ["/users/42", "/nowhere"] {
+    for (method, target) in [
+        (Method::DELETE, "/users/42"),
+        (Method::DELETE, "/nowhere"),
+        (purge, "/users/42"),
+    ] {
         let mut request = Request::new(kynos::http::body::Body::empty());
-        *request.method_mut() = Method::DELETE;
+        *request.method_mut() = method;
         *request.uri_mut() = target.parse().expect("a usable request target");
         drop(service.call(request));
     }
@@ -673,6 +679,8 @@ async fn a_request_never_polled_is_reported_abandoned() {
             "abandoned DELETE delete_user /users/{id}",
             "request DELETE <unmatched>",
             "abandoned DELETE <unmatched>",
+            "request PURGE <unmatched>",
+            "abandoned PURGE <unmatched>",
         ]
     );
 }
