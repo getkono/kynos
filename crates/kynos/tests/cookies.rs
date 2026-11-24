@@ -48,6 +48,18 @@ async fn sign_in(
     )
 }
 
+/// Sets the cookies an iterator yields, collected into one group.
+#[kynos::get("/preferences")]
+async fn preferences() -> WithHeaders<NoContent, SetCookieHeaders> {
+    WithHeaders::new(
+        NoContent,
+        [("theme", "dark"), ("locale", "en-GB")]
+            .into_iter()
+            .map(|(name, value)| Cookie::new(name, value).path("/"))
+            .collect(),
+    )
+}
+
 /// Every `Set-Cookie` a response was given, in order.
 fn cookies_on(reply: &support::Reply) -> Vec<String> {
     reply.fields(header::SET_COOKIE.as_str())
@@ -91,6 +103,24 @@ async fn a_handler_sets_a_cookie_it_minted_for_the_request() {
 
     assert_eq!(reply.status, StatusCode::NO_CONTENT);
     assert_eq!(cookies_on(&reply), ["sid=token-for-ada; Path=/; HttpOnly"]);
+}
+
+/// A collected iterator sends each cookie as its own field, in the order it
+/// yielded them rather than any sorted one.
+#[tokio::test]
+async fn a_handler_collects_cookies_into_fields_in_yield_order() {
+    let service = Router::<()>::new()
+        .mount(kynos::routes![preferences])
+        .build(())
+        .expect("a describable router");
+
+    let reply = get(&service, "/preferences").call().await;
+
+    assert_eq!(reply.status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        cookies_on(&reply),
+        ["theme=dark; Path=/", "locale=en-GB; Path=/"]
+    );
 }
 
 /// A source that reads the request decides per request.
