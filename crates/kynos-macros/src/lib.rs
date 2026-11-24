@@ -316,7 +316,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `const` is the struct's serde name: its container `rename`, the serialize
 /// side where the rename is split, otherwise its identifier, which `rename_all`
 /// does not reach. It carries no `discriminator`, a struct having no branches
-/// to tell apart, and a `transparent` struct writes no tag. A tuple is the
+/// to tell apart, and a `transparent` struct writes no tag. A type whose
+/// schema names a tag, an internally or adjacently tagged enum or a tagged
+/// named struct, also implements
+/// [`SerdeTagged`](https://docs.rs/kynos/latest/kynos/schema/trait.SerdeTagged.html),
+/// carrying the same names. A tuple is the
 /// array of the members serde does not skip both ways, and a newtype variant
 /// whose member serde skips is the unit variant serde writes, provided serde
 /// also reads it back. A newtype, and each

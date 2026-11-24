@@ -17,10 +17,12 @@
 //!   field is what a browser's `addEventListener` selects on; a serde tag inside
 //!   the data is what a consumer holding a parsed value branches on.
 //!   [`Event::tagged`] reads the name from `Update`'s serde tag, so the variant
-//!   is spelled once and a stream where the two disagree cannot be written.
+//!   is spelled once and a stream where the two disagree cannot be written. A
+//!   payload with no tag does not compile, and because a [`TaggedEvent`] has
+//!   no name of its own, the description lists every name `event` can carry.
 //! * **Resumption is a header and an identifier, and nothing else.** A client
 //!   that drops the connection reconnects with `Last-Event-ID` set to the last
-//!   [`Event::id`] it saw, and a browser does it without being asked. Minting
+//!   [`TaggedEvent::id`] it saw, and a browser does it without being asked. Minting
 //!   ids while ignoring the header is the worse of the two failures: it looks
 //!   resumable and replays from the beginning. [`LastEventId`] is the receive
 //!   half, named so the reconnect contract is a type rather than a string
@@ -59,7 +61,7 @@ use kynos::{
     prelude::*,
     response::stream::{
         Stream,
-        sse::{Event, KeepAlive, Sse},
+        sse::{Event, KeepAlive, Sse, TaggedEvent},
     },
     server::{Server, lifecycle::Draining},
 };
@@ -138,11 +140,11 @@ impl Feed {
 }
 
 impl Stream for Feed {
-    // A bare `Event`, because this feed cannot fail. One that can yields
-    // `Result<Event<Update>, E>` instead: its first error ends the stream, but
+    // A bare `TaggedEvent`, because this feed cannot fail. One that can yields
+    // `Result<TaggedEvent<Update>, E>` instead: its first error ends the stream, but
     // cannot retract the 200 already sent, which is why a streamed operation
     // should validate everything it can before it returns.
-    type Item = Event<Update>;
+    type Item = TaggedEvent<Update>;
 
     fn poll_next(mut self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.next_id == Self::MINTED {
@@ -206,7 +208,7 @@ async fn updates(LastEventId(resume): LastEventId, draining: Draining) -> Sse<Fe
 /// The return type names only the bound, which is what a handler writes when the
 /// stream's own type is an adapter's or cannot be spelled at all.
 #[kynos::get("/updates/burst")]
-async fn burst() -> Sse<impl Stream<Item = Event<Update>>> {
+async fn burst() -> Sse<impl Stream<Item = TaggedEvent<Update>>> {
     Sse::new(Feed::resuming_after(None))
 }
 
@@ -227,7 +229,9 @@ async fn main() -> kynos::Result<()> {
         .intercept(Compression::new().latency_mode(LatencyMode::Interactive));
 
     // `itemSchema` is what this prints that a 3.1 document could not: the shape
-    // of one event, rather than a claim that the body is one JSON value.
+    // of one event, rather than a claim that the body is one JSON value. Its
+    // `event` is an `enum` of `reading`, `alert` and `closed`, which a client
+    // generator can bind a listener to each of.
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
 

@@ -113,7 +113,8 @@
 //!
 //! # How this module is laid out
 //!
-//! The trait lives here; [`registry`] collects what a description refers to,
+//! [`Schema`] lives here, with [`SerdeTagged`] for a type serde writes under a
+//! tag of its own; [`registry`] collects what a description refers to,
 //! [`unchecked`] is the explicit escape from constraint, [`constraints`] holds
 //! what a derive attaches to a field, and [`flatten`] holds the markers that
 //! say how a type composes when `#[serde(flatten)]` makes its members another
@@ -239,6 +240,59 @@ pub trait Schema {
         reason = "the names are what rustdoc shows an implementor"
     )]
     fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {}
+}
+
+/// A type serde writes under a tag of its own: an internally or adjacently
+/// tagged enum, or a named struct carrying `#[serde(tag = "...")]`.
+///
+/// `#[derive(Schema)]` implements it for every such type, from the same
+/// reading of its serde attributes that names the tag in its schema, so the
+/// two cannot disagree. A type serde writes untagged has no implementation,
+/// and a bound on this trait refuses it at compile time.
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::schema::SerdeTagged;
+///
+/// #[derive(kynos::Schema, serde::Serialize)]
+/// #[serde(tag = "kind", rename_all = "snake_case")]
+/// enum ServerEvent {
+///     Tick { fingerprint: String },
+///     ShuttingDown,
+/// }
+///
+/// assert_eq!(ServerEvent::TAG, "kind");
+/// assert_eq!(ServerEvent::VARIANTS, ["tick", "shutting_down"]);
+/// assert_eq!(ServerEvent::ShuttingDown.variant(), "shutting_down");
+/// # }
+/// ```
+///
+/// A tagged struct is its own single variant, under its serde name.
+///
+/// Implement it by hand only beside a hand-written [`Schema`] for a type
+/// serde tags; the names are then yours to keep equal to what serde writes.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not written under a serde tag",
+    label = "untagged",
+    note = "tag it with `#[serde(tag = \"...\")]` and derive `kynos::Schema`, which implements \
+            `SerdeTagged` for an internally or adjacently tagged enum and a tagged named struct"
+)]
+pub trait SerdeTagged {
+    /// The member serde writes the tag as: the value of `#[serde(tag = "...")]`.
+    const TAG: &'static str;
+
+    /// Every value serde writes the tag with, one per variant serde writes, in
+    /// declaration order and renamed as serde renames them.
+    ///
+    /// A variant serde skips when serializing is not among them.
+    const VARIANTS: &'static [&'static str];
+
+    /// The value serde writes this value's tag with.
+    ///
+    /// One of [`VARIANTS`](Self::VARIANTS), save for a variant serde skips when
+    /// serializing, which serde refuses to write at all.
+    fn variant(&self) -> &'static str;
 }
 
 /// The component name of one instantiation of a generic type: `base`, then each
