@@ -263,6 +263,8 @@ impl Keys {
 }
 
 impl<C: Sync> Authenticator<AccessToken, C> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -346,6 +348,8 @@ fn unauthenticated_whatever<E>(error: E) -> AuthRejection {
 struct Passwords;
 
 impl<C: Sync> Authenticator<Basic<Credentials>, C> for Passwords {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<Credentials>,

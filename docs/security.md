@@ -537,9 +537,8 @@ stays wide for the same reason it always was.
 
 Where a handler's own error type also names 403, the two meet under
 [`errors.md`](errors.md#where-the-union-happens)'s union rule, which is why the
-narrowing has to reach the contributor that decides the status —
-`ScopedRejection<R>`, the rejection a `Scoped` argument raises — and not only
-the `Describe` beside it.
+narrowing is in what the guard itself declares, the contributor that decides
+the status, and not in a rejection type's `Responses` that no handler merges.
 
 ### An unreachable store is a 503, and the scheme opts in
 
@@ -568,13 +567,67 @@ keeps declaring 401 and 403 alone.
   `const` block, and the variant is `#[non_exhaustive]`, so it is not built any
   other way outside Kynos. The build checks that *some* scheme opted in, not
   that the operation is guarded by it, so two holes are left: an authenticator
-  naming a scheme other than its own, and a handler or custom guard whose error
-  type is `AuthRejection` or `ScopedRejection<R>`, which wraps one through
-  `From`, returning `unavailable::<S>()` on an operation no guard over `S`
-  covers. Neither type's `Responses` declares a 503, since neither knows a
-  scheme, and declaring one there would put a 503 on every operation that
-  names it. The conformance harness, which checks
-  each status against the description, is what finds either.
+  naming a scheme other than its own, and a handler whose error type is
+  `AuthRejection`, or holds one, returning `unavailable::<S>()` on an operation
+  no guard over `S` covers. `AuthRejection`'s `Responses` declares no 503,
+  since it knows no scheme, and declaring one there would put a 503 on every
+  operation that names it. The conformance harness, which checks each status
+  against the description, is what finds either.
+
+### An authenticator may fail with the application's own error
+
+A credential lookup can fail in a way that is neither a verdict on the
+credential nor an outage: a row that will not decode, a constraint the store
+broke. That is a 500, which no `AuthRejection` is, and an application whose
+problems carry its own members wants its own problem there besides. So
+`Authenticator` names what it fails with, `type Error`, which
+`Authorizer::authorize` shares: `AuthRejection` for an authenticator whose
+every failure is a 401, a 403 or a 503, and otherwise the application's own
+`#[derive(ApiError)]` type holding an `AuthRejection` in a transparent variant.
+
+```rust
+#[derive(Debug, thiserror::Error, ApiError)]
+enum SessionError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+    #[error("the session could not be read")]
+    #[problem(status = 500)]
+    Unreadable,
+}
+```
+
+- **Breaking, and one line where nothing else changes.** Associated type
+  defaults are unstable, so every authenticator names its error, and one that
+  needs only the three statuses writes `type Error = AuthRejection;`. A type
+  parameter defaulted on the trait was refused: a context's `Authenticates`
+  impl, and `#[provide(authenticates = S)]`, would then have to name the error
+  too, and one authenticator could implement it twice. An additive
+  `AuthRejection::internal()` was refused as well: it fixes the status and
+  leaves the body Kynos's, which is half of what the application asked for.
+- **`From<AuthRejection>` is required, not offered.** A guard answers its own
+  401, for an absent credential, through it, and `?` carries
+  `Presented::require`'s into it, so an authenticator never maps the three
+  statuses by hand. A transparent variant is the intended spelling, which is
+  why `AuthRejection` is one an `ApiError` may hold.
+- **The guard still owns the challenge.** It renders the error as a handler's
+  error is rendered, then writes `WWW-Authenticate` by the status sent: the
+  scheme's challenge on every 401, the application's own 401 included, and the
+  scope challenge on a 403 `authorize` refused. RFC 9110 section 11.6.1 does
+  not depend on which type said 401.
+- **The error's responses join the guard's.** The guard declares its own 401,
+  403 and 503 from its schemes as before, then every response the error
+  declares, so the 500 reaches the description of every operation the guard
+  covers. Only the context names the authenticator, so this half is declared
+  through the handler, which knows the context, rather than through the guard's
+  context-free `Describe`. `AuthRejection` adds nothing there, so an
+  authenticator naming it describes exactly what it did before. Nor does one
+  the error holds in a transparent variant: under a guard it declares the
+  guard's own refusals, not its wide 403, which would win the union and erase
+  a scope set's `FORBIDDEN_TYPE`. So the two spellings describe the same 401,
+  403 and 503, and the error's own statuses join them.
+- **One error per guard.** `AnyOf` and `AllOf` answer whichever scheme refused,
+  as one type, so every scheme they name fails with the same `Error`; two that
+  differ do not compile.
 
 ### A scheme with nothing to forbid opts out of the 403
 
@@ -597,7 +650,9 @@ while any one forbids, since each one's authenticator is consulted.
 - **The guard declares its own refusals.** A handler no longer merges a guard's
   `Rejection::responses` after its `Describe`: `AuthRejection` knows no scheme
   and would put the 403 back. Its `Responses`, the one a hand-written extractor
-  reaches, still declares it.
+  reaches, still declares it. An authenticator's own error is declared whole,
+  a 403 of its own included, since no scheme constrains it; an `AuthRejection`
+  it holds declares only what the guard does.
 
 ### What Kynos does not verify
 

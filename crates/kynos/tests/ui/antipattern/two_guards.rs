@@ -21,6 +21,8 @@ struct ServiceKey;
 struct Verifier;
 
 impl<S: Carries<Credential = String>, C: Sync> Authenticator<S, C> for Verifier {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         _: Presented<S::Presented>,

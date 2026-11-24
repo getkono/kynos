@@ -12,10 +12,11 @@ use kynos_openapi::{
 };
 
 use crate::{
-    error::rejection::{AuthRejection, ScopedRejection, auth_responses},
+    error::rejection::{AuthRejection, GuardRejection, auth_responses, guard_error_responses},
     extract::describe::Describe,
     http::{HeaderValue, Parts, StatusCode},
     router::operation::OperationCx,
+    schema::registry::Registry,
     security::{
         Guard, Scope,
         requirement::{self, CheckedBy, Requirement, Scopable, ScopeCheckedBy},
@@ -119,10 +120,15 @@ impl<S: Requirement> Describe for Auth<S> {
     /// [`Scopes::FORBIDDEN_TYPE`], since a bare scheme's authorizer may refuse
     /// with any problem type.
     fn describe(operation: &mut OperationCx<'_>) {
-        let security = S::declare(operation);
-        declare_reads::<S>(operation, false);
-        declare_requirement::<S>(operation, security);
+        describe_auth::<S>(operation, guard_error_responses::<AuthRejection>);
     }
+}
+
+/// [`Auth<S>`]'s description, declaring `own` beside its refusals.
+fn describe_auth<S: Requirement>(operation: &mut OperationCx<'_>, own: ErrorResponses) {
+    let security = S::declare(operation);
+    declare_reads::<S>(operation, false);
+    declare_requirement::<S>(operation, security, own);
 }
 
 impl<S: Requirement> sealed::Sealed for Auth<S> {}
@@ -132,14 +138,21 @@ where
     C: Sync,
     S: CheckedBy<C>,
 {
-    type Rejection = AuthRejection;
+    type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
+
+    fn __describe(operation: &mut OperationCx<'_>) {
+        describe_auth::<S>(
+            operation,
+            guard_error_responses::<<S as CheckedBy<C>>::Error>,
+        );
+    }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
         // The challenge is attached here so it is the string `describe`
         // declared; an absent credential is `Auth`'s own 401.
         S::check(parts, context)
             .await
-            .and_then(|checked| checked.ok_or_else(AuthRejection::unauthenticated))
+            .and_then(|checked| checked.ok_or_else(GuardRejection::unauthenticated))
             .map(Self)
             .map_err(|rejection| rejection.with_challenge(S::challenge()))
     }
@@ -189,12 +202,17 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
     /// Declares its 403 as [`Auth`] does, narrowed to
     /// [`Requirement::forbidden_type`].
     fn describe(operation: &mut OperationCx<'_>) {
-        let mut security = vec![SecurityRequirement::anonymous()];
-        security.extend(S::declare(operation));
-        // An anonymous request reads none of them.
-        declare_reads::<S>(operation, true);
-        declare_requirement::<S>(operation, security);
+        describe_maybe_auth::<S>(operation, guard_error_responses::<AuthRejection>);
     }
+}
+
+/// [`MaybeAuth<S>`]'s description, declaring `own` beside its refusals.
+fn describe_maybe_auth<S: Requirement>(operation: &mut OperationCx<'_>, own: ErrorResponses) {
+    let mut security = vec![SecurityRequirement::anonymous()];
+    security.extend(S::declare(operation));
+    // An anonymous request reads none of them.
+    declare_reads::<S>(operation, true);
+    declare_requirement::<S>(operation, security, own);
 }
 
 impl<S: Requirement> sealed::Sealed for MaybeAuth<S> {}
@@ -204,7 +222,14 @@ where
     C: Sync,
     S: CheckedBy<C>,
 {
-    type Rejection = AuthRejection;
+    type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
+
+    fn __describe(operation: &mut OperationCx<'_>) {
+        describe_maybe_auth::<S>(
+            operation,
+            guard_error_responses::<<S as CheckedBy<C>>::Error>,
+        );
+    }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
         // Absent is anonymity; malformed and present are the authenticator's.
@@ -428,21 +453,29 @@ impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
 
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let security = S::declare_scoped(operation, R::REQUIRED);
-        declare_reads::<S>(operation, false);
-        // `Scoped` always authorizes, so each scheme may always refuse a scope.
-        let challenges = Challenges {
-            unauthenticated: S::challenge(),
-            insufficient_scope: S::scope_challenge(),
-        };
-        // Nor can a scheme that never forbids drop the 403 a scope refusal is.
-        let refusals = Refusals {
-            forbidden_type: R::FORBIDDEN_TYPE,
-            forbids: true,
-            unavailable: S::MAY_BE_UNAVAILABLE,
-        };
-        declare(operation, challenges, security, refusals);
+        describe_scoped::<S, R>(operation, guard_error_responses::<AuthRejection>);
     }
+}
+
+/// [`Scoped<S, R>`]'s description, declaring `own` beside its refusals.
+fn describe_scoped<S: Scopable, R: Scopes<Scope = S::Scope>>(
+    operation: &mut OperationCx<'_>,
+    own: ErrorResponses,
+) {
+    let security = S::declare_scoped(operation, R::REQUIRED);
+    declare_reads::<S>(operation, false);
+    // `Scoped` always authorizes, so each scheme may always refuse a scope.
+    let challenges = Challenges {
+        unauthenticated: S::challenge(),
+        insufficient_scope: S::scope_challenge(),
+    };
+    // Nor can a scheme that never forbids drop the 403 a scope refusal is.
+    let refusals = Refusals {
+        forbidden_type: R::FORBIDDEN_TYPE,
+        forbids: true,
+        unavailable: S::MAY_BE_UNAVAILABLE,
+    };
+    declare(operation, challenges, security, refusals, own);
 }
 
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> sealed::Sealed for Scoped<S, R> {}
@@ -453,22 +486,34 @@ where
     S: ScopeCheckedBy<C>,
     R: Scopes<Scope = S::Scope>,
 {
-    /// [`AuthRejection`] described against `R`, which is what narrows the 403
-    /// this argument declares.
-    type Rejection = ScopedRejection<R>;
+    type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
+
+    fn __describe(operation: &mut OperationCx<'_>) {
+        describe_scoped::<S, R>(
+            operation,
+            guard_error_responses::<<S as CheckedBy<C>>::Error>,
+        );
+    }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
         // Every refusal is challenged: an `authorize` answering 401 owes one
         // too. An absent credential is `Scoped`'s own 401.
         S::check_scoped(parts, context, R::REQUIRED)
             .await
-            .and_then(|checked| checked.ok_or_else(AuthRejection::unauthenticated))
+            .and_then(|checked| checked.ok_or_else(GuardRejection::unauthenticated))
             .map(|credential| Self(credential, std::marker::PhantomData))
-            .map_err(|rejection| ScopedRejection::new(rejection.with_challenge(S::challenge())))
+            .map_err(|rejection| rejection.with_challenge(S::challenge()))
     }
 }
 
-/// Sets the operation's `security` to the guard's, and declares how it refuses.
+/// What the error a guard's schemes fail with declares, given the guard's own
+/// refusals: [`guard_error_responses`] for that error, and for
+/// [`AuthRejection`] where only the context-free [`Describe`] runs.
+type ErrorResponses = fn(&mut Registry, &kynos_openapi::Responses) -> kynos_openapi::Responses;
+
+/// Sets the operation's `security` to the guard's, and declares how it refuses:
+/// its own 401, 403 and 503 as `refusals` allows, joined with what `own` says
+/// the error its schemes fail with declares beside them.
 ///
 /// `security` is the guard's whole list, set once rather than appended to.
 fn declare(
@@ -476,16 +521,20 @@ fn declare(
     challenges: Challenges,
     security: Vec<SecurityRequirement>,
     refusals: Refusals,
+    own: ErrorResponses,
 ) {
     // Before the header: `add_response_header` invents a thin 401 when none is
-    // declared, and merging cannot replace an existing response.
-    let responses = auth_responses(
+    // declared, and merging cannot replace an existing response. `own` joins
+    // first too, so the challenge every 401 carries stays required.
+    let mut responses = auth_responses(
         operation.registry(),
         refusals.forbidden_type,
         refusals.forbids,
         refusals.unavailable,
         true,
     );
+    let own = own(operation.registry(), &responses);
+    crate::response::headers::union_from(&mut responses, &own);
     operation.add_responses(&responses);
 
     // RFC 9110 section 15.5.2: a 401 MUST carry a challenge. A scheme that
@@ -534,10 +583,12 @@ fn declare_reads<S: Requirement>(operation: &mut OperationCx<'_>, optional: bool
 }
 
 /// [`declare`] for a guard over requirement `S` itself, [`Auth`] or
-/// [`MaybeAuth`]: `S`'s challenges and refusals, as its members state them.
+/// [`MaybeAuth`]: `S`'s challenges and refusals, as its members state them,
+/// and `own`.
 fn declare_requirement<S: Requirement>(
     operation: &mut OperationCx<'_>,
     security: Vec<SecurityRequirement>,
+    own: ErrorResponses,
 ) {
     let challenges = Challenges {
         unauthenticated: S::challenge(),
@@ -548,7 +599,7 @@ fn declare_requirement<S: Requirement>(
         forbids: S::FORBIDS,
         unavailable: S::MAY_BE_UNAVAILABLE,
     };
-    declare(operation, challenges, security, refusals);
+    declare(operation, challenges, security, refusals, own);
 }
 
 /// Which refusals beside the 401 a guard declares, as [`declare`] declares

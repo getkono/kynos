@@ -44,8 +44,12 @@ use std::{borrow::Cow, future::Future, marker::PhantomData};
 use kynos_openapi::{ComponentName, Parameter, SecurityRequirement};
 
 use crate::{
-    error::rejection::AuthRejection,
+    error::{
+        problem::IntoProblem,
+        rejection::{AuthRejection, GuardRejection},
+    },
     http::Parts,
+    response::{IntoResponse, Responses},
     router::operation::OperationCx,
     schema::registry::Registry,
     security::{
@@ -228,14 +232,18 @@ pub trait Member: sealed::Sealed + 'static {
 /// requirement names, so a router guarding an operation with it cannot be built
 /// on a context that could not verify it.
 pub trait CheckedBy<C>: Requirement {
+    /// What checking fails with: the
+    /// [`Authenticator::Error`] every scheme named shares.
+    type Error: IntoProblem + IntoResponse + Responses + From<AuthRejection> + Send + 'static;
+
     /// Reads and verifies the credential the request presented.
     ///
     /// `Ok(None)` is *absent*: nothing this requirement reads was presented.
-    /// The challenge is left unset, for the guard to attach.
+    /// The 401's challenge is left unset, for the guard to attach.
     fn check(
         parts: &Parts,
         context: &C,
-    ) -> impl Future<Output = Result<Option<Self::Credential>, AuthRejection>> + Send;
+    ) -> impl Future<Output = Result<Option<Self::Credential>, GuardRejection<Self::Error>>> + Send;
 }
 
 /// A [`Requirement`] a [`Scoped`] guard can
@@ -274,7 +282,7 @@ pub trait Scopable: Requirement {
 ///
 /// Implemented wherever `C` implements [`Authenticates`] for every scheme the
 /// requirement names, as [`CheckedBy`] is.
-pub trait ScopeCheckedBy<C>: Scopable {
+pub trait ScopeCheckedBy<C>: Scopable + CheckedBy<C> {
     /// Reads and verifies the credential the request presented, and authorizes
     /// it for its scheme's default scopes and `required` in one call.
     ///
@@ -284,7 +292,7 @@ pub trait ScopeCheckedBy<C>: Scopable {
         parts: &Parts,
         context: &C,
         required: &'static [Self::Scope],
-    ) -> impl Future<Output = Result<Option<Self::Credential>, AuthRejection>> + Send;
+    ) -> impl Future<Output = Result<Option<Self::Credential>, GuardRejection<Self::Error>>> + Send;
 }
 
 impl<S: SecurityScheme> sealed::Sealed for S {}
@@ -322,7 +330,12 @@ where
     S: Carries,
     C: Authenticates<S>,
 {
-    async fn check(parts: &Parts, context: &C) -> Result<Option<S::Credential>, AuthRejection> {
+    type Error = ErrorOf<S, C>;
+
+    async fn check(
+        parts: &Parts,
+        context: &C,
+    ) -> Result<Option<S::Credential>, GuardRejection<Self::Error>> {
         check_member::<S, C>(parts, context).await
     }
 }
@@ -394,7 +407,7 @@ where
         parts: &Parts,
         context: &C,
         required: &'static [<S as SecurityScheme>::Scope],
-    ) -> Result<Option<S::Credential>, AuthRejection> {
+    ) -> Result<Option<S::Credential>, GuardRejection<Self::Error>> {
         present_and_verify::<S, C>(parts, context, || Some(demanded::<S>(required))).await
     }
 }
@@ -419,6 +432,66 @@ where
 ///         Either2::Second(credentials) => todo!("a username and password"),
 ///     }
 /// }
+/// ```
+///
+/// Whichever alternative refuses, the guard answers with one type, so every
+/// scheme's authenticator fails with the same
+/// [`Error`](Authenticator::Error), as in an [`AllOf`]. Two that differ do not
+/// check:
+///
+/// ```compile_fail,E0271
+/// use kynos::{
+///     ApiError,
+///     error::rejection::AuthRejection,
+///     security::{
+///         Authenticates, Authenticator, Head,
+///         carrier::{BearerToken, Credentials, presented::Presented},
+///         requirement::{AnyOf, CheckedBy},
+///         schemes::{Basic, Bearer},
+///     },
+/// };
+///
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum LookupError {
+///     #[error(transparent)]
+///     Rejected(#[from] AuthRejection),
+/// }
+///
+/// struct App;
+///
+/// impl Authenticator<Bearer, App> for App {
+///     type Error = LookupError;
+///
+///     async fn authenticate(
+///         &self, _: Presented<BearerToken>, _: Head<'_>, _: &App,
+///     ) -> Result<String, LookupError> {
+///         Err(AuthRejection::unauthenticated().into())
+///     }
+/// }
+///
+/// impl Authenticator<Basic, App> for App {
+///     type Error = AuthRejection;
+///
+///     async fn authenticate(
+///         &self, _: Presented<Credentials>, _: Head<'_>, _: &App,
+///     ) -> Result<Credentials, AuthRejection> {
+///         Err(AuthRejection::unauthenticated())
+///     }
+/// }
+///
+/// impl Authenticates<Bearer> for App {
+///     type Authenticator = App;
+///     fn authenticator(&self) -> &App { self }
+/// }
+///
+/// impl Authenticates<Basic> for App {
+///     type Authenticator = App;
+///     fn authenticator(&self) -> &App { self }
+/// }
+///
+/// fn checked<R: CheckedBy<App>>() {}
+///
+/// checked::<AnyOf<(Bearer, Basic)>>();
 /// ```
 pub struct AnyOf<T>(PhantomData<fn() -> T>);
 
@@ -514,9 +587,9 @@ pub(in crate::security) fn optional(mut reads: Vec<Parameter>) -> Vec<Parameter>
 /// One [`AnyOf`] alternative's outcome: its credential where it was satisfied,
 /// and otherwise `None`, keeping the first refusal in `refused`. An absent
 /// credential is skipped.
-fn satisfied<T>(
-    checked: Result<Option<T>, AuthRejection>,
-    refused: &mut Option<AuthRejection>,
+fn satisfied<T, E>(
+    checked: Result<Option<T>, GuardRejection<E>>,
+    refused: &mut Option<GuardRejection<E>>,
 ) -> Option<T> {
     checked.unwrap_or_else(|rejection| {
         refused.get_or_insert(rejection);
@@ -572,11 +645,17 @@ macro_rules! any_of {
         where
             $($scheme: Member<Scheme: Carries>,)+
             $(C: Authenticates<SchemeOf<$scheme>>,)+
+            $(
+                <C as Authenticates<SchemeOf<$rest>>>::Authenticator:
+                    Authenticator<SchemeOf<$rest>, C, Error = ErrorOf<SchemeOf<$first>, C>>,
+            )+
         {
+            type Error = ErrorOf<SchemeOf<$first>, C>;
+
             async fn check(
                 parts: &Parts,
                 context: &C,
-            ) -> Result<Option<Self::Credential>, AuthRejection> {
+            ) -> Result<Option<Self::Credential>, GuardRejection<Self::Error>> {
                 let mut refused = None;
                 $(
                     let checked = check_member::<$scheme, C>(parts, context).await;
@@ -619,12 +698,16 @@ macro_rules! any_of {
             $first: Carries,
             $($rest: Carries<Scope = <$first as SecurityScheme>::Scope>,)+
             $(C: Authenticates<$scheme>,)+
+            $(
+                <C as Authenticates<$rest>>::Authenticator:
+                    Authenticator<$rest, C, Error = ErrorOf<$first, C>>,
+            )+
         {
             async fn check_scoped(
                 parts: &Parts,
                 context: &C,
                 required: &'static [<$first as SecurityScheme>::Scope],
-            ) -> Result<Option<Self::Credential>, AuthRejection> {
+            ) -> Result<Option<Self::Credential>, GuardRejection<Self::Error>> {
                 // `check`'s order and precedence, with `required` demanded of
                 // whichever alternative is tried.
                 let mut refused = None;
@@ -644,7 +727,7 @@ macro_rules! any_of {
 
 /// Implements [`Requirement`] and [`CheckedBy`] for one [`AllOf`] arity.
 macro_rules! all_of {
-    ($($scheme:ident),+) => {
+    ($first:ident; $($scheme:ident),+; $($rest:ident),+) => {
         impl<$($scheme: Member),+> sealed::Sealed for AllOf<($($scheme,)+)> {}
 
         impl<$($scheme: Member),+> Requirement for AllOf<($($scheme,)+)> {
@@ -684,12 +767,18 @@ macro_rules! all_of {
         where
             $($scheme: Member<Scheme: Carries>,)+
             $(C: Authenticates<SchemeOf<$scheme>>,)+
+            $(
+                <C as Authenticates<SchemeOf<$rest>>>::Authenticator:
+                    Authenticator<SchemeOf<$rest>, C, Error = ErrorOf<SchemeOf<$first>, C>>,
+            )+
         {
+            type Error = ErrorOf<SchemeOf<$first>, C>;
+
             #[allow(non_snake_case)]
             async fn check(
                 parts: &Parts,
                 context: &C,
-            ) -> Result<Option<Self::Credential>, AuthRejection> {
+            ) -> Result<Option<Self::Credential>, GuardRejection<Self::Error>> {
                 // Every carrier before any verifier, so a missing credential
                 // costs no verification of the others.
                 $( let $scheme = <SchemeOf<$scheme> as Carries>::present(parts); )+
@@ -698,7 +787,7 @@ macro_rules! all_of {
                     return Ok(None);
                 }
                 if absent.iter().any(|absent| *absent) {
-                    return Err(AuthRejection::unauthenticated());
+                    return Err(GuardRejection::unauthenticated());
                 }
                 // Every authentication before any authorization, so a request
                 // one scheme cannot authenticate is a 401, never a 403, and is
@@ -725,9 +814,9 @@ any_of!(Either2; A; A => First, B => Second; B);
 any_of!(Either3; A; A => First, B => Second, D => Third; B, D);
 any_of!(Either4; A; A => First, B => Second, D => Third, E => Fourth; B, D, E);
 
-all_of!(A, B);
-all_of!(A, B, D);
-all_of!(A, B, D, E);
+all_of!(A; A, B; B);
+all_of!(A; A, B, D; B, D);
+all_of!(A; A, B, D, E; B, D, E);
 
 /// Reads scheme `S`'s credential and, unless it is absence the guard answers,
 /// verifies it for the `scopes` that are then computed.
@@ -735,7 +824,7 @@ async fn present_and_verify<S, C>(
     parts: &Parts,
     context: &C,
     scopes: impl FnOnce() -> Option<Cow<'static, [S::Scope]>>,
-) -> Result<Option<S::Credential>, AuthRejection>
+) -> Result<Option<S::Credential>, GuardRejection<ErrorOf<S, C>>>
 where
     S: Carries,
     C: Authenticates<S>,
@@ -767,7 +856,7 @@ async fn verify<S, C>(
     parts: &Parts,
     scopes: Option<&[S::Scope]>,
     context: &C,
-) -> Result<S::Credential, AuthRejection>
+) -> Result<S::Credential, GuardRejection<ErrorOf<S, C>>>
 where
     S: Carries,
     C: Authenticates<S>,
@@ -785,7 +874,7 @@ async fn authenticate<S, C>(
     presented: Presented<S::Presented>,
     parts: &Parts,
     context: &C,
-) -> Result<S::Credential, AuthRejection>
+) -> Result<S::Credential, GuardRejection<ErrorOf<S, C>>>
 where
     S: Carries,
     C: Authenticates<S>,
@@ -794,7 +883,7 @@ where
         .authenticator()
         .authenticate(presented, Head::new(parts), context)
         .await
-        .map_err(|rejection| rejection.with_scope_challenge(None))
+        .map_err(GuardRejection::new)
 }
 
 /// Authorizes `credential` for scheme `S`'s `scopes` where they are given, and
@@ -807,7 +896,7 @@ async fn authorize<S, C>(
     credential: S::Credential,
     scopes: Option<&[S::Scope]>,
     context: &C,
-) -> Result<S::Credential, AuthRejection>
+) -> Result<S::Credential, GuardRejection<ErrorOf<S, C>>>
 where
     S: Carries,
     C: Authenticates<S>,
@@ -819,8 +908,8 @@ where
             .await
             // The scheme's own, not `Requirement`'s, which only a guard naming
             // no scope set may declare.
-            .map_err(|rejection| {
-                rejection
+            .map_err(|error| {
+                GuardRejection::new(error)
                     .with_scope_challenge(<S as SecurityScheme>::insufficient_scope_challenge())
             })?;
     }
@@ -848,12 +937,15 @@ type SchemeOf<M> = <M as Member>::Scheme;
 /// What satisfying member `M` yields: its scheme's credential.
 type CredentialOf<M> = <SchemeOf<M> as SecurityScheme>::Credential;
 
+/// What context `C`'s authenticator for scheme `S` fails with.
+type ErrorOf<S, C> = <<C as Authenticates<S>>::Authenticator as Authenticator<S, C>>::Error;
+
 /// Reads member `M`'s credential and, unless it is absent, verifies it and
 /// authorizes it for [`Member::scopes`].
 async fn check_member<M, C>(
     parts: &Parts,
     context: &C,
-) -> Result<Option<CredentialOf<M>>, AuthRejection>
+) -> Result<Option<CredentialOf<M>>, GuardRejection<ErrorOf<M::Scheme, C>>>
 where
     M: Member<Scheme: Carries>,
     C: Authenticates<M::Scheme>,

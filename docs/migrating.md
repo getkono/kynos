@@ -51,6 +51,8 @@ the section for the release that ships it.
 | An `Observer` holding its own clone of a metrics registry the context already owns, cloned out before `build` | read it from the `context` that `Observer::on_response` now receives, as `on_request` does | #1432 |
 | An `Interceptor` whose only job is a `Drop` guard decrementing an in-flight gauge, since a request abandoned before its response reached no `Observer` method | `Observer::on_request` +1, and `on_response` / `on_abandoned` −1: exactly one of the two follows each `on_request` | #1399 |
 | `<unmatched>` as the method label of a request no operation matched, since `on_response` was handed no method | `exchange.method` (`middleware::Exchange`), the method the request arrived with, matched or not | #1399 |
+| A credential type wrapping `Result<Account, StoreError>`, so a lookup failure that is no outage could reach a 500, and an authorizer admitting its `Err` unchecked | `type Error = AuthError;` on the `security::Authenticator`, an `ApiError` holding `error::rejection::AuthRejection` in a transparent variant beside its own 500, and `?` inside `authenticate` | #1421 |
+| `auth.into_inner().resolve()?` at the top of every protected handler, unwrapping that deferred failure | `auth.into_inner()`: the guard already answered with the authenticator's error | #1421 |
 
 ## 0.5 to 0.6
 

@@ -81,27 +81,6 @@ const UNRECEIVABLE: &[&str] = &[
     "Late",
 ];
 
-/// A scope set for `ScopedRejection`, which is generic over one.
-struct ReadOnly;
-
-#[derive(Clone, Copy)]
-enum Grant {
-    Read,
-}
-
-impl kynos::security::Scope for Grant {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Read => "read",
-        }
-    }
-}
-
-impl kynos::security::auth::Scopes for ReadOnly {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::Read];
-}
-
 reportable! {
     /// The framework's own failure is what every example returns from `main`,
     /// so this is the one that decides whether an application may keep its own
@@ -157,7 +136,7 @@ reportable! {
         kynos::error::rejection::RangeRejection;
         kynos::error::rejection::ConnectInfoRejection;
         kynos::error::rejection::AuthRejection;
-        kynos::error::rejection::ScopedRejection<ReadOnly>;
+        kynos::error::rejection::GuardRejection;
     }
 
     /// A stalled body's read fails with this, and a handler reading its body

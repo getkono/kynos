@@ -73,6 +73,8 @@ struct UploadKey;
 struct Keys;
 
 impl Authenticator<UploadKey, Gate> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,

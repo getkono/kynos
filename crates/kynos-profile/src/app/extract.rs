@@ -52,6 +52,8 @@ pub(crate) struct ServiceKey;
 pub(crate) struct Keys;
 
 impl Authenticator<Bearer<Caller>, App> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -66,6 +68,8 @@ impl Authenticator<Bearer<Caller>, App> for Keys {
 }
 
 impl Authenticator<Basic<Caller>, App> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<Credentials>,
@@ -82,6 +86,8 @@ impl Authenticator<Basic<Caller>, App> for Keys {
 }
 
 impl Authenticator<ServiceKey, App> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,
