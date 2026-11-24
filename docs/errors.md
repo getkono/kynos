@@ -426,7 +426,8 @@ The text replaces the joined summaries and nothing else: each variant's
 `title` still reaches the wire and its branch, and a lone branch keeps its
 `title` too, since the description no longer says it. It is what the whole
 enum says of the status, so it is written over what a transparent variant's
-held error joins to it, may describe a status only that error answers with,
+held error joins to it, whose lone branch keeps the title its own description
+said, may describe a status only that error answers with,
 and describes a subset of the enum as well. A subset writes none of its own,
 as it declares nothing else of its own. A struct has no `describe`: it fails
 one way, so its `title` is its status's description already.

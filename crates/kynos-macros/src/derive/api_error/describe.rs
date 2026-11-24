@@ -60,12 +60,16 @@ pub(super) fn responses(
         entry(*status, text(*status), &declaring, &kept)
     });
 
+    // A held error's lone branch is titled at each of these first, as the
+    // description that said its title is about to be written over.
+    let written = described.iter().map(|described| described.status);
+    let written = quote!(&[#(#written),*]);
     let handed_over = delegates.iter().map(|delegate| {
         let kept = kept(Some(&delegate.variant));
         let held = delegate.responses();
         quote! {
             if #kept {
-                ::kynos::__private::problem::union_responses(&mut responses, &#held);
+                ::kynos::__private::problem::union_responses(&mut responses, #held, #written);
             }
         }
     });

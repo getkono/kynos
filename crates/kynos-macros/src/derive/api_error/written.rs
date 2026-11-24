@@ -4,7 +4,9 @@
 //!
 //! The text reaches the response through `kynos::__private::problem::response`,
 //! where a lone branch then keeps its summary as its title, and is written
-//! again over a transparent variant's union by [`rewritten`].
+//! again over a transparent variant's union by [`rewritten`], once
+//! `union_responses` has titled the held error's lone branches at the statuses
+//! it writes, so they keep their titles too.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};

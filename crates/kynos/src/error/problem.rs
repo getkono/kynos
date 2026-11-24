@@ -7,7 +7,8 @@ use serde::ser::SerializeMap;
 use serde_json::Value;
 
 use kynos_openapi::{
-    ComponentName, Map, MediaType, Response, Schema as OpenApiSchema, SchemaObject,
+    ComponentName, Map, MediaType, RefOr, Response, Responses, Schema as OpenApiSchema,
+    SchemaObject,
     model::{
         body::mime_names::APPLICATION_PROBLEM_JSON,
         schema::types::{SchemaType, TypeSet},
@@ -556,6 +557,40 @@ pub(crate) fn written_response(
         // its own as its title rather than losing it.
         Some(described) => described_response(problem, described.to_owned(), branches, true),
         None => narrowed_response(problem, status, branches),
+    }
+}
+
+/// A transparent variant's `held` responses, readied for an enum writing the
+/// description of each status in `written` over them: there a lone branch the
+/// held error left untitled, since its description said it, takes that
+/// description as its title, as [`title_lone_branch`] says.
+pub(crate) fn titled(mut held: Responses, written: &[u16]) -> Responses {
+    for status in written {
+        if let Some(RefOr::Item(response)) = held.responses.get_mut(&status.to_string()) {
+            title_lone_branch(response);
+        }
+    }
+    held
+}
+
+/// Gives `response`'s lone problem branch its description as its title, where
+/// the branch carries none, since another description is about to be written
+/// over the one that said it.
+///
+/// [`narrowed_response`] leaves a lone branch untitled because its description
+/// is its title; the branches of a `oneOf`, a titled branch, and any schema
+/// that is not a narrowed branch are left as they are.
+pub(crate) fn title_lone_branch(response: &mut Response) {
+    let Some(description) = &response.description else {
+        return;
+    };
+    let Some(RefOr::Item(media)) = response.content.get_mut(APPLICATION_PROBLEM_JSON) else {
+        return;
+    };
+    if let Some(OpenApiSchema::Object(branch)) = &mut media.schema {
+        if branch.title.is_none() && branch.one_of.is_none() && branch.all_of.is_some() {
+            branch.title = Some(description.clone());
+        }
     }
 }
 

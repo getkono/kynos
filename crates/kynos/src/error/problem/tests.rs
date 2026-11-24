@@ -6,15 +6,18 @@
 //! as readably: two failures publishing one type, the constants they union
 //! and the unions that stay an `anyOf`, two sharing one summary, a status
 //! whose failures gave no summary at all, which titles a status whose
-//! description the declaration wrote keeps, and a status with no failure
-//! answering it -- which no caller can emit and this refuses.
+//! description the declaration wrote keeps, which untitled lone branch is
+//! titled before a written description replaces its own, and a status with no
+//! failure answering it -- which no caller can emit and this refuses.
 //!
 //! One case is about the wire rather than a declaration: an extension keyed
 //! like a registered member, which the hand-written `Serialize` drops.
 
 use serde_json::Value;
 
-use crate::error::problem::{Branch, Member, constant, narrowed_response, written_response};
+use crate::error::problem::{
+    Branch, Member, constant, narrowed_response, title_lone_branch, written_response,
+};
 
 /// The `Problem` component, as `Registry::resolve` hands it over.
 fn component() -> kynos_openapi::Schema {
@@ -302,6 +305,63 @@ fn a_written_description_replaces_the_summaries_and_frees_a_lone_title() {
     assert_eq!(
         composed["content"]["application/problem+json"]["schema"]["title"],
         Value::Null
+    );
+}
+
+/// Before an enum's written description replaces a held error's, a lone
+/// branch that error left untitled takes the description that said its title;
+/// a lone branch already titled, the branches of a `oneOf`, and a schema that
+/// narrows nothing keep what they declare.
+#[test]
+fn a_lone_branch_is_titled_by_the_description_about_to_be_replaced() {
+    let unknown = (
+        Some("https://errors.example.com/unknown"),
+        Some("Unknown origin"),
+        &[][..],
+    );
+    let malformed = (
+        Some("https://errors.example.com/malformed-origin"),
+        Some("Malformed Origin header"),
+        &[][..],
+    );
+    let titled = |mut response: kynos_openapi::Response| {
+        title_lone_branch(&mut response);
+        serde_json::to_value(response).expect("a response serializes")
+    };
+
+    let lone = titled(narrowed_response(&component(), 404, &[unknown]));
+    assert_eq!(
+        lone["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Unknown origin"),
+        "{lone}"
+    );
+
+    let written = titled(written_response(
+        &component(),
+        404,
+        Some("No such origin is registered"),
+        &[unknown],
+    ));
+    assert_eq!(
+        written["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Unknown origin"),
+        "{written}"
+    );
+
+    let several = narrowed_response(&component(), 404, &[unknown, malformed]);
+    assert_eq!(
+        titled(several.clone()),
+        serde_json::to_value(several).expect("a response serializes")
+    );
+
+    let unnarrowed = kynos_openapi::Response::with_content(
+        "Not Found",
+        "application/problem+json",
+        kynos_openapi::MediaType::new(component()),
+    );
+    assert_eq!(
+        titled(unnarrowed.clone()),
+        serde_json::to_value(unnarrowed).expect("a response serializes")
     );
 }
 
