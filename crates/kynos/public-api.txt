@@ -4179,6 +4179,7 @@ impl<T> kynos::middleware::csrf::Csrf<T>
 pub fn kynos::middleware::csrf::Csrf<T>::check(&self, &kynos::http::Parts) -> core::result::Result<(), kynos::middleware::csrf::CrossSiteReason>
 pub fn kynos::middleware::csrf::Csrf<T>::permits(&self, &kynos::http::Parts) -> bool
 pub fn kynos::middleware::csrf::Csrf<T>::trusting_origin(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
+pub fn kynos::middleware::csrf::Csrf<T>::trusting_origins<I, S>(self, I) -> Self where I: core::iter::traits::collect::IntoIterator<Item = S>, S: core::convert::Into<alloc::borrow::Cow<'static, str>>
 pub fn kynos::middleware::csrf::Csrf<T>::when<C>(self, fn(&C) -> bool) -> kynos::middleware::csrf::CsrfWhen<C, T>
 impl<C, T> kynos::middleware::Interceptor<C> for kynos::middleware::csrf::Csrf<T> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::csrf::Csrf<T>::Adds = ()
