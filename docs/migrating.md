@@ -56,6 +56,8 @@ by task.
 | An `Observer` holding its own clone of a metrics registry the context already owns, cloned out before `build` | read it from the `context` that `Observer::on_response` now receives, as `on_request` does | #1432 |
 | An `Interceptor` whose only job is a `Drop` guard decrementing an in-flight gauge, since a request abandoned before its response reached no `Observer` method | `Observer::on_request` +1, and `on_response` / `on_abandoned` −1: exactly one of the two follows each `on_request` | #1399 |
 | `<unmatched>` as the method label of a request no operation matched, since `on_response` was handed no method | `exchange.method` (`middleware::Exchange`), the method the request arrived with, matched or not | #1399 |
+| A `multipart/form-data` test body framed by hand with `format!("--{BOUNDARY}\r\n...")`, and a `content-type` header naming that boundary | `.multipart(test::multipart::TestMultipart::new().file(..))` on the `test::TestRequest`, or a value whose type derives `MultipartForm`; behind `multipart` | #1419 |
+| `origins.fold(Csrf::new(), \|c, o\| c.trusting_origin(o))` | `middleware::csrf::Csrf::new().trusting_origins(origins)`, which takes what `Cors::allow_origins` takes | #1420 |
 
 ## 0.5 to 0.6
 
