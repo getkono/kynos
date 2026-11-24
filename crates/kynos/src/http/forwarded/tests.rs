@@ -1079,6 +1079,7 @@ fn only_a_routed_request_has_a_resolved_origin() {
         .extensions_mut()
         .insert(crate::router::dispatch::Routed {
             matched: Some(crate::extract::connection::MatchedPath("/origin")),
+            operation_id: None,
             captures: None,
             forwarded: resolved.clone(),
             secured: false,
@@ -1108,6 +1109,7 @@ fn a_request_head_reads_the_resolution_its_request_does() {
         .extensions_mut()
         .insert(crate::router::dispatch::Routed {
             matched: None,
+            operation_id: None,
             captures: None,
             forwarded: resolved.clone(),
             secured: false,

@@ -78,6 +78,9 @@ pub struct OperationCx<'a> {
     /// body, so a stall can answer it with `BodyRejection::Stalled`'s 408.
     #[cfg(feature = "server")]
     reads_body: bool,
+    /// How [`set_derived_operation_id`](Self::set_derived_operation_id)
+    /// spells what it is given: the describing router's.
+    operation_id_case: OperationIdCase,
 }
 
 impl<'a> OperationCx<'a> {
@@ -92,7 +95,14 @@ impl<'a> OperationCx<'a> {
             placed: Vec::new(),
             #[cfg(feature = "server")]
             reads_body: false,
+            operation_id_case: OperationIdCase::AsWritten,
         }
+    }
+
+    /// Spells every derived `operationId` this describes in `case`.
+    pub(crate) fn with_operation_id_case(mut self, case: OperationIdCase) -> Self {
+        self.operation_id_case = case;
+        self
     }
 
     /// Finishes the operation being described.
@@ -334,9 +344,15 @@ impl OperationCx<'_> {
         self.placed.push((deferred, name, header.clone()));
     }
 
-    /// Sets the operation identifier.
+    /// Sets the operation identifier, exactly as written.
     pub fn set_operation_id(&mut self, id: impl Into<String>) {
         self.operation.operation_id = Some(id.into());
+    }
+
+    /// Sets an operation identifier the framework derived rather than was
+    /// given, in the describing router's [`OperationIdCase`].
+    pub(crate) fn set_derived_operation_id(&mut self, id: &str) {
+        self.operation.operation_id = Some(self.operation_id_case.apply(id).into_owned());
     }
 
     /// The operation identifier set so far, empty when none is.
@@ -493,3 +509,74 @@ impl DeclaredTag {
         (self.metadata)()
     }
 }
+
+/// How the router spells each `operationId` it derived rather than was given,
+/// which [`Router::operation_id_case`](crate::Router::operation_id_case) sets.
+///
+/// Derived: a route attribute's handler name, the `head_*` a bare `head`
+/// derives from it, and an asset's or a docs page's `prefix_path`
+/// identifier. Given: a route attribute's `operation_id` and
+/// `head = "..."`, and whatever
+/// [`EndpointBuilder::operation_id`](crate::router::endpoint::builder::EndpointBuilder::operation_id),
+/// [`describe_head`](crate::router::endpoint::builder::EndpointBuilder::describe_head)
+/// or [`OperationCx::set_operation_id`] set, each published exactly as
+/// written.
+///
+/// Words are split at each `_`, and each keeps its letters after the first as
+/// written. Every name a request, an observer, an interceptor or a
+/// [`Link`](crate::extract::link::Link) sees is the recased one, and the
+/// router checks the recased names for uniqueness: a derived `get_user`
+/// recased beside a written `getUser` is a repeated `operationId`.
+///
+/// ```no_run
+/// use kynos::router::operation::OperationIdCase;
+///
+/// // `#[kynos::get("/users/{id}")] async fn get_user(..)` is published as
+/// // `getUser`.
+/// let router = kynos::Router::<()>::new().operation_id_case(OperationIdCase::LowerCamel);
+/// # let _ = router;
+/// ```
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[non_exhaustive]
+pub enum OperationIdCase {
+    /// As derived: `get_user`. The default, so an operation is named what the
+    /// function serving it is.
+    #[default]
+    AsWritten,
+    /// `getUser`.
+    LowerCamel,
+    /// `GetUser`.
+    UpperCamel,
+}
+
+impl OperationIdCase {
+    /// `id` in this case; `id` itself where it holds no word to recase.
+    pub(crate) fn apply(self, id: &str) -> std::borrow::Cow<'_, str> {
+        let capitalize_first = match self {
+            Self::AsWritten => return id.into(),
+            Self::LowerCamel => false,
+            Self::UpperCamel => true,
+        };
+        let mut cased = String::with_capacity(id.len());
+        for word in id.split('_').filter(|word| !word.is_empty()) {
+            let mut characters = word.chars();
+            let Some(first) = characters.next() else {
+                continue;
+            };
+            if cased.is_empty() && !capitalize_first {
+                cased.extend(first.to_lowercase());
+            } else {
+                cased.extend(first.to_uppercase());
+            }
+            cased.push_str(characters.as_str());
+        }
+        if cased.is_empty() {
+            id.into()
+        } else {
+            cased.into()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

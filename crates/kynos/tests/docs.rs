@@ -113,6 +113,26 @@ fn the_page_is_described_as_html_and_the_description_as_json() {
     }
 }
 
+/// Both docs routes' identifiers are derived from their paths, so the router's
+/// case recases them as it does a handler's name.
+#[test]
+fn a_case_recases_both_docs_identifiers() {
+    let document = Router::<App>::new()
+        .operation_id_case(kynos::router::operation::OperationIdCase::LowerCamel)
+        .docs(Docs::scalar())
+        .openapi()
+        .expect("a describable router");
+
+    for (path, id) in [("/docs", "docsDocs"), ("/openapi.json", "docsOpenapiJson")] {
+        let operation = document.paths.items[path].get.as_ref();
+        assert_eq!(
+            operation.and_then(|operation| operation.operation_id.as_deref()),
+            Some(id),
+            "{path}"
+        );
+    }
+}
+
 #[test]
 fn a_description_only_reference_describes_the_description_alone() {
     let document = support::router()

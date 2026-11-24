@@ -9,7 +9,7 @@ pub mod builder;
 pub mod meta;
 pub mod set;
 
-use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
+use std::{borrow::Cow, convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
 use kynos_openapi::{Method, PathTemplate};
 
@@ -17,7 +17,10 @@ use crate::{
     handler::Handler,
     http::{Request, Response},
     middleware::{Continued, Interceptor, MiddlewareError, Next, erased::ErasedInterceptor},
-    router::{dispatch::recovery, operation::OperationCx},
+    router::{
+        dispatch::recovery,
+        operation::{OperationCx, OperationIdCase},
+    },
 };
 
 /// A declared API operation.
@@ -92,13 +95,15 @@ pub trait Endpoint<C>: Send + Sync + 'static {
     }
 
     /// The `operationId` of the `HEAD` this operation describes beside
-    /// itself, if it does.
+    /// itself, if it does, as a router spelling derived ones in `case`
+    /// publishes it.
     ///
     /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
     /// answers it from [`describe_head`](builder::EndpointBuilder::describe_head),
     /// and any other endpoint describes only itself.
     #[doc(hidden)]
-    fn __described_head(&self) -> Option<&'static str> {
+    fn __described_head(&self, case: OperationIdCase) -> Option<Cow<'static, str>> {
+        let _ = case;
         None
     }
 
@@ -201,7 +206,7 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn reads_body(&self) -> bool;
 
-    fn described_head(&self) -> Option<&'static str>;
+    fn described_head(&self, case: OperationIdCase) -> Option<Cow<'static, str>>;
 
     /// This operation's guard as an interceptor, where its handler takes one.
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>>;
@@ -244,8 +249,8 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
         Endpoint::__reads_body(self)
     }
 
-    fn described_head(&self) -> Option<&'static str> {
-        Endpoint::__described_head(self)
+    fn described_head(&self, case: OperationIdCase) -> Option<Cow<'static, str>> {
+        Endpoint::__described_head(self, case)
     }
 
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>> {

@@ -222,6 +222,7 @@ fn routed(path: &'static str) -> crate::http::Request {
         .extensions_mut()
         .insert(crate::router::dispatch::Routed {
             matched: Some(crate::extract::connection::MatchedPath("/static/{*path}")),
+            operation_id: None,
             captures: Some(captures),
             forwarded,
             secured: false,

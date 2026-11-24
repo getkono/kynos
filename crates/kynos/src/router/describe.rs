@@ -247,7 +247,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let location = path_location(&key);
             let method = mounted.endpoint.method();
 
-            let mut cx = OperationCx::new(&mut registry);
+            let mut cx = OperationCx::new(&mut registry).with_operation_id_case(self.id_case());
             mounted.endpoint.describe(&mut cx);
 
             links.record(cx.operation_id(), method, &mounted.path, cx.links());
@@ -288,7 +288,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             };
             violations.extend(super::group::unguarded(mounted));
 
-            heads.defer(mounted, method, &operation, &mut violations);
+            heads.defer(mounted, method, &operation, self.id_case(), &mut violations);
 
             let item: &mut PathItem = paths.items.entry(key.clone()).or_default();
             if item.set_operation(method, operation).is_some() {
@@ -299,7 +299,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
         }
 
-        let linked = links.resolve().map_err(Box::new)?;
+        let linked = links.resolve(self.id_case()).map_err(Box::new)?;
 
         self.try_match_table(&mut violations);
 
@@ -369,9 +369,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 pub(super) struct Described {
     document: Document,
     violations: Vec<Violation<RouterError>>,
-    /// Whether any operation extracts a `Link`, so the service records where
-    /// each operation is mounted.
-    pub(super) linked: bool,
+    /// Where each operation a `Link` names is mounted; empty where none
+    /// links, so the service records nothing.
+    pub(super) linked: crate::extract::link::Targets,
 }
 
 impl Described {

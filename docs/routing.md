@@ -373,6 +373,20 @@ links only where one is extracted.
 `operation_id = "..."` on the attribute. Override it only to keep a generated
 client's method name stable across a refactor.
 
+`Router::operation_id_case` spells every identifier the framework derived in
+one case — `OperationIdCase::LowerCamel` publishes `fn get_user` as
+`getUser`, and the HEAD a bare `head` derives as `headUser`; an asset's and a
+docs page's identifiers are derived too. An identifier written by hand,
+`operation_id = "..."`, `head = "..."` or the builder's, is never recased, so
+it stays the one exception a reader sees on the route. The default,
+`AsWritten`, publishes the function's own name: a case is a choice about the
+generated client, and a default that renamed every operation would surprise
+anyone reading the handler. Everything downstream reads the recased name — the
+document, interceptors and observers, a `Link`'s lookup — and uniqueness is
+checked after recasing, so a derived `get_user` beside a written `getUser` is
+a repeated `operationId`. Like the policies below, it is set on the root
+router only.
+
 ## Application-level policies
 
 [`FallbackPolicy`](../crates/kynos/src/router/policy.rs) and
@@ -380,8 +394,9 @@ client's method name stable across a refactor.
 the root router, and have no per-route form.
 
 Only the root router's policies apply, so a router that is nested or merged may
-not set one: each of the three below, and `trusted_proxies`
-([`http::forwarded`](../crates/kynos/src/http/forwarded.rs)), called on an
+not set one: each of the three below, `trusted_proxies`
+([`http::forwarded`](../crates/kynos/src/http/forwarded.rs)) and
+`operation_id_case` (above), called on an
 absorbed router is a `RouterError::NestedRouterPolicy` violation that fails
 `openapi` and `build`. Setting the default counts too — the root's value would
 override it just the same, and a setting that is silently dropped, a trusted

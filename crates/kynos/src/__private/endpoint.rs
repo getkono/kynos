@@ -30,8 +30,12 @@ where
     let path =
         PathTemplate::parse(M::PATH).expect("a route attribute only emits a valid path template");
 
-    let mut builder =
-        EndpointBuilder::with_policy(method, path, handler).operation_id(M::OPERATION_ID);
+    let builder = EndpointBuilder::with_policy(method, path, handler);
+    let mut builder = if M::OPERATION_ID_DEFAULTED {
+        builder.derived_operation_id(M::OPERATION_ID)
+    } else {
+        builder.operation_id(M::OPERATION_ID)
+    };
     if let Some(summary) = M::SUMMARY {
         builder = builder.summary(summary);
     }
@@ -45,7 +49,11 @@ where
         builder = builder.with_tag(*tag);
     }
     if let Some(head) = M::HEAD_OPERATION_ID {
-        builder = builder.describe_head(head);
+        builder = if M::HEAD_OPERATION_ID_DEFAULTED {
+            builder.describe_derived_head(head)
+        } else {
+            builder.describe_head(head)
+        };
     }
     // The builder's own check, in the attribute's words: `public` refuses a
     // guarded handler however it is called.

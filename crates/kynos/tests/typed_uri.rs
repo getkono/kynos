@@ -350,6 +350,54 @@ async fn a_link_renders_its_target_under_every_prefix() {
     );
 }
 
+/// `report`'s parameters under a name a case policy recases.
+#[allow(clippy::unused_async)]
+#[kynos::get("/annual/{name}")]
+async fn annual_report(Path(_): Path<ReportPath>, Query(_): Query<ReportQuery>) {}
+
+/// Points at `annual_report`, by the name its attribute emitted.
+#[kynos::post("/filed/annual")]
+async fn file_annual_report(report: Link<annual_report>) -> Redirect<303> {
+    Redirect::to(report.uri((ReportPath, ReportQuery)))
+}
+
+/// A `Link` names its target as the attribute emitted it, and the router
+/// finds it under the name it published, in whichever case that is.
+#[tokio::test]
+async fn a_link_finds_a_target_whose_operation_id_was_recased() {
+    use kynos::router::operation::OperationIdCase;
+
+    for (case, published) in [
+        (OperationIdCase::AsWritten, "annual_report"),
+        (OperationIdCase::LowerCamel, "annualReport"),
+        (OperationIdCase::UpperCamel, "AnnualReport"),
+    ] {
+        let router = Router::<()>::new()
+            .operation_id_case(case)
+            .mount(kynos::routes![annual_report, file_annual_report]);
+        let document = router.openapi().expect("a describable router");
+        assert_eq!(
+            document.paths.items["/annual/{name}"]
+                .operation(openapi::Method::Get)
+                .and_then(|operation| operation.operation_id.as_deref()),
+            Some(published)
+        );
+
+        let service = router.build(()).expect("a buildable router");
+        let mut request = Request::new(Body::empty());
+        *request.method_mut() = Method::POST;
+        *request.uri_mut() = "/filed/annual".parse().expect("a usable request target");
+        let response = service.call(request).await;
+
+        assert_eq!(response.status(), StatusCode::SEE_OTHER, "{published}");
+        assert_eq!(
+            response.headers()[header::LOCATION],
+            "/annual/annual%2F2026?download=true",
+            "{published}"
+        );
+    }
+}
+
 #[test]
 fn a_link_to_an_operation_the_router_does_not_mount_refuses_to_build() {
     let router = Router::<()>::new().mount(kynos::routes![file_report]);

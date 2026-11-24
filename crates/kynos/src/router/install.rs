@@ -264,7 +264,7 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
 
         entry.operations.push(dispatch::Served {
             method: kynos_openapi::Method::Options,
-            operation_id: String::new(),
+            operation_id: "",
             terminal: Arc::new(dispatch::PreflightTerminal::new(preflight)),
             interceptors: Vec::new(),
             catch_panics: false,

@@ -291,7 +291,7 @@ async fn a_derived_head_is_reported_as_the_get_operation() {
 }
 
 /// Records the operation each request reached as an endpoint's own
-/// interceptor is told it, which the endpoint names rather than the router.
+/// interceptor is told it.
 #[derive(Clone, Default)]
 struct Inside(Arc<Mutex<Vec<(openapi::Method, String)>>>);
 
@@ -367,6 +367,42 @@ async fn a_described_head_is_reported_as_its_own_operation() {
     let named = vec![
         (openapi::Method::Get, "get_report".to_owned()),
         (openapi::Method::Head, "head_report".to_owned()),
+    ];
+    assert_eq!(routed, named);
+    assert_eq!(*inside.0.lock().expect("an unpoisoned record"), named);
+}
+
+/// `report`, named by the attribute and describing its HEAD.
+#[kynos::get("/cased/report", head)]
+async fn get_cased_report() -> Text {
+    report().await
+}
+
+/// An operation's own interceptors are told the name its router published, as
+/// the router's observers are, rather than the one the attribute emitted: once
+/// a case recased it, the two differ.
+#[tokio::test]
+async fn an_operations_own_interceptors_are_told_its_recased_name() {
+    let sightings = Sightings::default();
+    let inside = Inside::default();
+    let service = Router::<App>::new()
+        .operation_id_case(kynos::router::operation::OperationIdCase::LowerCamel)
+        .observe(sightings.clone())
+        .mount(kynos::routes![get_cased_report.intercept(inside.clone())])
+        .build(App::new())
+        .expect("a describable router");
+
+    get(&service, "/cased/report").call().await;
+    send(&service, Method::HEAD, "/cased/report").call().await;
+
+    let routed: Vec<_> = sightings
+        .taken()
+        .into_iter()
+        .filter_map(|(_, route)| route.map(|(method, _, id)| (method, id)))
+        .collect();
+    let named = vec![
+        (openapi::Method::Get, "getCasedReport".to_owned()),
+        (openapi::Method::Head, "headCasedReport".to_owned()),
     ];
     assert_eq!(routed, named);
     assert_eq!(*inside.0.lock().expect("an unpoisoned record"), named);

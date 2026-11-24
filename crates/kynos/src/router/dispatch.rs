@@ -179,7 +179,9 @@ fn untyped_query(method: Method, request: &Request) -> bool {
 /// One declared operation, ready to serve.
 pub(crate) struct Served<C> {
     pub(crate) method: Method,
-    pub(crate) operation_id: String,
+    /// Interned, so routing hands it to the operation in [`Routed`] without
+    /// allocating.
+    pub(crate) operation_id: &'static str,
     /// Erased because an unchecked route ends in a handler that is not an
     /// endpoint, and shared because one such handler serves several methods.
     pub(crate) terminal: Arc<dyn ErasedTerminal<C>>,
@@ -204,6 +206,10 @@ pub(crate) struct Routed {
     /// The `paths` key that matched; `None` for a fallback, which only the
     /// router's own interceptors see.
     pub(crate) matched: Option<crate::extract::connection::MatchedPath>,
+    /// The `operationId` the router published for the operation matched, so
+    /// the endpoint's own interceptors are told the name its router's are;
+    /// `None` for a fallback.
+    pub(crate) operation_id: Option<&'static str>,
     /// What the match captured, when the template has variables.
     pub(crate) captures: Option<PathCaptures>,
     /// Where the request came from, resolved once under the router's trust
@@ -232,6 +238,15 @@ pub(crate) fn mounted_path(request: &Request) -> Option<&'static str> {
         .get::<Routed>()
         .and_then(|routed| routed.matched.as_ref())
         .map(|matched| matched.0)
+}
+
+/// The `operationId` the router published for the operation routing matched
+/// `request` to; `None` where no router routed it.
+pub(crate) fn routed_operation_id(request: &Request) -> Option<&'static str> {
+    request
+        .extensions()
+        .get::<Routed>()
+        .and_then(|routed| routed.operation_id)
 }
 
 /// Every operation declared on one `paths` key.
@@ -540,6 +555,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         request.extensions_mut().insert(Routed {
             // The template, not the request path, to bound label cardinality.
             matched: Some(entry.matched.clone()),
+            operation_id: Some(entry.operations[position].operation_id),
             captures,
             forwarded,
             secured: entry.operations[position].secured,
@@ -671,6 +687,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             let forwarded = self.forwarded(request);
             request.extensions_mut().insert(Routed {
                 matched: None,
+                operation_id: None,
                 captures: None,
                 forwarded,
                 secured: false,
@@ -717,7 +734,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let entry = &self.paths[at.path];
         let operation = &entry.operations[at.position];
 
-        Route::new(&entry.template, &operation.operation_id, operation.method)
+        Route::new(&entry.template, operation.operation_id, operation.method)
     }
 
     /// Notifies every observer and hands the response on.

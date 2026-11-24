@@ -79,6 +79,7 @@ fn matched(path: &'static str, captures: &[(&'static str, &'static str)]) -> Req
         .extensions_mut()
         .insert(crate::router::dispatch::Routed {
             matched: Some(crate::extract::connection::MatchedPath(path)),
+            operation_id: None,
             captures: Some(recorded),
             forwarded,
             secured: false,
