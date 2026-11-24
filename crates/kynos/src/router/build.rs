@@ -96,7 +96,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
             let served = dispatch::Served {
                 method,
-                operation_id: dispatch::intern(operation_id.unwrap_or_default()),
+                matched: dispatch::Matched::intern(&paths[index].matched, operation_id),
                 terminal: Arc::new(terminal),
                 interceptors,
                 catch_panics: mounted.catch_panics || catches::<P>(),
@@ -226,15 +226,19 @@ fn install_unchecked<C>(
         let mut covering = interceptors.to_vec();
         covering.extend(route.interceptors.iter().cloned());
 
+        let entry = &mut paths[index];
         for method in &route.methods {
-            paths[index].operations.push(dispatch::Served {
+            entry.operations.push(dispatch::Served {
                 // Distinct per route and method, since interceptors key on it;
                 // `unchecked:` marks it as synthesized.
-                operation_id: dispatch::intern(&format!(
-                    "unchecked:{} {}",
-                    method.as_wire_str(),
-                    route.pattern
-                )),
+                matched: dispatch::Matched::intern(
+                    &entry.matched,
+                    Some(&format!(
+                        "unchecked:{} {}",
+                        method.as_wire_str(),
+                        route.pattern
+                    )),
+                ),
                 method: *method,
                 terminal: Arc::clone(&route.terminal),
                 interceptors: covering.clone(),

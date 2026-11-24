@@ -581,7 +581,8 @@ impl<C: Sync> FromRequestParts<C> for MatchedPath {
         Ok(parts
             .extensions
             .get::<crate::router::dispatch::Routed>()
-            .and_then(|routed| routed.matched.clone())
+            .and_then(|routed| routed.matched)
+            .map(|matched| matched.path.clone())
             .expect("the router records the matched path template before building an argument"))
     }
 }

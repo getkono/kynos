@@ -161,8 +161,9 @@ where
         // The key routing matched, prefixes included, and the name the router
         // published, recased; this endpoint's own only when driven without a
         // router.
-        let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
-        let routed = dispatch::routed_operation_id(&request);
+        let matched = dispatch::matched(&request);
+        let path = matched.map_or(self.path.as_str(), |matched| matched.path.0);
+        let routed = matched.map(|matched| matched.operation_id);
         // The `HEAD` this describes is the operation a HEAD request reaches.
         let route = match self.head {
             Some(head) if request.method() == crate::http::Method::HEAD => {

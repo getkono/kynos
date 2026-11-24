@@ -109,7 +109,7 @@ fn path_entry_fields(entry: &PathEntry<()>) {
 fn served_fields(served: &Served<()>) {
     let Served {
         method,
-        operation_id,
+        matched,
         terminal,
         interceptors,
         catch_panics,
@@ -123,7 +123,7 @@ fn served_fields(served: &Served<()>) {
 
     let _ = (
         method,
-        operation_id,
+        matched,
         terminal,
         interceptors,
         catch_panics,

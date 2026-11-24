@@ -199,7 +199,7 @@ pub(super) fn with_head<C>(
         .and_then(|item| item.operation(Method::Head))
         .map(|head| dispatch::Served {
             method: Method::Head,
-            operation_id: dispatch::intern(head.operation_id.as_deref().unwrap_or_default()),
+            matched: dispatch::Matched::intern(&get.matched.path, head.operation_id.as_deref()),
             terminal: Arc::clone(&get.terminal),
             interceptors: get.interceptors.clone(),
             catch_panics: get.catch_panics,
