@@ -1831,7 +1831,8 @@ fn a_written_description_replaces_the_joined_titles_in_any_order() {
 /// What an enum writes is what the whole enum says of the status: it replaces
 /// the description a transparent variant's held error joins to its own, and
 /// describes a status only that held error answers with. The held error's
-/// branches still reach the schema.
+/// branches still reach the schema, each under its title: a lone one keeps
+/// the title its description said, as the enum's text no longer says it.
 #[test]
 fn a_written_description_covers_what_a_transparent_variant_answers() {
     let responses = responses_of::<GatewayRefused>();
@@ -1840,15 +1841,32 @@ fn a_written_description_covers_what_a_transparent_variant_answers() {
         responses["403"]["description"],
         serde_json::json!("The request is not allowed")
     );
+    let schema = &responses["403"]["content"]["application/problem+json"]["schema"];
+    assert_eq!(published(schema).len(), 3, "{}", responses["403"]);
+    let mut titles: Vec<&str> = schema["oneOf"]
+        .as_array()
+        .expect("three types are a `oneOf`")
+        .iter()
+        .filter_map(|branch| branch["title"].as_str())
+        .collect();
+    titles.sort_unstable();
     assert_eq!(
-        published(&responses["403"]["content"]["application/problem+json"]["schema"]).len(),
-        3,
-        "{}",
-        responses["403"]
+        titles,
+        [
+            "Cross-origin request rejected",
+            "Gateway closed",
+            "Malformed Origin header"
+        ]
+    );
+    let unknown = &responses["404"];
+    assert_eq!(
+        unknown["description"],
+        serde_json::json!("No such origin is registered")
     );
     assert_eq!(
-        responses["404"]["description"],
-        serde_json::json!("No such origin is registered")
+        unknown["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Unknown origin"),
+        "{unknown}"
     );
 }
 
