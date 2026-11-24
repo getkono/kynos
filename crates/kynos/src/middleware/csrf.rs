@@ -121,6 +121,31 @@ impl<T> Csrf<T> {
         self
     }
 
+    /// Also allows unsafe requests from each of these exact origins.
+    ///
+    /// The list form of [`trusting_origin`](Csrf::trusting_origin), matched the
+    /// same way, and taking what [`Cors::allow_origins`] takes so both can be
+    /// configured from one list. Each call adds to the origins already trusted.
+    ///
+    /// [`Cors::allow_origins`]: crate::middleware::cors::Cors::allow_origins
+    ///
+    /// ```
+    /// use kynos::middleware::csrf::Csrf;
+    ///
+    /// let front_ends = ["https://app.example.com", "https://admin.example.com"];
+    /// let csrf = Csrf::new().trusting_origins(front_ends);
+    /// # let _ = csrf;
+    /// ```
+    #[must_use]
+    pub fn trusting_origins<I, S>(mut self, origins: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<Cow<'static, str>>,
+    {
+        self.trusted.extend(origins.into_iter().map(Into::into));
+        self
+    }
+
     /// Decides only where `enabled` says so of the context, and declares its
     /// 403 either way.
     ///
