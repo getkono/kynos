@@ -6635,6 +6635,68 @@ fn a_subset_names_a_generic_or_parenthesized_wider_enum() {
     );
 }
 
+/// A second wider enum sharing two of `ChunkRejection`'s variants, each with
+/// the same statuses, and failing a way of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum PutChunkRejection {
+    #[error("no chunk {id}")]
+    #[problem(status = 404, title = "Chunk unknown")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+    },
+
+    #[error("chunks are unavailable")]
+    #[problem(status = 503)]
+    Unavailable(#[problem(headers)] RetryAfter),
+
+    #[error("the chunk is too large")]
+    #[problem(status = 413)]
+    TooLarge,
+}
+
+/// A helper's failure shared by two operations' enums: a subset of both.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = (ChunkRejection, PutChunkRejection))]
+enum SharedChunkLookup {
+    NotFound { id: u64 },
+    Unavailable(RetryAfter),
+}
+
+/// A subset of several enums converts into each, and answers, declares and
+/// is described as the first it names.
+#[test]
+fn a_subset_of_several_enums_converts_into_each_and_answers_as_the_first() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    assert!(matches!(
+        ChunkRejection::from(SharedChunkLookup::NotFound { id: 3 }),
+        ChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        PutChunkRejection::from(SharedChunkLookup::NotFound { id: 3 }),
+        PutChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        PutChunkRejection::from(SharedChunkLookup::Unavailable(RetryAfter {
+            retry_after: 9
+        })),
+        PutChunkRejection::Unavailable(RetryAfter { retry_after: 9 })
+    ));
+
+    assert_eq!(SharedChunkLookup::STATUSES, &[404, 503]);
+    assert_eq!(
+        serde_json::to_value(SharedChunkLookup::NotFound { id: 3 }.into_problem())
+            .expect("a problem serializes"),
+        serde_json::to_value(ChunkRejection::NotFound { id: 3 }.into_problem())
+            .expect("a problem serializes"),
+    );
+    assert_eq!(
+        emitted_responses::<SharedChunkLookup>()["404"],
+        emitted_responses::<NotFoundAlone>()["404"]
+    );
+}
+
 /// Two of `ChunkRejection`'s variants, one under a name of its own, one of
 /// a generic wider enum's named by a turbofish path, and a failure of its own.
 #[derive(Debug, thiserror::Error, ApiError)]

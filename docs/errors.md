@@ -132,7 +132,7 @@ enum StoreError {
 | --- | --- | --- |
 | type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
 | type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
-| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
+| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it; or a parenthesized list of them, converting into each and answering as the first |
 | type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds; no `#[error(...)]` beside it |
 | type | `from` | beside `transparent` on an enum, every variant's `from` |
 | variant | `status` | required, 400–599 |
@@ -372,6 +372,16 @@ reads as hidden inherent items, and `subset_of` names a derived `ApiError`
 enum, a subset included. A per-operation exclusion was rejected, because it
 moves the guarantee from the type to a run-time check.
 
+A helper's failure two operations share is a subset of both enums:
+`#[problem(subset_of = (PutEntryError, LogPlaysError))]` generates `From` into
+each, so `?` carries it into either operation's error. A subset answers with
+one problem, so it answers and is described as the first enum listed, and a
+`const` asserts that each of its variants answers with the same statuses in
+every enum listed: converted into either, the failure declares what it sends.
+A title or type that differs between the two is the first's, which is why the
+order is written rather than guessed. An empty list, or one naming an enum
+twice, is refused.
+
 **A variant shared with a wider enum is taken, not copied.** An enum that also
 fails its own ways is no subset, but one of its variants can be the wider
 enum's: `#[problem(variant_of = ProfileProblem::ProfileUnavailable)]` on it
@@ -418,8 +428,10 @@ or twice, giving one no value or one that is neither a literal nor a path, or
 naming a field the failure already publishes; a `const` value whose type is not
 `Serialize` is a compile error at the path, with a case in
 [`tests/ui/macros`](../crates/kynos/tests/ui/macros). A `subset_of` on a variant or a struct, beside another key,
-naming the subset's generic parameter, or over a variant or field with a
-`#[problem(...)]` of its own is a compile error with a case in both. So is a
+naming the subset's generic parameter, naming an empty list or one enum twice,
+or over a variant or field with a `#[problem(...)]` of its own is a compile
+error with a case in both, and a listed enum disagreeing on a variant's
+statuses is one in a `const`. So is a
 `variant_of` on the type, beside another key, over a field with a
 `#[problem(...)]`, naming no enum, naming the enum's generic parameter, or
 taking a wider variant another variant already takes. So is a transparent

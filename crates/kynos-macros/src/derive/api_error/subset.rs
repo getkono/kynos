@@ -19,6 +19,7 @@ use syn::{
 };
 
 use super::{args::ProblemArgs, emit::union, impls, outcomes::generic_named_in};
+use crate::derive::attribute::compact;
 
 /// The function a derived enum describes the variants a caller keeps with.
 pub(super) const RESPONSES: &str = "__kynos_problem_responses";
@@ -68,11 +69,12 @@ pub(super) fn handles(
     }
 }
 
-/// The expansion of an enum declaring `subset_of = wide`.
+/// The expansion of an enum declaring `subset_of = listed`: one wider enum,
+/// or a parenthesized list of them, the first the one it answers as.
 pub(super) fn expand(
     input: &DeriveInput,
     args: &ProblemArgs,
-    wide: &Type,
+    listed: &Type,
     span: Span,
 ) -> syn::Result<TokenStream2> {
     let Data::Enum(data) = &input.data else {
@@ -99,15 +101,8 @@ pub(super) fn expand(
         ));
     }
 
-    if let Some(param) = generic_named_in(wide, &input.generics) {
-        return Err(syn::Error::new(
-            wide.span(),
-            format!(
-                "a subset's statuses are a `const`, which cannot depend on the type's generic \
-                 parameter `{param}`; name a concrete wider error"
-            ),
-        ));
-    }
+    let wides = wides(input, listed, span)?;
+    let wide = &wides[0];
 
     // Every `#[problem(...)]` below the enum would say what the wider
     // variant already says.
@@ -136,7 +131,18 @@ pub(super) fn expand(
     let consts: Vec<Ident> = idents.iter().map(|variant| statuses_of(variant)).collect();
     let responses = Ident::new(RESPONSES, Span::call_site());
 
-    let from = conversion(input, data.variants.iter(), wide);
+    let conversions = wides.iter().map(|wide| {
+        let from = conversion(input, data.variants.iter(), wide);
+        quote! {
+            #[automatically_derived]
+            impl #impl_generics ::core::convert::From<#name #ty_generics> for #wide #where_clause {
+                fn from(subset: #name #ty_generics) -> Self {
+                    #from
+                }
+            }
+        }
+    });
+    let agreements = agreements(input, &wides, &idents);
 
     let names = idents.iter().map(ToString::to_string);
     let body = quote! {
@@ -169,16 +175,102 @@ pub(super) fn expand(
     );
 
     Ok(quote! {
-        #[automatically_derived]
-        impl #impl_generics ::core::convert::From<#name #ty_generics> for #wide #where_clause {
-            fn from(subset: #name #ty_generics) -> Self {
-                #from
-            }
-        }
-
+        #(#conversions)*
+        #agreements
         #handles
         #impls
     })
+}
+
+/// The wider enums `listed` lists, or the one it is, refusing an empty list,
+/// one naming an enum twice, and an enum naming `input`'s generic parameters.
+fn wides(input: &DeriveInput, listed: &Type, span: Span) -> syn::Result<Vec<Type>> {
+    let wides: Vec<Type> = match listed {
+        Type::Tuple(list) => list.elems.iter().cloned().collect(),
+        one => vec![one.clone()],
+    };
+    if wides.is_empty() {
+        return Err(syn::Error::new(
+            span,
+            "`subset_of = ()` names no wider enum; name one, or several as `(Wide, Other)`",
+        ));
+    }
+    for (index, wide) in wides.iter().enumerate() {
+        if let Some(param) = generic_named_in(wide, &input.generics) {
+            return Err(syn::Error::new(
+                wide.span(),
+                format!(
+                    "a subset's statuses are a `const`, which cannot depend on the type's \
+                     generic parameter `{param}`; name a concrete wider error"
+                ),
+            ));
+        }
+        if wides[..index]
+            .iter()
+            .any(|earlier| compact(earlier) == compact(wide))
+        {
+            return Err(syn::Error::new(
+                wide.span(),
+                format!(
+                    "`subset_of` already names `{}`, and a subset converts into each enum \
+                     once",
+                    compact(wide)
+                ),
+            ));
+        }
+    }
+    Ok(wides)
+}
+
+/// For each wider enum after the first, a `const` assertion that each
+/// variant answers with the statuses it answers with in the first, which the
+/// subset answers and is described as: converted into either, one failure
+/// cannot change what it declares.
+fn agreements(input: &DeriveInput, wides: &[Type], variants: &[&Ident]) -> TokenStream2 {
+    let Some((first, others)) = wides.split_first() else {
+        return TokenStream2::new();
+    };
+    let name = &input.ident;
+    let checks = others.iter().flat_map(|other| {
+        variants.iter().map(move |variant| {
+            let item = statuses_of(variant);
+            let message = format!(
+                "`{name}::{variant}` answers with other statuses as `{}` than as `{}`, which it \
+                 answers as; a subset of several enums is one failure in each",
+                compact(other),
+                compact(first),
+            );
+            quote_spanned! {other.span()=>
+                ::core::assert!(
+                    __kynos_problem_agree(<#first>::#item, <#other>::#item),
+                    #message
+                );
+            }
+        })
+    });
+    quote! {
+        const _: () = {
+            /// Whether `a` and `b` hold the same statuses, in any order.
+            const fn __kynos_problem_agree(a: &[u16], b: &[u16]) -> bool {
+                const fn within(a: &[u16], b: &[u16]) -> bool {
+                    let mut i = 0;
+                    while i < a.len() {
+                        let mut j = 0;
+                        while j < b.len() && b[j] != a[i] {
+                            j += 1;
+                        }
+                        if j == b.len() {
+                            return false;
+                        }
+                        i += 1;
+                    }
+                    true
+                }
+                within(a, b) && within(b, a)
+            }
+            #(#checks)*
+        };
+    }
 }
 
 /// The `from` body: each variant's fields moved into the wider variant of

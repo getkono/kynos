@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: `TitleError::TitleUnavailable` answers with other statuses as `LogPlaysError` than as `PutError`, which it answers as; a subset of several enums is one failure in each
+  --> tests/ui/macros/api_error_subset_of_several_disagreeing.rs:24:34
+   |
+24 | #[problem(subset_of = (PutError, LogPlaysError))]
+   |                                  ^^^^^^^^^^^^^ evaluation of `_` failed here

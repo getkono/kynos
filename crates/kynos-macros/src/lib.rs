@@ -916,6 +916,13 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// describes the variants it keeps. The wider enum is a derived `ApiError`
 /// enum, a subset included, and cannot name the subset's generic parameters.
 ///
+/// A helper's failure shared by several operations' enums is a subset of
+/// each: `#[problem(subset_of = (PutEntryError, LogPlaysError))]` generates
+/// `From` into every enum listed, each once. It answers and is described as
+/// the first, and each variant must answer with the same statuses in every
+/// enum listed, which a `const` asserts, so where it is converted to cannot
+/// change what it declares.
+///
 /// One variant shared with a wider enum, in an enum that also fails its own
 /// ways, says `#[problem(variant_of = Wide::Variant)]`:
 ///

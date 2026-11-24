@@ -5841,6 +5841,26 @@ mod api_error {
                  `transparent` or `from` of its own",
             ),
             case(
+                "`subset_of` naming an empty list",
+                quote::quote!(
+                    #[problem(subset_of = ())]
+                    enum HeadRejection {
+                        NotFound,
+                    }
+                ),
+                "names no wider enum",
+            ),
+            case(
+                "`subset_of` naming one wider enum twice",
+                quote::quote!(
+                    #[problem(subset_of = (ChunkRejection, PutRejection, ChunkRejection))]
+                    enum HeadRejection {
+                        NotFound,
+                    }
+                ),
+                "already names `ChunkRejection`",
+            ),
+            case(
                 "`subset_of` naming the subset's generic parameter",
                 quote::quote!(
                     #[problem(subset_of = ChunkRejection<T>)]

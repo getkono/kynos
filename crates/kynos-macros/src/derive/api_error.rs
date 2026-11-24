@@ -5,7 +5,9 @@
 //! #[problem( describe( <code> = "<text>" [, <code> = "<text>"]* ) )]
 //!                                                  on an enum, optional
 //! #[problem( subset_of = <type> )]                 on an enum, alone, instead of
-//!                                                  every list below it
+//!                                                  every list below it; or
+//!                                                  `( <type> [, <type>]* )`, each
+//!                                                  once, answering as the first
 //! #[problem(transparent)]                          on an enum, instead of each
 //!                                                  variant's, which displays as it
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
