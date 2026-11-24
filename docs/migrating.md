@@ -19,7 +19,10 @@ A feature request's optional **Replaces** field names the downstream code the
 feature makes unnecessary. When that issue ships, its answer becomes a row in
 the section for the release that ships it. A release checks every `feat` entry
 for its row, as [`releasing.md`](releasing.md#what-the-pipeline-does-not-check)
-says.
+says. Where an application starting on that release would write the same
+workaround, the feature also gets a row in [getting
+started](../GETTING_STARTED.md#before-writing-it-yourself), which indexes these
+by task.
 
 ## 0.6 to 0.7
 
