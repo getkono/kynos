@@ -132,8 +132,14 @@ impl Observer<App> for Unheard {
         let _ = (request, route, context);
     }
 
-    fn on_response(&self, response: &Response, route: Option<Route<'_>>, elapsed: Duration) {
-        let _ = (response, route, elapsed);
+    fn on_response(
+        &self,
+        response: &Response,
+        route: Option<Route<'_>>,
+        elapsed: Duration,
+        context: &App,
+    ) {
+        let _ = (response, route, elapsed, context);
     }
 }
 

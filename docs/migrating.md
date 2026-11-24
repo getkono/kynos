@@ -41,6 +41,7 @@ the section for the release that ships it.
 | `.cookie("sid", &token)` beside every other `.cookie(..)` in a signed-in test, since a request's own cookies replaced a `with_default_header("cookie", ..)` whole | `test::TestClient::new(service).with_default_cookie("sid", &token)`: a request's own cookies join it, and one named `sid` is sent instead | #1400 |
 | A helper splitting a `Set-Cookie` field on `;` to check `HttpOnly`, `SameSite` or `Max-Age=0`, or matching `starts_with("sid=;")` to see a logout clear it | `resp.set_cookie("sid")`, a `test::cookie::TestSetCookie` with each attribute typed, and `resp.assert_cookie_set("sid")` or `resp.assert_cookie_cleared("sid")`, which tell a removal from an empty value; behind `cookie` | #1400 |
 | A merge-patch `Nullable<T>` of your own, with hand-written `Deserialize`, `Schema`, `schema::constraints::Numeric` and `Textual` impls | `Nullable<T>` (`schema::Nullable`), still beside `#[serde(default)]`, which the `Schema` derive now refuses to compile without, where a member missing one was listed in `required` | #1411 |
+| An `Observer` holding its own clone of a metrics registry the context already owns, cloned out before `build` | read it from the `context` that `Observer::on_response` now receives, as `on_request` does | #1432 |
 
 ## 0.5 to 0.6
 

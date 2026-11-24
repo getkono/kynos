@@ -2098,6 +2098,7 @@ impl kynos::middleware::Observer<()> for CountingEnds {
         _: &kynos::http::Response,
         _: Option<kynos::router::operation::Route<'_>>,
         _: Duration,
+        (): &(),
     ) {
         self.0
             .responses
