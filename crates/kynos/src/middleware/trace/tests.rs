@@ -220,7 +220,7 @@ fn each_level_is_emitted_as_the_tracing_level_of_its_name() {
         let trace = Trace::new().level(level);
         let lines = captured(|| {
             Observer::<()>::on_request(&trace, &request, None, &());
-            Observer::<()>::on_response(&trace, &response, None, std::time::Duration::ZERO);
+            Observer::<()>::on_response(&trace, &response, None, std::time::Duration::ZERO, &());
         });
 
         let prefixes: Vec<&str> = lines
@@ -248,7 +248,7 @@ fn levels_of(trace: &Trace, status: StatusCode) -> Vec<String> {
 
     let lines = captured(|| {
         Observer::<()>::on_request(trace, &request, None, &());
-        Observer::<()>::on_response(trace, &response, None, std::time::Duration::ZERO);
+        Observer::<()>::on_response(trace, &response, None, std::time::Duration::ZERO, &());
     });
 
     lines
@@ -308,7 +308,13 @@ fn the_closing_event_carries_the_assigned_identifier() {
     assert!(response.headers().get("x-request-id").is_none());
 
     let lines = captured(|| {
-        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
+        Observer::<()>::on_response(
+            &Trace::new(),
+            &response,
+            None,
+            std::time::Duration::ZERO,
+            &(),
+        );
     });
 
     assert!(lines.contains("INFO"), "{lines}");
@@ -325,7 +331,13 @@ fn the_closing_event_ignores_an_identifier_no_request_id_assigned() {
     *response.headers_mut() = map(&[("x-request-id", "forged")]);
 
     let lines = captured(|| {
-        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
+        Observer::<()>::on_response(
+            &Trace::new(),
+            &response,
+            None,
+            std::time::Duration::ZERO,
+            &(),
+        );
     });
 
     assert!(lines.contains("request_id=\"\""), "{lines}");
@@ -344,10 +356,17 @@ fn the_closing_event_carries_the_method() {
             &response,
             Some(route),
             std::time::Duration::ZERO,
+            &(),
         );
     });
     let unmatched = captured(|| {
-        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
+        Observer::<()>::on_response(
+            &Trace::new(),
+            &response,
+            None,
+            std::time::Duration::ZERO,
+            &(),
+        );
     });
 
     assert!(matched.contains("method=DELETE "), "{matched}");

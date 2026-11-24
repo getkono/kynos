@@ -348,7 +348,10 @@ impl<C> Observer<C> for Trace {
         response: &http::Response,
         route: Option<Route<'_>>,
         elapsed: std::time::Duration,
+        context: &C,
     ) {
+        let _ = context;
+
         emit!(
             self.closing(response.status()),
             method = %route.map_or(UNMATCHED, |route| route.method().as_wire_str()),

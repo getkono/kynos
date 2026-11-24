@@ -689,11 +689,16 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// Exactly one of [`on_complete`](Observer::on_complete), for a body
     /// that finished, and [`on_disconnect`](Observer::on_disconnect), for one
     /// that did not, follows.
+    ///
+    /// `context` is the one [`on_request`](Observer::on_request) received,
+    /// so state the application already owns, such as a metrics registry,
+    /// is read from it rather than cloned into the observer.
     fn on_response(
         &self,
         response: &Response,
         route: Option<Route<'_>>,
         elapsed: std::time::Duration,
+        context: &C,
     );
 
     /// Called when the response body [`on_response`](Observer::on_response)

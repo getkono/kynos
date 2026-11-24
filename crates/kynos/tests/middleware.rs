@@ -1579,6 +1579,7 @@ mod streamed_failure {
             _: &kynos::http::Response,
             _: Option<Route<'_>>,
             _: std::time::Duration,
+            (): &(),
         ) {
         }
 
