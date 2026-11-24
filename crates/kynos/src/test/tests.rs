@@ -1363,6 +1363,9 @@ mod assertions {
                 "dashed=; Expires=Thu, 01-Jan-1970 00:00:00 GMT",
                 "loose=x; Expires=1 JAN 2000 1:2:3",
                 "two-digit=x; Expires=Wed, 09 Jun 21 10:18:14 GMT",
+                "rfc850=x; Expires=Sunday, 06-Nov-94 08:49:37 GMT",
+                "last-2000s=x; Expires=Tue, 01 Jan 69 00:00:00 GMT",
+                "first-1900s=x; Expires=Thu, 01 Jan 70 00:00:00 GMT",
                 "earliest=x; Expires=Mon, 01 Jan 1601 00:00:00 GMT",
                 "too-early=x; Expires=Sun, 31 Dec 1600 23:59:59 GMT",
                 "leap-second=x; Expires=Thu, 01 Jan 1970 00:00:60 GMT",
@@ -1381,6 +1384,9 @@ mod assertions {
             response.assert_cookie_cleared("dashed");
             assert_eq!(expires("loose"), Some(at(946_684_800 + 3723)));
             assert_eq!(expires("two-digit"), Some(at(1_623_233_894)));
+            assert_eq!(expires("rfc850"), Some(at(784_111_777)));
+            assert_eq!(expires("last-2000s"), Some(at(3_124_224_000)));
+            assert_eq!(expires("first-1900s"), Some(SystemTime::UNIX_EPOCH));
             assert_eq!(
                 expires("earliest"),
                 SystemTime::UNIX_EPOCH.checked_sub(Duration::from_secs(11_644_473_600))
