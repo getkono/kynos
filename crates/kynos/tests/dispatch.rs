@@ -12,6 +12,7 @@
 
 use std::{
     convert::Infallible,
+    future::Future,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -24,11 +25,14 @@ use kynos::{
         params::path::Path,
     },
     http::{
-        Method, Request, Response, StatusCode,
+        Method, Request, StatusCode,
         forwarded::{Forwarded, ProxyHeader, TrustedProxies},
         header,
     },
-    middleware::{Completion, Continued, Interceptor, Next, Observer, request_id::RequestId},
+    middleware::{
+        Abandonment, Completion, Continued, Exchange, Interceptor, Next, Observer,
+        request_id::RequestId,
+    },
     openapi,
     response::status::NoContent,
     router::{
@@ -265,7 +269,7 @@ impl Observer<App> for Sightings {
             .push((request.method().clone(), route));
     }
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, _: &App) {}
+    fn on_response(&self, _: &Exchange<'_>, _: &App) {}
 }
 
 /// A derived HEAD runs the GET operation, so an observer is told that is the
@@ -508,20 +512,31 @@ fn named(route: Option<Route<'_>>) -> String {
 }
 
 impl Observer<App> for Endings {
-    fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &App) {}
+    fn on_request(&self, request: &Request, route: Option<Route<'_>>, _: &App) {
+        self.push(format!("request {} {}", request.method(), named(route)));
+    }
 
-    fn on_response(&self, response: &Response, route: Option<Route<'_>>, _: Duration, _: &App) {
+    fn on_response(&self, exchange: &Exchange<'_>, _: &App) {
         use hyper::body::Body as _;
 
         self.push(format!(
-            "response {} {} {:?}",
-            named(route),
-            response.status().as_u16(),
-            response.body().size_hint().exact()
+            "response {} {} {} {:?}",
+            exchange.method,
+            named(exchange.route),
+            exchange.response.status().as_u16(),
+            exchange.response.body().size_hint().exact()
         ));
     }
 
-    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+    fn on_abandoned(&self, abandonment: &Abandonment<'_>, _: &App) {
+        self.push(format!(
+            "abandoned {} {}",
+            abandonment.method,
+            named(abandonment.route)
+        ));
+    }
+
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion, _: &App) {
         self.push(format!(
             "complete {} {}",
             named(route),
@@ -529,16 +544,17 @@ impl Observer<App> for Endings {
         ));
     }
 
-    fn on_disconnect(&self, route: Option<Route<'_>>, _: Duration) {
+    fn on_disconnect(&self, route: Option<Route<'_>>, _: Duration, _: &App) {
         self.push(format!("disconnect {}", named(route)));
     }
 }
 
-/// `on_response` is handed the operation that answered, or none where no
-/// operation did, and a HEAD's response with its content already shed, since
-/// that is what the peer will receive. Each body read to its end is then
-/// reported to `on_complete`, counting what the peer received: nothing for
-/// the HEAD, and exactly the length `on_response` saw announced otherwise.
+/// `on_response` is handed the method the request arrived with, the operation
+/// that answered, or none where no operation did, and a HEAD's response with
+/// its content already shed, since that is what the peer will receive. Each
+/// body read to its end is then reported to `on_complete`, counting what the
+/// peer received: nothing for the HEAD, and exactly the length `on_response`
+/// saw announced otherwise.
 #[tokio::test]
 async fn an_observer_sees_the_route_and_the_response_the_peer_will_get() {
     let endings = Endings::default();
@@ -555,12 +571,107 @@ async fn an_observer_sees_the_route_and_the_response_the_peer_will_get() {
     assert_eq!(
         endings.taken(),
         [
-            "response loud_head /loud 200 Some(0)",
+            "request HEAD loud_head /loud",
+            "response HEAD loud_head /loud 200 Some(0)",
             "complete loud_head /loud 0",
-            "response <unmatched> 405 Some(64)",
+            "request GET <unmatched>",
+            "response GET <unmatched> 405 Some(64)",
             "complete <unmatched> 64",
-            "response <unmatched> 404 Some(55)",
+            "request GET <unmatched>",
+            "response GET <unmatched> 404 Some(55)",
             "complete <unmatched> 55",
+        ]
+    );
+}
+
+/// A request no operation answers is still reported with the method it
+/// arrived with, a token no description can declare included, so an unmatched
+/// request can be labelled by method.
+#[tokio::test]
+async fn an_unmatched_request_is_reported_with_its_own_method() {
+    let endings = Endings::default();
+    let service = support::router()
+        .observe(endings.clone())
+        .build(App::new())
+        .expect("a describable router");
+    let purge = Method::from_bytes(b"PURGE").expect("a method token");
+
+    let refused = send(&service, purge, "/users/42").call().await;
+
+    assert_eq!(refused.status, StatusCode::NOT_IMPLEMENTED);
+    assert_eq!(
+        endings.taken()[..2],
+        [
+            "request PURGE <unmatched>",
+            "response PURGE <unmatched> 501 Some(61)",
+        ]
+    );
+}
+
+/// A handler that never answers.
+#[kynos::get("/stalled")]
+async fn stalled() -> NoContent {
+    std::future::pending().await
+}
+
+/// A request dropped while its handler is still working is reported to
+/// `on_abandoned`, under the operation it was routed to, and never to
+/// `on_response`: exactly one of the two follows `on_request`.
+#[tokio::test]
+async fn a_request_dropped_before_its_response_is_reported_abandoned() {
+    let endings = Endings::default();
+    let service = support::router()
+        .mount(kynos::routes![stalled])
+        .observe(endings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/stalled".parse().expect("a usable request target");
+    let mut served = Box::pin(service.call(request));
+    let polled = Future::poll(
+        served.as_mut(),
+        &mut std::task::Context::from_waker(std::task::Waker::noop()),
+    );
+    assert!(polled.is_pending(), "the stalled handler answered");
+    assert_eq!(endings.taken(), ["request GET stalled /stalled"]);
+
+    drop(served);
+
+    assert_eq!(
+        endings.taken(),
+        [
+            "request GET stalled /stalled",
+            "abandoned GET stalled /stalled",
+        ]
+    );
+}
+
+/// The future `Service::call` returns has already routed the request and told
+/// every observer of it, so dropping it unpolled abandons that request too,
+/// matched or not.
+#[tokio::test]
+async fn a_request_never_polled_is_reported_abandoned() {
+    let endings = Endings::default();
+    let service = support::router()
+        .observe(endings.clone())
+        .build(App::new())
+        .expect("a describable router");
+
+    for target in ["/users/42", "/nowhere"] {
+        let mut request = Request::new(kynos::http::body::Body::empty());
+        *request.method_mut() = Method::DELETE;
+        *request.uri_mut() = target.parse().expect("a usable request target");
+        drop(service.call(request));
+    }
+
+    assert_eq!(
+        endings.taken(),
+        [
+            "request DELETE delete_user /users/{id}",
+            "abandoned DELETE delete_user /users/{id}",
+            "request DELETE <unmatched>",
+            "abandoned DELETE <unmatched>",
         ]
     );
 }
@@ -584,7 +695,8 @@ async fn an_observer_hears_a_dropped_body_under_the_operation_that_sent_it() {
     assert_eq!(
         endings.taken(),
         [
-            "response get_user /users/{id} 200 Some(35)",
+            "request GET get_user /users/{id}",
+            "response GET get_user /users/{id} 200 Some(35)",
             "disconnect get_user /users/{id}",
         ]
     );
@@ -597,11 +709,11 @@ struct Timings(Arc<Mutex<(Option<Duration>, Option<Duration>)>>);
 impl Observer<App> for Timings {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &App) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, elapsed: Duration, _: &App) {
-        self.0.lock().expect("an unpoisoned record").0 = Some(elapsed);
+    fn on_response(&self, exchange: &Exchange<'_>, _: &App) {
+        self.0.lock().expect("an unpoisoned record").0 = Some(exchange.elapsed);
     }
 
-    fn on_complete(&self, _: Option<Route<'_>>, completion: &Completion) {
+    fn on_complete(&self, _: Option<Route<'_>>, completion: &Completion, _: &App) {
         self.0.lock().expect("an unpoisoned record").1 = Some(completion.elapsed);
     }
 }
@@ -662,23 +774,54 @@ impl Observer<App> for Contexts {
         self.push("request", context);
     }
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, context: &App) {
+    fn on_response(&self, _: &Exchange<'_>, context: &App) {
         self.push("response", context);
+    }
+
+    fn on_abandoned(&self, _: &Abandonment<'_>, context: &App) {
+        self.push("abandoned", context);
+    }
+
+    fn on_complete(&self, _: Option<Route<'_>>, _: &Completion, context: &App) {
+        self.push("complete", context);
+    }
+
+    fn on_disconnect(&self, _: Option<Route<'_>>, _: Duration, context: &App) {
+        self.push("disconnect", context);
+    }
+
+    fn on_panic(&self, _: &(dyn std::any::Any + Send), _: Option<Route<'_>>, context: &App) {
+        self.push("panic", context);
     }
 }
 
-/// `on_response` is handed the very context `on_request` was, the one the
-/// router was built with, whether or not an operation matched.
+/// A handler whose panic its own endpoint recovers.
+#[kynos::get("/boom", catch_panics)]
+async fn boom() -> NoContent {
+    panic!("boom")
+}
+
+/// Every hook is handed the very context `on_request` was, the one the
+/// router was built with, whether or not an operation matched and however
+/// the request ended.
 #[tokio::test]
-async fn on_response_is_handed_the_context_on_request_was() {
+async fn every_hook_is_handed_the_context_on_request_was() {
     let contexts = Contexts::default();
     let service = support::router()
+        .mount(kynos::routes![boom])
         .observe(contexts.clone())
         .build(App { pool: Pool(11) })
         .expect("a describable router");
 
     get(&service, "/users/42").call().await;
     get(&service, "/nowhere").call().await;
+    get(&service, "/boom").call().await;
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/users/42".parse().expect("a usable request target");
+    drop(service.call(request).await);
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/users/42".parse().expect("a usable request target");
+    drop(service.call(request));
 
     let seen = contexts.0.lock().expect("an unpoisoned record").clone();
     let hooks: Vec<_> = seen.iter().map(|&(hook, _, pool)| (hook, pool)).collect();
@@ -687,8 +830,19 @@ async fn on_response_is_handed_the_context_on_request_was() {
         [
             ("request", 11),
             ("response", 11),
+            ("complete", 11),
             ("request", 11),
             ("response", 11),
+            ("complete", 11),
+            ("request", 11),
+            ("panic", 11),
+            ("response", 11),
+            ("complete", 11),
+            ("request", 11),
+            ("response", 11),
+            ("disconnect", 11),
+            ("request", 11),
+            ("abandoned", 11),
         ]
     );
     let built = seen[0].1;
@@ -1450,8 +1604,8 @@ async fn a_query_naming_its_media_type_reaches_its_operation() {
 #[cfg(all(feature = "openapi32", feature = "unchecked"))]
 #[tokio::test]
 async fn an_unchecked_query_without_a_content_type_is_a_bad_request() {
-    async fn answer(_: Request) -> Response {
-        Response::new(kynos::http::body::Body::empty())
+    async fn answer(_: Request) -> kynos::http::Response {
+        kynos::http::Response::new(kynos::http::body::Body::empty())
     }
 
     let service = Router::<()>::new()

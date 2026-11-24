@@ -11,17 +11,14 @@
 //! `operationId`s a mounted reference publishes, and what a `map_openapi` edit
 //! reaches and may not change.
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+use std::sync::{Arc, Mutex};
 
 use kynos_openapi::{Method, PathTemplate};
 
 use super::{Router, endpoint::builder::EndpointBuilder, operation::Route};
 use crate::{
-    http::{Request, Response, body::Body},
-    middleware::Observer,
+    http::{Request, body::Body},
+    middleware::{Exchange, Observer},
     response::status::NoContent,
     router::error::RouterError,
 };
@@ -70,7 +67,7 @@ impl Observer<()> for Seen {
             .push(request.uri().path().to_owned());
     }
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, (): &()) {}
+    fn on_response(&self, _: &Exchange<'_>, (): &()) {}
 }
 
 /// An observer sees whole requests rather than operations, so one an absorbed

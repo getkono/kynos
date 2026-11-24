@@ -63,7 +63,7 @@ use std::{any::Any, collections::HashMap, net::Ipv4Addr, time::Duration};
 use kynos::{
     http,
     middleware::{
-        Completion, Observer,
+        Completion, Exchange, Observer,
         request_id::{Random, RequestId},
         trace::{Level, Trace},
     },
@@ -112,19 +112,13 @@ impl<C> Observer<C> for Slo {
         tracing::trace!(target: "slo", operation_id = route.operation_id(), "started");
     }
 
-    fn on_response(
-        &self,
-        response: &http::Response,
-        route: Option<Route<'_>>,
-        elapsed: Duration,
-        _: &C,
-    ) {
-        let Some(route) = route else { return };
+    fn on_response(&self, exchange: &Exchange<'_>, _: &C) {
+        let Some(route) = exchange.route else { return };
         let Some(budget) = self.budgets.get(route.operation_id()) else {
             return;
         };
 
-        if elapsed > *budget {
+        if exchange.elapsed > *budget {
             // `matched_path` rather than the request's own path: bounded
             // cardinality, and it is the key a reader will grep the description
             // for.
@@ -132,15 +126,15 @@ impl<C> Observer<C> for Slo {
                 target: "slo",
                 operation_id = route.operation_id(),
                 matched_path = route.path(),
-                status = response.status().as_u16(),
-                elapsed_ms = elapsed.as_millis(),
+                status = exchange.response.status().as_u16(),
+                elapsed_ms = exchange.elapsed.as_millis(),
                 budget_ms = budget.as_millis(),
                 "over budget",
             );
         }
     }
 
-    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion, _: &C) {
         // The delivered figures a bytes-sent or full-latency metric records:
         // `body_bytes` counts the content octets after any content coding,
         // without transfer framing or trailers.
@@ -153,7 +147,7 @@ impl<C> Observer<C> for Slo {
         );
     }
 
-    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: Duration) {
+    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: Duration, _: &C) {
         // Not a budget overrun: the operation may have been well inside its
         // budget and the client simply left. Recorded at `info` rather than
         // `warn` for that reason -- a cancelled download is ordinary traffic,
@@ -167,7 +161,7 @@ impl<C> Observer<C> for Slo {
         );
     }
 
-    fn on_panic(&self, payload: &(dyn Any + Send), route: Option<Route<'_>>) {
+    fn on_panic(&self, payload: &(dyn Any + Send), route: Option<Route<'_>>, _: &C) {
         // The payload is whatever was passed to `panic!`, so the two common
         // shapes are worth unwrapping before falling back to nothing.
         let message = payload

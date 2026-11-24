@@ -274,12 +274,12 @@ do not pay.
 
 **Against axum, the gap is Kynos's own futures.** The same plaintext request,
 counted the same way on one connection with a per-request allocation counter,
-is 14 blocks and 10129 bytes through Kynos and 13 and 9200 through axum 0.8
-over the same hyper; both pay the 8 KiB buffer. Kynos allocates 989 bytes
-axum does not — the dispatch and endpoint futures (432 and 320, below), the
+is 14 blocks and 10153 bytes through Kynos and 13 and 9200 through axum 0.8
+over the same hyper; both pay the 8 KiB buffer. Kynos allocates 1013 bytes
+axum does not — the dispatch and endpoint futures (456 and 320, below), the
 routing record (120), the read deadline axum's `serve` does not arm (96), the
 handler's own string (13) and the `Connection` handle (8) — and axum 60 Kynos
-does not. Without hyper's buffer, Kynos allocates 1897 bytes a request to
+does not. Without hyper's buffer, Kynos allocates 1921 bytes a request to
 axum's 968, the near-2× `kynos-bench`'s first sessions recorded against
 `0.1.0`. Removing any of the three needs a public bound, `unsafe` or a
 dependency the default build cannot take, or a change to `http`, for the
@@ -308,20 +308,20 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
 | 16 B, 48 B → 88 B → 120 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way. The record's one block is **kept** |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
-| 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
+| 1928 B → 1904 B → 432 B → 456 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
 | 920 B → 912 B → 536 B → 320 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
 
 **Five remain, and none is the router's to remove.** They are
-[`requests.tsv`](../crates/kynos-profile/requests.tsv)'s 1052 bytes for that
+[`requests.tsv`](../crates/kynos-profile/requests.tsv)'s bytes for that
 row: the map's box and table (32 and 148), the record (120), and the dispatch
-and endpoint futures (432 and 320).
+and endpoint futures (456 and 320).
 
 - The dispatch future is boxed because `Service<C>` erases it, and generic
   code calls `Service::call` under no bound on `C`, as `examples/csrf.rs`'s
   `send` and the server's own `serve_http` do. Returning `serve`'s future
   unboxed names one that is `Send` only for `C: Send + Sync + 'static`, so it
   needs that bound on `call`: a breaking change, and the one that would remove
-  the block, carrying its 432 bytes inline in every future awaiting `call`.
+  the block, carrying its 456 bytes inline in every future awaiting `call`.
 - An inline slot instead of either box, used when the future fits, stores an
   erased value in place. Writing one here needs `unsafe`, which the workspace
   forbids. Taking a vetted one, the way `alloc_counter` keeps that rule
@@ -375,11 +375,15 @@ layer's continuation and panic recovery are started on the call, and recovery
 boxes what it guards then, so a future that awaits it reserves a pointer. The
 closure returns `serve`'s future rather than awaiting it, and `Service::call`
 returns the box itself, so the request is routed, and every observer told,
-when it is called rather than when it is first polled. The box holds 432
+when it is called rather than when it is first polled. The box holds 456
 bytes, from 2208 in a Linux test build at rustc 1.97.1 at both feature sets,
-and the future a caller holds is the box's 16-byte pointer.
+and the future a caller holds is the box's 16-byte pointer. It held 432 until
+it kept the request's method beside its start time, which an observer is
+handed on the response or the abandonment after the chain consumed the
+request: 24 bytes every request carries, so that no observed one allocates
+for it.
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
-holds the box to under two requests everywhere and to its 432 on Linux, where
+holds the box to under two requests everywhere and to its 456 on Linux, where
 only the crate can name it.
 
 **The endpoint's future holds one.** An endpoint splits the request before
@@ -1243,14 +1247,17 @@ over `tracing` and the subscriber stays the application's.
 | operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `by-design`, below |
 | operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `by-design`, below |
 | operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end; [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) asserting a compressed stream reaches `on_complete` with the encoded octets read and a failed one reaches only `on_disconnect` | `enforced` |
+| operability | Every request an observer is told of ends in exactly one of a response and an abandonment | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) dropping a request while its handler is pending, and one never polled, matched and not, and asserting each reaches `on_abandoned` and never `on_response`, against the exact event lists every answered request produces; [`tests/panics.rs`](../crates/kynos/tests/panics.rs) asserting a panic nothing recovers is reported abandoned | `enforced` |
 
 Both `by-design` rows rest on the same refusal — Kynos ships no OpenTelemetry
 module, for the reasons closing this section. What did land is the
 seam they need: `Observer` receives the matched
 [`Route`](../crates/kynos/src/router/operation.rs), so a label can be keyed by
 operation rather than by request path, which is the property the second row
-measures, and both `on_request` and `on_response` receive the application
-context, so the registry those labels feed is the one the context owns.
+measures; `on_response`'s `Exchange` and `on_abandoned`'s `Abandonment` carry
+the method the request arrived with, so a request no operation matched is
+still labelled by method; and every hook receives the application context, so
+the registry those labels feed is the one the context owns.
 
 The third row is the one that was not simply missing but wrong. `on_response`
 fires when the response head is ready, which for a stream or a download is
@@ -1260,9 +1267,22 @@ rather than sending one. `on_disconnect` reports the body dropped before its
 last frame, which is the difference, and `on_complete` the body read to its
 end, with the latency to its last frame and the octets it carried after
 content coding; exactly one of the two follows each `on_response`, and both
-ride on the body watch only a mounted observer adds. Neither reports a client that leaves
-while the handler is still working: there is no body to drop until the handler
-has produced one.
+ride on the body watch only a mounted observer adds.
+
+Neither reports a client that leaves while the handler is still working, since
+there is no body to drop until the handler has produced one. Nothing else did
+either, once, so an in-flight gauge raised in `on_request` and lowered in
+`on_response` only climbed. The fourth row closes that: the request's future
+owns a drop guard from routing to its response head, and dropped before that
+head, polled or not, it reports `on_abandoned` instead, a panic nothing
+recovers included. Every request carries the 24 bytes of the method the guard
+keeps, in the boxed dispatch future above; only where an observer is mounted
+is the method copied and the guard's report owed, and copying a standard
+method never allocates. The `scope.observer_noop`, `scope.trace_nosub` and
+`scope.trace_sub` rows of
+[`requests.tsv`](../crates/kynos-profile/requests.tsv) price the observed side
+with the rest of observing.
+
 The module is not merely unwritten, though. Shipping one would put this
 framework's release schedule in front of the OpenTelemetry project's, and would
 fix by fiat what a span is called, which attributes it carries, which

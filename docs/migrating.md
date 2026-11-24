@@ -47,6 +47,8 @@ the section for the release that ships it.
 | A merge-patch `Nullable<T>` of your own, with hand-written `Deserialize`, `Schema`, `schema::constraints::Numeric` and `Textual` impls | `Nullable<T>` (`schema::Nullable`), still beside `#[serde(default)]`, which the `Schema` derive now refuses to compile without, where a member missing one was listed in `required` | #1411 |
 | A `#[derive(HeaderParams)]` group with a `set_cookie: String` field, filled from `Cookie::encode()`, plus an error type and `From` impls routing its `None` into each handler's 500 | `WithHeaders<T, response::cookie::SetCookieHeaders>`, built `cookie.into()` from a `response::cookie::Cookie`: an unencodable cookie answers 500 itself; behind `cookie` | #1393 |
 | An `Observer` holding its own clone of a metrics registry the context already owns, cloned out before `build` | read it from the `context` that `Observer::on_response` now receives, as `on_request` does | #1432 |
+| An `Interceptor` whose only job is a `Drop` guard decrementing an in-flight gauge, since a request abandoned before its response reached no `Observer` method | `Observer::on_request` +1, and `on_response` / `on_abandoned` −1: exactly one of the two follows each `on_request` | #1399 |
+| `<unmatched>` as the method label of a request no operation matched, since `on_response` was handed no method | `exchange.method` (`middleware::Exchange`), the method the request arrived with, matched or not | #1399 |
 
 ## 0.5 to 0.6
 

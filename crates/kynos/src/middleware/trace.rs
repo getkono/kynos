@@ -2,7 +2,7 @@
 
 use crate::{
     http,
-    middleware::{Observer, request_id::AssignedId},
+    middleware::{Exchange, Observer, request_id::AssignedId},
     router::operation::Route,
 };
 
@@ -343,14 +343,9 @@ impl<C> Observer<C> for Trace {
         );
     }
 
-    fn on_response(
-        &self,
-        response: &http::Response,
-        route: Option<Route<'_>>,
-        elapsed: std::time::Duration,
-        context: &C,
-    ) {
+    fn on_response(&self, exchange: &Exchange<'_>, context: &C) {
         let _ = context;
+        let (response, route) = (exchange.response, exchange.route);
 
         emit!(
             self.closing(response.status()),
@@ -358,7 +353,7 @@ impl<C> Observer<C> for Trace {
             matched_path = route.map_or(UNMATCHED, |route| route.path()),
             operation_id = route.map_or(UNMATCHED, |route| route.operation_id()),
             status = response.status().as_u16(),
-            latency = ?elapsed,
+            latency = ?exchange.elapsed,
             request_id = AssignedId::of_response(response)
                 .and_then(AssignedId::as_str)
                 .unwrap_or_default(),
@@ -366,7 +361,13 @@ impl<C> Observer<C> for Trace {
         );
     }
 
-    fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
+    fn on_panic(
+        &self,
+        payload: &(dyn std::any::Any + Send),
+        route: Option<Route<'_>>,
+        context: &C,
+    ) {
+        let _ = context;
         // Always `ERROR`, so no level filter hides a panic.
         tracing::error!(
             matched_path = route.map_or(UNMATCHED, |route| route.path()),

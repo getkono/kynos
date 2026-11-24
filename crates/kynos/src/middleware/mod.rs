@@ -672,7 +672,14 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 /// It contributes nothing to the description, so it needs no declaration and
 /// can see everything.
 ///
-/// `route` is `None` when no operation matched.
+/// Every hook is handed the router's context last, so state the application
+/// already owns, such as a metrics registry, is read from it rather than
+/// cloned into the observer. `route` is `None` when no operation matched.
+///
+/// Exactly one of [`on_response`](Observer::on_response) and
+/// [`on_abandoned`](Observer::on_abandoned) follows each
+/// [`on_request`](Observer::on_request), so a gauge one raises the other
+/// lowers, and it never only climbs.
 pub trait Observer<C>: Send + Sync + 'static {
     /// Called when a request arrives, before any interceptor.
     ///
@@ -684,22 +691,25 @@ pub trait Observer<C>: Send + Sync + 'static {
 
     /// Called when a response is about to be written.
     ///
-    /// `elapsed` measures producing the response head, not delivering the
-    /// body; a streaming response is reported long before its last frame.
-    /// Exactly one of [`on_complete`](Observer::on_complete), for a body
-    /// that finished, and [`on_disconnect`](Observer::on_disconnect), for one
-    /// that did not, follows.
+    /// [`Exchange::elapsed`] measures producing the response head, not
+    /// delivering the body; a streaming response is reported long before its
+    /// last frame. Exactly one of [`on_complete`](Observer::on_complete), for
+    /// a body that finished, and [`on_disconnect`](Observer::on_disconnect),
+    /// for one that did not, follows.
+    fn on_response(&self, exchange: &Exchange<'_>, context: &C);
+
+    /// Called when a request is dropped before its response head was
+    /// produced, in place of [`on_response`](Observer::on_response).
     ///
-    /// `context` is the one [`on_request`](Observer::on_request) received,
-    /// so state the application already owns, such as a metrics registry,
-    /// is read from it rather than cloned into the observer.
-    fn on_response(
-        &self,
-        response: &Response,
-        route: Option<Route<'_>>,
-        elapsed: std::time::Duration,
-        context: &C,
-    );
+    /// The client left, or the connection closed, while an interceptor or the
+    /// handler was still working. A panic that nothing recovers is reported
+    /// the same way, since no response follows it either.
+    ///
+    /// Called from the drop of the request's future, on whatever task held
+    /// it: record and return, never block or await.
+    fn on_abandoned(&self, abandonment: &Abandonment<'_>, context: &C) {
+        let _ = (abandonment, context);
+    }
 
     /// Called when the response body [`on_response`](Observer::on_response)
     /// reported was read to its end.
@@ -711,8 +721,8 @@ pub trait Observer<C>: Send + Sync + 'static {
     ///
     /// Called from whatever task reads or drops the body: record and return,
     /// never block or await.
-    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
-        let _ = (route, completion);
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion, context: &C) {
+        let _ = (route, completion, context);
     }
 
     /// Called when a response body was dropped before its end.
@@ -724,15 +734,15 @@ pub trait Observer<C>: Send + Sync + 'static {
     ///
     /// `elapsed` runs from the request arriving to the body being dropped.
     ///
-    /// A client that leaves while the handler is still working is not
-    /// reported, since there is no response body to drop yet.
+    /// A client that leaves while the handler is still working has no body to
+    /// drop yet; [`on_abandoned`](Observer::on_abandoned) reports it instead.
     ///
     /// Called once the body has been released, so whatever it owned is gone;
     /// a body whose own drop panics is still reported, once. Called from the
     /// drop on whatever task last held the body: record and return, never
     /// block or await.
-    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: std::time::Duration) {
-        let _ = (route, elapsed);
+    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: std::time::Duration, context: &C) {
+        let _ = (route, elapsed, context);
     }
 
     /// Called when a panic was recovered, at whichever scope asked for
@@ -743,10 +753,78 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// only for one out of a router's own interceptor around a request no
     /// operation matched. A panic is reported once, by the innermost scope
     /// that recovered it.
-    /// Not reported: a panic nothing recovers, or one whose 500 an outer
-    /// interceptor replaced with a short circuit of its own.
-    fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
-        let _ = (payload, route);
+    /// Not reported: a panic nothing recovers, which
+    /// [`on_abandoned`](Observer::on_abandoned) reports as the request it
+    /// cost, or one whose 500 an outer interceptor replaced with a short
+    /// circuit of its own.
+    fn on_panic(
+        &self,
+        payload: &(dyn std::any::Any + Send),
+        route: Option<Route<'_>>,
+        context: &C,
+    ) {
+        let _ = (payload, route, context);
+    }
+}
+
+/// A response head about to be written, as [`Observer::on_response`] reports
+/// it.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Exchange<'a> {
+    /// The request's method, as it arrived: `HEAD` for a `HEAD` that a `GET`
+    /// answers, and whatever token the client sent where no operation matched.
+    pub method: &'a crate::http::Method,
+    /// The response, with a HEAD's content already shed, since that is what
+    /// the peer will receive.
+    pub response: &'a Response,
+    /// The operation that answered; `None` for an answer the router gives
+    /// itself, such as a 404 or a 405.
+    pub route: Option<Route<'a>>,
+    /// From the request arriving to the response head being ready.
+    pub elapsed: std::time::Duration,
+}
+
+impl<'a> Exchange<'a> {
+    pub(crate) fn new(
+        method: &'a crate::http::Method,
+        response: &'a Response,
+        route: Option<Route<'a>>,
+        elapsed: std::time::Duration,
+    ) -> Self {
+        Self {
+            method,
+            response,
+            route,
+            elapsed,
+        }
+    }
+}
+
+/// A request dropped before its response head, as [`Observer::on_abandoned`]
+/// reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Abandonment<'a> {
+    /// The request's method, as it arrived.
+    pub method: &'a crate::http::Method,
+    /// The operation the request was routed to; `None` where none matched.
+    pub route: Option<Route<'a>>,
+    /// From the request arriving to its being dropped.
+    pub elapsed: std::time::Duration,
+}
+
+impl<'a> Abandonment<'a> {
+    pub(crate) fn new(
+        method: &'a crate::http::Method,
+        route: Option<Route<'a>>,
+        elapsed: std::time::Duration,
+    ) -> Self {
+        Self {
+            method,
+            route,
+            elapsed,
+        }
     }
 }
 

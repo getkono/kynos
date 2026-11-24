@@ -21,7 +21,7 @@ use crate::{
         header,
     },
     middleware::{
-        Completion, Next, Observer,
+        Abandonment, Completion, Exchange, Next, Observer,
         erased::{ErasedInterceptor, ErasedTerminal},
     },
     response::IntoResponse,
@@ -416,6 +416,41 @@ struct Location {
     position: usize,
 }
 
+/// One request between routing and its response head: the table serving it,
+/// where routing sent it, and what its observers are still owed.
+///
+/// Dropped while still owing, it reports the request abandoned, so exactly
+/// one of `on_response` and `on_abandoned` follows each `on_request`.
+struct Pending<C: Send + Sync + 'static> {
+    dispatch: Arc<Dispatch<C>>,
+    routed: Result<Location, Unanswered>,
+    /// `None` where no observer is mounted, and once a response was reported.
+    owed: Option<Owed>,
+}
+
+/// What an observer reads off a request that no longer exists by the time it
+/// is answered, kept only where one is mounted.
+struct Owed {
+    started: Instant,
+    /// Copied off the request, which the chain consumes; a standard method,
+    /// or an extension token of up to 15 bytes, copies without allocating.
+    method: crate::http::Method,
+}
+
+impl<C: Send + Sync + 'static> Drop for Pending<C> {
+    fn drop(&mut self) {
+        let Some(owed) = self.owed.take() else {
+            return;
+        };
+
+        let route = self.routed.ok().map(|at| self.dispatch.route_at(at));
+        let abandonment = Abandonment::new(&owed.method, route, owed.started.elapsed());
+        for observer in &self.dispatch.observers {
+            observer.on_abandoned(&abandonment, &self.dispatch.context);
+        }
+    }
+}
+
 impl<C: Send + Sync + 'static> Dispatch<C> {
     /// Serves one request.
     ///
@@ -426,53 +461,65 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// chain it starts in place rather than through another `async fn`: every
     /// request in flight carries this future in a box, and each `async fn`
     /// between it and the chain would keep a copy of the request of its own.
+    ///
+    /// The future owns the table through a [`Pending`], so dropping it before
+    /// the response head, polled or not, reports the request abandoned.
     pub(crate) fn serve(
         self: Arc<Self>,
         mut request: Request,
     ) -> impl Future<Output = Response> + Send + 'static {
-        // Only an observer reads the clock.
-        let started = (!self.observers.is_empty()).then(Instant::now);
+        // Only an observer reads the clock or the method.
+        let owed = (!self.observers.is_empty()).then(|| Owed {
+            started: Instant::now(),
+            method: request.method().clone(),
+        });
         // Whatever answers a HEAD sends no content.
         let head = request.method() == crate::http::Method::HEAD;
         let routed = self.route(&mut request);
+        let mut pending = Pending {
+            dispatch: self,
+            routed,
+            owed,
+        };
 
         async move {
+            let this = &pending.dispatch;
             let response = 'served: {
-                let at = match routed {
+                let at = match pending.routed {
                     Ok(at) => at,
                     // Without interceptors nothing waits, so a fallback costs
                     // only its answer and its observers.
-                    Err(unanswered) if self.interceptors.is_empty() => {
-                        break 'served self.answer(unanswered, &request);
+                    Err(unanswered) if this.interceptors.is_empty() => {
+                        break 'served this.answer(unanswered, &request);
                     }
                     Err(unanswered) => {
                         let terminal = FallbackTerminal {
-                            dispatch: Arc::clone(&self),
+                            dispatch: Arc::clone(this),
                             unanswered,
                         };
-                        break 'served self
+                        break 'served this
                             .chain(
-                                &self.interceptors,
+                                &this.interceptors,
                                 &terminal,
                                 None,
-                                self.catch_panics,
+                                this.catch_panics,
                                 request,
                             )
                             .await;
                     }
                 };
 
-                let operation = &self.paths[at.path].operations[at.position];
+                let operation = &this.paths[at.path].operations[at.position];
 
                 // A layer wraps the operation after routing, where an
                 // interceptor runs.
                 #[cfg(feature = "unchecked")]
                 if !operation.unchecked_layers.is_empty() {
                     let layered = if operation.catch_panics {
-                        Self::recovering_layers(Arc::clone(&self), at, request)
+                        Self::recovering_layers(Arc::clone(this), at, request)
                     } else {
                         crate::unchecked::through_layers(
-                            Arc::clone(&self),
+                            Arc::clone(this),
                             at.path,
                             at.position,
                             request,
@@ -484,10 +531,13 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                     };
                 }
 
-                self.run(operation, self.route_at(at), request).await
+                this.run(operation, this.route_at(at), request).await
             };
 
-            self.finish(response, routed.ok(), started, head)
+            let owed = pending.owed.take();
+            pending
+                .dispatch
+                .finish(response, pending.routed.ok(), owed, head)
         }
     }
 
@@ -685,7 +735,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// Tells every observer about a recovered panic.
     fn report_panic(&self, payload: &(dyn Any + Send), route: Option<Route<'_>>) {
         for observer in &self.observers {
-            observer.on_panic(payload, route);
+            observer.on_panic(payload, route, &self.context);
         }
     }
 
@@ -761,13 +811,13 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
     /// mid-response, is reported; without, nothing is added. A HEAD response sheds its content
     /// first, so an observer sees what the peer will.
     ///
-    /// `started` is `None` exactly when no observer is mounted, since only an
+    /// `owed` is `None` exactly when no observer is mounted, since only an
     /// observer reads it.
     fn finish(
         self: &Arc<Self>,
         response: Response,
         at: Option<Location>,
-        started: Option<Instant>,
+        owed: Option<Owed>,
         head: bool,
     ) -> Response {
         let response = if head {
@@ -776,14 +826,14 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             response
         };
 
-        let Some(started) = started else {
+        let Some(Owed { started, method }) = owed else {
             return response;
         };
 
-        let elapsed = started.elapsed();
         let route = at.map(|at| self.route_at(at));
+        let exchange = Exchange::new(&method, &response, route, started.elapsed());
         for observer in &self.observers {
-            observer.on_response(&response, route, elapsed, &self.context);
+            observer.on_response(&exchange, &self.context);
         }
 
         // Rebuilt inside the watch: the body outlives any borrow of the table.
@@ -796,12 +846,12 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 Delivery::Complete { bytes } => {
                     let completion = Completion::new(elapsed, bytes);
                     for observer in &watcher.observers {
-                        observer.on_complete(route, &completion);
+                        observer.on_complete(route, &completion, &watcher.context);
                     }
                 }
                 Delivery::Interrupted => {
                     for observer in &watcher.observers {
-                        observer.on_disconnect(route, elapsed);
+                        observer.on_disconnect(route, elapsed, &watcher.context);
                     }
                 }
             }

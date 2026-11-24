@@ -25,8 +25,8 @@ use std::{
 use kynos::{
     Router,
     di::inject::Inject,
-    http::{Request, Response},
-    middleware::Observer,
+    http::Request,
+    middleware::{Exchange, Observer},
     response::stream::sse::{Event, KeepAlive, Sse},
     router::operation::Route,
     server::{Server, error::ServerError, lifecycle::Draining, shutdown::Shutdown},
@@ -272,11 +272,11 @@ struct Counting(Arc<Witness>);
 impl Observer<Arc<Witness>> for Counting {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &Arc<Witness>) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration, _: &Arc<Witness>) {
+    fn on_response(&self, _: &Exchange<'_>, _: &Arc<Witness>) {
         self.0.responses.fetch_add(1, Ordering::SeqCst);
     }
 
-    fn on_disconnect(&self, _: Option<Route<'_>>, _: Duration) {
+    fn on_disconnect(&self, _: Option<Route<'_>>, _: Duration, _: &Arc<Witness>) {
         self.0.disconnects.fetch_add(1, Ordering::SeqCst);
     }
 }
