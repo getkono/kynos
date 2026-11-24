@@ -7092,8 +7092,12 @@ pub fn kynos::response::cookie::Cookie::clone(&self) -> kynos::response::cookie:
 impl core::cmp::Eq for kynos::response::cookie::Cookie
 impl core::cmp::PartialEq for kynos::response::cookie::Cookie
 pub fn kynos::response::cookie::Cookie::eq(&self, &kynos::response::cookie::Cookie) -> bool
+impl core::convert::From<kynos::response::cookie::Cookie> for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::from(kynos::response::cookie::Cookie) -> Self
 impl core::fmt::Debug for kynos::response::cookie::Cookie
 pub fn kynos::response::cookie::Cookie::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::iter::traits::collect::FromIterator<kynos::response::cookie::Cookie> for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::from_iter<I: core::iter::traits::collect::IntoIterator<Item = kynos::response::cookie::Cookie>>(I) -> Self
 impl core::marker::StructuralPartialEq for kynos::response::cookie::Cookie
 impl core::marker::Freeze for kynos::response::cookie::Cookie
 impl core::marker::Send for kynos::response::cookie::Cookie
@@ -7109,10 +7113,16 @@ pub fn kynos::response::cookie::SetCookieHeaders::clone(&self) -> kynos::respons
 impl core::cmp::Eq for kynos::response::cookie::SetCookieHeaders
 impl core::cmp::PartialEq for kynos::response::cookie::SetCookieHeaders
 pub fn kynos::response::cookie::SetCookieHeaders::eq(&self, &kynos::response::cookie::SetCookieHeaders) -> bool
+impl core::convert::From<alloc::vec::Vec<kynos::response::cookie::Cookie>> for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::from(alloc::vec::Vec<kynos::response::cookie::Cookie>) -> Self
+impl core::convert::From<kynos::response::cookie::Cookie> for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::from(kynos::response::cookie::Cookie) -> Self
 impl core::default::Default for kynos::response::cookie::SetCookieHeaders
 pub fn kynos::response::cookie::SetCookieHeaders::default() -> kynos::response::cookie::SetCookieHeaders
 impl core::fmt::Debug for kynos::response::cookie::SetCookieHeaders
 pub fn kynos::response::cookie::SetCookieHeaders::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::iter::traits::collect::FromIterator<kynos::response::cookie::Cookie> for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::from_iter<I: core::iter::traits::collect::IntoIterator<Item = kynos::response::cookie::Cookie>>(I) -> Self
 impl core::marker::StructuralPartialEq for kynos::response::cookie::SetCookieHeaders
 impl kynos::extract::params::header::EncodeHeaders for kynos::response::cookie::SetCookieHeaders
 pub fn kynos::response::cookie::SetCookieHeaders::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>

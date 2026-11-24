@@ -111,14 +111,13 @@ async fn probe_options() -> NoContent {
 async fn session() -> WithHeaders<NoContent, kynos::response::cookie::SetCookieHeaders> {
     WithHeaders::new(
         NoContent,
-        kynos::response::cookie::SetCookieHeaders {
-            cookies: vec![
-                Cookie::new("session", "abc123")
-                    .http_only()
-                    .same_site(SameSite::Strict),
-                Cookie::new("theme", "dark").path("/"),
-            ],
-        },
+        vec![
+            Cookie::new("session", "abc123")
+                .http_only()
+                .same_site(SameSite::Strict),
+            Cookie::new("theme", "dark").path("/"),
+        ]
+        .into(),
     )
 }
 
