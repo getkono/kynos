@@ -160,6 +160,10 @@ impl<C: Sync + 'static> Interceptor<C> for RequireSecret {
     type Adds = ();
     type Short = SecretRejected;
 
+    /// It reads only the head, so `BodySize` above leaves `GET /admin/reports`
+    /// -- whose handler reads no body either -- without a 413.
+    const READS_BODY: bool = false;
+
     async fn intercept(
         &self,
         request: http::Request,
@@ -200,6 +204,9 @@ impl<C: Sync + 'static> Interceptor<C> for Tenant {
     /// Never answers on its own: a missing `X-Tenant` is a rejection the
     /// extraction produces, not something this body decides.
     type Short = Infallible;
+
+    /// It reads only the head; the 413 on what it guards is the handler's.
+    const READS_BODY: bool = false;
 
     async fn intercept(
         &self,
