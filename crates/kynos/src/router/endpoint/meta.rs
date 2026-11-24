@@ -40,6 +40,15 @@ pub trait EndpointMeta {
     /// argument overrides it.
     const OPERATION_ID: &'static str;
 
+    /// Whether [`OPERATION_ID`](EndpointMeta::OPERATION_ID) is the handler's
+    /// name, which the route attribute defaulted it to, rather than one its
+    /// `operation_id` argument wrote.
+    ///
+    /// A defaulted identifier is one the router may recase; a written one is
+    /// published exactly as written. Defaults to `false`, so an implementation
+    /// written before it existed keeps the identifier it wrote.
+    const OPERATION_ID_DEFAULTED: bool = false;
+
     /// The first line of the handler's doc comment.
     const SUMMARY: Option<&'static str>;
 
@@ -75,6 +84,14 @@ pub trait EndpointMeta {
     /// Defaults to `None`, so an implementation written before it existed
     /// describes nothing it did not.
     const HEAD_OPERATION_ID: Option<&'static str> = None;
+
+    /// Whether [`HEAD_OPERATION_ID`](EndpointMeta::HEAD_OPERATION_ID) was
+    /// derived from the handler's name by a bare `head`, rather than named by
+    /// `head = "..."`.
+    ///
+    /// Read as [`OPERATION_ID_DEFAULTED`](EndpointMeta::OPERATION_ID_DEFAULTED)
+    /// is, and defaults to `false` for the same reason.
+    const HEAD_OPERATION_ID_DEFAULTED: bool = false;
 }
 
 /// How a route attribute renders its operation's URI against a path template.
