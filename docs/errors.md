@@ -133,7 +133,7 @@ enum StoreError {
 | type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
 | type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
 | type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it; or a parenthesized list of them, converting into each and answering as the first |
-| type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds; no `#[error(...)]` beside it |
+| type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds and `Error` with its source; no `#[error(...)]` beside it |
 | type | `from` | beside `transparent` on an enum, every variant's `from` |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
@@ -322,15 +322,20 @@ enum AddItemError {
 
 `transparent` on the enum makes each variant transparent, and the derive
 implements the enum's `Display` delegating to the error each variant holds,
-which is what `thiserror`'s `#[error(transparent)]` on every variant would.
+and `std::error::Error` whose `source` is that error's own, which is what
+`thiserror`'s `#[error(transparent)]` on every variant would. A type named an
+error that is no `Error` would surprise whoever boxes it or hands it to `?` in
+a function returning another error, so both come together; the enum must be
+`Debug`, as every `Error` is, and each held error an `Error`.
 It is said on the enum rather than implied by every variant being transparent:
-`Display` is the enum's, and an implied one would collide with a hand-written
-or `thiserror` one, and fail to compile over a held error with no `Display` of
-its own, such as a refusal Kynos ships. An `#[error(...)]` beside it is refused
-for the first reason, and such a refusal is held by a variant marked
-`transparent` in an enum that is not. An enum of transparent variants that is
-not transparent whole needs no `Display` either, since no failure of its own
-reads one.
+`Display` and `Error` are the enum's, and implied ones would collide with a
+hand-written or `thiserror` one, and fail to compile over a held error with no
+`Display` or `Error` of its own, such as a refusal Kynos ships. An
+`#[error(...)]` beside it is refused for the first reason, an `Error` written
+by hand conflicts with the derive's, and such a refusal is held by a variant
+marked `transparent` in an enum that is not. An enum of transparent variants
+that is not transparent whole needs no `Display` either, since no failure of
+its own reads one, and gets no `Error`.
 
 **`from` is asked for, not implied.** `#[problem(from)]` on a transparent
 variant generates `From` the error it holds, so `?` carries that error in;

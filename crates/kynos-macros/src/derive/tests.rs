@@ -5639,7 +5639,7 @@ mod api_error {
                 "a struct has no variant to hand over",
             ),
             case(
-                "a transparent enum beside `thiserror`, which would display it twice",
+                "a transparent enum beside `thiserror`, which would display it and be an `Error` twice",
                 quote::quote!(
                     #[problem(transparent)]
                     enum StoreError {
@@ -5647,7 +5647,7 @@ mod api_error {
                         Lookup(LookupError),
                     }
                 ),
-                "would implement `Display` a second time",
+                "would implement `Display` and `Error` a second time",
             ),
             case(
                 "a variant of a transparent enum saying `transparent` again",
@@ -6285,7 +6285,7 @@ mod api_error {
                             Lookup(LookupError),
                         }
                     ),
-                    "would implement `Display` a second time",
+                    "would implement `Display` and `Error` a second time",
                 ),
             ],
             expand_inner,

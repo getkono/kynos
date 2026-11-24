@@ -1,0 +1,10 @@
+error[E0119]: conflicting implementations of trait `std::error::Error` for type `WrittenTwice`
+  --> tests/ui/macros/api_error_transparent_enum_error_written.rs:15:17
+   |
+15 | #[derive(Debug, ApiError)]
+   |                 ^^^^^^^^ conflicting implementation for `WrittenTwice`
+...
+21 | impl std::error::Error for WrittenTwice {}
+   | --------------------------------------- first implementation here
+   |
+   = note: this error originates in the derive macro `ApiError` (in Nightly builds, run with -Z macro-backtrace for more info)

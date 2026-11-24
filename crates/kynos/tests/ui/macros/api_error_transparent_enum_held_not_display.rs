@@ -1,6 +1,7 @@
-//! A transparent enum displays as the error each variant holds, so one held
-//! error with no `Display` is reported at its field. A refusal Kynos ships is
-//! one; an enum holding it marks its variants `transparent` instead.
+//! A transparent enum displays as the error each variant holds, and is an
+//! `Error` whose source is its, so one held error with no `Display` and no
+//! `Error` is reported at its field for each. A refusal Kynos ships is one; an
+//! enum holding it marks its variants `transparent` instead.
 
 use kynos::ApiError;
 

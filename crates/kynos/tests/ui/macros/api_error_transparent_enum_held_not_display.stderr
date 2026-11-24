@@ -1,5 +1,11 @@
 error[E0277]: `BodySizeExceeded` doesn't implement `std::fmt::Display`
-  --> tests/ui/macros/api_error_transparent_enum_held_not_display.rs:10:14
+  --> tests/ui/macros/api_error_transparent_enum_held_not_display.rs:11:14
    |
-10 |     TooLarge(kynos::middleware::limits::body_size::BodySizeExceeded),
+11 |     TooLarge(kynos::middleware::limits::body_size::BodySizeExceeded),
    |              ^^^^^ the trait `std::fmt::Display` is not implemented for `BodySizeExceeded`
+
+error[E0277]: the trait bound `BodySizeExceeded: std::error::Error` is not satisfied
+  --> tests/ui/macros/api_error_transparent_enum_held_not_display.rs:11:14
+   |
+11 |     TooLarge(kynos::middleware::limits::body_size::BodySizeExceeded),
+   |              ^^^^^ the trait `std::error::Error` is not implemented for `BodySizeExceeded`

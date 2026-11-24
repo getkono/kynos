@@ -832,7 +832,9 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 ///
 /// An enum of held errors alone says `#[problem(transparent)]` once, on the
 /// enum, and needs no `thiserror`: every variant is transparent, and the
-/// derive implements `Display` delegating to the error each holds:
+/// derive implements `Display` delegating to the error each holds, and
+/// `std::error::Error` whose `source` is that error's own, as `thiserror`'s
+/// `#[error(transparent)]` would:
 ///
 /// ```ignore
 /// #[derive(Debug, ApiError)]
@@ -843,11 +845,13 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// Each held error must then be `Display`; one that is not, such as a refusal
-/// Kynos ships, is held by a variant marked `transparent` instead. A variant
-/// saying `transparent` again or taking a `variant_of`, and an
-/// `#[error(...)]`, which would implement `Display` a second time, are
-/// refused. A struct has no variant to hand over, so takes no `transparent`.
+/// The enum must then be `Debug` and each held error an `Error`; one that is
+/// not, such as a refusal Kynos ships, is held by a variant marked
+/// `transparent` instead. A variant saying `transparent` again or taking a
+/// `variant_of`, and an `#[error(...)]`, which would implement `Display` and
+/// `Error` a second time, are refused; an `Error` written by hand beside it
+/// conflicts with the derive's. A struct has no variant to hand over, so takes
+/// no `transparent`.
 ///
 /// `from` beside a variant's `transparent`, or on a variant `#[error(transparent)]`
 /// makes transparent, generates `From` the error it holds, so `?` carries that

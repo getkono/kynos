@@ -6237,6 +6237,45 @@ fn a_transparent_enum_answers_and_displays_as_the_error_it_holds() {
     assert_eq!(SharedUndisplayed::STATUSES, LookupError::STATUSES);
 }
 
+/// A held error with a source of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the journal could not be written")]
+#[problem(status = 503)]
+struct JournalUnwritable(#[source] std::io::Error);
+
+/// Transparent whole over a held error with a source and one without.
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum SharedSourced {
+    Journal(JournalUnwritable),
+    Lookup(LookupError),
+}
+
+/// A transparent enum is an `Error` whose source is the held error's own,
+/// not the held error, as `thiserror`'s `#[error(transparent)]` reads: the
+/// enum is that error, so a chain walked from it never names it twice.
+#[test]
+fn a_transparent_enum_is_an_error_whose_source_is_the_held_error_s() {
+    use std::error::Error;
+
+    let sourced: Box<dyn Error> = Box::new(SharedSourced::Journal(JournalUnwritable(
+        std::io::Error::other("disk gone"),
+    )));
+    assert_eq!(sourced.to_string(), "the journal could not be written");
+    assert_eq!(
+        sourced
+            .source()
+            .expect("the held error's source")
+            .to_string(),
+        "disk gone"
+    );
+    assert!(
+        SharedSourced::Lookup(LookupError::TenantUnknown)
+            .source()
+            .is_none()
+    );
+}
+
 /// `from` on a variant `#[error(transparent)]` makes transparent, beside a
 /// failure of its own.
 #[derive(Debug, thiserror::Error, ApiError)]

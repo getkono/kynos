@@ -1,8 +1,8 @@
 //! Transparent variants: what makes one — `#[problem(transparent)]` on it or
 //! on its enum, or `#[error(transparent)]` — what each refuses, and what the
-//! error it holds gives the enum beyond its answer: the enum's `Display`,
-//! where the enum is transparent whole, and `From` the held error, where the
-//! variant or its enum says `from`.
+//! error it holds gives the enum beyond its answer: the enum's `Display` and
+//! `Error`, where the enum is transparent whole, and `From` the held error,
+//! where the variant or its enum says `from`.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
@@ -63,7 +63,8 @@ pub(super) fn conversions(
 }
 
 /// Refuses an `#[error(...)]` on a transparent enum or its variants:
-/// `thiserror`'s, which would implement the `Display` [`display`] does.
+/// `thiserror`'s, which would implement the `Display` and `Error` [`display`]
+/// does.
 pub(super) fn display_unclaimed(input: &DeriveInput, data: &DataEnum) -> syn::Result<()> {
     let claimed = error_attribute(&input.attrs).or_else(|| {
         data.variants
@@ -73,18 +74,20 @@ pub(super) fn display_unclaimed(input: &DeriveInput, data: &DataEnum) -> syn::Re
     match claimed {
         Some(span) => Err(syn::Error::new(
             span,
-            "a transparent enum displays as the error each variant holds, and `thiserror`'s \
-             `#[error(...)]` would implement `Display` a second time. Drop the `#[error(...)]` \
-             lists and `thiserror::Error`, or drop `transparent` from the enum",
+            "a transparent enum displays as the error each variant holds and is an `Error` whose \
+             source is that error's, and `thiserror`'s `#[error(...)]` would implement `Display` \
+             and `Error` a second time. Drop the `#[error(...)]` lists and `thiserror::Error`, or \
+             drop `transparent` from the enum",
         )),
         None => Ok(()),
     }
 }
 
 /// The `Display` the type has or needs: delegated to each held error where
-/// the enum is `whole`ly transparent; asserted where a failure of its own
-/// reads it for `detail`; neither where no failure does, since a held error's
-/// problem carries its own.
+/// the enum is `whole`ly transparent, with an `Error` whose `source` is the
+/// held error's; asserted where a failure of its own reads it for `detail`;
+/// neither where no failure does, since a held error's problem carries its
+/// own.
 pub(super) fn display(
     input: &DeriveInput,
     whole: bool,
@@ -95,24 +98,38 @@ pub(super) fn display(
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     if whole {
-        let arms = delegates.iter().map(|delegate| {
-            let variant = &delegate.variant;
-            let bindings = &delegate.bindings;
-            // Spanned to the field's type, so one with no `Display` is
-            // reported where it is named: the bound is the argument's.
-            let span = delegate.ty.span();
-            let held: TokenStream2 = delegate
-                .held
-                .clone()
-                .into_iter()
-                .map(|mut token| {
-                    token.set_span(span);
-                    token
+        // Each arm spanned to its field's type, so a held error with no
+        // `Display` or `Error` is reported where it is named: the bound is
+        // the argument's.
+        let arms = |method: fn(Span) -> TokenStream2, rest: TokenStream2| {
+            delegates
+                .iter()
+                .map(|delegate| {
+                    let variant = &delegate.variant;
+                    let bindings = &delegate.bindings;
+                    let span = delegate.ty.span();
+                    let held: TokenStream2 = delegate
+                        .held
+                        .clone()
+                        .into_iter()
+                        .map(|mut token| {
+                            token.set_span(span);
+                            token
+                        })
+                        .collect();
+                    let call = method(span);
+                    quote!(Self::#variant #bindings => #call(#held #rest),)
                 })
-                .collect();
-            let fmt = quote_spanned!(span=> ::core::fmt::Display::fmt);
-            quote!(Self::#variant #bindings => #fmt(#held, formatter),)
-        });
+                .collect::<Vec<_>>()
+        };
+        let display = arms(
+            |span| quote_spanned!(span=> ::core::fmt::Display::fmt),
+            quote!(, formatter),
+        );
+        let source = arms(
+            |span| quote_spanned!(span=> ::core::error::Error::source),
+            TokenStream2::new(),
+        );
         // An enum with no variants has no value to display, and `match self`
         // over a reference to one is not exhaustive.
         let matched = if delegates.is_empty() {
@@ -128,7 +145,18 @@ pub(super) fn display(
                     formatter: &mut ::core::fmt::Formatter<'_>,
                 ) -> ::core::fmt::Result {
                     match #matched {
-                        #(#arms)*
+                        #(#display)*
+                    }
+                }
+            }
+
+            // The held error's source, not the held error: the enum is it,
+            // as `thiserror`'s `#[error(transparent)]` reads.
+            #[automatically_derived]
+            impl #impl_generics ::core::error::Error for #name #ty_generics #where_clause {
+                fn source(&self) -> ::core::option::Option<&(dyn ::core::error::Error + 'static)> {
+                    match #matched {
+                        #(#source)*
                     }
                 }
             }
