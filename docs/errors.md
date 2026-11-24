@@ -140,6 +140,7 @@ enum StoreError {
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`; implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
 | variant | `from` | on a transparent variant, generate `From` the error it holds, as `thiserror`'s `#[from]` would; never beside that `#[from]`, and one variant per held type |
+| variant | `include` | on a one-field variant holding a shared `ApiError` enum, answer as it, as `transparent` does, and generate `From` every error converting into it; one per enum, never beside `from`, `variant_of` or `#[from]` |
 | variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
@@ -348,6 +349,56 @@ naming the duplicate, as are two variants it would build from one type, and
 `from` on a variant that is not transparent: a failure of its own converts
 however its own fields say.
 
+**Failures every operation shares are included, not copied.** An operation's
+enum lists only the failures it can produce, so the 500 and 503 every
+operation answers with would otherwise be copied into each enum, along with a
+`From` per source error. Instead they are declared once, in a shared enum, and
+each operation's enum holds it in one variant marked `include`:
+
+```rust
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ServerError {
+    #[error("the server failed")]
+    #[problem(status = 500, title = "Internal server error")]
+    Internal,
+
+    #[error("the store is unreachable")]
+    #[problem(status = 503, title = "Service unavailable")]
+    Unavailable,
+}
+
+impl From<DbErr> for ServerError { /* chooses the 500 or the 503 */ }
+
+#[derive(Debug, thiserror::Error, ApiError)]
+enum RegisterError {
+    #[error("the name is taken")]
+    #[problem(status = 409)]
+    Conflict,
+
+    #[error(transparent)]
+    #[problem(include)]
+    Server(ServerError),
+}
+```
+
+The variant is transparent, so its statuses join the enum's as any
+transparent variant's do, and it generates `From<E>` for every `E:
+Into<ServerError>`: `?` carries in a `ServerError` and a `DbErr` alike, since
+`?` does not chain two conversions on its own. A derive cannot add a variant to
+the enum it reads, so the variant is written out rather than spliced in from an
+enum-level key, which keeps it matchable as
+`RegisterError::Server(ServerError::Unavailable)` and visible in rustdoc.
+
+That `From` is generic, so it overlaps any other `From` whose source could
+convert into the shared enum. An enum includes one shared enum, since two would
+overlap on an error converting into both; a `from` on the variant, on its
+transparent enum, or on another variant holding the same type, and
+`thiserror`'s `#[from]` on its field, are refused by name. A `From` of another
+type beside it — a sibling's `#[from]`, or one written by hand — is the trait
+solver's to accept, which it does wherever that type or the shared enum is the
+crate's own, and otherwise refuses with E0119, since the type's crate could
+make it convert later.
+
 **An operation that cannot fail every way names a subset.** A rejection
 type's statuses are declared on every operation returning it, so a `HEAD`
 sharing a `PUT`'s enum would declare a 409 it can never send. The narrower
@@ -443,7 +494,9 @@ taking a wider variant another variant already takes. So is a transparent
 enum beside an `#[error(...)]`, or over a variant saying `transparent` again or
 taking a `variant_of`; and a `from` on a struct, on an enum not transparent
 whole, on a variant not transparent, beside `#[from]`, or building two
-variants from one type. What `base`, `title`,
+variants from one type; and an `include` on the type, given a value, beside
+`from`, `variant_of` or `#[from]`, in an enum saying `from`, beside a `from`
+variant holding its type, or a second one in one enum. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
