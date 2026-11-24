@@ -849,6 +849,23 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// `#[error(...)]`, which would implement `Display` a second time, are
 /// refused. A struct has no variant to hand over, so takes no `transparent`.
 ///
+/// `from` beside a variant's `transparent`, or on a variant `#[error(transparent)]`
+/// makes transparent, generates `From` the error it holds, so `?` carries that
+/// error in; beside `transparent` on the enum, every variant's:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(transparent, from)]
+/// enum AddItemError {
+///     ListNotFound(ListNotFound),
+///     Internal(Internal),
+/// }
+/// ```
+///
+/// It is refused on a variant that is not transparent, on an enum that is not
+/// transparent whole, beside `thiserror`'s `#[from]`, which implements the
+/// same `From`, and on two variants holding one type.
+///
 /// A status's description joins the `title` of every variant answering with
 /// it, in declaration order. An enum writes its own with `describe`, which
 /// leaves each variant's `title` on the wire and on its branch of the schema:

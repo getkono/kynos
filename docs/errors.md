@@ -134,10 +134,12 @@ enum StoreError {
 | type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
 | type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
 | type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds; no `#[error(...)]` beside it |
+| type | `from` | beside `transparent` on an enum, every variant's `from` |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`; implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
+| variant | `from` | on a transparent variant, generate `From` the error it holds, as `thiserror`'s `#[from]` would; never beside that `#[from]`, and one variant per held type |
 | variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
@@ -288,7 +290,8 @@ slug in `const` items, so it cannot drift from the prefix the derives use.
 
 **A shared failure is declared once.** A variant marked `transparent` holds
 another `ApiError` — failures many operations share, such as validation or a
-missing parent resource — and `thiserror`'s `#[from]` converts into it. Its
+missing parent resource — and `thiserror`'s `#[from]`, or `from` below,
+converts into it. Its
 problem is the held error's, and that type's statuses and responses join the
 enum's: the `const` is the union in declaration order, and a status both sides
 declare is unioned rather than replaced, so the description names every type
@@ -328,6 +331,17 @@ for the first reason, and such a refusal is held by a variant marked
 `transparent` in an enum that is not. An enum of transparent variants that is
 not transparent whole needs no `Display` either, since no failure of its own
 reads one.
+
+**`from` is asked for, not implied.** `#[problem(from)]` on a transparent
+variant generates `From` the error it holds, so `?` carries that error in;
+beside `transparent` on the enum, `#[problem(transparent, from)]`, it does so
+for every variant. A `From` for every transparent variant would collide with
+the `thiserror` `#[from]` every existing enum already writes, with a
+hand-written one, and with itself where two variants hold one type, each
+breaking code that compiled. So `from` beside `#[from]` on the field is refused
+naming the duplicate, as are two variants it would build from one type, and
+`from` on a variant that is not transparent: a failure of its own converts
+however its own fields say.
 
 **An operation that cannot fail every way names a subset.** A rejection
 type's statuses are declared on every operation returning it, so a `HEAD`
@@ -410,7 +424,9 @@ naming the subset's generic parameter, or over a variant or field with a
 `#[problem(...)]`, naming no enum, naming the enum's generic parameter, or
 taking a wider variant another variant already takes. So is a transparent
 enum beside an `#[error(...)]`, or over a variant saying `transparent` again or
-taking a `variant_of`. What `base`, `title`,
+taking a `variant_of`; and a `from` on a struct, on an enum not transparent
+whole, on a variant not transparent, beside `#[from]`, or building two
+variants from one type. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.

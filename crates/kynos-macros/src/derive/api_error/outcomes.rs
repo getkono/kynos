@@ -7,12 +7,9 @@ use syn::{Data, DeriveInput, Fields, GenericParam, Generics, Ident, Type, Varian
 
 use super::{
     Extension, Failure, Outcome, TypeUri,
-    args::{
-        Base, Constant, Markers, Position, ProblemArgs, check_field_markers, error_transparent,
-        parse_problem,
-    },
+    args::{Base, Constant, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
     fields::{header_field, retry_after_field},
-    transparent,
+    transparent::{self, error_transparent},
 };
 use crate::doc::doc_string;
 
@@ -43,20 +40,28 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
             let whole = args.transparent;
             if whole.is_some() {
                 transparent::display_unclaimed(input, data)?;
+            } else if let Some(span) = args.from {
+                return Err(syn::Error::new(
+                    span,
+                    "`from` on an enum builds every variant from the error it holds, so it needs \
+                     `transparent` beside it; mark each transparent variant `#[problem(from)]` \
+                     instead",
+                ));
             }
 
             data.variants
                 .iter()
-                .map(|variant| variant_outcome(input, variant, whole, base))
+                .map(|variant| variant_outcome(input, variant, (whole, args.from), base))
                 .collect()
         }
 
         Data::Struct(data) => {
-            if let Some(span) = args.transparent {
+            if let Some(span) = args.transparent.or(args.from) {
                 return Err(syn::Error::new(
                     span,
-                    "`transparent` hands a variant to the error it holds, so it belongs on an \
-                     enum or one of its variants; a struct has no variant to hand over",
+                    "`transparent` and `from` hand a variant to the error it holds, so they \
+                     belong on an enum or one of its variants; a struct has no variant to hand \
+                     over",
                 ));
             }
 
@@ -90,12 +95,12 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
     }
 }
 
-/// How one variant of `input` fails, `whole` the span of a `transparent` on
-/// the enum.
+/// How one variant of `input` fails, `whole` and `from` the spans of a
+/// `transparent` and a `from` on the enum.
 fn variant_outcome(
     input: &DeriveInput,
     variant: &Variant,
-    whole: Option<Span>,
+    (whole, from): (Option<Span>, Option<Span>),
     base: Option<&Base>,
 ) -> syn::Result<Outcome> {
     let markers = check_field_markers(&variant.fields)?;
@@ -103,22 +108,37 @@ fn variant_outcome(
 
     let mut args = parse_problem(&variant.attrs, Position::Variant)?;
     if let Some(whole) = whole {
-        return transparent::whole(variant, &args, whole, &markers, generics)
-            .map(Outcome::Transparent);
-    }
-    if let Some((wide, span)) = &args.variant_of {
-        return super::variant_of::variant_of(variant, &args, wide, *span, &markers, generics)
-            .map(Outcome::Transparent);
-    }
-    if let Some(span) = args.transparent {
-        return transparent::read(variant, &args, span, &markers, generics)
+        return transparent::whole(variant, &args, whole, from, &markers, generics)
             .map(Outcome::Transparent);
     }
     // `#[error(transparent)]` already says the variant is what it holds; a
     // status of its own is the opt-out. Only a variant: a struct has no
     // variant to hand over, so a struct-level one implies nothing and the
     // struct still declares its status.
-    if let (None, Some(span)) = (args.status, error_transparent(&variant.attrs)) {
+    let implied = error_transparent(&variant.attrs).filter(|_| args.status.is_none());
+    if let (Some(span), true) = (
+        args.from,
+        args.variant_of.is_some() || args.transparent.or(implied).is_none(),
+    ) {
+        return Err(syn::Error::new(
+            span,
+            format!(
+                "`from` builds a transparent variant from the one error it holds, and variant \
+                 `{}` is not transparent; mark it `transparent`, or write the `From` it needs by \
+                 hand",
+                variant.ident
+            ),
+        ));
+    }
+    if let Some((wide, span)) = &args.variant_of {
+        return super::variant_of::variant_of(variant, &args, wide, *span, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    if let Some(span) = args.transparent {
+        return transparent::read(variant, &args, span, args.from, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    if let Some(span) = implied {
         return transparent::implied(variant, &args, span, &markers, generics)
             .map(Outcome::Transparent);
     }

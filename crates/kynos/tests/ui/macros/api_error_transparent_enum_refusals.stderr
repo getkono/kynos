@@ -4,7 +4,7 @@ error: a transparent enum displays as the error each variant holds, and `thiserr
 17 |     #[error(transparent)]
    |       ^^^^^
 
-error: the enum is transparent, so variant `Lookup` already answers as the one error it holds; drop this key, or drop `transparent` from the enum
+error: the enum is transparent, so variant `Lookup` already answers as the one error it holds, and is built from it where the enum says `from`; drop this key, or drop it from the enum
   --> tests/ui/macros/api_error_transparent_enum_refusals.rs:24:15
    |
 24 |     #[problem(transparent)]

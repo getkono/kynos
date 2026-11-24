@@ -6237,6 +6237,73 @@ fn a_transparent_enum_answers_and_displays_as_the_error_it_holds() {
     assert_eq!(SharedUndisplayed::STATUSES, LookupError::STATUSES);
 }
 
+/// `from` on a variant `#[error(transparent)]` makes transparent, beside a
+/// failure of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ConvertedPause {
+    #[error(transparent)]
+    #[problem(from)]
+    Lookup(LookupError),
+
+    #[error("the torrent is already paused")]
+    #[problem(status = 409)]
+    AlreadyPaused,
+}
+
+/// `from` on a transparent enum, every variant built from what it holds,
+/// one through a named field, inside a generic `impl`.
+#[derive(Debug, ApiError)]
+#[problem(transparent, from)]
+enum SharedFrom<const N: usize> {
+    Lookup(LookupError),
+    Invalid { source: ValidationFailed },
+}
+
+/// `from` on one transparent variant and not the other, without `thiserror`.
+#[derive(Debug, ApiError)]
+enum PartlyFrom {
+    #[problem(transparent, from)]
+    Lookup(LookupError),
+
+    #[problem(transparent)]
+    Invalid(ValidationFailed),
+}
+
+/// `?` carries a held error into each variant `from` builds, without
+/// `thiserror`'s `#[from]`.
+#[test]
+fn from_builds_a_transparent_variant_from_the_error_it_holds() {
+    fn lookup<E: From<LookupError>>() -> Result<(), E> {
+        Err(LookupError::TenantUnknown)?;
+        Ok(())
+    }
+
+    assert!(matches!(
+        lookup::<ConvertedPause>(),
+        Err(ConvertedPause::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        lookup::<SharedFrom<0>>(),
+        Err(SharedFrom::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        lookup::<PartlyFrom>(),
+        Err(PartlyFrom::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        SharedFrom::<0>::from(ValidationFailed {
+            field: "name".to_owned(),
+        }),
+        SharedFrom::Invalid { source } if source.field == "name"
+    ));
+    assert!(matches!(
+        PartlyFrom::Invalid(ValidationFailed {
+            field: "name".to_owned()
+        }),
+        PartlyFrom::Invalid(_)
+    ));
+}
+
 /// The wider enum `subset_of` cases narrow: an extension member, a status two
 /// variants share, a header group on one of two variants sharing a status,
 /// and a transparent variant whose 404 joins one of its own.

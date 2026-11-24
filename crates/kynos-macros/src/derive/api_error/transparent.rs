@@ -1,17 +1,66 @@
 //! Transparent variants: what makes one — `#[problem(transparent)]` on it or
 //! on its enum, or `#[error(transparent)]` — what each refuses, and what the
 //! error it holds gives the enum beyond its answer: the enum's `Display`,
-//! where the enum is transparent whole.
+//! where the enum is transparent whole, and `From` the held error, where the
+//! variant or its enum says `from`.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
-use syn::{DataEnum, DeriveInput, Generics, Index, Member, Variant, spanned::Spanned};
+use syn::{Attribute, DataEnum, DeriveInput, Generics, Index, Member, Variant, spanned::Spanned};
 
 use super::{
     Failure, Transparent,
-    args::{Markers, ProblemArgs, error_attribute},
+    args::{Markers, ProblemArgs},
     outcomes::generic_named_in,
 };
+use crate::derive::attribute::compact;
+
+/// `From<Held> for Self` for each delegate that says `from`, building its
+/// variant from the error it holds; refusing two holding one type, which
+/// one `From` cannot build both of.
+pub(super) fn conversions(
+    input: &DeriveInput,
+    delegates: &[&Transparent],
+) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    let converting: Vec<&Transparent> = delegates
+        .iter()
+        .copied()
+        .filter(|delegate| delegate.from.is_some())
+        .collect();
+
+    let mut impls = Vec::with_capacity(converting.len());
+    for (index, delegate) in converting.iter().enumerate() {
+        let ty = &delegate.ty;
+        if let Some(first) = converting[..index]
+            .iter()
+            .find(|earlier| compact(&earlier.ty) == compact(ty))
+        {
+            return Err(syn::Error::new(
+                delegate.from.unwrap_or_else(|| ty.span()),
+                format!(
+                    "variant `{}` is already built from `{}`, and one `From` builds one \
+                     variant; drop `from` from one of them",
+                    first.variant,
+                    compact(ty)
+                ),
+            ));
+        }
+        let variant = &delegate.variant;
+        let bindings = &delegate.bindings;
+        let held = &delegate.held;
+        impls.push(quote! {
+            #[automatically_derived]
+            impl #impl_generics ::core::convert::From<#ty> for #name #ty_generics #where_clause {
+                fn from(#held: #ty) -> Self {
+                    Self::#variant #bindings
+                }
+            }
+        });
+    }
+    Ok(quote!(#(#impls)*))
+}
 
 /// Refuses an `#[error(...)]` on a transparent enum or its variants:
 /// `thiserror`'s, which would implement the `Display` [`display`] does.
@@ -104,11 +153,12 @@ pub(super) fn display(
 }
 
 /// Reads a `#[problem(transparent)]` variant, refusing what it cannot also
-/// say.
+/// say; `from` is the span of the `from` building it, its own or its enum's.
 pub(super) fn read(
     variant: &Variant,
     args: &ProblemArgs,
     span: Span,
+    from: Option<Span>,
     markers: &[Markers],
     generics: &Generics,
 ) -> syn::Result<Transparent> {
@@ -176,40 +226,53 @@ pub(super) fn read(
         ));
     }
 
+    if let (Some(_), Some(attr)) = (
+        from,
+        field.attrs.iter().find(|attr| attr.path().is_ident("from")),
+    ) {
+        return Err(syn::Error::new(
+            attr.path().span(),
+            "`thiserror`'s `#[from]` implements the `From` that `#[problem(from)]` does; drop \
+             one of them",
+        ));
+    }
+
     let member = field
         .ident
         .clone()
         .map_or_else(|| Member::Unnamed(Index::from(0)), Member::Named);
-    Ok(Transparent::field(
-        variant.ident.clone(),
-        &member,
-        field.ty.clone(),
-    ))
+    let mut delegate = Transparent::field(variant.ident.clone(), &member, field.ty.clone());
+    delegate.from = from;
+    Ok(delegate)
 }
 
-/// Reads a variant of an enum `transparent` marks whole, refusing a variant
-/// that says so again or takes a wider enum's variant instead.
+/// Reads a variant of an enum `transparent` marks whole, `from` the span of
+/// the enum's own `from`, refusing a variant that says either again or takes
+/// a wider enum's variant instead.
 pub(super) fn whole(
     variant: &Variant,
     args: &ProblemArgs,
     whole: Span,
+    from: Option<Span>,
     markers: &[Markers],
     generics: &Generics,
 ) -> syn::Result<Transparent> {
     if let Some(span) = args
         .transparent
         .or_else(|| args.variant_of.as_ref().map(|(_, span)| *span))
+        .or_else(|| args.from.filter(|_| from.is_some()))
     {
         return Err(syn::Error::new(
             span,
             format!(
                 "the enum is transparent, so variant `{}` already answers as the one error it \
-                 holds; drop this key, or drop `transparent` from the enum",
+                 holds, and is built from it where the enum says `from`; drop this key, or drop \
+                 it from the enum",
                 variant.ident
             ),
         ));
     }
-    read(variant, args, whole, markers, generics)
+    read(variant, args, whole, from.or(args.from), markers, generics)
 }
 
 /// Reads a variant `#[error(transparent)]` makes transparent, having declared
@@ -233,5 +296,26 @@ pub(super) fn implied(
             ),
         ));
     }
-    read(variant, args, span, markers, generics)
+    read(variant, args, span, args.from, markers, generics)
+}
+
+/// The span of `thiserror`'s `#[error(transparent)]` among `attrs`: the item
+/// displays as the one field it holds, which a variant declaring no status of
+/// its own also answers as.
+pub(super) fn error_transparent(attrs: &[Attribute]) -> Option<Span> {
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("error"))
+        .filter_map(|attr| attr.parse_args::<syn::Ident>().ok())
+        .find(|ident| ident == "transparent")
+        .map(|ident| ident.span())
+}
+
+/// The span of the first `#[error(...)]` among `attrs`: `thiserror`'s, which
+/// implements `Display` for the item it is written on.
+pub(super) fn error_attribute(attrs: &[Attribute]) -> Option<Span> {
+    attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("error"))
+        .map(|attr| attr.path().span())
 }

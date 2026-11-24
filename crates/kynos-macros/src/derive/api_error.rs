@@ -12,6 +12,8 @@
 //! #[problem(transparent)]                          on a one-field variant, instead;
 //!                                                  implied by `#[error(transparent)]`
 //!                                                  on a variant with no `status`
+//! #[problem(from)]                                 on a transparent variant, or
+//!                                                  beside `transparent` on an enum
 //! #[problem( variant_of = <path>::<variant> )]     on a variant, alone, instead
 //! #[problem(extension)]                            on a named field, optional
 //! #[problem(headers)]                              on one field, optional
@@ -94,7 +96,7 @@ mod transparent;
 mod variant_of;
 mod written;
 
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{ToTokens, quote, quote_spanned};
 use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, ext::IdentExt, spanned::Spanned};
 
@@ -173,6 +175,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
 
     let impls = impls(input, &problem, &response, &responses, &codes);
     let back = variant_of::conversions_back(input, &delegates)?;
+    let from = transparent::conversions(input, &delegates)?;
 
     // `Responses` and `into_problem` come from the same declarations.
     Ok(quote! {
@@ -181,6 +184,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         #impls
         #handles
         #back
+        #from
     })
 }
 
@@ -269,6 +273,8 @@ struct Transparent {
     /// For `variant_of`, the wider variant, whose statuses and description
     /// are its own rather than the whole wider enum's.
     of: Option<Ident>,
+    /// Where `from` asks for `From` the held error, its own or its enum's.
+    from: Option<Span>,
 }
 
 impl Transparent {
@@ -280,6 +286,7 @@ impl Transparent {
             held: quote!(inner),
             ty,
             of: None,
+            from: None,
         }
     }
 }
