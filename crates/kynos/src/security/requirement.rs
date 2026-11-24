@@ -940,17 +940,21 @@ type CredentialOf<M> = <SchemeOf<M> as SecurityScheme>::Credential;
 /// What context `C`'s authenticator for scheme `S` fails with.
 type ErrorOf<S, C> = <<C as Authenticates<S>>::Authenticator as Authenticator<S, C>>::Error;
 
+/// What checking member `M` under context `C` yields: its credential where
+/// one was presented, or the guard's refusal.
+type MemberChecked<M, C> = Result<Option<CredentialOf<M>>, GuardRejection<ErrorOf<SchemeOf<M>, C>>>;
+
 /// Reads member `M`'s credential and, unless it is absent, verifies it and
 /// authorizes it for [`Member::scopes`].
-async fn check_member<M, C>(
-    parts: &Parts,
-    context: &C,
-) -> Result<Option<CredentialOf<M>>, GuardRejection<ErrorOf<M::Scheme, C>>>
+///
+/// A plain `fn` handing back [`present_and_verify`]'s future, so a guard
+/// awaiting it embeds no state machine of this function's own.
+fn check_member<M, C>(parts: &Parts, context: &C) -> impl Future<Output = MemberChecked<M, C>>
 where
     M: Member<Scheme: Carries>,
     C: Authenticates<M::Scheme>,
 {
-    present_and_verify::<M::Scheme, C>(parts, context, M::scopes).await
+    present_and_verify::<M::Scheme, C>(parts, context, M::scopes)
 }
 
 /// Registers member `M`'s scheme and returns the requirement naming it with
