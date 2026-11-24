@@ -876,9 +876,10 @@ rejection ([`nfr.md`](nfr.md#routing) records the width). With it, a routed
 request, and one no operation answers that the root router's interceptors
 see, carries one extension more, holding two function pointers: its own block,
 since `http::Extensions` boxes every value, so an application that did not ask
-for a policy does not pay it. Every chain carries a pointer to the policy
-beside the interceptor it polls, whether one is installed or not, which is 8
-of the dispatch future's bytes ([`nfr.md`](nfr.md#routing)); an endpoint that
+for a policy does not pay it. Every chain carries a pointer to the policy,
+whether one is installed or not: 8 of the dispatch future's bytes, and 8 in
+each interceptor's future, since each holds the `Next` that hands the pointer
+down the chain ([`nfr.md`](nfr.md#routing)); an endpoint that
 runs interceptors of its own or recovers its own panics looks the extension up
 once per request.
 

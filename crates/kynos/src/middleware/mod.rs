@@ -583,6 +583,9 @@ pub struct Next<'a, C> {
     context: &'a C,
     route: Option<Route<'a>>,
     /// The problem policy each refusal along the chain is rendered under.
+    ///
+    /// Eight bytes in every interceptor's future, which holds the `Next` it
+    /// is handed until it runs it.
     problems: crate::__private::Refusing,
 }
 
@@ -639,6 +642,8 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
     /// being synchronous, it could never have interrupted.
     pub fn run(self, request: Request) -> impl Future<Output = Continued<()>> + Send + 'a {
         // The policy rides in the interceptor's arm, the only one reading it.
+        // It widens nothing here, the terminal arm's tag fitting in the
+        // pointer's niche, but leaves no niche for an enum around this future.
         enum Rest<I, T> {
             Interceptor(I, crate::__private::Refusing),
             Terminal(T),

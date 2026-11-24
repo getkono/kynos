@@ -322,8 +322,10 @@ fn each_bodiless_router_answer_carries_exactly_its_fields() {
 /// Keeping the request's method for an observer, after the chain has consumed
 /// the request, costs nothing here: a method a description can declare sits
 /// in the routing tag's padding, and any other token behind a pointer. The
-/// problem policy a refusal is rendered under costs 8, from 432: the pointer
-/// the chain's interceptor arm holds.
+/// problem policy a refusal is rendered under costs 8, from 432, though the
+/// chain's future holding it stays 24 bytes: the pointer takes the niche the
+/// choice between a recovered and an unguarded chain kept its tag in, so that
+/// choice now needs a tag of its own.
 const BOXED_DISPATCH_FUTURE_BYTES: usize = 440;
 
 /// The design property under the ceiling, and the one that survives a change

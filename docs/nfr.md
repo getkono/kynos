@@ -382,10 +382,22 @@ method, which an observer is handed on the response or the abandonment after
 the chain consumed the request, widens it by nothing: one a description can
 declare sits in a byte of the routing tag's padding, where the `HEAD` flag
 was, and any other token, always refused 501, behind a pointer. The problem
-policy an interceptor's refusal is rendered under widens it by 8, from 432:
-the pointer the chain's interceptor arm holds, since the refusal is rendered
-where its interceptor's future settles and nowhere is the policy closer
-([`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders)).
+policy an interceptor's refusal is rendered under widens it by 8, from 432,
+since the refusal is rendered where its interceptor's future settles and
+nowhere is the policy closer
+([`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders)). The
+chain's own future holds the pointer in its interceptor arm and stays 24
+bytes, the terminal arm's tag fitting in the pointer's niche; the 8 is the
+tag the choice between a recovered and an unguarded chain needs once that
+niche is spent. The pointer also rides down the chain in each `Next`, which
+every interceptor's future holds until it runs it, so each interceptor's box
+is 8 bytes wider too: `scenarios.layers_4` and `layers_8` measured 40 and 72
+heap bytes more than before the policy, on one host, and every request 18
+program instructions more, plus about 7 per interceptor. Holding the pointer
+once in each interceptor's box, beside the future it settles, would need pin
+projection, so `unsafe` or a new dependency; reading it from the request's
+extensions at each level would trade those bytes for a lookup per
+interceptor.
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
 holds the box to under two requests everywhere and to its 440 on Linux, where
 only the crate can name it.
