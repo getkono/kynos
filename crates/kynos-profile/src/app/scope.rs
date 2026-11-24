@@ -5,14 +5,15 @@
 
 use std::any::Any;
 use std::convert::Infallible;
-use std::time::Duration;
 
 use bytes::Bytes;
 use http_body::Frame;
 use kynos::{
     extract::connection::Connection,
-    http::{Request, Response},
-    middleware::{Continued, Interceptor, Next, Observer, catch_panic::PanicPolicy, trace::Trace},
+    http::Request,
+    middleware::{
+        Continued, Exchange, Interceptor, Next, Observer, catch_panic::PanicPolicy, trace::Trace,
+    },
     prelude::*,
     router::{operation::Route, service::Service},
     server::tls::TlsConfig,
@@ -132,14 +133,8 @@ impl Observer<App> for Unheard {
         let _ = (request, route, context);
     }
 
-    fn on_response(
-        &self,
-        response: &Response,
-        route: Option<Route<'_>>,
-        elapsed: Duration,
-        context: &App,
-    ) {
-        let _ = (response, route, elapsed, context);
+    fn on_response(&self, exchange: &Exchange<'_>, context: &App) {
+        let _ = (exchange, context);
     }
 }
 

@@ -5479,11 +5479,12 @@ pub fn kynos::middleware::trace::Trace::default() -> Self
 impl core::fmt::Debug for kynos::middleware::trace::Trace
 pub fn kynos::middleware::trace::Trace::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<C> kynos::middleware::Observer<C> for kynos::middleware::trace::Trace
-pub fn kynos::middleware::trace::Trace::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion)
-pub fn kynos::middleware::trace::Trace::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration)
-pub fn kynos::middleware::trace::Trace::on_panic(&self, &(dyn core::any::Any + core::marker::Send), core::option::Option<kynos::router::operation::Route<'_>>)
+pub fn kynos::middleware::trace::Trace::on_abandoned(&self, &kynos::middleware::Abandonment<'_>, &C)
+pub fn kynos::middleware::trace::Trace::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion, &C)
+pub fn kynos::middleware::trace::Trace::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration, &C)
+pub fn kynos::middleware::trace::Trace::on_panic(&self, &(dyn core::any::Any + core::marker::Send), core::option::Option<kynos::router::operation::Route<'_>>, &C)
 pub fn kynos::middleware::trace::Trace::on_request(&self, &kynos::http::Request, core::option::Option<kynos::router::operation::Route<'_>>, &C)
-pub fn kynos::middleware::trace::Trace::on_response(&self, &kynos::http::Response, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration, &C)
+pub fn kynos::middleware::trace::Trace::on_response(&self, &kynos::middleware::Exchange<'_>, &C)
 impl core::marker::Freeze for kynos::middleware::trace::Trace
 impl core::marker::Send for kynos::middleware::trace::Trace
 impl core::marker::Sync for kynos::middleware::trace::Trace
@@ -5688,6 +5689,26 @@ impl core::marker::Unpin for kynos::middleware::Placement
 impl core::marker::UnsafeUnpin for kynos::middleware::Placement
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::Placement
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::Placement
+#[non_exhaustive] pub struct kynos::middleware::Abandonment<'a>
+pub kynos::middleware::Abandonment::elapsed: core::time::Duration
+pub kynos::middleware::Abandonment::method: &'a http::method::Method
+pub kynos::middleware::Abandonment::route: core::option::Option<kynos::router::operation::Route<'a>>
+impl<'a> core::clone::Clone for kynos::middleware::Abandonment<'a>
+pub fn kynos::middleware::Abandonment<'a>::clone(&self) -> kynos::middleware::Abandonment<'a>
+impl<'a> core::cmp::Eq for kynos::middleware::Abandonment<'a>
+impl<'a> core::cmp::PartialEq for kynos::middleware::Abandonment<'a>
+pub fn kynos::middleware::Abandonment<'a>::eq(&self, &kynos::middleware::Abandonment<'a>) -> bool
+impl<'a> core::fmt::Debug for kynos::middleware::Abandonment<'a>
+pub fn kynos::middleware::Abandonment<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for kynos::middleware::Abandonment<'a>
+impl<'a> core::marker::StructuralPartialEq for kynos::middleware::Abandonment<'a>
+impl<'a> core::marker::Freeze for kynos::middleware::Abandonment<'a>
+impl<'a> core::marker::Send for kynos::middleware::Abandonment<'a>
+impl<'a> core::marker::Sync for kynos::middleware::Abandonment<'a>
+impl<'a> core::marker::Unpin for kynos::middleware::Abandonment<'a>
+impl<'a> core::marker::UnsafeUnpin for kynos::middleware::Abandonment<'a>
+impl<'a> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::Abandonment<'a>
+impl<'a> core::panic::unwind_safe::UnwindSafe for kynos::middleware::Abandonment<'a>
 #[non_exhaustive] pub struct kynos::middleware::Completion
 pub kynos::middleware::Completion::body_bytes: u64
 pub kynos::middleware::Completion::elapsed: core::time::Duration
@@ -5724,6 +5745,23 @@ impl<H> core::marker::Unpin for kynos::middleware::Continued<H>
 impl<H> core::marker::UnsafeUnpin for kynos::middleware::Continued<H>
 impl<H> !core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::Continued<H>
 impl<H> !core::panic::unwind_safe::UnwindSafe for kynos::middleware::Continued<H>
+#[non_exhaustive] pub struct kynos::middleware::Exchange<'a>
+pub kynos::middleware::Exchange::elapsed: core::time::Duration
+pub kynos::middleware::Exchange::method: &'a http::method::Method
+pub kynos::middleware::Exchange::response: &'a kynos::http::Response
+pub kynos::middleware::Exchange::route: core::option::Option<kynos::router::operation::Route<'a>>
+impl<'a> core::clone::Clone for kynos::middleware::Exchange<'a>
+pub fn kynos::middleware::Exchange<'a>::clone(&self) -> kynos::middleware::Exchange<'a>
+impl<'a> core::fmt::Debug for kynos::middleware::Exchange<'a>
+pub fn kynos::middleware::Exchange<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<'a> core::marker::Copy for kynos::middleware::Exchange<'a>
+impl<'a> core::marker::Freeze for kynos::middleware::Exchange<'a>
+impl<'a> core::marker::Send for kynos::middleware::Exchange<'a>
+impl<'a> core::marker::Sync for kynos::middleware::Exchange<'a>
+impl<'a> core::marker::Unpin for kynos::middleware::Exchange<'a>
+impl<'a> core::marker::UnsafeUnpin for kynos::middleware::Exchange<'a>
+impl<'a> !core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::Exchange<'a>
+impl<'a> !core::panic::unwind_safe::UnwindSafe for kynos::middleware::Exchange<'a>
 pub struct kynos::middleware::Next<'a, C>
 impl<'a, C: core::marker::Sync + 'static> kynos::middleware::Next<'a, C>
 pub fn kynos::middleware::Next<'a, C>::route(&self) -> core::option::Option<kynos::router::operation::Route<'a>>
@@ -5906,17 +5944,19 @@ pub const kynos::middleware::limits::body_timeout::BodyTimeout::COVERS: kynos::m
 pub const kynos::middleware::limits::body_timeout::BodyTimeout::READS_BODY: bool
 pub async fn kynos::middleware::limits::body_timeout::BodyTimeout::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> core::result::Result<kynos::middleware::Continued<()>, core::convert::Infallible>
 pub trait kynos::middleware::Observer<C>: core::marker::Send + core::marker::Sync + 'static
-pub fn kynos::middleware::Observer::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion)
-pub fn kynos::middleware::Observer::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration)
-pub fn kynos::middleware::Observer::on_panic(&self, &(dyn core::any::Any + core::marker::Send), core::option::Option<kynos::router::operation::Route<'_>>)
+pub fn kynos::middleware::Observer::on_abandoned(&self, &kynos::middleware::Abandonment<'_>, &C)
+pub fn kynos::middleware::Observer::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion, &C)
+pub fn kynos::middleware::Observer::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration, &C)
+pub fn kynos::middleware::Observer::on_panic(&self, &(dyn core::any::Any + core::marker::Send), core::option::Option<kynos::router::operation::Route<'_>>, &C)
 pub fn kynos::middleware::Observer::on_request(&self, &kynos::http::Request, core::option::Option<kynos::router::operation::Route<'_>>, &C)
-pub fn kynos::middleware::Observer::on_response(&self, &kynos::http::Response, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration, &C)
+pub fn kynos::middleware::Observer::on_response(&self, &kynos::middleware::Exchange<'_>, &C)
 impl<C> kynos::middleware::Observer<C> for kynos::middleware::trace::Trace
-pub fn kynos::middleware::trace::Trace::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion)
-pub fn kynos::middleware::trace::Trace::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration)
-pub fn kynos::middleware::trace::Trace::on_panic(&self, &(dyn core::any::Any + core::marker::Send), core::option::Option<kynos::router::operation::Route<'_>>)
+pub fn kynos::middleware::trace::Trace::on_abandoned(&self, &kynos::middleware::Abandonment<'_>, &C)
+pub fn kynos::middleware::trace::Trace::on_complete(&self, core::option::Option<kynos::router::operation::Route<'_>>, &kynos::middleware::Completion, &C)
+pub fn kynos::middleware::trace::Trace::on_disconnect(&self, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration, &C)
+pub fn kynos::middleware::trace::Trace::on_panic(&self, &(dyn core::any::Any + core::marker::Send), core::option::Option<kynos::router::operation::Route<'_>>, &C)
 pub fn kynos::middleware::trace::Trace::on_request(&self, &kynos::http::Request, core::option::Option<kynos::router::operation::Route<'_>>, &C)
-pub fn kynos::middleware::trace::Trace::on_response(&self, &kynos::http::Response, core::option::Option<kynos::router::operation::Route<'_>>, core::time::Duration, &C)
+pub fn kynos::middleware::trace::Trace::on_response(&self, &kynos::middleware::Exchange<'_>, &C)
 pub mod kynos::prelude
 pub use kynos::prelude::ApiError
 pub use kynos::prelude::CookieParams

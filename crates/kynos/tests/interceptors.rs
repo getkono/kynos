@@ -15,7 +15,6 @@
 use std::{
     collections::BTreeSet,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use kynos::{
@@ -306,17 +305,11 @@ struct Departures(Arc<Mutex<Vec<Option<AssignedId>>>>);
 impl Observer<App> for Departures {
     fn on_request(&self, _: &kynos::http::Request, _: Option<Route<'_>>, _: &App) {}
 
-    fn on_response(
-        &self,
-        response: &kynos::http::Response,
-        _: Option<Route<'_>>,
-        _: Duration,
-        _: &App,
-    ) {
+    fn on_response(&self, exchange: &kynos::middleware::Exchange<'_>, _: &App) {
         self.0
             .lock()
             .expect("an unpoisoned record")
-            .push(AssignedId::of_response(response).cloned());
+            .push(AssignedId::of_response(exchange.response).cloned());
     }
 }
 

@@ -377,7 +377,11 @@ closure returns `serve`'s future rather than awaiting it, and `Service::call`
 returns the box itself, so the request is routed, and every observer told,
 when it is called rather than when it is first polled. The box holds 432
 bytes, from 2208 in a Linux test build at rustc 1.97.1 at both feature sets,
-and the future a caller holds is the box's 16-byte pointer.
+and the future a caller holds is the box's 16-byte pointer. The request's
+method, which an observer is handed on the response or the abandonment after
+the chain consumed the request, widens it by nothing: one a description can
+declare sits in a byte of the routing tag's padding, where the `HEAD` flag
+was, and any other token, always refused 501, behind a pointer.
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
 holds the box to under two requests everywhere and to its 432 on Linux, where
 only the crate can name it.
@@ -1243,14 +1247,17 @@ over `tracing` and the subscriber stays the application's.
 | operability | Spans conform to OpenTelemetry HTTP semantic conventions | Integration test asserting attribute names against a pinned semconv version | `by-design`, below |
 | operability | Metric cardinality is bounded by operation count | Test asserting series count is invariant under 10k distinct request paths | `by-design`, below |
 | operability | A response the client did not receive is distinguishable from one it did | [`tests/sse.rs`](../crates/kynos/tests/sse.rs) dropping a live event stream's reader and asserting `on_disconnect` fires exactly once, with a control that reads a finite response to its end; [`tests/middleware.rs`](../crates/kynos/tests/middleware.rs) asserting a compressed stream reaches `on_complete` with the encoded octets read and a failed one reaches only `on_disconnect` | `enforced` |
+| operability | Every request an observer is told of ends in exactly one of a response and an abandonment | [`tests/dispatch.rs`](../crates/kynos/tests/dispatch.rs) dropping a request while its handler is pending, and one never polled, matched and not, and asserting each reaches `on_abandoned` and never `on_response`, against the exact event lists every answered request produces; [`tests/panics.rs`](../crates/kynos/tests/panics.rs) asserting a panic nothing recovers is reported abandoned | `enforced` |
 
 Both `by-design` rows rest on the same refusal — Kynos ships no OpenTelemetry
 module, for the reasons closing this section. What did land is the
 seam they need: `Observer` receives the matched
 [`Route`](../crates/kynos/src/router/operation.rs), so a label can be keyed by
 operation rather than by request path, which is the property the second row
-measures, and both `on_request` and `on_response` receive the application
-context, so the registry those labels feed is the one the context owns.
+measures; `on_response`'s `Exchange` and `on_abandoned`'s `Abandonment` carry
+the method the request arrived with, so a request no operation matched is
+still labelled by method; and every hook receives the application context, so
+the registry those labels feed is the one the context owns.
 
 The third row is the one that was not simply missing but wrong. `on_response`
 fires when the response head is ready, which for a stream or a download is
@@ -1260,9 +1267,24 @@ rather than sending one. `on_disconnect` reports the body dropped before its
 last frame, which is the difference, and `on_complete` the body read to its
 end, with the latency to its last frame and the octets it carried after
 content coding; exactly one of the two follows each `on_response`, and both
-ride on the body watch only a mounted observer adds. Neither reports a client that leaves
-while the handler is still working: there is no body to drop until the handler
-has produced one.
+ride on the body watch only a mounted observer adds.
+
+Neither reports a client that leaves while the handler is still working, since
+there is no body to drop until the handler has produced one. Nothing else did
+either, once, so an in-flight gauge raised in `on_request` and lowered in
+`on_response` only climbed. The fourth row closes that: the request's future
+owns a drop guard from routing to its response head, and dropped before that
+head, polled or not, it reports `on_abandoned` instead, a panic nothing
+recovers included. The guard widens no request's boxed dispatch future above:
+the method it keeps sits in a byte of what routing already recorded, where the
+`HEAD` flag was, and only a token no description can declare, always refused
+501, is boxed. Every request pays to build and drop the guard, observed or
+not, and no block; only where an observer is mounted is the guard's report
+owed, and naming a standard method to it never allocates. Every row of
+[`requests.tsv`](../crates/kynos-profile/requests.tsv) prices the first; the
+`scope.observer_noop`, `scope.trace_nosub` and `scope.trace_sub` rows price
+the observed side with the rest of observing.
+
 The module is not merely unwritten, though. Shipping one would put this
 framework's release schedule in front of the OpenTelemetry project's, and would
 fix by fiat what a span is called, which attributes it carries, which

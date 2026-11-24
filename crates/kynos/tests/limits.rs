@@ -2093,19 +2093,13 @@ impl kynos::middleware::Observer<()> for CountingEnds {
     ) {
     }
 
-    fn on_response(
-        &self,
-        _: &kynos::http::Response,
-        _: Option<kynos::router::operation::Route<'_>>,
-        _: Duration,
-        (): &(),
-    ) {
+    fn on_response(&self, _: &kynos::middleware::Exchange<'_>, (): &()) {
         self.0
             .responses
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
-    fn on_disconnect(&self, _: Option<kynos::router::operation::Route<'_>>, _: Duration) {
+    fn on_disconnect(&self, _: Option<kynos::router::operation::Route<'_>>, _: Duration, (): &()) {
         self.0
             .disconnects
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
