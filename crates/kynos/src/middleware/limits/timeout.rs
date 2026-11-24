@@ -3,7 +3,11 @@
 use std::{marker::PhantomData, time::Duration};
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     http,
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -49,24 +53,42 @@ impl<T: ProblemType> IntoProblem for TimedOut<T> {
 
 impl<T: ProblemType> IntoResponse for TimedOut<T> {
     fn into_response(self) -> http::Response {
-        self.into_problem().into_response()
+        self.__refused(Refusing::default())
     }
 }
 
 impl<T: ProblemType> ShortCircuit for TimedOut<T> {
     const STATUSES: &'static [u16] = &[408];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        refused(self.into_problem(), problems.0, |_| {})
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        timed_out_responses::<T>(registry, true)
+    }
 }
 
 impl<T: ProblemType> Responses for TimedOut<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            408,
-            refusal_response::<T>(
-                registry,
-                "the handler did not finish within the configured limit",
-            ),
-        )
+        timed_out_responses::<T>(registry, false)
     }
+}
+
+/// [`TimedOut`]'s 408, under the problem policy where `served`.
+fn timed_out_responses<T: ProblemType>(
+    registry: &mut Registry,
+    served: bool,
+) -> kynos_openapi::Responses {
+    kynos_openapi::Responses::new().with(
+        408,
+        served_refusal_response::<T>(
+            registry,
+            http::StatusCode::REQUEST_TIMEOUT,
+            "the handler did not finish within the configured limit",
+            served,
+        ),
+    )
 }
 
 /// Caps how long a handler may run.

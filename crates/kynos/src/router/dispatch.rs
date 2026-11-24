@@ -609,7 +609,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
             Ok(recovered.unwrap_or_else(|payload| {
                 dispatch.report_panic(payload.as_ref(), Some(dispatch.route_at(at)));
-                panic_response()
+                panic_response(dispatch.problems)
             }))
         })
     }
@@ -755,7 +755,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         catch_panics: bool,
         request: Request,
     ) -> impl Future<Output = Response> + Send + 'a {
-        let next = Next::new(interceptors, terminal, &self.context, route);
+        let next =
+            Next::new(interceptors, terminal, &self.context, route).with_problems(self.problems);
         let started = if catch_panics {
             // Started inside the block, so that recovery also covers what
             // `Next::run` does before its future is first polled.
@@ -772,7 +773,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                     Ok(response) => response,
                     Err(payload) => {
                         self.report_panic(payload.as_ref(), route);
-                        panic_response()
+                        panic_response(self.problems)
                     }
                 },
                 Started::Unguarded(unguarded) => unguarded.await.into_response(),

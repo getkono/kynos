@@ -5,7 +5,11 @@ use std::{marker::PhantomData, num::NonZeroUsize, sync::Arc, time::Duration};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     http::{self, retry_after_header, set_retry_after},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, Responses, ShortCircuit},
@@ -51,27 +55,49 @@ impl<T: ProblemType> IntoProblem for AtCapacity<T> {
 
 impl<T: ProblemType> IntoResponse for AtCapacity<T> {
     fn into_response(self) -> http::Response {
-        let retry_after = self.retry_after;
-        let mut response = self.into_problem().into_response();
-        if let Some(delay) = retry_after {
-            set_retry_after(&mut response, delay);
-        }
-        response
+        self.__refused(Refusing::default())
     }
 }
 
 impl<T: ProblemType> ShortCircuit for AtCapacity<T> {
     const STATUSES: &'static [u16] = &[503];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        let retry_after = self.retry_after;
+        refused(self.into_problem(), problems.0, |response| {
+            if let Some(delay) = retry_after {
+                set_retry_after(response, delay);
+            }
+        })
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        at_capacity_responses::<T>(registry, true)
+    }
 }
 
 impl<T: ProblemType> Responses for AtCapacity<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            503,
-            refusal_response::<T>(registry, "the service is at its concurrency limit")
-                .with_header("Retry-After", retry_after_header()),
-        )
+        at_capacity_responses::<T>(registry, false)
     }
+}
+
+/// [`AtCapacity`]'s 503 and its `Retry-After`, under the problem policy where
+/// `served`.
+fn at_capacity_responses<T: ProblemType>(
+    registry: &mut Registry,
+    served: bool,
+) -> kynos_openapi::Responses {
+    kynos_openapi::Responses::new().with(
+        503,
+        served_refusal_response::<T>(
+            registry,
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            "the service is at its concurrency limit",
+            served,
+        )
+        .with_header("Retry-After", retry_after_header()),
+    )
 }
 
 /// Caps concurrent in-flight requests.

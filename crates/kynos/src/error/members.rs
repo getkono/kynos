@@ -118,18 +118,30 @@ pub enum ProblemOrigin {
     /// serves satisfies:
     /// [`RangeRejection`](crate::error::rejection::RangeRejection).
     ByteRange,
+    /// An interceptor Kynos ships, refusing with its own `Short`:
+    /// [`BodySizeExceeded`](crate::middleware::limits::body_size::BodySizeExceeded),
+    /// [`RateLimited`](crate::middleware::rate_limit::refusal::RateLimited)
+    /// and the rest. Rendered after the interceptor gave the request away, so
+    /// [`ProblemCx`] holds no request head for it.
+    Interceptor,
+    /// A panic a recovery branch caught, answered with a 500. Rendered after
+    /// the request moved into the future that unwound, so [`ProblemCx`]
+    /// holds no request head for it.
+    Panic,
 }
 
 /// What the router knows when it renders a problem it owns.
 ///
 /// Read by [`ProblemPolicy::members`]. The request is the head the operation
 /// saw, so an extension an interceptor inserted, such as a request ID, is
-/// there to read.
+/// there to read; every accessor reading it answers `None` for
+/// [`ProblemOrigin::Interceptor`] and [`ProblemOrigin::Panic`], which are
+/// rendered after the request is gone.
 #[derive(Debug)]
 pub struct ProblemCx<'a> {
     problem: &'a Problem,
     origin: ProblemOrigin,
-    head: Head<'a>,
+    head: Option<Head<'a>>,
 }
 
 impl<'a> ProblemCx<'a> {
@@ -152,29 +164,29 @@ impl<'a> ProblemCx<'a> {
         self.origin
     }
 
-    /// The request's method.
+    /// The request's method, where its head is still in hand.
     #[must_use]
-    pub fn method(&self) -> &'a Method {
-        self.head.method
+    pub fn method(&self) -> Option<&'a Method> {
+        self.head.map(|head| head.method)
     }
 
-    /// The request's target.
+    /// The request's target, where its head is still in hand.
     #[must_use]
-    pub fn uri(&self) -> &'a Uri {
-        self.head.uri
+    pub fn uri(&self) -> Option<&'a Uri> {
+        self.head.map(|head| head.uri)
     }
 
-    /// The request's header fields.
+    /// The request's header fields, where its head is still in hand.
     #[must_use]
-    pub fn headers(&self) -> &'a HeaderMap {
-        self.head.headers
+    pub fn headers(&self) -> Option<&'a HeaderMap> {
+        self.head.map(|head| head.headers)
     }
 
     /// The request's extensions, as the interceptors outside the refusal left
-    /// them.
+    /// them, where its head is still in hand.
     #[must_use]
-    pub fn extensions(&self) -> &'a Extensions {
-        self.head.extensions
+    pub fn extensions(&self) -> Option<&'a Extensions> {
+        self.head.map(|head| head.extensions)
     }
 }
 
@@ -272,11 +284,15 @@ pub(crate) struct Unsent;
 
 /// What a [`ProblemPolicy`] does to a problem as it is rendered: the identity
 /// it gives it and the members it adds.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Policy {
+#[derive(Debug)]
+pub(crate) struct Rendering {
     pub(crate) identify: Identify,
     pub(crate) produce: Produce,
 }
+
+/// A [`Rendering`], as everything carrying one holds it: a pointer wide, since
+/// every interceptor chain carries one whether a policy is installed or not.
+pub(crate) type Policy = &'static Rendering;
 
 /// One [`ProblemPolicy`], erased: how it renders a problem and how it declares
 /// what it renders.
@@ -293,9 +309,11 @@ impl Hook {
     /// `P`, erased.
     pub(crate) fn of<P: ProblemPolicy>() -> Self {
         Self {
-            policy: Policy {
-                identify: P::identity,
-                produce: produce::<P>,
+            policy: const {
+                &Rendering {
+                    identify: P::identity,
+                    produce: produce::<P>,
+                }
             },
             describe: P::Members::schema,
             memberless: memberless::<P>(),
@@ -472,9 +490,45 @@ impl IntoResponse for Rendered {
 /// router installed one: an `about:blank` problem takes the identity it
 /// gives, then the problem carries the members it yields.
 pub(crate) fn render(
-    mut problem: Problem,
+    problem: Problem,
     origin: ProblemOrigin,
     head: Head<'_>,
+    policy: Option<Policy>,
+) -> Rendered {
+    render_for(problem, origin, Some(head), policy)
+}
+
+/// An interceptor's refusal `problem`, rendered under `policy` with no
+/// request head to read, and `finish` writing the refusal's own fields onto
+/// it; the 500 that replaces it where its members cannot be sent gets
+/// nothing more.
+pub(crate) fn refused(
+    problem: Problem,
+    policy: Option<Policy>,
+    finish: impl FnOnce(&mut Response),
+) -> Response {
+    match render_for(problem, ProblemOrigin::Interceptor, None, policy) {
+        Rendered::Kept(mut response) => {
+            finish(&mut response);
+            response
+        }
+        Rendered::Refused(refused) => refused,
+    }
+}
+
+/// The 500 a recovered panic becomes, rendered under `policy`; it never
+/// exposes the payload.
+pub(crate) fn panicked(policy: Option<Policy>) -> Response {
+    let problem = Problem::new(StatusCode::INTERNAL_SERVER_ERROR);
+
+    render_for(problem, ProblemOrigin::Panic, None, policy).into_response()
+}
+
+/// [`render`], for a problem whose request head may already be gone.
+fn render_for(
+    mut problem: Problem,
+    origin: ProblemOrigin,
+    head: Option<Head<'_>>,
     policy: Option<Policy>,
 ) -> Rendered {
     if let Some(policy) = policy {

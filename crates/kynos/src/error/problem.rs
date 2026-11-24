@@ -16,6 +16,10 @@ use kynos_openapi::{
 };
 
 use crate::{
+    error::{
+        members::{ProblemOrigin, declared_identity},
+        rejection::with_installed,
+    },
     http::{HeaderValue, StatusCode, body::Body, header},
     response::{IntoResponse, codec::json_bytes},
     schema::{Schema, flatten::Flatten, registry::Registry},
@@ -504,6 +508,41 @@ pub fn refusal_response<T: ProblemType>(
         &[(T::TYPE_URI, Some(summary), &[])],
         false,
     )
+}
+
+/// The response a refusal an interceptor Kynos ships declares at `status`:
+/// [`refusal_response`]'s, or, where `served`, the same narrowed to the
+/// identity the problem policy gives an `about:blank` refusal and carrying
+/// the members it adds to every one, as `ShortCircuit::__refused` renders it.
+pub(crate) fn served_refusal_response<T: ProblemType>(
+    registry: &mut Registry,
+    status: StatusCode,
+    summary: &'static str,
+    served: bool,
+) -> Response {
+    let problem = registry.resolve::<Problem>();
+    let identity = match T::TYPE_URI {
+        Some(_) => (None, None),
+        None => declared_identity(registry, ProblemOrigin::Interceptor, status, served),
+    };
+    let (uri, title) = match identity {
+        (Some(uri), title) => (Some(uri), title),
+        (None, _) => (T::TYPE_URI, Some(summary)),
+    };
+    let members = with_installed(registry, &[], served);
+
+    summarized_response(&problem, summary, (uri, title, &members))
+}
+
+/// The response one failure declares under the description `summary`: the
+/// shared component narrowed to `branch`, titled by the branch's own summary
+/// where that is not `summary` already.
+pub(crate) fn summarized_response(
+    problem: &OpenApiSchema,
+    summary: &str,
+    branch: Branch<'_>,
+) -> Response {
+    described_response(problem, summary.to_owned(), &[branch], false)
 }
 
 // --- What one status declares --------------------------------------------

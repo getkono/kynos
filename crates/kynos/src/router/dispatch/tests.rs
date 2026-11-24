@@ -307,7 +307,7 @@ fn each_bodiless_router_answer_carries_exactly_its_fields() {
 // --- How wide the future every request is boxed in is --------------------
 
 /// How wide the future [`Service::call`](crate::router::service::Service::call)
-/// boxes for every request is allowed to be: 432 bytes on Linux, read at
+/// boxes for every request is allowed to be: 440 bytes on Linux, read at
 /// baseline features and with `--all-features` alike by setting the ceiling to
 /// zero and taking the width out of the failure.
 ///
@@ -321,8 +321,10 @@ fn each_bodiless_router_answer_carries_exactly_its_fields() {
 ///
 /// Keeping the request's method for an observer, after the chain has consumed
 /// the request, costs nothing here: a method a description can declare sits
-/// in the routing tag's padding, and any other token behind a pointer.
-const BOXED_DISPATCH_FUTURE_BYTES: usize = 432;
+/// in the routing tag's padding, and any other token behind a pointer. The
+/// problem policy a refusal is rendered under costs 8, from 432: the pointer
+/// the chain's interceptor arm holds.
+const BOXED_DISPATCH_FUTURE_BYTES: usize = 440;
 
 /// The design property under the ceiling, and the one that survives a change
 /// to it: the boxed future holds one request.

@@ -99,25 +99,29 @@ impl Schema for Echo {
 
 impl Produced for Echo {
     fn new(cx: &ProblemCx<'_>) -> Self {
+        // A problem rendered after the request is gone reads none of it.
         Self {
             code: format!(
                 "{:?}-{}-{}-{}-{}",
                 cx.origin(),
                 cx.status().as_u16(),
                 cx.problem().type_uri,
-                cx.method(),
-                cx.uri().path(),
+                cx.method().map_or("-", |method| method.as_str()),
+                cx.uri().map_or("-", |uri| uri.path()),
             ),
-            request_id: cx.headers()["x-request-id"]
-                .to_str()
-                .expect("an ASCII field")
-                .to_owned(),
-            tenant: cx
-                .extensions()
-                .get::<Tenant>()
-                .expect("inserted by the test")
-                .0
-                .to_owned(),
+            request_id: cx.headers().map_or("-".to_owned(), |headers| {
+                headers["x-request-id"]
+                    .to_str()
+                    .expect("an ASCII field")
+                    .to_owned()
+            }),
+            tenant: cx.extensions().map_or("-".to_owned(), |extensions| {
+                extensions
+                    .get::<Tenant>()
+                    .expect("inserted by the test")
+                    .0
+                    .to_owned()
+            }),
         }
     }
 }
@@ -494,4 +498,97 @@ fn a_declared_identity_is_the_policys_only_where_the_router_serves_the_problem()
         (Some("urn:test:unauthorized"), Some("Not signed in"))
     );
     assert_eq!(declared(false), (None, None));
+}
+
+/// A policy naming an identity for an interceptor's 413 and a panic's 500,
+/// adding [`Echo`]'s members.
+struct Headless;
+
+impl ProblemPolicy for Headless {
+    type Members = Echo;
+
+    fn identity(origin: ProblemOrigin, status: StatusCode) -> Option<ProblemIdentity> {
+        match (origin, status) {
+            (ProblemOrigin::Interceptor, StatusCode::PAYLOAD_TOO_LARGE) => {
+                Some(ProblemIdentity::new("urn:test:oversized", "Send less"))
+            }
+            (ProblemOrigin::Panic, _) => {
+                Some(ProblemIdentity::new("urn:test:crashed", "Try again"))
+            }
+            _ => None,
+        }
+    }
+
+    fn members(cx: &ProblemCx<'_>) -> Echo {
+        Echo::new(cx)
+    }
+}
+
+#[tokio::test]
+async fn a_refusal_reads_no_request_and_keeps_the_fields_it_writes() {
+    let response = super::refused(
+        Problem::new(StatusCode::PAYLOAD_TOO_LARGE),
+        Some(Hook::of::<Headless>().policy),
+        |response| {
+            response
+                .headers_mut()
+                .insert("connection", crate::http::HeaderValue::from_static("close"));
+        },
+    );
+
+    assert_eq!(response.headers()["connection"], "close");
+    assert_eq!(
+        body(response).await,
+        json!({
+            "type": "urn:test:oversized",
+            "title": "Send less",
+            "status": 413,
+            "code": "Interceptor-413-urn:test:oversized----",
+            "request_id": "-",
+            "tenant": "-",
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_refusal_whose_members_cannot_be_sent_gets_none_of_its_fields() {
+    let response = super::refused(
+        Problem::new(StatusCode::PAYLOAD_TOO_LARGE),
+        Some(Hook::of::<Only<Bare>>().policy),
+        |response| {
+            response
+                .headers_mut()
+                .insert("connection", crate::http::HeaderValue::from_static("close"));
+        },
+    );
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(response.headers().get("connection").is_none());
+}
+
+#[tokio::test]
+async fn a_recovered_panic_takes_the_policy_s_identity_and_members() {
+    let response = super::panicked(Some(Hook::of::<Headless>().policy));
+
+    assert_eq!(
+        body(response).await,
+        json!({
+            "type": "urn:test:crashed",
+            "title": "Try again",
+            "status": 500,
+            "code": "Panic-500-urn:test:crashed----",
+            "request_id": "-",
+            "tenant": "-",
+        })
+    );
+}
+
+#[tokio::test]
+async fn without_a_policy_a_recovered_panic_is_a_bare_500() {
+    let response = super::panicked(None);
+
+    assert_eq!(
+        body(response).await,
+        serde_json::to_value(Problem::new(StatusCode::INTERNAL_SERVER_ERROR)).expect("a problem")
+    );
 }

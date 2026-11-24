@@ -582,6 +582,8 @@ pub struct Next<'a, C> {
     terminal: &'a dyn ErasedTerminal<C>,
     context: &'a C,
     route: Option<Route<'a>>,
+    /// The problem policy each refusal along the chain is rendered under.
+    problems: crate::__private::Refusing,
 }
 
 impl<C> std::fmt::Debug for Next<'_, C> {
@@ -606,7 +608,15 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
             terminal,
             context,
             route,
+            problems: crate::__private::Refusing::default(),
         }
+    }
+
+    /// Renders each refusal along the chain under `problems`, the policy
+    /// the router installed.
+    pub(crate) fn with_problems(mut self, problems: Option<crate::error::members::Policy>) -> Self {
+        self.problems = crate::__private::Refusing(problems);
+        self
     }
 
     /// Runs the rest of the chain.
@@ -628,11 +638,13 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
     /// timer such as `tokio::time::timeout` starts after that work, which,
     /// being synchronous, it could never have interrupted.
     pub fn run(self, request: Request) -> impl Future<Output = Continued<()>> + Send + 'a {
+        // The policy rides in the interceptor's arm, the only one reading it.
         enum Rest<I, T> {
-            Interceptor(I),
+            Interceptor(I, crate::__private::Refusing),
             Terminal(T),
         }
 
+        let problems = self.problems;
         let mut rest = match self.remaining.split_first() {
             Some((head, remaining)) => {
                 let next = Self {
@@ -640,8 +652,9 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
                     terminal: self.terminal,
                     context: self.context,
                     route: self.route,
+                    problems,
                 };
-                Rest::Interceptor((**head).intercept(request, self.context, next))
+                Rest::Interceptor((**head).intercept(request, self.context, next), problems)
             }
             None => Rest::Terminal(self.terminal.call(request, self.context)),
         };
@@ -649,7 +662,9 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
         // Both arms are boxed, so polling them in place needs no pinning here.
         std::future::poll_fn(move |context| {
             match &mut rest {
-                Rest::Interceptor(intercepted) => intercepted.as_mut().poll_settle(context),
+                Rest::Interceptor(intercepted, problems) => {
+                    intercepted.as_mut().poll_settle(context, *problems)
+                }
                 Rest::Terminal(terminal) => terminal.as_mut().poll(context),
             }
             .map(Continued::new)

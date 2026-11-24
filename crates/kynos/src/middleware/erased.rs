@@ -12,15 +12,16 @@ use std::{
 use kynos_openapi::RefOr;
 
 use crate::{
+    __private::Refusing,
     error::{
-        members::{Head, ProblemOrigin, served},
+        members::{Head, ProblemOrigin, Rendered, served},
         problem::IntoProblem,
         rejection::{HeaderRejection, constraint_responses},
     },
     extract::params::header::{DecodeHeaders, HeaderParams},
     http::{Request, Response},
     middleware::{Continued, Covers, Interceptor, Next},
-    response::{IntoResponse, Responses},
+    response::{Responses, ShortCircuit},
     router::operation::OperationCx,
 };
 
@@ -66,21 +67,54 @@ pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
 /// it captured keeps that future twice.
 pub(crate) type Intercepted<'a> = Pin<Box<dyn Settle + Send + 'a>>;
 
-/// A future whose outcome becomes a response once it is ready.
+/// A future whose outcome becomes a response once it is ready, a refusal
+/// rendered under the problem policy `problems` holds.
+///
+/// The refusal is rendered here, where the refusing interceptor's future
+/// settles, so every interceptor outside it sees the problem the client
+/// receives.
 pub(crate) trait Settle {
-    fn poll_settle(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Response>;
+    fn poll_settle(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        problems: Refusing,
+    ) -> Poll<Response>;
 }
 
 impl<F, A, S> Settle for F
 where
     F: Future<Output = Result<Continued<A>, S>>,
-    S: IntoResponse,
+    S: Refuse,
 {
-    fn poll_settle(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Response> {
+    fn poll_settle(
+        self: Pin<&mut Self>,
+        context: &mut Context<'_>,
+        problems: Refusing,
+    ) -> Poll<Response> {
         self.poll(context).map(|outcome| match outcome {
             Ok(continued) => Continued::into_response(continued),
-            Err(short) => IntoResponse::into_response(short),
+            Err(short) => short.refuse(problems),
         })
+    }
+}
+
+/// What an interceptor's chain settles to on a refusal.
+pub(crate) trait Refuse {
+    /// The refusal, rendered under `problems`.
+    fn refuse(self, problems: Refusing) -> Response;
+}
+
+impl<S: ShortCircuit> Refuse for S {
+    fn refuse(self, problems: Refusing) -> Response {
+        ShortCircuit::__refused(self, problems)
+    }
+}
+
+/// A header rejection, rendered under the policy before the interceptor took
+/// the request.
+impl Refuse for Rendered {
+    fn refuse(self, _: Refusing) -> Response {
+        self.into_response()
     }
 }
 
@@ -112,7 +146,9 @@ where
             operation.add_responses(&named);
         }
 
-        let responses = <I::Short as Responses>::responses(operation.registry());
+        // As `Settle` renders it: under the problem policy, for a refusal
+        // Kynos ships.
+        let responses = <I::Short as ShortCircuit>::__refusal_responses(operation.registry());
         operation.add_responses(&responses);
 
         if <I::Adds as HeaderParams>::DESCRIBED {

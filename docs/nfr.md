@@ -308,7 +308,7 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
 | 16 B, 48 B → 88 B → 120 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way. The record's one block is **kept** |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
-| 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
+| 1928 B → 1904 B → 432 B → 440 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
 | 920 B → 912 B → 536 B → 320 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
 
 **Five remain, and none is the router's to remove.** They are
@@ -375,15 +375,19 @@ layer's continuation and panic recovery are started on the call, and recovery
 boxes what it guards then, so a future that awaits it reserves a pointer. The
 closure returns `serve`'s future rather than awaiting it, and `Service::call`
 returns the box itself, so the request is routed, and every observer told,
-when it is called rather than when it is first polled. The box holds 432
+when it is called rather than when it is first polled. The box holds 440
 bytes, from 2208 in a Linux test build at rustc 1.97.1 at both feature sets,
 and the future a caller holds is the box's 16-byte pointer. The request's
 method, which an observer is handed on the response or the abandonment after
 the chain consumed the request, widens it by nothing: one a description can
 declare sits in a byte of the routing tag's padding, where the `HEAD` flag
-was, and any other token, always refused 501, behind a pointer.
+was, and any other token, always refused 501, behind a pointer. The problem
+policy an interceptor's refusal is rendered under widens it by 8, from 432:
+the pointer the chain's interceptor arm holds, since the refusal is rendered
+where its interceptor's future settles and nowhere is the policy closer
+([`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders)).
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
-holds the box to under two requests everywhere and to its 432 on Linux, where
+holds the box to under two requests everywhere and to its 440 on Linux, where
 only the crate can name it.
 
 **The endpoint's future holds one.** An endpoint splits the request before
@@ -471,7 +475,7 @@ rewrite.
 | security | Per-IP connection caps | — | `absent`, and recorded below and in [`middleware.md`](middleware.md#what-bounds-a-request-before-an-interceptor-runs): a connection is counted before any header is read, and `Router::trusted_proxies` applies only after routing. A per-IP request rate, `RateLimit` keyed `ByClientAddress`, is the supported bound |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
-| correctness | The type, title and members the policy `Router::problems` installs are sent on every problem whose response declares them, and declared on every response whose problem sends them | [`tests/problem_policy.rs`](../crates/kynos/tests/problem_policy.rs) validating each refusal's body with `assert_conformance` against the schema narrowing its `type` and requiring the members; an identity read from the origin and status alone, which is all the description knows; a hidden `IntoResponse` and `Responses` pair that a type overrides both halves of or neither | `enforced` for extractor and guard rejections, an interceptor's `Reads` 400, an asset endpoint's 416, the router's fallbacks and a CORS preflight's 405 and 501; `absent` for a returned rejection, a ranged `Delivery`'s 416, an interceptor's own refusal and a recovered panic's 500, which are sent and declared as without a policy, each for the reason [`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders) records |
+| correctness | The type, title and members the policy `Router::problems` installs are sent on every problem whose response declares them, and declared on every response whose problem sends them | [`tests/problem_policy.rs`](../crates/kynos/tests/problem_policy.rs) validating each refusal's body with `assert_conformance` against the schema narrowing its `type` and requiring the members; an identity read from the origin and status alone, which is all the description knows; a hidden `IntoResponse` and `Responses` pair, and a hidden `ShortCircuit` pair, that a type overrides both halves of or neither | `enforced` for extractor and guard rejections, an interceptor's `Reads` 400, an asset endpoint's 416, the router's fallbacks, a CORS preflight's 405 and 501, every refusal an interceptor Kynos ships answers with, and a recovered panic's 500; `absent` for a returned rejection, a ranged `Delivery`'s 416 and an application's own `Short`, which are sent and declared as without a policy, each for the reason [`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders) records |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator receives its credential from the carrier its scheme's description was written from, and a malformed one is never treated as absence | Structural: `Authenticator::authenticate` receives `Presented<S::Presented>`, which `Carries::present` alone builds; [`carrier/tests.rs`](../crates/kynos/src/security/carrier/tests.rs) classifies every malformed field by its reason, and [`security/auth/tests.rs`](../crates/kynos/src/security/auth/tests.rs) hands a malformed credential to the authenticator under `Auth` and `MaybeAuth` alike and absence only from an optional carrier | `enforced` for the credential; `absent` for the rest of the request head, which `Head` hands the authenticator by design, as [`security.md`](security.md#why-the-authenticator-sees-the-head) records |
 | security | A header a carrier reads beside its credential is declared on every operation a guard naming the scheme covers, required only where every admitted request presents that credential | A derived `reads = T` writes `SecurityScheme::reads` and the carrier from one `T`; [`tests/derives.rs`](../crates/kynos/tests/derives.rs) reads the group only beside a presented credential and declares it, and [`security/auth/tests.rs`](../crates/kynos/src/security/auth/tests.rs) declares it required under `Auth`, `Scoped` and `AllOf` and optional under `MaybeAuth` and `AnyOf`. A hand-written `Carries` reading more than its credential is held to its own override | `enforced` for a derived carrier; `absent` for a hand-written one, which the type system cannot tie to its declaration |

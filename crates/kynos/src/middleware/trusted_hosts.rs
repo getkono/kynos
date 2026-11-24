@@ -16,7 +16,11 @@ use std::{
 use ::http::uri::Authority;
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     http::{self, HeaderMap},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, ShortCircuit},
@@ -391,24 +395,42 @@ impl<T: ProblemType> IntoProblem for UntrustedHost<T> {
 
 impl<T: ProblemType> IntoResponse for UntrustedHost<T> {
     fn into_response(self) -> http::Response {
-        self.into_problem().into_response()
+        self.__refused(Refusing::default())
     }
 }
 
 impl<T: ProblemType> ShortCircuit for UntrustedHost<T> {
     const STATUSES: &'static [u16] = &[421];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        refused(self.into_problem(), problems.0, |_| {})
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        untrusted_host_responses::<T>(registry, true)
+    }
 }
 
 impl<T: ProblemType> crate::response::Responses for UntrustedHost<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            421,
-            refusal_response::<T>(
-                registry,
-                "the request named a host this server does not answer for",
-            ),
-        )
+        untrusted_host_responses::<T>(registry, false)
     }
+}
+
+/// [`UntrustedHost`]'s 421, under the problem policy where `served`.
+fn untrusted_host_responses<T: ProblemType>(
+    registry: &mut Registry,
+    served: bool,
+) -> kynos_openapi::Responses {
+    kynos_openapi::Responses::new().with(
+        421,
+        served_refusal_response::<T>(
+            registry,
+            http::StatusCode::MISDIRECTED_REQUEST,
+            "the request named a host this server does not answer for",
+            served,
+        ),
+    )
 }
 
 impl<C, T> Interceptor<C> for TrustedHosts<T>

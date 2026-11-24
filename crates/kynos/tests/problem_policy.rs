@@ -21,11 +21,13 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 use kynos::openapi::{Severity, Violation};
 use kynos::{
     HeaderParams, PathParams, QueryParams, Router, Schema,
+    error::problem::ProblemType,
     error::{
         members::{ProblemCx, ProblemIdentity, ProblemOrigin, ProblemPolicy},
         rejection::AuthRejection,
@@ -35,8 +37,11 @@ use kynos::{
         params::{path::Path, query::Query},
     },
     http::{Request, StatusCode, header},
-    middleware::{Continued, Interceptor, Next},
-    response::status::NoContent,
+    middleware::{
+        Continued, Interceptor, Next, limits::body_size::BodySizeExceeded,
+        rate_limit::refusal::RateLimited,
+    },
+    response::{ShortCircuit, status::NoContent},
     router::{error::RouterError, group::Group, service::Service},
     schema::constraints::{ConstraintDetail, ConstraintProblem},
     security::{
@@ -59,8 +64,8 @@ struct Coded {
 }
 
 /// The policy every test here installs: [`Coded`] on every problem, and a
-/// type of the application's own on a missing credential and an unsupported
-/// media type.
+/// type of the application's own on a missing credential, an unsupported
+/// media type, a body an interceptor finds too large and a recovered panic.
 struct AppProblems;
 
 /// What [`AppProblems`] names a missing credential.
@@ -71,6 +76,12 @@ const UNAUTHENTICATED: ProblemIdentity =
 const UNSUPPORTED: ProblemIdentity =
     ProblemIdentity::new("urn:test:problem:unsupported", "Send JSON");
 
+/// What [`AppProblems`] names a body an interceptor refuses as too large.
+const OVERSIZED: ProblemIdentity = ProblemIdentity::new("urn:test:problem:oversized", "Send less");
+
+/// What [`AppProblems`] names a recovered panic.
+const CRASHED: ProblemIdentity = ProblemIdentity::new("urn:test:problem:crashed", "Try again");
+
 impl ProblemPolicy for AppProblems {
     type Members = Coded;
 
@@ -78,6 +89,8 @@ impl ProblemPolicy for AppProblems {
         match (origin, status) {
             (ProblemOrigin::Authentication, StatusCode::UNAUTHORIZED) => Some(UNAUTHENTICATED),
             (ProblemOrigin::Content, StatusCode::UNSUPPORTED_MEDIA_TYPE) => Some(UNSUPPORTED),
+            (ProblemOrigin::Interceptor, StatusCode::PAYLOAD_TOO_LARGE) => Some(OVERSIZED),
+            (ProblemOrigin::Panic, _) => Some(CRASHED),
             _ => None,
         }
     }
@@ -85,9 +98,11 @@ impl ProblemPolicy for AppProblems {
     fn members(cx: &ProblemCx<'_>) -> Coded {
         Coded {
             code: format!("{:?}-{}", cx.origin(), cx.status().as_u16()),
+            // An interceptor's refusal and a panic answer a request already
+            // given away, so they read none.
             request_id: cx
                 .headers()
-                .get("x-request-id")
+                .and_then(|headers| headers.get("x-request-id"))
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("-")
                 .to_owned(),
@@ -969,4 +984,225 @@ async fn a_directory_s_416_carries_the_members() {
     assert_eq!(problem["code"], "ByteRange-416", "{problem}");
     assert_eq!(problem["request_id"], "req-a", "{problem}");
     assert_eq!(refused.header("content-range"), Some("bytes */19"));
+}
+
+/// Refuses every request with the refusal its function builds.
+struct Refuses<S>(fn() -> S);
+
+impl<S: ShortCircuit + Send + 'static> Interceptor<App> for Refuses<S> {
+    type Reads = ();
+    type Adds = ();
+    type Short = S;
+
+    async fn intercept(
+        &self,
+        _: Request,
+        (): (),
+        _: &App,
+        _: Next<'_, App>,
+    ) -> Result<Continued, S> {
+        Err((self.0)())
+    }
+}
+
+/// A type a limiter's refusal names itself, which the policy leaves alone.
+struct Throttled;
+
+impl ProblemType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("urn:test:problem:throttled");
+}
+
+/// A client for `service`, and the document it serves.
+fn serving(service: Service<App>) -> (TestClient<App>, Value) {
+    let document = serde_json::to_value(service.openapi()).expect("a document serializes");
+    (TestClient::new(service), document)
+}
+
+/// `/open`, behind an interceptor refusing it as `refuses` builds.
+fn refusing<S: ShortCircuit + Send + 'static>(refuses: fn() -> S) -> (TestClient<App>, Value) {
+    serving(
+        Router::<App>::new()
+            .mount(kynos::routes![open])
+            .intercept(Refuses(refuses))
+            .problems::<AppProblems>()
+            .build(App)
+            .expect("a buildable router"),
+    )
+}
+
+/// The schema `document` declares the problem `path` answers `status` with by.
+fn declared_problem(document: &Value, path: &str, status: &str) -> Value {
+    document["paths"][path]["get"]["responses"][status]["content"]["application/problem+json"]
+        ["schema"]
+        .clone()
+}
+
+/// An interceptor's refusal takes the identity the policy names for it and
+/// carries the members, though no request head is left to read, and its
+/// operation declares both.
+#[tokio::test]
+async fn an_interceptor_s_refusal_is_rendered_under_the_policy() {
+    let (client, document) = refusing(|| BodySizeExceeded::<()>::new(64));
+
+    let refused = client
+        .get("/open")
+        .header("x-request-id", "req-1")
+        .send()
+        .await;
+
+    refused.assert_status(413);
+    let problem: Value = refused.json();
+    assert_eq!(problem["type"], OVERSIZED.type_uri(), "{problem}");
+    assert_eq!(problem["title"], OVERSIZED.title(), "{problem}");
+    assert_eq!(problem["detail"], "the request body exceeds 64 bytes");
+    assert_eq!(problem["code"], "Interceptor-413", "{problem}");
+    assert_eq!(problem["request_id"], "-", "{problem}");
+
+    let declared = declared_problem(&document, "/open", "413");
+    assert_eq!(
+        declared["allOf"][1]["properties"]["type"]["const"],
+        OVERSIZED.type_uri(),
+        "{declared}"
+    );
+    assert_eq!(declared["title"], OVERSIZED.title(), "{declared}");
+    assert_eq!(
+        declared["allOf"][1]["required"],
+        json!(["code", "request_id"]),
+        "{declared}"
+    );
+
+    client.assert_conformance();
+}
+
+/// A refusal naming its own type keeps it, and still carries the members
+/// beside the fields it writes.
+#[tokio::test]
+async fn a_refusal_naming_its_own_type_keeps_it_under_the_policy() {
+    let (client, document) = refusing(|| RateLimited::<Throttled>::new(Duration::from_secs(3), 10));
+
+    let refused = client.get("/open").send().await;
+
+    refused.assert_status(429);
+    let problem: Value = refused.json();
+    assert_eq!(problem["type"], "urn:test:problem:throttled", "{problem}");
+    assert_eq!(problem["title"], "Too Many Requests", "{problem}");
+    assert_eq!(problem["code"], "Interceptor-429", "{problem}");
+    assert_eq!(refused.header("retry-after"), Some("3"));
+
+    let declared = declared_problem(&document, "/open", "429");
+    assert_eq!(
+        declared["allOf"][1]["properties"]["type"]["const"], "urn:test:problem:throttled",
+        "{declared}"
+    );
+
+    client.assert_conformance();
+}
+
+/// Sends `/open` through an interceptor refusing it as `refuses` builds, and
+/// returns the `code` member the refusal carried, having held it to the
+/// operation's declaration.
+async fn refused_code<S: ShortCircuit + Send + 'static>(refuses: fn() -> S) -> Value {
+    let (client, _) = refusing(refuses);
+    let problem: Value = client.get("/open").send().await.json();
+    client.assert_conformance();
+    problem["code"].clone()
+}
+
+/// Every refusal an interceptor Kynos ships answers with is rendered under
+/// the policy, which no source scan could tell from one that is not.
+#[tokio::test]
+async fn every_refusal_kynos_ships_carries_the_members() {
+    use kynos::middleware::{
+        csrf::CrossSite,
+        limits::{
+            body_size::{BodyRefused, BodyTooSlow},
+            concurrency::AtCapacity,
+            timeout::TimedOut,
+        },
+        rate_limit::refusal::RateLimitedFields,
+        trusted_hosts::UntrustedHost,
+    };
+
+    let mut codes = vec![
+        refused_code(|| BodySizeExceeded::<()>::new(64)).await,
+        refused_code(|| BodyRefused::<(), ()>::TooSlow(BodyTooSlow::new(Duration::from_secs(1))))
+            .await,
+        refused_code(|| TimedOut::<()>::new(Duration::from_secs(1))).await,
+        refused_code(|| AtCapacity::<()>::new(None)).await,
+        refused_code(|| RateLimited::<()>::new(Duration::from_secs(1), 10)).await,
+        refused_code(|| {
+            RateLimitedFields::<()>::new(Duration::from_secs(1), Vec::new(), Vec::new())
+        })
+        .await,
+        refused_code(CrossSite::<()>::new).await,
+        refused_code(UntrustedHost::<()>::new).await,
+    ];
+    let mut expected = vec![
+        "Interceptor-413",
+        "Interceptor-408",
+        "Interceptor-408",
+        "Interceptor-503",
+        "Interceptor-429",
+        "Interceptor-429",
+        "Interceptor-403",
+        "Interceptor-421",
+    ];
+
+    #[cfg(feature = "compression")]
+    {
+        use kynos::middleware::{compression::NotAcceptable, decompression::Undecodable};
+
+        codes.push(refused_code(NotAcceptable::<()>::new).await);
+        codes.push(refused_code(Undecodable::<(), (), ()>::unsupported_coding).await);
+        expected.extend(["Interceptor-406", "Interceptor-415"]);
+    }
+
+    assert_eq!(codes, expected);
+}
+
+#[kynos::get("/boom")]
+async fn boom() -> NoContent {
+    panic!("the handler failed");
+}
+
+#[kynos::get("/boom-alone", catch_panics)]
+async fn boom_alone() -> NoContent {
+    panic!("the handler failed");
+}
+
+/// A recovered panic's 500 takes the identity the policy names for it and
+/// carries the members, whether the router or the endpoint recovered it, and
+/// the operation declares both.
+#[tokio::test]
+async fn a_recovered_panic_s_500_is_rendered_under_the_policy() {
+    let router_scope = Router::<App>::new()
+        .mount(kynos::routes![boom])
+        .catch_panics()
+        .problems::<AppProblems>()
+        .build(App);
+    let endpoint_scope = Router::<App>::new()
+        .mount(kynos::routes![boom_alone])
+        .problems::<AppProblems>()
+        .build(App);
+
+    for (service, path) in [(router_scope, "/boom"), (endpoint_scope, "/boom-alone")] {
+        let (client, document) = serving(service.expect("a buildable router"));
+
+        let crashed = client.get(path).send().await;
+
+        crashed.assert_status(500);
+        let problem: Value = crashed.json();
+        assert_eq!(problem["type"], CRASHED.type_uri(), "{problem}");
+        assert_eq!(problem["title"], CRASHED.title(), "{problem}");
+        assert_eq!(problem["code"], "Panic-500", "{problem}");
+
+        let declared = declared_problem(&document, path, "500");
+        assert_eq!(
+            declared["allOf"][1]["properties"]["type"]["const"],
+            CRASHED.type_uri(),
+            "{declared}"
+        );
+
+        client.assert_conformance();
+    }
 }

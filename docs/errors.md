@@ -785,9 +785,11 @@ declares both from one place, so the description cannot drift from the wire
   authorizer's `forbidden_as` or a constraint's named problem is the more
   specific answer.
 - `P::members(cx)` produces the members, read from a `ProblemCx`: the problem
-  as the identity left it, its origin, and the request head the operation saw,
-  interceptors' extensions included. `type Members = ()` sends and declares
-  none.
+  as the identity left it, its origin, and the head the operation saw,
+  interceptors' extensions included. Each accessor reading the head answers
+  `None` for an interceptor's own refusal and a recovered panic, which are
+  rendered after the request moved away (below), so the compiler makes a
+  policy say what those carry. `type Members = ()` sends and declares none.
 
 One trait rather than an identity hook beside a members hook, so there is one
 setting to find, and no order between two to learn. An identity read from the
@@ -800,12 +802,29 @@ hand: each rejection a handler's argument or guard raises, the 400 an
 interceptor's `Reads` header group answers with, an asset endpoint's 416, the
 404, 405 and 501 under `FallbackPolicy::Problem`, a CORS preflight's 405 and
 501 for an `OPTIONS` that is not one, and the 400 a `QUERY` naming no media
-type gets. Each such response an operation declares narrows its branch to the
-identity `P` names for it, and to `P`'s members, required as `P::Members`'s
-schema requires them; the wide 403 `AuthRejection` declares stays wide, since
-it already admits both. The
-router's and the preflight's answers belong to no operation, so they are sent
-and declared nowhere, as they always were.
+type gets. And two rendered after the head is gone, under
+`ProblemOrigin::Interceptor` and `ProblemOrigin::Panic`:
+
+- The refusal of every interceptor Kynos ships — `BodySizeExceeded`,
+  `BodyRefused`, `TimedOut`, `AtCapacity`, `RateLimited`, `RateLimitedFields`,
+  `CrossSite`, `UntrustedHost`, `NotAcceptable` and `Undecodable`. It is
+  rendered where the refusing interceptor's future settles, so every
+  interceptor outside it, a compressing or a localizing one, sees the problem
+  the client receives rather than one rewritten after it. The interceptor took
+  the request by value, so `ProblemCx` reads no head; keeping a copy would
+  cost every request through every interceptor.
+- A recovered panic's 500, at every scope a recovery branch covers. The
+  request moved into the future that unwound, so the same holds.
+
+The policy reaches both through the chain the router starts, as two function
+pointers, and through the routed request where an endpoint runs its own
+interceptors or recovers its own panic.
+
+Each such response an operation declares narrows its branch to the identity
+`P` names for it, and to `P`'s members, required as `P::Members`'s schema
+requires them; the wide 403 `AuthRejection` declares stays wide, since it
+already admits both. The router's and the preflight's answers belong to no
+operation, so they are sent and declared nowhere, as they always were.
 
 **What it does not reach**, which is sent and declared as it would be without
 it, and why:
@@ -820,22 +839,22 @@ it, and why:
   ([`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds that width), and
   declaring it would need a served form of every return type that can hold
   one.
-- An interceptor's own refusal — `BodySizeExceeded`, `BodyTooSlow`,
-  `RateLimited`, `AtCapacity`, `TimedOut`, `Undecodable`, `NotAcceptable`,
-  `UntrustedHost`, `CrossSite` and any `Short` an application writes. The
-  interceptor takes the request by value and renders its `Short` after it has
-  given the request away, so no head is left to read; keeping a copy would
-  cost every request through every interceptor.
-- A recovered panic's 500. The request moved into the future that unwound,
-  at every scope a recovery branch covers, so the same copy would be paid on
-  every request that could panic.
+- A `Short` an application's own interceptor writes, `refusal_problem` and
+  `refusal_response` included, and a Kynos refusal an application holds in its
+  `ApiError` or returns from a handler: each is the application's to type, as
+  its `ApiError` is.
+- A 500 that replaces a response already produced: a body or header group that
+  would not encode, the policy's own members failing to serialize, and an
+  unchecked layer's lost continuation. Each answers a failure to send, and the
+  second must not recurse into the policy that failed.
 
 **Sending and declaring are one switch.** A rejection reaches the request only
 where the handler renders it, so `IntoResponse` and `Responses` carry a hidden
 pair the handler calls for an argument's or guard's rejection instead of the
-public methods. A type overriding both sends and declares the policy's identity
-and members; every other type, an `ApiError` holding a rejection transparently
-included, does neither. A status two contributors share keeps a member
+public methods, and `ShortCircuit` carries a second the interceptor chain calls
+for a refusal. A type overriding both halves of a pair sends and declares the
+policy's identity and members; every other type, an `ApiError` holding a
+rejection transparently included, does neither. A status two contributors share keeps a member
 required only where both send it, by
 [the union rule](#what-the-declared-response-narrows-to).
 
@@ -855,7 +874,11 @@ rejection ([`nfr.md`](nfr.md#routing) records the width). With it, a routed
 request, and one no operation answers that the root router's interceptors
 see, carries one extension more, holding two function pointers: its own block,
 since `http::Extensions` boxes every value, so an application that did not ask
-for a policy does not pay it.
+for a policy does not pay it. Every chain carries a pointer to the policy
+beside the interceptor it polls, whether one is installed or not, which is 8
+of the dispatch future's bytes ([`nfr.md`](nfr.md#routing)); an endpoint that
+runs interceptors of its own or recovers its own panics looks the extension up
+once per request.
 
 ## What is not an error type
 

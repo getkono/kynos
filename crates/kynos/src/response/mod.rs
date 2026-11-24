@@ -134,6 +134,35 @@ pub trait Responses {
 pub trait ShortCircuit: IntoResponse + Responses {
     /// The statuses this type can answer with.
     const STATUSES: &'static [u16];
+
+    /// Writes this value as an interceptor's refusal, rendered under the
+    /// problem policy `problems` holds.
+    ///
+    /// Not part of the stable API: a refusal an interceptor Kynos ships
+    /// answers with is rendered under the policy
+    /// [`Router::problems`](crate::router::Router::problems) installs, and
+    /// declares what that policy renders through
+    /// [`__refusal_responses`](ShortCircuit::__refusal_responses). Anything
+    /// else writes [`into_response`](IntoResponse::into_response); a type
+    /// overrides both halves or neither.
+    #[doc(hidden)]
+    fn __refused(self, problems: crate::__private::Refusing) -> Response
+    where
+        Self: Sized,
+    {
+        let _ = problems;
+        self.into_response()
+    }
+
+    /// The responses this type may produce as an interceptor's refusal, which
+    /// [`__refused`](ShortCircuit::__refused) writes.
+    ///
+    /// Not part of the stable API, as that method: [`Responses::responses`]
+    /// unless the type overrides both.
+    #[doc(hidden)]
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        Self::responses(registry)
+    }
 }
 
 /// The empty body, which is 200 like every other bare body type.

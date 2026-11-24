@@ -74,7 +74,9 @@ pub kynos::error::members::ProblemOrigin::ByteRange
 pub kynos::error::members::ProblemOrigin::Content
 pub kynos::error::members::ProblemOrigin::CookieValue
 pub kynos::error::members::ProblemOrigin::HeaderField
+pub kynos::error::members::ProblemOrigin::Interceptor
 pub kynos::error::members::ProblemOrigin::Negotiation
+pub kynos::error::members::ProblemOrigin::Panic
 pub kynos::error::members::ProblemOrigin::PathParameter
 pub kynos::error::members::ProblemOrigin::QueryParameter
 pub kynos::error::members::ProblemOrigin::Routing
@@ -99,13 +101,13 @@ impl core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemO
 impl core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemOrigin
 pub struct kynos::error::members::ProblemCx<'a>
 impl<'a> kynos::error::members::ProblemCx<'a>
-pub fn kynos::error::members::ProblemCx<'a>::extensions(&self) -> &'a http::extensions::Extensions
-pub fn kynos::error::members::ProblemCx<'a>::headers(&self) -> &'a http::header::map::HeaderMap
-pub fn kynos::error::members::ProblemCx<'a>::method(&self) -> &'a http::method::Method
+pub fn kynos::error::members::ProblemCx<'a>::extensions(&self) -> core::option::Option<&'a http::extensions::Extensions>
+pub fn kynos::error::members::ProblemCx<'a>::headers(&self) -> core::option::Option<&'a http::header::map::HeaderMap>
+pub fn kynos::error::members::ProblemCx<'a>::method(&self) -> core::option::Option<&'a http::method::Method>
 pub fn kynos::error::members::ProblemCx<'a>::origin(&self) -> kynos::error::members::ProblemOrigin
 pub fn kynos::error::members::ProblemCx<'a>::problem(&self) -> &'a kynos::error::problem::Problem
 pub fn kynos::error::members::ProblemCx<'a>::status(&self) -> http::status::StatusCode
-pub fn kynos::error::members::ProblemCx<'a>::uri(&self) -> &'a http::uri::Uri
+pub fn kynos::error::members::ProblemCx<'a>::uri(&self) -> core::option::Option<&'a http::uri::Uri>
 impl<'a> core::fmt::Debug for kynos::error::members::ProblemCx<'a>
 pub fn kynos::error::members::ProblemCx<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<'a> core::marker::Freeze for kynos::error::members::ProblemCx<'a>
