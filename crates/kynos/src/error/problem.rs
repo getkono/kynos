@@ -422,7 +422,9 @@ pub(crate) fn problem_response(
 /// [`Interceptor`](crate::middleware::Interceptor)'s declaration is read from
 /// its types, so the same `const` reaches both the body and the description.
 pub trait ProblemType: 'static {
-    /// The URI identifying the problem type, or `None` for `about:blank`.
+    /// The URI identifying the problem type, or `None` to leave it to the
+    /// policy [`Router::problems`](crate::router::Router::problems) installs,
+    /// and to `about:blank` without one.
     const TYPE_URI: Option<&'static str>;
 }
 

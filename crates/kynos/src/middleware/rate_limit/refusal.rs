@@ -24,7 +24,9 @@ use crate::{
 
 /// What a limiter answers with when a policy refuses, in the `X-` spelling.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`.
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one.
 pub struct RateLimited<T = ()> {
     /// How long the client should wait before retrying.
     pub retry_after: Duration,
@@ -93,7 +95,9 @@ impl<T: ProblemType> Responses for RateLimited<T> {
 
 /// The same, in the draft's spelling.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`.
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one.
 pub struct RateLimitedFields<T = ()> {
     /// How long the client should wait before retrying.
     pub retry_after: Duration,

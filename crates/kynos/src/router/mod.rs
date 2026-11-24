@@ -991,11 +991,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Reaches each rejection a handler's argument or guard raises, the 400
     /// an interceptor's `Reads` answers with, an asset endpoint's 416, the
     /// 404, 405 and 501 under [`FallbackPolicy::Problem`], a CORS preflight's
-    /// 405 and 501, and the 400 a `QUERY` naming no media type gets. An
+    /// 405 and 501, the 400 a `QUERY` naming no media type gets, the refusal
+    /// of every interceptor Kynos ships (as [`ProblemOrigin::Refusal`]) at
+    /// whichever scope it is mounted, and a recovered panic's 500 (as
+    /// [`ProblemOrigin::Panic`]) at whichever scope recovers it. An
     /// application's own `#[derive(ApiError)]` type names its own type, title
-    /// and members; a rejection or `Delivery` a handler returns, an
-    /// interceptor's own refusal and a recovered panic's 500 are left as they
-    /// are. See [`ProblemPolicy`] for what `Q` names.
+    /// and members; a rejection or `Delivery` a handler returns, and a `Short`
+    /// an application's own interceptor writes, are left as they are. See
+    /// [`ProblemPolicy`] for what `Q` names.
     ///
     /// One application-level policy, so it is set on the root router: on a
     /// router that is then nested or merged, it is a
@@ -1003,6 +1006,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Calling it twice keeps the second.
     ///
     /// [`ProblemPolicy`]: crate::error::members::ProblemPolicy
+    /// [`ProblemOrigin::Refusal`]: crate::error::members::ProblemOrigin::Refusal
+    /// [`ProblemOrigin::Panic`]: crate::error::members::ProblemOrigin::Panic
     #[must_use]
     pub fn problems<Q: crate::error::members::ProblemPolicy>(mut self) -> Self {
         self.problems = Some(crate::error::members::Hook::of::<Q>());

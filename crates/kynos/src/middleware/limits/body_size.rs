@@ -39,8 +39,9 @@ use crate::{
 /// Carries the limit it enforced, so the response can say what was exceeded
 /// rather than only that something was.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`BodySize::problem_type`].
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one. Set it with [`BodySize::problem_type`].
 pub struct BodySizeExceeded<T = ()> {
     /// The maximum body size, in bytes.
     pub limit: u64,
@@ -113,8 +114,9 @@ fn too_large_responses<T: ProblemType>(
 /// What a [`BodySize`] with a [`deadline`](BodySize::deadline) answers with
 /// when a body has not arrived in time: RFC 9110 section 15.5.9's 408.
 ///
-/// `U` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`BodySize::deadline_problem_type`].
+/// `U` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one. Set it with [`BodySize::deadline_problem_type`].
 ///
 /// Over HTTP/1 the 408 a deadline answers with carries `Connection: close`, as
 /// that section advises, so the client cannot frame the rest of the body it

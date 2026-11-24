@@ -375,8 +375,9 @@ fn is_loopback(host: &str) -> bool {
 
 /// What a request for an untrusted host is answered with.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`TrustedHosts::problem_type`].
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one. Set it with [`TrustedHosts::problem_type`].
 pub struct UntrustedHost<T = ()> {
     /// Carries `T` without storing one; `fn() -> T` keeps it `Send` and `Sync`.
     problem_type: PhantomData<fn() -> T>,
