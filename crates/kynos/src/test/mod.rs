@@ -975,6 +975,11 @@ impl Coverage {
     /// [`TestClient::assert_declared_responses_covered`], a `HEAD` answered by
     /// a path's `get` does not count toward that operation.
     ///
+    /// A 403 no test can provoke, from a scheme whose credential grants
+    /// nothing beyond itself, is not declared once the scheme says so with
+    /// [`FORBIDS`](crate::security::SecurityScheme::FORBIDS)
+    /// (`#[security(forbids = false)]`), so it needs no exchange here.
+    ///
     /// # Panics
     ///
     /// Panics listing every declared response that was never seen.
@@ -1232,6 +1237,9 @@ pub struct TestRequest<'a, C> {
 
 impl<'a, C> TestRequest<'a, C> {
     /// Sets a header.
+    ///
+    /// A bearer token is [`bearer`](Self::bearer), and a header every
+    /// request carries is [`TestClient::with_default_header`].
     ///
     /// # Panics
     ///

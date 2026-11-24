@@ -116,6 +116,10 @@ pub const REDACTED: &[&str] = &[
 
 impl Trace {
     /// Traces every operation at [`Level::Info`].
+    ///
+    /// Its events stand alone; [`span`](Trace::span) also wraps the chain in
+    /// one `request` span carrying the request id, which the handler's own
+    /// events and spans inherit.
     #[must_use]
     pub fn new() -> Self {
         Self {

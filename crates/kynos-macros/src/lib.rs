@@ -203,6 +203,8 @@ pub fn public(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// Router::new().mount(routes![users::list, users::create, users::get]);
 /// ```
 ///
+/// It takes any number of operations, so one list holds a whole service's.
+///
 /// `.intercept(..)` after an operation scopes an interceptor to that operation
 /// alone, as `EndpointBuilder::intercept` does: the first call is the
 /// outermost, and every enclosing scope wraps it. One resource's operations
