@@ -1206,3 +1206,86 @@ async fn a_recovered_panic_s_500_is_rendered_under_the_policy() {
         client.assert_conformance();
     }
 }
+
+/// An authenticator's own error: a credential refused as Kynos refuses one,
+/// carried in by `?`, beside a 401 of the application's own.
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+#[problem(base = "https://errors.example.test/")]
+enum AccountError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+
+    #[error("no account holds this token")]
+    #[problem(status = 401)]
+    UnknownToken,
+}
+
+/// A context whose authenticator fails with [`AccountError`].
+struct Accounts;
+
+impl Authenticator<Bearer, Accounts> for Accounts {
+    type Error = AccountError;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Self,
+    ) -> Result<String, AccountError> {
+        match presented.require()?.as_str() {
+            "unknown" => Err(AccountError::UnknownToken),
+            token => Ok(token.to_owned()),
+        }
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+#[kynos::get("/account")]
+async fn account(caller: Auth<Bearer>) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+/// A guard whose authenticator fails with the application's own error
+/// renders every refusal through it, its own 401 for an absent credential
+/// included, so the policy reaches none of them; and the operation declares
+/// none of the policy there, so what it declares is what is sent.
+#[tokio::test]
+async fn a_guard_s_own_error_is_neither_sent_nor_declared_under_the_policy() {
+    let service = Router::<Accounts>::new()
+        .mount(kynos::routes![account])
+        .problems::<AppProblems>()
+        .build(Accounts)
+        .expect("a buildable router");
+    let document = serde_json::to_value(service.openapi()).expect("a document serializes");
+    let client = TestClient::new(service);
+
+    let absent = client.get("/account").send().await;
+    absent.assert_status(401);
+    let problem: Value = absent.json();
+    assert_eq!(problem["type"], "about:blank", "{problem}");
+    assert!(problem.get("code").is_none(), "{problem}");
+
+    let unknown = client.get("/account").bearer("unknown").send().await;
+    unknown.assert_status(401);
+    let problem: Value = unknown.json();
+    assert_eq!(
+        problem["type"], "https://errors.example.test/unknown-token",
+        "{problem}"
+    );
+
+    let declared = document["paths"]["/account"]["get"]["responses"]["401"].to_string();
+    assert!(
+        !declared.contains(UNAUTHENTICATED.type_uri()) && !declared.contains("request_id"),
+        "{declared}"
+    );
+
+    client.assert_conformance();
+}
