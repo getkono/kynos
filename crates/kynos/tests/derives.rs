@@ -2170,7 +2170,6 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
         ("name=caf%E9", "name"),
         ("name=%FF%FE", "name"),
         ("name=ok&note=%FF", "note"),
-        ("name=%FF&name=ok", "name"),
         ("name=ok&sortBy=%FF", "sortBy"),
         ("na%6De=%FF", "name"),
     ] {
@@ -2196,6 +2195,42 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
             Ok(decoded) => assert_eq!(decoded.name, expected, "{query}"),
             Err(rejection) => panic!("{query}: refused: {rejection}"),
         }
+    }
+}
+
+/// A declared parameter named by a second pair is refused, naming it by its
+/// wire name, whether the two values agree, differ, or one is not text: a
+/// field carries one value, and keeping either would guess at which one the
+/// client meant. A name is matched once percent-decoded, so an escaped
+/// spelling repeats it too; an undeclared name may repeat freely.
+#[test]
+fn a_query_parameter_given_twice_is_refused_naming_it() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for (query, parameter) in [
+        ("name=a&name=b", "name"),
+        ("name=a&name=a", "name"),
+        ("name=%FF&name=ok", "name"),
+        ("name=ok&note=a&note=b", "note"),
+        ("name=ok&sortBy=a&na%6De=b", "name"),
+        ("name=ok&sortBy=&sortBy", "sortBy"),
+    ] {
+        match <Named as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, detail }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert_eq!(
+                    detail, "the parameter is given more than once, and it carries one value",
+                    "{query}"
+                );
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {:?}", decoded.name),
+        }
+    }
+
+    match <Named as DecodeQuery>::decode(Some("other=1&name=x&other=2&sort=a&sort=b")) {
+        Ok(decoded) => assert_eq!(decoded.name, "x"),
+        Err(rejection) => panic!("an undeclared name repeated: refused: {rejection}"),
     }
 }
 

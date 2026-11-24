@@ -27,8 +27,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let params = Param::pair(fields, &names, group.as_ref());
     let rejection = quote!(::kynos::error::rejection::QueryRejection);
 
-    // The first occurrence of a repeated name wins.
-    let pairs = query_slots(&params);
+    let pairs = query_slots(&params, &rejection);
     let reads = params.iter().enumerate().map(|(index, param)| {
         let wire = param.name();
         let slot = query_slot(index);
@@ -106,27 +105,41 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 }
 
 /// One pass over the pairs a raw query string carries, binding each declared
-/// parameter's [`query_slot`] to the octets of the first pair that names it.
+/// parameter's [`query_slot`] to the octets of the one pair that names it.
+///
+/// A second pair naming a declared parameter is refused rather than either
+/// value kept: the parameter carries one value, and which one a client, a
+/// proxy or another framework would read is not this decoder's to guess.
 ///
 /// A name is compared as octets once decoded, and only a declared parameter's
 /// value is decoded at all, so a pair no field reads costs its name's decoding
 /// alone and nothing is collected. Split by `kynos::__private::uri::query_names`,
 /// which shares its decoding with query API keys.
-fn query_slots(params: &[Param<'_>]) -> proc_macro2::TokenStream {
+fn query_slots(
+    params: &[Param<'_>],
+    rejection: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
     if params.is_empty() {
         return quote!(let _ = query;);
     }
 
     let slots: Vec<Ident> = (0..params.len()).map(query_slot).collect();
     let arms = params.iter().zip(&slots).map(|(param, slot)| {
-        let wire = proc_macro2::Literal::byte_string(param.name().as_bytes());
+        let name = param.name();
+        let wire = proc_macro2::Literal::byte_string(name.as_bytes());
         quote! {
             #wire => {
-                if #slot.is_none() {
-                    #slot = ::core::option::Option::Some(
-                        ::kynos::__private::uri::decode_query_component(value),
-                    );
+                if #slot.is_some() {
+                    return ::core::result::Result::Err(#rejection::Invalid {
+                        name: <::std::string::String as ::core::convert::From<_>>::from(#name),
+                        detail: <::std::string::String as ::core::convert::From<_>>::from(
+                            "the parameter is given more than once, and it carries one value",
+                        ),
+                    });
                 }
+                #slot = ::core::option::Option::Some(
+                    ::kynos::__private::uri::decode_query_component(value),
+                );
             }
         }
     });

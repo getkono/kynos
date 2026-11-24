@@ -1131,6 +1131,8 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// A declared parameter whose percent-decoded value is not UTF-8 is refused
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
+/// A declared parameter named by more than one pair is refused the same way,
+/// since a field carries one value and keeping either would guess at which.
 ///
 /// The parameter derives read `#[schema(...)]` as the [`Schema`](macro@Schema)
 /// derive does, and register it themselves, so a group carries bounds with
