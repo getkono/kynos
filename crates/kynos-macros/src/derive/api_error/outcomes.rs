@@ -111,6 +111,10 @@ fn variant_outcome(
         return transparent::whole(variant, &args, whole, from, &markers, generics)
             .map(Outcome::Transparent);
     }
+    if args.include.is_some() {
+        return super::include::read(variant, &args, None, &markers, generics)
+            .map(Outcome::Transparent);
+    }
     // `#[error(transparent)]` already says the variant is what it holds; a
     // status of its own is the opt-out. Only a variant: a struct has no
     // variant to hand over, so a struct-level one implies nothing and the

@@ -6078,6 +6078,7 @@ mod api_error {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
         each_case_is_refused(from_ledger(), expand_inner);
+        each_case_is_refused(include_ledger(), expand_inner);
         each_case_is_refused(subset_ledger(), expand_inner);
         each_case_is_refused(variant_of_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
@@ -6247,6 +6248,234 @@ mod api_error {
         }
     }
 
+    /// The refusals of `#[problem(include)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn include_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`include` on the enum, which cannot add the variant",
+                quote::quote!(
+                    #[problem(include = ServerError)]
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        Missing,
+                    }
+                ),
+                "a derive cannot add a variant to the enum it reads",
+            ),
+            case(
+                "`include` naming the shared enum the field already names",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(include = ServerError)]
+                        Server(ServerError),
+                    }
+                ),
+                "`include` is a bare marker",
+            ),
+            case(
+                "`include` in an enum building every variant `from` what it holds",
+                quote::quote!(
+                    #[problem(transparent, from)]
+                    enum StoreError {
+                        Lookup(LookupError),
+                        #[problem(include)]
+                        Server(ServerError),
+                    }
+                ),
+                "`from` on the enum builds variant `Server` from the shared enum it holds",
+            ),
+            case(
+                "`include` beside `from` on the variant",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(include, from)]
+                        Server(ServerError),
+                    }
+                ),
+                "`include` already builds variant `Server`",
+            ),
+            case(
+                "`include` beside `variant_of`",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(include, variant_of = Wide::Server)]
+                        Server(ServerError),
+                    }
+                ),
+                "`variant_of` takes one variant of a wider enum",
+            ),
+            case(
+                "`include` beside `thiserror`'s `#[from]`",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(include)]
+                        Server(#[from] ServerError),
+                    }
+                ),
+                "`thiserror`'s `#[from]` implements a `From` the `include` beside it",
+            ),
+            case(
+                "two `include`s, whose `From`s overlap",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(include)]
+                        Server(ServerError),
+                        #[problem(include)]
+                        Store(StoreFailure),
+                    }
+                ),
+                "variant `Server` already includes `ServerError`",
+            ),
+        ]
+    }
+
+    /// `include` reaches the refusals `transparent` and `from` share with it.
+    #[test]
+    fn include_is_refused_wherever_transparent_is_or_overlaps_a_from() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`include` beside a status of its own",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(include, status = 500)]
+                            Server(ServerError),
+                        }
+                    ),
+                    "answers as the error it holds",
+                ),
+                case(
+                    "`include` on a variant holding two fields",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(include)]
+                            Server(ServerError, String),
+                        }
+                    ),
+                    "holds exactly one field",
+                ),
+                case(
+                    "`include` on a struct",
+                    quote::quote!(
+                        #[problem(status = 500, include)]
+                        struct StoreError(ServerError);
+                    ),
+                    "a derive cannot add a variant to the enum it reads",
+                ),
+                case(
+                    "`include` beside `from` building another variant from its type",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(transparent, from)]
+                            Fault(ServerError),
+                            #[problem(include)]
+                            Server(ServerError),
+                        }
+                    ),
+                    "variant `Fault` is already built from `ServerError`, and one `From` builds \
+                     one variant; hold another type in one of them",
+                ),
+                case(
+                    "`include` on a variant of a transparent enum saying `transparent` again",
+                    quote::quote!(
+                        #[problem(transparent)]
+                        enum StoreError {
+                            #[problem(include, transparent)]
+                            Server(ServerError),
+                        }
+                    ),
+                    "the enum is transparent, so variant `Server` already answers",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// `include` is accepted wherever a transparent variant is, and beside a
+    /// `from` of another type, which only the trait solver can judge.
+    #[test]
+    fn include_is_accepted_wherever_a_transparent_variant_is() {
+        for (description, accepted) in [
+            (
+                "`include` alone",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(include)]
+                        Server(ServerError),
+                    }
+                ),
+            ),
+            (
+                "`include` beside `transparent` and `#[error(transparent)]`",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(include, transparent)]
+                        Server { source: ServerError },
+                    }
+                ),
+            ),
+            (
+                "`include` beside a `from` variant holding another type",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent, from)]
+                        Lookup(LookupError),
+                        #[problem(include)]
+                        Server(ServerError),
+                    }
+                ),
+            ),
+            (
+                "`include` in a transparent enum",
+                quote::quote!(
+                    #[problem(transparent)]
+                    enum StoreError {
+                        Lookup(LookupError),
+                        #[problem(include)]
+                        Server(ServerError),
+                    }
+                ),
+            ),
+        ] {
+            let input = syn::parse2(accepted).expect("the case itself must parse");
+            assert!(
+                expand_inner(&input).is_ok(),
+                "{description} must be accepted"
+            );
+        }
+    }
+
+    /// `include`'s `From` is generic over every error converting into the
+    /// shared enum, beside the enum's own parameters, and builds the variant
+    /// from what that error converts into.
+    #[test]
+    fn include_generates_a_from_over_every_error_converting_into_the_shared_enum() {
+        let input = syn::parse_quote! {
+            enum StoreError<const N: usize> {
+                #[problem(include)]
+                Server(ServerError),
+            }
+        };
+        let expanded = expand_inner(&input)
+            .expect("an included variant expands")
+            .to_string();
+        let expected = quote::quote! {
+            impl<const N: usize, __KynosSource: ::core::convert::Into<ServerError> >
+                ::core::convert::From<__KynosSource> for StoreError<N>
+            {
+                fn from(source: __KynosSource) -> Self {
+                    let inner: ServerError = ::core::convert::Into::into(source);
+                    Self::Server { 0: inner }
+                }
+            }
+        }
+        .to_string();
+        assert!(expanded.contains(&expected), "{expanded}");
+    }
+
     /// A transparent enum's refusals each cover more than their ledger row:
     /// a variant taking a wider variant, one declaring a status, and an
     /// `#[error(...)]` on the enum rather than a variant.
@@ -6307,6 +6536,7 @@ mod api_error {
                 include_str!("api_error/args.rs"),
                 include_str!("api_error/emit.rs"),
                 include_str!("api_error/fields.rs"),
+                include_str!("api_error/include.rs"),
                 include_str!("api_error/transparent.rs"),
                 include_str!("api_error/outcomes.rs"),
                 include_str!("api_error/subset.rs"),
@@ -6317,6 +6547,7 @@ mod api_error {
             ledger().len()
                 + transparent_ledger().len()
                 + from_ledger().len()
+                + include_ledger().len()
                 + subset_ledger().len()
                 + variant_of_ledger().len()
                 + headers_ledger().len()

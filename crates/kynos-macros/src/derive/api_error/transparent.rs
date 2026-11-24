@@ -2,7 +2,8 @@
 //! on its enum, or `#[error(transparent)]` — what each refuses, and what the
 //! error it holds gives the enum beyond its answer: the enum's `Display` and
 //! `Error`, where the enum is transparent whole, and `From` the held error,
-//! where the variant or its enum says `from`.
+//! where the variant or its enum says `from`, or every error converting into
+//! it, where the variant says `include`, as [`include`] says.
 
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{quote, quote_spanned};
@@ -11,42 +12,59 @@ use syn::{Attribute, DataEnum, DeriveInput, Generics, Index, Member, Variant, sp
 use super::{
     Failure, Transparent,
     args::{Markers, ProblemArgs},
+    include,
     outcomes::generic_named_in,
 };
 use crate::derive::attribute::compact;
 
 /// `From<Held> for Self` for each delegate that says `from`, building its
-/// variant from the error it holds; refusing two holding one type, which
-/// one `From` cannot build both of.
+/// variant from the error it holds, and [`include::conversion`] for the one
+/// that says `include`; refusing two holding one type, which one `From`
+/// cannot build both of.
 pub(super) fn conversions(
     input: &DeriveInput,
     delegates: &[&Transparent],
 ) -> syn::Result<TokenStream2> {
-    let name = &input.ident;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let converting: Vec<&Transparent> = delegates
         .iter()
         .copied()
-        .filter(|delegate| delegate.from.is_some())
+        .filter(|delegate| delegate.from.or(delegate.include).is_some())
         .collect();
 
     let mut impls = Vec::with_capacity(converting.len());
     for (index, delegate) in converting.iter().enumerate() {
+        let earlier = &converting[..index];
         let ty = &delegate.ty;
-        if let Some(first) = converting[..index]
+        let span = delegate
+            .from
+            .or(delegate.include)
+            .unwrap_or_else(|| ty.span());
+        if let Some(first) = earlier
             .iter()
             .find(|earlier| compact(&earlier.ty) == compact(ty))
         {
+            let drop = if first.include.or(delegate.include).is_some() {
+                "hold another type in one of them"
+            } else {
+                "drop `from` from one of them"
+            };
             return Err(syn::Error::new(
-                delegate.from.unwrap_or_else(|| ty.span()),
+                span,
                 format!(
                     "variant `{}` is already built from `{}`, and one `From` builds one \
-                     variant; drop `from` from one of them",
+                     variant; {drop}",
                     first.variant,
                     compact(ty)
                 ),
             ));
         }
+        if delegate.include.is_some() {
+            include::unique(delegate, earlier)?;
+            impls.push(include::conversion(input, delegate));
+            continue;
+        }
+        let name = &input.ident;
+        let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
         let variant = &delegate.variant;
         let bindings = &delegate.bindings;
         let held = &delegate.held;
@@ -299,6 +317,9 @@ pub(super) fn whole(
                 variant.ident
             ),
         ));
+    }
+    if args.include.is_some() {
+        return include::read(variant, args, from, markers, generics);
     }
     read(variant, args, whole, from.or(args.from), markers, generics)
 }

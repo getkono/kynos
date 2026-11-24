@@ -870,6 +870,45 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// transparent whole, beside `thiserror`'s `#[from]`, which implements the
 /// same `From`, and on two variants holding one type.
 ///
+/// `include` marks the variant holding a shared `ApiError` enum, the failures
+/// several operations answer with alike. It is transparent, and generates
+/// `From` every error converting into the shared enum, so `?` carries in that
+/// enum and each error its own `From`s build it from:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum ServerError {
+///     #[error("the server failed")]
+///     #[problem(status = 500)]
+///     Internal,
+///
+///     #[error("the store is unreachable")]
+///     #[problem(status = 503)]
+///     Unavailable,
+/// }
+///
+/// impl From<DbErr> for ServerError { /* ... */ }
+///
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// enum RegisterError {
+///     #[error("the name is taken")]
+///     #[problem(status = 409)]
+///     Conflict,
+///
+///     #[error(transparent)]
+///     #[problem(include)]
+///     Server(ServerError),
+/// }
+/// ```
+///
+/// A derive cannot add a variant, so the variant is written out, and matches
+/// as `RegisterError::Server(ServerError::Unavailable)`. An enum includes one
+/// shared enum, since two such `From`s overlap; `from` beside it, on it or on
+/// its transparent enum, and `thiserror`'s `#[from]` on its field are refused,
+/// as is a `from` variant holding the same type. A `From` of another type
+/// beside it compiles wherever the trait solver can tell that type does not
+/// convert into the shared enum: always where either is the crate's own.
+///
 /// A status's description joins the `title` of every variant answering with
 /// it, in declaration order. An enum writes its own with `describe`, which
 /// leaves each variant's `title` on the wire and on its branch of the schema:

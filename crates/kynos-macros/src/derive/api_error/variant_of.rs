@@ -94,6 +94,7 @@ pub(super) fn variant_of(
         ty,
         of: Some(of),
         from: None,
+        include: None,
     })
 }
 

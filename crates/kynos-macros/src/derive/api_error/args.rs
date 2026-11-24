@@ -6,7 +6,10 @@ use syn::{
     ext::IdentExt, meta::ParseNestedMeta, spanned::Spanned,
 };
 
-use super::written::{self, Described};
+use super::{
+    include,
+    written::{self, Described},
+};
 use crate::derive::attribute::{Keys, status, unknown};
 
 /// The range a problem detail's status may fall in: RFC 9457 errors, 4xx and
@@ -46,6 +49,9 @@ pub(super) struct ProblemArgs {
     /// `from`: on a transparent variant, `From` its held error builds it; on
     /// a transparent enum, every variant's.
     pub(super) from: Option<Span>,
+    /// `include`: on a one-field variant, it answers as the shared enum it
+    /// holds, and is built from every error converting into that enum.
+    pub(super) include: Option<Span>,
     /// `subset_of`: the wider `ApiError` enum this one is a subset of.
     pub(super) subset_of: Option<(Type, Span)>,
     /// `variant_of`: the variant of a wider `ApiError` enum this variant is.
@@ -143,6 +149,7 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                 // Checked against what it sits beside where the outcomes are
                 // read, as `transparent` is.
                 "from" => args.from = Some(span),
+                "include" => args.include = Some(include::parse(&meta, position)?),
                 "describe" => args.described = Some((written::parse(&meta, position)?, span)),
                 "extension" if meta.input.peek(syn::token::Paren) => {
                     constants(&meta, &mut args.constants)?;

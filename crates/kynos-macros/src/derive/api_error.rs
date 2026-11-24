@@ -16,6 +16,7 @@
 //!                                                  on a variant with no `status`
 //! #[problem(from)]                                 on a transparent variant, or
 //!                                                  beside `transparent` on an enum
+//! #[problem(include)]                              on one variant, holding a shared enum
 //! #[problem( variant_of = <path>::<variant> )]     on a variant, alone, instead
 //! #[problem(extension)]                            on a named field, optional
 //! #[problem(headers)]                              on one field, optional
@@ -92,6 +93,7 @@ mod args;
 mod describe;
 mod emit;
 mod fields;
+mod include;
 mod outcomes;
 mod subset;
 mod transparent;
@@ -277,6 +279,8 @@ struct Transparent {
     of: Option<Ident>,
     /// Where `from` asks for `From` the held error, its own or its enum's.
     from: Option<Span>,
+    /// Where `include` asks for `From` what converts into the held error.
+    include: Option<Span>,
 }
 
 impl Transparent {
@@ -289,6 +293,7 @@ impl Transparent {
             ty,
             of: None,
             from: None,
+            include: None,
         }
     }
 }
@@ -357,8 +362,7 @@ impl Failure {
     }
 }
 
-/// A failure's type URI, as the `&'static str` expression the expansion
-/// writes.
+/// A failure's type URI, as the `&'static str` expression the expansion writes.
 enum TypeUri {
     /// Known here, so emitted as a literal.
     Literal(String),

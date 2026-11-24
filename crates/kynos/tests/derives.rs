@@ -6343,6 +6343,127 @@ fn from_builds_a_transparent_variant_from_the_error_it_holds() {
     ));
 }
 
+/// The failures every operation shares, a 500 and a 503, the one a store
+/// failure answers with chosen by what failed.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ServerError {
+    #[error("the server failed")]
+    #[problem(status = 500, title = "Internal server error")]
+    Internal,
+
+    #[error("the store is unreachable")]
+    #[problem(status = 503, title = "Service unavailable")]
+    Unavailable,
+}
+
+/// What a store call fails with, converting into [`ServerError`] alone.
+struct StoreFailure {
+    outage: bool,
+}
+
+impl From<StoreFailure> for ServerError {
+    fn from(failure: StoreFailure) -> Self {
+        if failure.outage {
+            Self::Unavailable
+        } else {
+            Self::Internal
+        }
+    }
+}
+
+/// `include` beside a `#[from]` sibling and a 500 of its own, which the
+/// included 500 is unioned with.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum RegisterError {
+    #[error(transparent)]
+    Lookup(#[from] LookupError),
+
+    #[error("the name is taken")]
+    #[problem(status = 409)]
+    Conflict,
+
+    #[error("the password could not be hashed")]
+    #[problem(status = 500, title = "Hashing failed")]
+    Hashing,
+
+    #[error(transparent)]
+    #[problem(include)]
+    Server(ServerError),
+}
+
+/// `include` in a transparent enum, inside a generic `impl`.
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum IncludedWhole<const N: usize> {
+    Lookup(LookupError),
+    #[problem(include)]
+    Server {
+        source: ServerError,
+    },
+}
+
+/// `?` carries the shared enum, and every error converting into it, into the
+/// variant `include` marks, which stays matchable; its statuses join the
+/// enum's, a status met twice unioned, and its problem is the held one's.
+#[test]
+fn include_builds_a_variant_from_every_error_converting_into_the_shared_enum() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    fn store<E: From<StoreFailure>>(outage: bool) -> Result<(), E> {
+        Err(StoreFailure { outage })?;
+        Ok(())
+    }
+    fn shared<E: From<ServerError>>() -> Result<(), E> {
+        Err(ServerError::Internal)?;
+        Ok(())
+    }
+
+    assert!(matches!(
+        store::<RegisterError>(true),
+        Err(RegisterError::Server(ServerError::Unavailable))
+    ));
+    assert!(matches!(
+        store::<RegisterError>(false),
+        Err(RegisterError::Server(ServerError::Internal))
+    ));
+    assert!(matches!(
+        shared::<RegisterError>(),
+        Err(RegisterError::Server(ServerError::Internal))
+    ));
+    assert!(matches!(
+        RegisterError::from(LookupError::UserUnknown),
+        RegisterError::Lookup(LookupError::UserUnknown)
+    ));
+    assert!(matches!(
+        store::<IncludedWhole<0>>(true),
+        Err(IncludedWhole::Server {
+            source: ServerError::Unavailable
+        })
+    ));
+
+    assert_eq!(RegisterError::STATUSES, [404, 409, 500, 503]);
+    assert_eq!(IncludedWhole::<0>::STATUSES, [404, 500, 503]);
+    let described = emitted_responses::<RegisterError>();
+    let described = described
+        .as_object()
+        .expect("responses serialize as an object");
+    assert!(
+        ["404", "409", "500", "503"]
+            .iter()
+            .all(|status| described.contains_key(*status)),
+        "{described:?}"
+    );
+
+    assert_eq!(
+        RegisterError::from(StoreFailure { outage: true }).into_problem(),
+        ServerError::Unavailable.into_problem()
+    );
+    assert_eq!(
+        IncludedWhole::<0>::from(ServerError::Internal).to_string(),
+        "the server failed"
+    );
+}
+
 /// The wider enum `subset_of` cases narrow: an extension member, a status two
 /// variants share, a header group on one of two variants sharing a status,
 /// and a transparent variant whose 404 joins one of its own.

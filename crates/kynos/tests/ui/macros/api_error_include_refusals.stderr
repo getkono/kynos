@@ -1,0 +1,47 @@
+error: a derive cannot add a variant to the enum it reads, so `include` marks the variant holding the shared enum: write `#[problem(include)] Shared(SharedError)` among the variants
+  --> tests/ui/macros/api_error_include_refusals.rs:25:11
+   |
+25 | #[problem(include = ServerError)]
+   |           ^^^^^^^
+
+error: `include` is a bare marker, the shared enum being the type of the variant's one field; write `#[problem(include)]`
+  --> tests/ui/macros/api_error_include_refusals.rs:35:15
+   |
+35 |     #[problem(include = ServerError)]
+   |               ^^^^^^^
+
+error: `from` on the enum builds variant `Server` from the shared enum it holds, which its `include` already does; drop `from` from the enum and mark each other variant `#[problem(from)]`
+  --> tests/ui/macros/api_error_include_refusals.rs:40:24
+   |
+40 | #[problem(transparent, from)]
+   |                        ^^^^
+
+error: `include` already builds variant `Server` from the shared enum it holds and from every error converting into it; drop `from`
+  --> tests/ui/macros/api_error_include_refusals.rs:50:24
+   |
+50 |     #[problem(include, from)]
+   |                        ^^^^
+
+error: `include` holds a shared enum whole, and `variant_of` takes one variant of a wider enum; drop one of them
+  --> tests/ui/macros/api_error_include_refusals.rs:57:24
+   |
+57 |     #[problem(include, variant_of = Wide::Server)]
+   |                        ^^^^^^^^^^
+
+error: `thiserror`'s `#[from]` implements a `From` the `include` beside it already does; drop `#[from]`
+  --> tests/ui/macros/api_error_include_refusals.rs:65:14
+   |
+65 |     Server(#[from] ServerError),
+   |              ^^^^
+
+error: variant `Fault` is already built from `ServerError`, and one `From` builds one variant; hold another type in one of them
+  --> tests/ui/macros/api_error_include_refusals.rs:74:15
+   |
+74 |     #[problem(include)]
+   |               ^^^^^^^
+
+error: variant `Server` already includes `ServerError`, building the enum from every error converting into it, and a second `include` would build it from an error converting into both as well; gather the shared failures into one enum, or mark this variant `#[problem(transparent, from)]`
+  --> tests/ui/macros/api_error_include_refusals.rs:84:15
+   |
+84 |     #[problem(include)]
+   |               ^^^^^^^
