@@ -4947,12 +4947,69 @@ mod attribute {
     /// status, whose rows the `reply` and `api_error` ledgers keep.
     const STATUS_SITES: usize = 2;
 
+    /// The `#[param(...)]` keys only a parameter group reads, driven through
+    /// the `QueryParams` derive.
+    fn param_ledger() -> Vec<Case> {
+        vec![case(
+            "`explode` written as a string, which would read as a flag it is not",
+            quote::quote!(
+                struct Search {
+                    #[param(explode = "false")]
+                    diet: Vec<String>,
+                }
+            ),
+            "`explode` is `true` or `false`, written as a literal",
+        )]
+    }
+
+    #[test]
+    fn each_param_key_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(param_ledger(), crate::derive::query_params::expand_inner);
+    }
+
+    /// `explode` is the `#[param]` grammar's alone: a header or a cookie is
+    /// one value, so neither grammar holds the key.
+    #[test]
+    fn explode_is_no_header_or_cookie_key() {
+        let header: DeriveInput = syn::parse_quote!(
+            struct Traced {
+                #[header(explode = false)]
+                id: Vec<String>,
+            }
+        );
+        let cookie: DeriveInput = syn::parse_quote!(
+            struct Session {
+                #[cookie(explode = false)]
+                id: Vec<String>,
+            }
+        );
+        for (input, expand, grammar) in [
+            (
+                header,
+                crate::derive::headers::expand_inner as fn(&DeriveInput) -> _,
+                "`#[header(...)]`",
+            ),
+            (cookie, expand_inner, "`#[cookie(...)]`"),
+        ] {
+            let Err(error) = expand(&input) else {
+                panic!("{grammar} accepted `explode`");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("`explode` is not part of the {grammar} grammar")),
+                "{error}"
+            );
+        }
+    }
+
     #[test]
     fn every_attribute_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
             "attribute.rs",
             include_str!("attribute.rs"),
-            ledger().len() + group_ledger().len() - SHARED_TWICE + STATUS_SITES,
+            ledger().len() + group_ledger().len() + param_ledger().len() - SHARED_TWICE
+                + STATUS_SITES,
         );
     }
 }
@@ -8133,15 +8190,27 @@ mod path_params {
     use crate::derive::path_params::expand_inner;
 
     fn ledger() -> Vec<Case> {
-        vec![case(
-            "an optional field, when a captured variable is always present",
-            quote::quote!(
-                struct ReportPath {
-                    name: Option<String>,
-                }
+        vec![
+            case(
+                "an optional field, when a captured variable is always present",
+                quote::quote!(
+                    struct ReportPath {
+                        name: Option<String>,
+                    }
+                ),
+                "a path parameter is always present",
             ),
-            "a path parameter is always present",
-        )]
+            case(
+                "`explode`, which says how a query list is carried",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(explode = false)]
+                        name: String,
+                    }
+                ),
+                "a path parameter is one value",
+            ),
+        ]
     }
 
     #[test]
@@ -8154,6 +8223,49 @@ mod path_params {
         every_diagnostic_has_a_case(
             "path_params.rs",
             include_str!("path_params.rs"),
+            ledger().len(),
+        );
+    }
+}
+
+mod query_params {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::query_params::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "an optional list, whose `Some` of no items no query string carries",
+                quote::quote!(
+                    struct Search {
+                        diet: Option<Vec<String>>,
+                    }
+                ),
+                "a list parameter is absent exactly when it has no items",
+            ),
+            case(
+                "`explode` on a field that is one value, where it has no effect",
+                quote::quote!(
+                    struct Search {
+                        #[param(explode = false)]
+                        diet: String,
+                    }
+                ),
+                "this field is one value",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_query_params_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "query_params.rs",
+            include_str!("query_params.rs"),
             ledger().len(),
         );
     }

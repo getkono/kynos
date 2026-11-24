@@ -2422,6 +2422,261 @@ fn a_nan_query_value_is_refused_under_its_numeric_bounds() {
     }
 }
 
+// --- A derived query list carries several values ----------------------------
+//
+// The recorded runtime exception again: a `Vec<T>` field is one parameter of
+// several items, exploded over repeated pairs by default or delimited by commas
+// in one pair under `#[param(explode = false)]`, and the derive's decoder,
+// encoder and description must agree on which.
+
+#[derive(Schema, ParamValue, serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum Diet {
+    Vegan,
+    GlutenFree,
+}
+
+#[derive(QueryParams, Debug)]
+struct Facets {
+    /// Every pair named `diet`.
+    diet: Vec<Diet>,
+    #[param(explode = false)]
+    #[schema(max_items = 3)]
+    cuisine: Vec<String>,
+    #[param(rename = "n", explode = true)]
+    scores: Vec<Score>,
+}
+
+/// A list parameter is described as an array of its items, `required: false`
+/// because a query string carries an empty list as no pair at all, with its
+/// `style` and `explode` written out and its field's bounds on the array.
+#[test]
+fn a_query_list_is_described_as_an_array_with_its_style() {
+    assert_eq!(
+        query_parameters::<Facets>(),
+        serde_json::json!([
+            {
+                "name": "diet",
+                "in": "query",
+                "description": "Every pair named `diet`.",
+                "required": false,
+                "schema": resolved::<Vec<Diet>>(),
+                "style": "form",
+                "explode": true,
+            },
+            {
+                "name": "cuisine",
+                "in": "query",
+                "required": false,
+                "schema": bounded(resolved::<Vec<String>>(), &serde_json::json!({"maxItems": 3})),
+                "style": "form",
+                "explode": false,
+            },
+            {
+                "name": "n",
+                "in": "query",
+                "required": false,
+                "schema": resolved::<Vec<Score>>(),
+                "style": "form",
+                "explode": true,
+            },
+        ])
+    );
+}
+
+#[derive(QueryParams, Debug)]
+struct Selected {
+    #[schema(min_items = 1)]
+    id: Vec<u64>,
+}
+
+/// A list whose field requires an item is `required: true`, since its absence
+/// is its emptiness, and the decoder refuses that absence as too few items,
+/// so the document and the decoder agree on what a request must carry.
+#[test]
+fn a_query_list_requiring_an_item_is_a_required_parameter() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    assert_eq!(
+        query_parameters::<Selected>(),
+        serde_json::json!([{
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": bounded(resolved::<Vec<u64>>(), &serde_json::json!({"minItems": 1})),
+            "style": "form",
+            "explode": true,
+        }])
+    );
+    for query in [None, Some(""), Some("other=1")] {
+        match <Selected as DecodeQuery>::decode(query) {
+            Err(QueryRejection::Schema { name, failures, .. }) => {
+                assert_eq!(name, "id", "{query:?}");
+                assert_eq!(
+                    failures,
+                    std::collections::BTreeMap::from([(
+                        String::new(),
+                        "must hold at least 1 items".to_owned()
+                    )]),
+                    "{query:?}"
+                );
+            }
+            Err(other) => panic!("{query:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query:?}: accepted as {decoded:?}"),
+        }
+    }
+    match <Selected as DecodeQuery>::decode(Some("id=7")) {
+        Ok(decoded) => assert_eq!(decoded.id, [7]),
+        Err(rejection) => panic!("refused: {rejection}"),
+    }
+}
+
+/// An exploded list reads every pair naming it, in wire order, and a delimited
+/// one splits its one pair at each literal comma before decoding, so an
+/// escaped `%2C` stays inside its item. No pair is the empty list; an empty
+/// value is one empty item, as RFC 6570 reads it.
+#[test]
+fn a_query_list_decodes_each_item_in_wire_order() {
+    use kynos::extract::params::query::DecodeQuery;
+
+    for (query, diet, cuisine, scores) in [
+        (None, vec![], vec![], vec![]),
+        (Some(""), vec![], vec![], vec![]),
+        (
+            Some("diet=vegan&n=3&diet=gluten-free&n=1&diet=vegan"),
+            vec![Diet::Vegan, Diet::GlutenFree, Diet::Vegan],
+            vec![],
+            vec![Score(3), Score(1)],
+        ),
+        (
+            Some("cuisine=thai,korean"),
+            vec![],
+            vec!["thai", "korean"],
+            vec![],
+        ),
+        (
+            Some("cuisine=a%2Cb,c+d"),
+            vec![],
+            vec!["a,b", "c d"],
+            vec![],
+        ),
+        (Some("cuisine="), vec![], vec![""], vec![]),
+        (Some("cuisine=,"), vec![], vec!["", ""], vec![]),
+    ] {
+        match <Facets as DecodeQuery>::decode(query) {
+            Ok(decoded) => {
+                assert_eq!(decoded.diet, diet, "{query:?}");
+                assert_eq!(decoded.cuisine, cuisine, "{query:?}");
+                assert_eq!(decoded.scores, scores, "{query:?}");
+            }
+            Err(rejection) => panic!("{query:?}: refused: {rejection}"),
+        }
+    }
+}
+
+/// An item that is not text or does not parse is refused naming the parameter
+/// and the item's index; a delimited list is one pair, so a second is refused
+/// as a scalar's is. An item breaking its type's bound is refused at its
+/// index's pointer, and the list breaking its field's bound at the parameter's.
+#[test]
+fn a_query_list_item_is_refused_at_its_index() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for (query, parameter, expected) in [
+        (
+            "diet=vegan&diet=paleo",
+            "diet",
+            "item 1: expected one of `vegan`, `gluten-free`",
+        ),
+        (
+            "n=1&n=2&n=%FF",
+            "n",
+            "item 2: the percent-decoded value is not UTF-8",
+        ),
+        (
+            "cuisine=a,%FF",
+            "cuisine",
+            "item 1: the percent-decoded value is not UTF-8",
+        ),
+        (
+            "cuisine=a&cuisine=b",
+            "cuisine",
+            "the parameter is given more than once, and it carries one value",
+        ),
+    ] {
+        match <Facets as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, detail }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert_eq!(detail, expected, "{query}");
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {decoded:?}"),
+        }
+    }
+
+    let invalid = <Facets as DecodeQuery>::decode(Some("n=x"));
+    assert!(
+        matches!(
+            &invalid,
+            Err(QueryRejection::Invalid { name, detail })
+                if name == "n" && detail.starts_with("item 0: ")
+        ),
+        "{invalid:?}"
+    );
+
+    for (query, parameter, pointer, detail) in [
+        ("n=1&n=101", "n", "/1", "must be at most 100"),
+        (
+            "cuisine=a,b,c,d",
+            "cuisine",
+            "",
+            "must hold at most 3 items",
+        ),
+    ] {
+        match <Facets as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Schema { name, failures, .. }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert_eq!(
+                    failures,
+                    std::collections::BTreeMap::from([(pointer.to_owned(), detail.to_owned())]),
+                    "{query}"
+                );
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {decoded:?}"),
+        }
+    }
+}
+
+/// The encoder writes an exploded list as one pair per item and a delimited
+/// one as one pair whose items are joined by a literal comma, each item
+/// escaped so a comma inside one survives, and omits an empty list; what it
+/// writes decodes back to the group it encoded.
+#[test]
+fn a_derived_query_list_encodes_and_round_trips() {
+    use kynos::extract::params::query::{DecodeQuery, EncodeQuery};
+
+    let group = Facets {
+        diet: vec![Diet::GlutenFree, Diet::Vegan],
+        cuisine: vec!["a,b".to_owned(), String::new(), "c d".to_owned()],
+        scores: vec![],
+    };
+    let encoded = group.encode();
+
+    assert_eq!(encoded, "diet=gluten-free&diet=vegan&cuisine=a%2Cb,,c%20d");
+    let decoded = <Facets as DecodeQuery>::decode(Some(&encoded)).expect("what it encoded");
+    assert_eq!(
+        (decoded.diet, decoded.cuisine, decoded.scores),
+        (group.diet, group.cuisine, group.scores)
+    );
+    let empty = Facets {
+        diet: vec![],
+        cuisine: vec![],
+        scores: vec![],
+    };
+    assert_eq!(empty.encode(), "");
+}
+
 // --- Path, header and cookie parameters keep their fields' bounds -----------
 //
 // The same recorded exception as the query parameter's: each other parameter

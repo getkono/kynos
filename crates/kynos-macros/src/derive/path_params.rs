@@ -2,9 +2,10 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::{DeriveInput, spanned::Spanned};
+use syn::{DeriveInput, FieldsNamed, spanned::Spanned};
 
 use crate::derive::{
+    attribute::field_args,
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
     params::{
         Param, check_field, constraint_problems_body, construct, decode_field,
@@ -25,9 +26,24 @@ fn reject_optional(params: &[Param<'_>]) -> syn::Result<()> {
     }
 }
 
+/// `#[param(explode)]` is the query list's: a path variable is one value.
+fn reject_explode(fields: &FieldsNamed) -> syn::Result<()> {
+    for field in &fields.named {
+        if let Some(flag) = field_args(field, "param")?.explode {
+            return Err(syn::Error::new(
+                flag.span(),
+                "`explode` says how a query list's items are carried, and a path parameter is \
+                 one value. Only a `QueryParams` group's `Vec<T>` field takes it",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "PathParams")?;
     let names = wire_names(input, fields, "param")?;
+    reject_explode(fields)?;
     reject_duplicate_names(fields, &names, "path parameter", NameCase::Sensitive)?;
 
     let name = &input.ident;

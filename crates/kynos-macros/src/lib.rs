@@ -1116,6 +1116,30 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// `kynos::extract::params::querystring::QueryString<T, M>` describes the whole
 /// query string under `openapi32`.
 ///
+/// A field typed `Vec<T>`, recognised syntactically as `Option` is, is the one
+/// parameter of several values, each `T` a `ParamValue`: described as an array
+/// of `T` with `style: form`, read from every pair naming it
+/// (`tag=a&tag=b`, `explode: true`), or under `#[param(explode = false)]` from
+/// one pair whose items are split at each literal comma before they are
+/// percent-decoded (`tag=a,b`), so an item holding `%2C` keeps its comma. No
+/// pair is the empty list, which RFC 6570 writes as nothing, so a list is
+/// `required: false` unless its `#[schema(min_items = ...)]` is at least 1, and
+/// an `Option<Vec<T>>`, whose `Some(vec![])` no query string carries, is
+/// refused. An item that does not decode is refused naming its index, as
+/// `item 1: ...`, and one breaking its type's bounds at the pointer `/1`; the
+/// field's own bounds are the array's, such as `max_items`.
+///
+/// ```ignore
+/// #[derive(kynos::QueryParams)]
+/// struct Search {
+///     /// `?diet=vegan&diet=gluten-free`
+///     diet: Vec<Diet>,
+///     /// `?cuisine=thai,korean`
+///     #[param(explode = false)]
+///     cuisine: Vec<Cuisine>,
+/// }
+/// ```
+///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
 /// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos
@@ -1132,7 +1156,8 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
 /// A declared parameter named by more than one pair is refused the same way,
-/// since a field carries one value and keeping either would guess at which.
+/// a delimited list included, since a field carries one value and keeping
+/// either would guess at which.
 ///
 /// The parameter derives read `#[schema(...)]` as the [`Schema`](macro@Schema)
 /// derive does, and register it themselves, so a group carries bounds with

@@ -157,6 +157,31 @@ must implement `ParamValue`: the promise that the three agree on one value. An
 object or an array would be spread over several by the location's `style`, and
 one `FromStr` never reads that.
 
+A query list is the one exception, spelled by the field rather than the value:
+a `QueryParams` field typed `Vec<T>`, `T` a `ParamValue`, is one parameter of
+many items, described as an array of `T` with `style: form`.
+
+| Field | Wire form | `explode` |
+| --- | --- | --- |
+| `diet: Vec<Diet>` | `diet=vegan&diet=gluten-free` | `true` |
+| `#[param(explode = false)] cuisine: Vec<Cuisine>` | `cuisine=thai,korean` | `false` |
+
+- **No pair is the empty list.** RFC 6570 treats an empty list as undefined
+  and writes nothing for it, so absence and emptiness are one state on the
+  wire, and `Option<Vec<T>>` is refused: its `Some(vec![])` is a state no query
+  string carries. A list is `required: false` unless its field says
+  `#[schema(min_items = n)]` with `n` at least 1, which makes it
+  `required: true` and refuses its absence as too few items.
+- **A comma-delimited list is split before it is percent-decoded**, so an item
+  holding a comma travels as `%2C` and round-trips; the encoder escapes it.
+  `cuisine=` is one empty item, as RFC 6570 reads it.
+- **A refused item is named by its index**: `item 1: ...` for an item that does
+  not parse, and the JSON Pointer `/1` for one breaking its type's bounds.
+- **A field that is one value is one pair.** A declared scalar named twice is
+  refused, and so is a delimited list, rather than either value being kept.
+  `explode` on a scalar field or a path parameter is refused at compile time,
+  since OpenAPI gives it no effect there.
+
 | Implements `ParamValue` | Feature |
 | --- | --- |
 | `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |
