@@ -120,7 +120,7 @@ impl<S: Requirement> Describe for Auth<S> {
     /// [`Scopes::FORBIDDEN_TYPE`], since a bare scheme's authorizer may refuse
     /// with any problem type.
     fn describe(operation: &mut OperationCx<'_>) {
-        describe_auth::<S>(operation, guard_error_responses::<AuthRejection>);
+        describe_auth::<S>(operation, error_responses::<AuthRejection>());
     }
 }
 
@@ -141,10 +141,7 @@ where
     type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
 
     fn __describe(operation: &mut OperationCx<'_>) {
-        describe_auth::<S>(
-            operation,
-            guard_error_responses::<<S as CheckedBy<C>>::Error>,
-        );
+        describe_auth::<S>(operation, error_responses::<<S as CheckedBy<C>>::Error>());
     }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
@@ -202,7 +199,7 @@ impl<S: Requirement> Describe for MaybeAuth<S> {
     /// Declares its 403 as [`Auth`] does, narrowed to
     /// [`Requirement::forbidden_type`].
     fn describe(operation: &mut OperationCx<'_>) {
-        describe_maybe_auth::<S>(operation, guard_error_responses::<AuthRejection>);
+        describe_maybe_auth::<S>(operation, error_responses::<AuthRejection>());
     }
 }
 
@@ -225,10 +222,7 @@ where
     type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
 
     fn __describe(operation: &mut OperationCx<'_>) {
-        describe_maybe_auth::<S>(
-            operation,
-            guard_error_responses::<<S as CheckedBy<C>>::Error>,
-        );
+        describe_maybe_auth::<S>(operation, error_responses::<<S as CheckedBy<C>>::Error>());
     }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
@@ -453,7 +447,7 @@ impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
 
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        describe_scoped::<S, R>(operation, guard_error_responses::<AuthRejection>);
+        describe_scoped::<S, R>(operation, error_responses::<AuthRejection>());
     }
 }
 
@@ -489,10 +483,7 @@ where
     type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
 
     fn __describe(operation: &mut OperationCx<'_>) {
-        describe_scoped::<S, R>(
-            operation,
-            guard_error_responses::<<S as CheckedBy<C>>::Error>,
-        );
+        describe_scoped::<S, R>(operation, error_responses::<<S as CheckedBy<C>>::Error>());
     }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
@@ -507,9 +498,27 @@ where
 }
 
 /// What the error a guard's schemes fail with declares, given the guard's own
-/// refusals: [`guard_error_responses`] for that error, and for
-/// [`AuthRejection`] where only the context-free [`Describe`] runs.
-type ErrorResponses = fn(&mut Registry, &kynos_openapi::Responses) -> kynos_openapi::Responses;
+/// refusals, and whether Kynos renders those refusals itself.
+#[derive(Clone, Copy)]
+struct ErrorResponses {
+    /// [`guard_error_responses`] for that error, and for [`AuthRejection`]
+    /// where only the context-free [`Describe`] runs.
+    declare: fn(&mut Registry, &kynos_openapi::Responses) -> kynos_openapi::Responses,
+
+    /// Whether that error is [`AuthRejection`], which Kynos renders under the
+    /// problem policy the router installs. An application's own error renders
+    /// the guard's refusals itself, as it renders every other, so the policy
+    /// reaches none of them and none is declared under it.
+    served: bool,
+}
+
+/// [`ErrorResponses`] for a guard whose schemes fail with `E`.
+fn error_responses<E: crate::response::Responses + 'static>() -> ErrorResponses {
+    ErrorResponses {
+        declare: guard_error_responses::<E>,
+        served: std::any::TypeId::of::<E>() == std::any::TypeId::of::<AuthRejection>(),
+    }
+}
 
 /// Sets the operation's `security` to the guard's, and declares how it refuses:
 /// its own 401, 403 and 503 as `refusals` allows, joined with what `own` says
@@ -531,9 +540,9 @@ fn declare(
         refusals.forbidden_type,
         refusals.forbids,
         refusals.unavailable,
-        true,
+        own.served,
     );
-    let own = own(operation.registry(), &responses);
+    let own = (own.declare)(operation.registry(), &responses);
     crate::response::headers::union_from(&mut responses, &own);
     operation.add_responses(&responses);
 
