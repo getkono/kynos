@@ -59,6 +59,12 @@ where
 ///
 /// Not a session, not a signed jar, not a CSRF token. The first two are
 /// application policy — see [`response::cookie`](crate::response::cookie).
+///
+/// Nor is it how a handler sets a cookie it mints per request, such as a
+/// session credential, since a source sees the request but not what the
+/// handler decided. The handler returns that one as a
+/// [`SetCookieHeaders`] in a
+/// [`WithHeaders`](crate::response::headers::WithHeaders).
 #[derive(Clone, Debug)]
 pub struct SetCookies<S> {
     source: S,
