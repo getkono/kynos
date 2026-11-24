@@ -24,6 +24,8 @@ impl Scope for Grant {
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         _: Presented<BearerToken>,

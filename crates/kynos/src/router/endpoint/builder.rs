@@ -255,6 +255,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// # };
     /// # struct Tokens;
     /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+    /// #     type Error = AuthRejection;
     /// #     async fn authenticate(
     /// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
     /// #     ) -> Result<String, AuthRejection> {

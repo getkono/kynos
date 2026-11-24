@@ -287,6 +287,8 @@ const VALID_TOKEN: &str = "valid";
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -480,6 +482,397 @@ async fn an_authenticators_refusal_of_a_malformed_credential_carries_the_challen
             .map(|value| value.to_str().expect("a visible challenge")),
         Some("Bearer"),
     );
+}
+
+/// What `Accounts` fails with: the guard's own refusals, held transparently,
+/// a 401 of the application's own, and a lookup failing in a way that is no
+/// verdict on the token and no outage either.
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+#[problem(base = "https://errors.example.test/")]
+enum AccountError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+
+    #[error("no account holds this token")]
+    #[problem(status = 401)]
+    UnknownToken,
+
+    #[error("the account could not be read")]
+    #[problem(status = 500)]
+    Unreadable,
+}
+
+/// A context whose authenticator fails with `AccountError`.
+struct Accounts;
+
+impl Authenticator<Bearer, Accounts> for Accounts {
+    type Error = AccountError;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Self,
+    ) -> Result<String, AccountError> {
+        match presented.require()?.as_str() {
+            "broken" => Err(AccountError::Unreadable),
+            "unknown" => Err(AccountError::UnknownToken),
+            token => Ok(token.to_owned()),
+        }
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+#[kynos::get("/account")]
+async fn account(caller: Auth<Bearer>) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+/// `/account` mounted over `Accounts`.
+fn accounts() -> kynos::router::service::Service<Accounts> {
+    kynos::Router::<Accounts>::new()
+        .mount(kynos::routes![account])
+        .build(Accounts)
+        .expect("a describable router")
+}
+
+/// Sends `GET /account` to `service`, with `authorization` when given one.
+async fn send_account(
+    service: &kynos::router::service::Service<Accounts>,
+    authorization: Option<&str>,
+) -> kynos::http::Response {
+    use kynos::http::{HeaderValue, Request, header};
+
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/account".parse().expect("a usable path");
+    if let Some(value) = authorization {
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(value).expect("a usable field value"),
+        );
+    }
+    service.call(request).await
+}
+
+/// The status, `WWW-Authenticate` and problem `type` of `response`.
+async fn refusal(response: kynos::http::Response) -> (u16, Option<String>, String) {
+    use http_body_util::BodyExt;
+    use kynos::http::header;
+
+    let status = response.status().as_u16();
+    let challenge = response
+        .headers()
+        .get(header::WWW_AUTHENTICATE)
+        .map(|value| value.to_str().expect("a visible challenge").to_owned());
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    let problem: serde_json::Value = serde_json::from_slice(&body).expect("a problem document");
+    let type_uri = problem["type"].as_str().expect("a problem type").to_owned();
+    (status, challenge, type_uri)
+}
+
+/// An authenticator failing with its own error answers with that error: a 500
+/// as the application's problem, which no `AuthRejection` can be. Every 401
+/// still carries the scheme's challenge RFC 9110 section 11.6.1 requires,
+/// whether the application's own variant or the guard's, which `?` carried in
+/// through the transparent variant, sent it; and no 500 carries one.
+#[tokio::test]
+async fn an_authenticators_own_error_reaches_the_wire_with_the_guards_challenge() {
+    let service = accounts();
+    let challenge = Some("Bearer".to_owned());
+
+    assert_eq!(
+        refusal(send_account(&service, Some("Bearer broken")).await).await,
+        (
+            500,
+            None,
+            "https://errors.example.test/unreadable".to_owned()
+        )
+    );
+    assert_eq!(
+        refusal(send_account(&service, Some("Bearer unknown")).await).await,
+        (
+            401,
+            challenge.clone(),
+            "https://errors.example.test/unknown-token".to_owned()
+        )
+    );
+    assert_eq!(
+        refusal(send_account(&service, None).await).await,
+        (401, challenge, "about:blank".to_owned())
+    );
+
+    let admitted = send_account(&service, Some("Bearer someone")).await;
+    assert_eq!(admitted.status().as_u16(), 204);
+}
+
+/// Every status the authenticator's error can answer with is declared on the
+/// operation the guard covers, beside the guard's own: the 500 no scheme
+/// constrains, and both 401s, which share the challenge every 401 is sent with,
+/// still required.
+#[test]
+fn an_authenticators_own_error_is_declared_where_its_guard_is() {
+    let document = kynos::Router::<Accounts>::new()
+        .mount(kynos::routes![account])
+        .openapi()
+        .expect("a describable router");
+    let described = serde_json::to_value(&document).expect("a serializable document");
+    let responses = &described["paths"]["/account"]["get"]["responses"];
+
+    assert!(responses.get("500").is_some(), "{responses}");
+    let unauthorized = &responses["401"];
+    assert_eq!(
+        unauthorized["headers"]["WWW-Authenticate"]["required"],
+        serde_json::json!(true),
+        "{unauthorized}"
+    );
+    let types = unauthorized.to_string();
+    assert!(
+        types.contains("about:blank")
+            && types.contains("https://errors.example.test/unknown-token"),
+        "{unauthorized}"
+    );
+}
+
+/// What `Accounts` decides of a token, under any scheme carrying one.
+fn look_up(presented: Presented<BearerToken>) -> Result<String, AccountError> {
+    match presented.require()?.as_str() {
+        "broken" => Err(AccountError::Unreadable),
+        "unknown" => Err(AccountError::UnknownToken),
+        token => Ok(token.to_owned()),
+    }
+}
+
+/// The scope `/account/admin` demands.
+#[derive(Clone, Copy)]
+enum Grant {
+    Admin,
+}
+
+impl kynos::security::Scope for Grant {
+    fn name(&self) -> &'static str {
+        "admin"
+    }
+}
+
+/// The scope set `/account/admin` demands, naming its refusal.
+struct Admins;
+
+impl kynos::security::auth::Scopes for Admins {
+    type Scope = Grant;
+    const REQUIRED: &'static [Grant] = &[Grant::Admin];
+    const FORBIDDEN_TYPE: Option<&'static str> = Some(NOT_AN_ADMIN);
+}
+
+/// The problem type `Accounts` refuses a missing `admin` scope with.
+const NOT_AN_ADMIN: &str = "https://errors.example.test/not-an-admin";
+
+/// A bearer token an operation may demand `Grant` of.
+type Granted = Bearer<String, Grant>;
+
+impl Authenticator<Granted, Accounts> for Accounts {
+    type Error = AccountError;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Self,
+    ) -> Result<String, AccountError> {
+        look_up(presented)
+    }
+}
+
+/// Admits `admin`, fails with the application's own 500 on `unauthorizable`,
+/// and refuses every other caller with the named 403.
+impl kynos::security::Authorizer<Granted, Accounts, Grant> for Accounts {
+    async fn authorize(
+        &self,
+        credential: &String,
+        _: &[Grant],
+        _: &Self,
+    ) -> Result<(), AccountError> {
+        match credential.as_str() {
+            "admin" => Ok(()),
+            "unauthorizable" => Err(AccountError::Unreadable),
+            _ => Err(AuthRejection::forbidden_as(NOT_AN_ADMIN).into()),
+        }
+    }
+}
+
+impl Authenticates<Granted> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+/// A key `Accounts` reads beside its bearer token, which challenges with
+/// nothing, so a combination's challenge is the bearer's.
+#[derive(kynos::SecurityScheme)]
+#[security(api_key(in = "header", name = "X-Api-Key"))]
+struct AccountKey;
+
+impl Authenticator<AccountKey, Accounts> for Accounts {
+    type Error = AccountError;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<kynos::security::carrier::ApiKey>,
+        _: Head<'_>,
+        _: &Self,
+    ) -> Result<String, AccountError> {
+        match presented.require()?.into_inner().as_str() {
+            "broken" => Err(AccountError::Unreadable),
+            key => Ok(key.to_owned()),
+        }
+    }
+}
+
+impl Authenticates<AccountKey> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+#[kynos::get("/account/admin")]
+async fn account_admin(caller: kynos::security::auth::Scoped<Granted, Admins>) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+#[kynos::get("/account/either")]
+async fn account_either(
+    caller: Auth<kynos::security::requirement::AnyOf<(Bearer, AccountKey)>>,
+) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+#[kynos::get("/account/both")]
+async fn account_both(
+    caller: Auth<kynos::security::requirement::AllOf<(Bearer, AccountKey)>>,
+) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+/// The operations guarded beyond a single scheme, over `Accounts`.
+fn guarded_accounts() -> kynos::Router<Accounts> {
+    kynos::Router::<Accounts>::new().mount(kynos::routes![
+        account_admin,
+        account_either,
+        account_both
+    ])
+}
+
+/// Sends `GET path` to `service` with each of `headers`.
+async fn send_guarded(
+    service: &kynos::router::service::Service<Accounts>,
+    path: &str,
+    headers: &[(&'static str, &str)],
+) -> kynos::http::Response {
+    use kynos::http::{HeaderValue, Request};
+
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = path.parse().expect("a usable path");
+    for (name, value) in headers {
+        request.headers_mut().insert(
+            *name,
+            HeaderValue::from_str(value).expect("a usable field value"),
+        );
+    }
+    service.call(request).await
+}
+
+/// `Scoped`, `AnyOf` and `AllOf` answer with the authenticator's own error as
+/// `Auth` over one scheme does, and `Authorizer::authorize` fails with it too:
+/// its 500 reaches the wire as the application's problem with no challenge,
+/// and the named 403 it carried in through the transparent variant keeps the
+/// scope challenge the guard owes on it.
+#[tokio::test]
+async fn an_authenticators_own_error_reaches_the_wire_under_every_guard() {
+    let service = guarded_accounts()
+        .build(Accounts)
+        .expect("a describable router");
+    let unreadable = "https://errors.example.test/unreadable".to_owned();
+    let bearer = |token: &'static str| ("authorization", token);
+
+    let admin = "/account/admin";
+    assert_eq!(
+        refusal(send_guarded(&service, admin, &[bearer("Bearer broken")]).await).await,
+        (500, None, unreadable.clone())
+    );
+    assert_eq!(
+        refusal(send_guarded(&service, admin, &[bearer("Bearer unauthorizable")]).await).await,
+        (500, None, unreadable.clone())
+    );
+    assert_eq!(
+        refusal(send_guarded(&service, admin, &[bearer("Bearer someone")]).await).await,
+        (
+            403,
+            Some(r#"Bearer error="insufficient_scope""#.to_owned()),
+            NOT_AN_ADMIN.to_owned()
+        )
+    );
+    let admitted = send_guarded(&service, admin, &[bearer("Bearer admin")]).await;
+    assert_eq!(admitted.status().as_u16(), 204);
+
+    let key = |value: &'static str| ("x-api-key", value);
+    assert_eq!(
+        refusal(send_guarded(&service, "/account/either", &[key("broken")]).await).await,
+        (500, None, unreadable.clone())
+    );
+    assert_eq!(
+        refusal(send_guarded(&service, "/account/either", &[]).await).await,
+        (401, Some("Bearer".to_owned()), "about:blank".to_owned())
+    );
+
+    assert_eq!(
+        refusal(
+            send_guarded(
+                &service,
+                "/account/both",
+                &[bearer("Bearer someone"), key("broken")]
+            )
+            .await
+        )
+        .await,
+        (500, None, unreadable)
+    );
+    assert_eq!(
+        refusal(send_guarded(&service, "/account/both", &[bearer("Bearer someone")]).await).await,
+        (401, Some("Bearer".to_owned()), "about:blank".to_owned())
+    );
+}
+
+/// The error's 500 is declared under `Scoped`, `AnyOf` and `AllOf` as under
+/// `Auth`, beside each guard's own 401.
+#[test]
+fn an_authenticators_own_error_is_declared_under_every_guard() {
+    let document = guarded_accounts().openapi().expect("a describable router");
+    let described = serde_json::to_value(&document).expect("a serializable document");
+
+    for path in ["/account/admin", "/account/either", "/account/both"] {
+        let responses = &described["paths"][path]["get"]["responses"];
+        assert!(responses.get("500").is_some(), "{path}: {responses}");
+        assert!(responses.get("401").is_some(), "{path}: {responses}");
+    }
 }
 
 /// The witnessed top arity, counted against the list that produces it.

@@ -542,6 +542,8 @@ fn the_provider_derive_supplies_every_field_it_was_not_told_to_skip() {
 struct Gate(&'static str);
 
 impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer, C> for Gate {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
@@ -553,6 +555,8 @@ impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer, C
 }
 
 impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u32>, C> for Gate {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
@@ -582,6 +586,8 @@ struct Guarded {
 struct Shared(Gate);
 
 impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u64>, C> for Shared {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,

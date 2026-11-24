@@ -185,6 +185,8 @@ impl Scope for Grant {
 }
 
 impl<C: Sync, P: Scope> Authenticator<Bearer<Caller, P>, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -266,6 +268,8 @@ struct ServiceKey;
 struct Keys;
 
 impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,

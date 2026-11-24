@@ -2242,6 +2242,8 @@ struct Tokens;
 impl<C: Sync, P: kynos::security::Scope>
     kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims, P>, C> for Tokens
 {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         presented: kynos::security::carrier::presented::Presented<
@@ -2519,6 +2521,101 @@ fn a_named_forbidden_type_meets_a_handler_errors_403_as_a_choice_of_three() {
     );
 }
 
+/// An authenticator's own error: the guard's refusals, held transparently as
+/// the `Authenticator::Error` documentation spells it, beside a 500.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum TokenError {
+    #[error(transparent)]
+    Rejected(#[from] kynos::error::rejection::AuthRejection),
+
+    #[error("the token could not be read")]
+    #[problem(status = 500)]
+    Unreadable,
+}
+
+/// `Tokens`, failing with `TokenError`.
+struct OwnTokens;
+
+impl<C: Sync, P: kynos::security::Scope>
+    kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims, P>, C> for OwnTokens
+{
+    type Error = TokenError;
+
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::presented::Presented<
+            kynos::security::carrier::BearerToken,
+        >,
+        head: kynos::security::Head<'_>,
+        context: &C,
+    ) -> Result<Claims, TokenError> {
+        let _ = (presented, head, context);
+        Err(TokenError::Unreadable)
+    }
+}
+
+impl<C: Sync> kynos::security::Authorizer<Granted, C, Grant> for OwnTokens {
+    async fn authorize(
+        &self,
+        credential: &Claims,
+        scopes: &[Grant],
+        context: &C,
+    ) -> Result<(), TokenError> {
+        let _ = (credential, scopes, context);
+        Err(kynos::error::rejection::AuthRejection::forbidden_as(INSUFFICIENT_SCOPE).into())
+    }
+}
+
+/// `Guarded`, authenticated by `OwnTokens`.
+struct Owned;
+
+impl<P: kynos::security::Scope>
+    kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims, P>> for Owned
+where
+    OwnTokens: kynos::security::Authorizer<kynos::security::schemes::Bearer<Claims, P>, Self, P>,
+{
+    type Authenticator = OwnTokens;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &OwnTokens
+    }
+}
+
+#[kynos::get("/owned/audit")]
+async fn owned_audit(caller: kynos::security::auth::Scoped<Granted, Staff>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// A scope set's narrowing survives an authenticator's own error holding an
+/// `AuthRejection`: the held one declares the 403 the guard declares rather
+/// than its own wide one, which would win the union and erase the named type.
+/// The error's own 500 is declared beside it.
+#[test]
+fn a_held_auth_rejection_keeps_the_scope_sets_narrowed_403() {
+    let document = Router::<Owned>::new()
+        .mount(kynos::routes![owned_audit])
+        .openapi()
+        .expect("a describable router");
+    let schema = declared_problem_schema(&document, "/owned/audit", "403");
+
+    assert_eq!(
+        published(&schema),
+        vec!["about:blank".to_owned(), INSUFFICIENT_SCOPE.to_owned()],
+        "{schema}"
+    );
+    assert_eq!(
+        schema,
+        declared_problem_schema(&guarded_document(), "/admin/audit", "403")
+    );
+    assert!(
+        operation(&document, "/owned/audit")
+            .responses
+            .responses
+            .contains_key("500")
+    );
+}
+
 // --- Scope in what an unreachable store publishes ---------------------------
 //
 // `AuthRejection::unavailable` answers 503 where a credential store cannot be
@@ -2537,6 +2634,8 @@ struct Session;
 struct Sessions;
 
 impl<C: Sync> kynos::security::Authenticator<Session, C> for Sessions {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         presented: kynos::security::carrier::presented::Presented<kynos::security::carrier::ApiKey>,

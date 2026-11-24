@@ -632,6 +632,8 @@ struct ScrapeToken;
 struct Scrape;
 
 impl kynos::security::Authenticator<ScrapeToken, ()> for Scrape {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         presented: kynos::security::carrier::presented::Presented<

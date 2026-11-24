@@ -6,7 +6,12 @@ use super::{Auth, MaybeAuth, Scoped, Scopes};
 use crate::{
     error::rejection::AuthRejection,
     extract::describe::Describe,
-    http::{HeaderValue, Parts, Request, StatusCode, body::Body, header::AUTHORIZATION},
+    http::{
+        HeaderValue, Parts, Request, StatusCode,
+        body::Body,
+        header::{AUTHORIZATION, WWW_AUTHENTICATE},
+    },
+    response::IntoResponse,
     router::operation::OperationCx,
     schema::registry::Registry,
     security::{
@@ -121,6 +126,8 @@ where
     S: Carries<Credential = String>,
     C: Sync,
 {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<S::Presented>,
@@ -210,6 +217,8 @@ impl Carries for Revoked {
 struct Rejecting;
 
 impl<C: Sync> Authenticator<Revoked, C> for Rejecting {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         _: Presented<BearerToken>,
@@ -588,9 +597,13 @@ async fn a_basic_challenge_names_a_realm() {
     else {
         panic!("an anonymous request is refused");
     };
-    assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+    let response = refused.into_response();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 
-    let sent = refused.challenge().expect("a 401 carries a challenge");
+    let sent = response.headers()[WWW_AUTHENTICATE]
+        .to_str()
+        .expect("a visible challenge")
+        .to_owned();
     let parameters = sent.strip_prefix("Basic ").expect("a Basic challenge");
     assert!(
         parameters
@@ -634,7 +647,7 @@ async fn every_guard_authorizes_the_default_scopes_it_declares() {
     let refusing = Recording::refusing();
     let refused = <Auth<Audited> as Guard<_>>::guard(&parts, &refusing).await;
     assert_eq!(
-        refused.err().map(|r| r.status()),
+        refused.err().map(|r| r.error().status()),
         Some(StatusCode::FORBIDDEN)
     );
     assert_eq!(refusing.0.authorized(), defaults);
@@ -642,7 +655,7 @@ async fn every_guard_authorizes_the_default_scopes_it_declares() {
     let refusing = Recording::refusing();
     let refused = <MaybeAuth<Audited> as Guard<_>>::guard(&parts, &refusing).await;
     assert_eq!(
-        refused.err().map(|r| r.status()),
+        refused.err().map(|r| r.error().status()),
         Some(StatusCode::FORBIDDEN)
     );
     assert_eq!(refusing.0.authorized(), defaults);
@@ -651,7 +664,7 @@ async fn every_guard_authorizes_the_default_scopes_it_declares() {
     let refusing = Recording::refusing();
     let refused = <Auth<AllOf<(Audited, Bearer)>> as Guard<_>>::guard(&parts, &refusing).await;
     assert_eq!(
-        refused.err().map(|r| r.status()),
+        refused.err().map(|r| r.error().status()),
         Some(StatusCode::FORBIDDEN)
     );
     assert_eq!(refusing.0.authorized(), defaults);
@@ -674,7 +687,7 @@ async fn all_of_authenticates_every_scheme_before_authorizing_any() {
             .await;
 
     assert_eq!(
-        refused.err().map(|r| r.status()),
+        refused.err().map(|r| r.error().status()),
         Some(StatusCode::UNAUTHORIZED)
     );
     assert!(refusing.0.authorized().is_empty());
@@ -725,7 +738,7 @@ async fn maybe_auth_over_all_of_with_an_optional_carrier_refuses_a_bare_request(
     .await;
 
     assert_eq!(
-        guarded.err().map(|r| r.status()),
+        guarded.err().map(|r| r.error().status()),
         Some(StatusCode::UNAUTHORIZED)
     );
 }
@@ -964,6 +977,8 @@ impl Authenticates<Basic<String, Grant>> for Recording {
 struct Suspending;
 
 impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Suspending {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         _: Presented<BearerToken>,
@@ -1159,6 +1174,8 @@ impl Carries for Outage {
 struct Down;
 
 impl<C: Sync> Authenticator<Outage, C> for Down {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         _: Presented<BearerToken>,
@@ -1622,7 +1639,7 @@ async fn any_of_authorizes_each_alternative_for_its_own_set() {
         )
         .await;
     assert_eq!(
-        refused.err().map(|r| r.status()),
+        refused.err().map(|r| r.error().status()),
         Some(StatusCode::FORBIDDEN)
     );
     assert_eq!(refusing.0.authorized(), [Vec::<&str>::new()]);
@@ -1833,6 +1850,8 @@ impl<const OPTIONAL: bool> Carries for Witnessed<OPTIONAL> {
 struct Witness;
 
 impl<const OPTIONAL: bool> Authenticator<Witnessed<OPTIONAL>, Witness> for Witness {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -1906,7 +1925,7 @@ async fn absence_reaches_the_authenticator_only_from_an_optional_carrier() {
 
     let refused = <Auth<Witnessed<false>> as Guard<_>>::guard(&bare, &Witness).await;
     assert_eq!(
-        refused.err().map(|rejection| rejection.status()),
+        refused.err().map(|rejection| rejection.error().status()),
         Some(StatusCode::UNAUTHORIZED)
     );
     let anonymous = <MaybeAuth<Witnessed<false>> as Guard<_>>::guard(&bare, &Witness).await;
@@ -1976,6 +1995,8 @@ impl Ledger {
 }
 
 impl Authenticator<Witnessed<false>, Ledger> for Ledger {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -1987,6 +2008,8 @@ impl Authenticator<Witnessed<false>, Ledger> for Ledger {
 }
 
 impl Authenticator<Keyed, Ledger> for Ledger {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<carrier::ApiKey>,
@@ -2070,7 +2093,7 @@ async fn all_of_hands_a_malformed_credential_to_its_authenticator_in_tuple_order
     )
     .await;
     assert_eq!(
-        refused.err().map(|rejection| rejection.status()),
+        refused.err().map(|rejection| rejection.error().status()),
         Some(StatusCode::UNAUTHORIZED)
     );
     assert_eq!(ledger.seen(), ["Keyed present refused"]);
@@ -2088,13 +2111,13 @@ async fn all_of_refuses_a_malformed_credential_beside_an_absent_one_unasked() {
         let auth =
             <Auth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(parts, &ledger).await;
         assert_eq!(
-            auth.err().map(|rejection| rejection.status()),
+            auth.err().map(|rejection| rejection.error().status()),
             Some(StatusCode::UNAUTHORIZED)
         );
         let maybe =
             <MaybeAuth<AllOf<(Witnessed<false>, Keyed)>> as Guard<_>>::guard(parts, &ledger).await;
         assert_eq!(
-            maybe.err().map(|rejection| rejection.status()),
+            maybe.err().map(|rejection| rejection.error().status()),
             Some(StatusCode::UNAUTHORIZED)
         );
         assert!(ledger.seen().is_empty());

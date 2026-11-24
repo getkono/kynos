@@ -58,6 +58,8 @@ by task.
 | `<unmatched>` as the method label of a request no operation matched, since `on_response` was handed no method | `exchange.method` (`middleware::Exchange`), the method the request arrived with, matched or not | #1399 |
 | A `multipart/form-data` test body framed by hand with `format!("--{BOUNDARY}\r\n...")`, and a `content-type` header naming that boundary | `.multipart(test::multipart::TestMultipart::new().file(..))` on the `test::TestRequest`, or a value whose type derives `MultipartForm`; behind `multipart` | #1419 |
 | `origins.fold(Csrf::new(), \|c, o\| c.trusting_origin(o))` | `middleware::csrf::Csrf::new().trusting_origins(origins)`, which takes what `Cors::allow_origins` takes | #1420 |
+| A credential type wrapping `Result<Account, StoreError>`, so a lookup failure that is no outage could reach a 500, and an authorizer admitting its `Err` unchecked | `type Error = AuthError;` on the `security::Authenticator`, an `ApiError` holding `error::rejection::AuthRejection` in a transparent variant beside its own 500, and `?` inside `authenticate` | #1421 |
+| `auth.into_inner().resolve()?` at the top of every protected handler, unwrapping that deferred failure | `auth.into_inner()`: the guard already answered with the authenticator's error | #1421 |
 
 ## 0.5 to 0.6
 
