@@ -34,6 +34,37 @@ features its [index](crates/kynos/examples/README.md) lists.
 | Serve over TLS, and shut down gracefully | [`tls`](crates/kynos/examples/tls.rs), [`graceful_shutdown`](crates/kynos/examples/graceful_shutdown.rs) |
 | Test the service, and prove its description true | [`testing`](crates/kynos/examples/testing.rs) |
 
+## Before writing it yourself
+
+What Kynos already does that an application is tempted to write. If you are
+about to write the left column, the item in the right one does it, and its API
+documentation says how. Paths are relative to `kynos`, and an item the prelude
+exports is named bare. [Migrating](docs/migrating.md) lists the same features
+by the release that shipped each, for code written before it.
+
+| If you are about to write | Reach for |
+| --- | --- |
+| An `authorization` header formatting a bearer token in a test | `test::TestRequest::bearer` |
+| The same header or cookie on every request a test sends | `test::TestClient::with_default_header` or `with_default_cookie` |
+| A helper checking a problem response's status, type URI and members | `test::TestResponse::assert_problem`, with the base set once by `test::TestClient::with_problem_base`, and `test::TestProblem::extension` |
+| `assert!(resp.header(name).is_none())` | `test::TestResponse::assert_no_header` |
+| A parser for a `Set-Cookie` field's attributes | `test::TestResponse::set_cookie`, `assert_cookie_set` and `assert_cookie_cleared`; behind `cookie` |
+| A `multipart/form-data` test body framed by hand | `test::TestRequest::multipart`; behind `multipart` |
+| A loopback socket to test what a configured server's timeouts answer | `test::TestClient::through_server` |
+| A raw socket sending a body that stalls, arrives short or runs long | `test::TestRequest::stalled_body`, or `body_stream` with `content_length` |
+| A oneshot, a `JoinHandle` and an address struct around `serve()` | `server::BoundServer::spawn`, and `test::TestClient::connect` to its `server::Running` |
+| Response coverage merged across test clients, or held to one area of the document | `test::Coverage::for_document`, given to each client by `test::TestClient::with_coverage`, then `assert_covered`, `assert_covered_where` and `assert_conformance` |
+| A 403 deleted from the document before asserting coverage | `#[security(forbids = false)]` on a scheme whose credential grants nothing beyond itself |
+| A credential carrying a store failure into every handler | `#[security(unavailable)]` on the scheme, and `error::rejection::AuthRejection::unavailable` from its authenticator, for a 503; for the application's own 500, `type Error` on the `security::Authenticator`, and `?` inside `authenticate` |
+| A `code` field and a constructor on every failure | `#[problem(extension(code = CONST))]` |
+| Failure variants copied from one `ApiError` enum into another | `#[problem(transparent, from)]`, `#[problem(subset_of = Wider)]` or `#[problem(variant_of = Wider::Variant)]` |
+| A `Location` joined from a mount prefix with `format!` | `extract::link::Link<E>`, rendered into `Created::at` |
+| Several `routes!` lists, or `routes![op].0.intercept(..)` | one `routes![..]`, with `.intercept(..)` after the member it scopes to |
+| `#[tracing::instrument]` spans that carry no request id | `middleware::trace::Trace::span` |
+| An interceptor that only counts requests in flight | `middleware::Observer`'s `on_request`, then `on_response` or `on_abandoned` |
+| A literal schema bound kept equal to a `const` | `#[schema(maximum = CONST)]`, or any other numeric or count bound |
+| `FromStr`, `Display` and `schema::ParamValue` by hand for an enum or a newtype | `#[derive(kynos::ParamValue)]` |
+
 ## Getting data from middleware to a handler
 
 There is no channel for it, deliberately. A handler's arguments are its
