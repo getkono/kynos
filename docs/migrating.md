@@ -60,6 +60,15 @@ the section for the release that ships it.
 | A loopback socket, a hand-written request head and a status-line parser, to test what a configured server's timeouts answer | `test::TestClient::through_server`, which sends each request over `server::Server::serve_io` | #1152 |
 | The `uuid`, `time-chrono`, `time-jiff`, `decimal-rust` or `decimal-big` feature | `uuid1`, `time-chrono04`, `time-jiff02`, `decimal-rust1` or `decimal-big04`: each names the crate major its impls are for, so the next major arrives beside it | #1214 |
 | `#[derive(prost::Message)]` alone on a `Protobuf<T>` message, or a `prost` pinned to the version Kynos compiled | `#[derive(prost::Message, ProtobufMessage)]`, or `type_attribute(".", "#[derive(kynos::ProtobufMessage)]")` in `prost-build`: `extract::body::protobuf::Message` is Kynos's, and the `prost` it calls is your own: any version whose `Message` has `decode(impl Buf)` over `bytes` 1 and `encode_to_vec`, named `::prost` or by the type's `#[prost(prost_path = "...")]` | #1215 |
+| Two `routes!` lists mounted one after the other, because one took at most sixteen operations | one `routes![..]`, of any length | #1275 |
+| A `code` field on every failure, filled by a constructor and declared as a plain `string` | `#[problem(extension(code = CONST))]` on the variant: sent on every occurrence, and declared a JSON Schema `const` | #1273 |
+| A oneshot, a `JoinHandle` and an address struct around `tokio::spawn(bound.serve())` | `server::BoundServer::spawn`, whose `server::Running` reads `local_addr()` and awaits `shutdown()` | #1280 |
+| `#[tracing::instrument]` spans of your own that carry no request id | `middleware::trace::Trace::new().span(&[..])` intercepted after the `middleware::request_id::RequestId`: one `request` span carrying `request_id`, which every event and span beneath it inherits | #1279 |
+| A literal `#[schema(maximum = 200)]` beside the `const` it must stay equal to | `#[schema(maximum = MAX_LIMIT)]`: a numeric or count bound names the `const` | #1146 |
+| `.header("authorization", &format!("Bearer {token}"))` | `test::TestRequest::bearer(&token)` | #1153 |
+| An `assert_code` helper comparing `body["type"]` and a `code` member by hand | `resp.assert_problem(status, type_uri)`, then `resp.problem().extension::<T>("code")` (`test::TestProblem`) | #1151 |
+| `assert!(resp.header(name).is_none())`, whose failure names neither the request nor the value | `resp.assert_no_header(name)` | #1150 |
+| A raw socket left idle mid-body, or a `body_stream` that never yields, to reach a 408 | `test::TestRequest::stalled_body(media_type)`, which reaches it at once in process; behind `server` | #1359 |
 
 ## 0.4 to 0.5
 
@@ -68,6 +77,8 @@ the section for the release that ships it.
 | Presenting, authenticating and authorizing a credential by hand, then patching the 403's challenge | `security::requirement::ScopeCheckedBy::check_scoped`, which authorizes the scheme's default scopes and the demanded ones in one call | #1000 |
 | `extract::body::binary::Binary<M>` to carry a text body under a `text/*` media type | `extract::body::text_as::TextAs<M>`, which checks the body is UTF-8 | #987 |
 | A hand-built hyper accept loop around your own transport, buffering each body before routing | `server::Server::serve_io`, which serves any `AsyncRead + AsyncWrite` connection, streams bodies and speaks HTTP/2 | #580 |
+| A 403 deleted from the document before asserting coverage, for a scheme whose credential is right or wrong and grants nothing beyond itself | `#[security(forbids = false)]` on the derived scheme: no operation it alone guards declares a 403 | #1001 |
+| A credential carrying `Result<_, StoreError>` into every handler, because an authenticator could refuse only with 401 or 403 | `#[security(unavailable)]` on the derived scheme, and `error::rejection::AuthRejection::unavailable::<S>()` from its authenticator: a 503, declared on every operation it guards | #993 |
 
 ## 0.3 to 0.4
 
@@ -75,6 +86,7 @@ the section for the release that ships it.
 | --- | --- | --- |
 | Patching `externalDocs` into the document after the router emits it | `Router::external_docs` | #472 |
 | A mount prefix of your own joined into a `Location` with `format!` | the `extract::link::Link<E>` extractor: `Created::at(link.uri(params), body)` renders the target with every `Group` and `nest` prefix applied | #477 |
+| `routes![op].0.intercept(..)`, or a second `routes!` only to scope an interceptor to one operation | `routes![list, create.intercept(..)]`: an interceptor after a member is scoped to that operation alone | #470 |
 | The same literal in every `#[problem(base = "https://…")]` | a shared `const`: `#[problem(base = crate::PROBLEM_BASE)]` | #458 |
 | `FromStr`, `Display` and `schema::ParamValue` written by hand for a field-less enum | `#[derive(kynos::ParamValue)]`, reading and writing the names serde does | #464 |
 | A macro re-declaring shared failure variants in every `ApiError` enum | one variant, `#[problem(transparent)] Shared(#[from] SharedError)` | #459 |
