@@ -126,6 +126,41 @@ fn an_undeclared_length_promises_nothing() {
     assert_eq!(next(&mut body), None);
 }
 
+/// `TestMultipart` keeps its parts in order, a text field stating no media
+/// type as a browser's does and a file stating its name and media type.
+/// `tests/client.rs` holds the body a decoder reads from them.
+#[cfg(feature = "multipart")]
+#[test]
+fn a_multipart_body_holds_its_parts_as_a_browser_writes_them() {
+    use crate::{
+        extract::body::multipart::Part, response::codec::multipart::IntoMultipart,
+        test::multipart::TestMultipart,
+    };
+
+    let parts = TestMultipart::new()
+        .text("source", "mal_xml")
+        .file("file", "list.xml", "application/xml", "<list/>")
+        .into_parts();
+
+    assert_eq!(
+        parts,
+        [
+            Part {
+                name: "source".to_owned(),
+                file_name: None,
+                content_type: None,
+                bytes: Bytes::from_static(b"mal_xml"),
+            },
+            Part {
+                name: "file".to_owned(),
+                file_name: Some("list.xml".to_owned()),
+                content_type: Some("application/xml".to_owned()),
+                bytes: Bytes::from_static(b"<list/>"),
+            },
+        ]
+    );
+}
+
 /// `TestRequest::stalled_body`: a framed body owed one octet that never
 /// arrives. `tests/client.rs` holds the 408 it reaches.
 #[cfg(feature = "server")]
