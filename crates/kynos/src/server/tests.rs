@@ -8238,10 +8238,15 @@ mod on_paused_clock {
 
     /// A wait on a tokio timer passes at once in real time, and is measured
     /// on the paused clock, which is running again afterwards.
+    ///
+    /// The thread stalls between building the wait and running it, as a
+    /// loaded host preempts it, and the hour measured is still the hour.
     #[tokio::test]
     async fn an_hour_on_a_timer_is_measured_and_the_clock_resumed() {
         let hour = Duration::from_secs(60 * 60);
-        let ((), waited) = on_paused_clock(tokio::time::sleep(hour), Duration::from_secs(10))
+        let wait = tokio::time::sleep(hour);
+        std::thread::sleep(Duration::from_millis(5));
+        let ((), waited) = on_paused_clock(wait, Duration::from_secs(10))
             .await
             .expect("the timer ends the wait");
 
