@@ -188,12 +188,25 @@ impl Drop for Waiter<'_> {
     }
 }
 
+/// Wakes every waiting clone when a poll of the trigger unwinds, so each one
+/// polls it again rather than waiting on a transition that will never come.
+struct WakeOnUnwind<'a>(&'a Waker);
+
+impl Drop for WakeOnUnwind<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.0.wake_by_ref();
+        }
+    }
+}
+
 /// Locks `mutex` through poisoning.
 ///
 /// The waiter list is whole at every point a panic can leave it. A panic in
-/// the trigger's future leaves its stage in place, so the next clone to poll
-/// it panics too rather than reading a half-made transition: the phase is
-/// only ever replaced whole, after the future it reports resolved.
+/// the trigger's future leaves its stage in place and wakes every waiting
+/// clone, so each panics too on its next poll rather than reading a half-made
+/// transition or staying parked: the phase is only ever replaced whole, after
+/// the future it reports resolved.
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
@@ -209,6 +222,8 @@ impl Shared {
     ) -> Poll<io::Result<()>> {
         // Registered before the poll, so a wake during or after it reaches us.
         self.waiters.register(key, cx.waker());
+        // Declared before the lock, so it wakes the others once it is released.
+        let _unwind = WakeOnUnwind(&self.waker);
         let mut trigger = lock(&self.trigger);
         let mut shared = Context::from_waker(&self.waker);
         loop {
