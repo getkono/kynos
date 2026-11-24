@@ -6,6 +6,8 @@
 //!                                                  on an enum, optional
 //! #[problem( subset_of = <type> )]                 on an enum, alone, instead of
 //!                                                  every list below it
+//! #[problem(transparent)]                          on an enum, instead of each
+//!                                                  variant's, which displays as it
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
 //! #[problem(transparent)]                          on a one-field variant, instead;
 //!                                                  implied by `#[error(transparent)]`
@@ -69,7 +71,8 @@
 //! so the headers the held error sends reach the wire. Each is read through
 //! `kynos::__private::problem::HeldError`, so a held type that is no
 //! `ApiError` is reported as that, at the field, rather than once per trait
-//! each use needs.
+//! each use needs. What makes a variant transparent, and what else the held
+//! error gives the enum, is [`transparent`]'s.
 //!
 //! A `subset_of` enum's variants are some of the derived enum `<type>` names,
 //! by name and fields; it converts into that enum and answers and is described
@@ -87,6 +90,7 @@ mod emit;
 mod fields;
 mod outcomes;
 mod subset;
+mod transparent;
 mod variant_of;
 mod written;
 
@@ -130,23 +134,10 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .collect();
     let statuses = distinct_statuses(&failures);
     let codes = codes(&outcomes, &statuses);
-    let name = &input.ident;
     let described = args.described.as_ref();
     let answered = written::answered(input, described, &statuses, &delegates, &codes)?;
     let described = described.map_or(&[][..], |(described, _)| described);
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-
-    // `detail` comes from `Display`; asserted here rather than bounded so the
-    // diagnostic lands on the error type, not the handler returning it.
-    let display = quote! {
-        const _: () = {
-            #[allow(dead_code)]
-            fn detail_comes_from_display #impl_generics () #where_clause {
-                fn is_display<T: ::core::fmt::Display + ?::core::marker::Sized>() {}
-                is_display::<#name #ty_generics>();
-            }
-        };
-    };
+    let display = transparent::display(input, args.transparent.is_some(), &failures, &delegates);
 
     let problem = into_problem(&failures, &delegates);
     let response = into_response(&failures, &delegates);

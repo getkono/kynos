@@ -705,7 +705,8 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// at `about:blank`.
 ///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
-/// A type without a `Display` is rejected at the derive.
+/// A type declaring a failure of its own without a `Display` is rejected at
+/// the derive; one whose every variant is transparent reads none.
 ///
 /// With the `trace` feature, a failure declaring a 5xx is logged as it is
 /// turned into a response: one `ERROR` event on the `kynos::error` target with
@@ -828,6 +829,25 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// `extension(...)` beside `#[error(transparent)]` without a status is
 /// refused, since the held error's would replace it. A held type that is no
 /// `ApiError` is reported as such, naming both ways out.
+///
+/// An enum of held errors alone says `#[problem(transparent)]` once, on the
+/// enum, and needs no `thiserror`: every variant is transparent, and the
+/// derive implements `Display` delegating to the error each holds:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(transparent)]
+/// enum AddItemError {
+///     ListNotFound(ListNotFound),
+///     Internal(Internal),
+/// }
+/// ```
+///
+/// Each held error must then be `Display`; one that is not, such as a refusal
+/// Kynos ships, is held by a variant marked `transparent` instead. A variant
+/// saying `transparent` again or taking a `variant_of`, and an
+/// `#[error(...)]`, which would implement `Display` a second time, are
+/// refused. A struct has no variant to hand over, so takes no `transparent`.
 ///
 /// A status's description joins the `title` of every variant answering with
 /// it, in declaration order. An enum writes its own with `describe`, which

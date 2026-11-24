@@ -6196,6 +6196,47 @@ fn error_transparent_answers_as_the_held_error_unless_a_status_opts_out() {
     );
 }
 
+/// Transparent whole, and no `thiserror`: each variant answers, and the enum
+/// displays, as the error it holds. Generic, so its `Display` is implemented
+/// inside a generic `impl`; one variant holds its error in a named field.
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum SharedWhole<const N: usize> {
+    Lookup(LookupError),
+    Invalid { source: ValidationFailed },
+}
+
+/// Held errors alone, no enum `Display`: no failure of its own reads one for
+/// `detail`, so the derive asks for none.
+#[derive(Debug, ApiError)]
+enum SharedUndisplayed {
+    #[problem(transparent)]
+    Lookup(LookupError),
+}
+
+/// A transparent enum's `Display`, problem and statuses are each its held
+/// error's, and an enum of held errors alone compiles with no `Display`.
+#[test]
+fn a_transparent_enum_answers_and_displays_as_the_error_it_holds() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    let invalid = || ValidationFailed {
+        field: "name".to_owned(),
+    };
+    let whole = SharedWhole::<0>::Invalid { source: invalid() };
+    assert_eq!(whole.to_string(), invalid().to_string());
+    assert_eq!(
+        SharedWhole::<0>::Lookup(LookupError::TenantUnknown).to_string(),
+        "no tenant with that slug"
+    );
+    assert_eq!(
+        serde_json::to_value(whole.into_problem()).expect("a problem serializes"),
+        serde_json::to_value(invalid().into_problem()).expect("a problem serializes"),
+    );
+    assert_eq!(SharedWhole::<0>::STATUSES, SharedOnly::<0>::STATUSES);
+    assert_eq!(SharedUndisplayed::STATUSES, LookupError::STATUSES);
+}
+
 /// The wider enum `subset_of` cases narrow: an extension member, a status two
 /// variants share, a header group on one of two variants sharing a status,
 /// and a transparent variant whose 404 joins one of its own.

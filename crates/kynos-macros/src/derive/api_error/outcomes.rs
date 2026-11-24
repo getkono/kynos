@@ -3,18 +3,16 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, quote};
-use syn::{
-    Data, DeriveInput, Fields, GenericParam, Generics, Ident, Index, Member, Type, Variant,
-    spanned::Spanned,
-};
+use syn::{Data, DeriveInput, Fields, GenericParam, Generics, Ident, Type, Variant};
 
 use super::{
-    Extension, Failure, Outcome, Transparent, TypeUri,
+    Extension, Failure, Outcome, TypeUri,
     args::{
         Base, Constant, Markers, Position, ProblemArgs, check_field_markers, error_transparent,
         parse_problem,
     },
     fields::{header_field, retry_after_field},
+    transparent,
 };
 use crate::doc::doc_string;
 
@@ -40,74 +38,28 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                 ));
             }
 
+            // `transparent` on the enum: every variant answers, and the enum
+            // displays, as the error it holds.
+            let whole = args.transparent;
+            if whole.is_some() {
+                transparent::display_unclaimed(input, data)?;
+            }
+
             data.variants
                 .iter()
-                .map(|variant| {
-                    let markers = check_field_markers(&variant.fields)?;
-
-                    let mut args = parse_problem(&variant.attrs, Position::Variant)?;
-                    if let Some((wide, span)) = &args.variant_of {
-                        return super::variant_of::variant_of(
-                            variant,
-                            &args,
-                            wide,
-                            *span,
-                            &markers,
-                            &input.generics,
-                        )
-                        .map(Outcome::Transparent);
-                    }
-                    if let Some(span) = args.transparent {
-                        return transparent(variant, &args, span, &markers, &input.generics)
-                            .map(Outcome::Transparent);
-                    }
-                    // `#[error(transparent)]` already says the variant is
-                    // what it holds; a status of its own is the opt-out. Only
-                    // a variant: a struct has no variant to hand over, so a
-                    // struct-level one implies nothing and the struct still
-                    // declares its status.
-                    if let (None, Some(span)) = (args.status, error_transparent(&variant.attrs)) {
-                        return implied_transparent(
-                            variant,
-                            &args,
-                            span,
-                            &markers,
-                            &input.generics,
-                        )
-                        .map(Outcome::Transparent);
-                    }
-
-                    let Some((status, _)) = args.status else {
-                        return Err(syn::Error::new(
-                            variant.ident.span(),
-                            format!(
-                                "variant `{}` does not say what status it produces; add \
-                                 `#[problem(status = ...)]`",
-                                variant.ident
-                            ),
-                        ));
-                    };
-
-                    let name = &variant.ident;
-                    let extensions = extensions(&variant.fields, &markers);
-
-                    Ok(Outcome::Declared(Failure {
-                        path: quote!(Self::#name),
-                        variant: Some(name.clone()),
-                        constants: constants(std::mem::take(&mut args.constants), &extensions)?,
-                        extensions,
-                        headers: header_field(&variant.fields, &markers)?,
-                        retry_after: retry_after_field(&variant.fields, &markers)?,
-                        status,
-                        type_uri: type_uri(&args, base, &variant.ident),
-                        title: args.title,
-                        doc: doc_string(&variant.attrs),
-                    }))
-                })
+                .map(|variant| variant_outcome(input, variant, whole, base))
                 .collect()
         }
 
         Data::Struct(data) => {
+            if let Some(span) = args.transparent {
+                return Err(syn::Error::new(
+                    span,
+                    "`transparent` hands a variant to the error it holds, so it belongs on an \
+                     enum or one of its variants; a struct has no variant to hand over",
+                ));
+            }
+
             let markers = check_field_markers(&data.fields)?;
 
             let Some((status, _)) = args.status else {
@@ -138,112 +90,65 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
     }
 }
 
-/// Reads a `#[problem(transparent)]` variant, refusing what it cannot also
-/// say.
-fn transparent(
+/// How one variant of `input` fails, `whole` the span of a `transparent` on
+/// the enum.
+fn variant_outcome(
+    input: &DeriveInput,
     variant: &Variant,
-    args: &ProblemArgs,
-    span: Span,
-    markers: &[Markers],
-    generics: &Generics,
-) -> syn::Result<Transparent> {
-    if args.status.is_some() || args.title.is_some() || args.type_uri.is_some() {
-        return Err(syn::Error::new(
-            span,
-            "a transparent variant answers as the error it holds, so its status, title and type \
-             are that error's. Drop them, or drop `transparent`",
-        ));
+    whole: Option<Span>,
+    base: Option<&Base>,
+) -> syn::Result<Outcome> {
+    let markers = check_field_markers(&variant.fields)?;
+    let generics = &input.generics;
+
+    let mut args = parse_problem(&variant.attrs, Position::Variant)?;
+    if let Some(whole) = whole {
+        return transparent::whole(variant, &args, whole, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    if let Some((wide, span)) = &args.variant_of {
+        return super::variant_of::variant_of(variant, &args, wide, *span, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    if let Some(span) = args.transparent {
+        return transparent::read(variant, &args, span, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    // `#[error(transparent)]` already says the variant is what it holds; a
+    // status of its own is the opt-out. Only a variant: a struct has no
+    // variant to hand over, so a struct-level one implies nothing and the
+    // struct still declares its status.
+    if let (None, Some(span)) = (args.status, error_transparent(&variant.attrs)) {
+        return transparent::implied(variant, &args, span, &markers, generics)
+            .map(Outcome::Transparent);
     }
 
-    if let Some(constant) = args.constants.first() {
-        return Err(syn::Error::new(
-            constant.span,
-            "a transparent variant publishes the extension members of the error it holds, so it \
-             sends no constant of its own. Declare it on that error, or drop `transparent`",
-        ));
-    }
-
-    let mut fields = variant.fields.iter();
-    let (Some(field), None) = (fields.next(), fields.next()) else {
+    let Some((status, _)) = args.status else {
         return Err(syn::Error::new(
             variant.ident.span(),
             format!(
-                "transparent variant `{}` holds exactly one field, the error it answers as",
+                "variant `{}` does not say what status it produces; add \
+                 `#[problem(status = ...)]`",
                 variant.ident
             ),
         ));
     };
 
-    // The one field's, since `variant` has exactly one.
-    let marked = markers.first().copied().unwrap_or_default();
+    let name = &variant.ident;
+    let extensions = extensions(&variant.fields, &markers);
 
-    if let Some(span) = marked.extension {
-        return Err(syn::Error::new(
-            span,
-            "a transparent variant publishes the extension members of the error it holds, not \
-             the field holding it",
-        ));
-    }
-
-    if let Some(span) = marked.headers {
-        return Err(syn::Error::new(
-            span,
-            "a transparent variant sends the headers of the error it holds, which is not a \
-             header group itself",
-        ));
-    }
-
-    if let Some(span) = marked.retry_after {
-        return Err(syn::Error::new(
-            span,
-            "a transparent variant sends the `Retry-After` of the error it holds, which is not a \
-             delay itself",
-        ));
-    }
-
-    if let Some(param) = generic_named_in(&field.ty, generics) {
-        return Err(syn::Error::new(
-            field.ty.span(),
-            format!(
-                "a transparent variant's statuses are a `const`, which cannot depend on the \
-                 type's generic parameter `{param}`; name a concrete error type"
-            ),
-        ));
-    }
-
-    let member = field
-        .ident
-        .clone()
-        .map_or_else(|| Member::Unnamed(Index::from(0)), Member::Named);
-    Ok(Transparent::field(
-        variant.ident.clone(),
-        &member,
-        field.ty.clone(),
-    ))
-}
-
-/// Reads a variant `#[error(transparent)]` makes transparent, having declared
-/// no `status`: a `title`, `type` or constant member beside it would be
-/// dropped as the held error's, so it is refused naming the opt-out.
-fn implied_transparent(
-    variant: &Variant,
-    args: &ProblemArgs,
-    span: Span,
-    markers: &[Markers],
-    generics: &Generics,
-) -> syn::Result<Transparent> {
-    if args.title.is_some() || args.type_uri.is_some() || !args.constants.is_empty() {
-        return Err(syn::Error::new(
-            span,
-            format!(
-                "`#[error(transparent)]` makes variant `{}` answer as the error it holds, whose \
-                 title, type and extension members are that error's. Declare \
-                 `#[problem(status = ...)]` beside them for a failure of its own, or drop them",
-                variant.ident
-            ),
-        ));
-    }
-    transparent(variant, args, span, markers, generics)
+    Ok(Outcome::Declared(Failure {
+        path: quote!(Self::#name),
+        variant: Some(name.clone()),
+        constants: constants(std::mem::take(&mut args.constants), &extensions)?,
+        extensions,
+        headers: header_field(&variant.fields, &markers)?,
+        retry_after: retry_after_field(&variant.fields, &markers)?,
+        status,
+        type_uri: type_uri(&args, base, &variant.ident),
+        title: args.title,
+        doc: doc_string(&variant.attrs),
+    }))
 }
 
 /// The first of `generics`' parameters `ty` names, if any.

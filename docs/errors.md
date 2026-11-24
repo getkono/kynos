@@ -133,6 +133,7 @@ enum StoreError {
 | type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
 | type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
 | type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
+| type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds; no `#[error(...)]` beside it |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
@@ -154,10 +155,12 @@ receive.
 
 There is no de-camel-casing of variant names anywhere.
 
-`detail` comes from `Display`, which is why the derive requires it and why
-`thiserror` is the expected companion: the `#[error("...")]` a Rust reader
-already writes is the sentence an API consumer receives, rather than a second
-one that can drift from it.
+`detail` comes from `Display`, which is why the derive requires it of a type
+declaring a failure of its own, and why `thiserror` is the expected companion:
+the `#[error("...")]` a Rust reader already writes is the sentence an API
+consumer receives, rather than a second one that can drift from it. A type
+whose every variant is transparent reads no `Display` of its own, so the derive
+requires none.
 
 **A server failure's cause goes to the log, not the wire.** RFC 9457 section 5
 keeps implementation detail out of a problem, so a 5xx's `Display` says what
@@ -302,6 +305,30 @@ Where the held type is no `ApiError`, the compile error says so and names both
 ways out. A transparent variant's message being its field's is `thiserror`'s
 rule, so the implication follows it rather than any guess about the type.
 
+**An enum of held errors alone is transparent whole.** Every operation having
+its own error type leaves many enums whose every variant hands over:
+
+```rust
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum AddItemError {
+    ListNotFound(ListNotFound),
+    Internal(Internal),
+}
+```
+
+`transparent` on the enum makes each variant transparent, and the derive
+implements the enum's `Display` delegating to the error each variant holds,
+which is what `thiserror`'s `#[error(transparent)]` on every variant would.
+It is said on the enum rather than implied by every variant being transparent:
+`Display` is the enum's, and an implied one would collide with a hand-written
+or `thiserror` one, and fail to compile over a held error with no `Display` of
+its own, such as a refusal Kynos ships. An `#[error(...)]` beside it is refused
+for the first reason, and such a refusal is held by a variant marked
+`transparent` in an enum that is not. An enum of transparent variants that is
+not transparent whole needs no `Display` either, since no failure of its own
+reads one.
+
 **An operation that cannot fail every way names a subset.** A rejection
 type's statuses are declared on every operation returning it, so a `HEAD`
 sharing a `PUT`'s enum would declare a 409 it can never send. The narrower
@@ -381,7 +408,9 @@ naming the subset's generic parameter, or over a variant or field with a
 `#[problem(...)]` of its own is a compile error with a case in both. So is a
 `variant_of` on the type, beside another key, over a field with a
 `#[problem(...)]`, naming no enum, naming the enum's generic parameter, or
-taking a wider variant another variant already takes. What `base`, `title`,
+taking a wider variant another variant already takes. So is a transparent
+enum beside an `#[error(...)]`, or over a variant saying `transparent` again or
+taking a `variant_of`. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.

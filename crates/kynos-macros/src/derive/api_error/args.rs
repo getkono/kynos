@@ -40,6 +40,8 @@ pub(super) struct ProblemArgs {
     pub(super) title: Option<String>,
     pub(super) type_uri: Option<String>,
     pub(super) base: Option<Base>,
+    /// `transparent`: on a variant, it answers as the error it holds; on an
+    /// enum, every variant does, and the enum displays as what it holds.
     pub(super) transparent: Option<Span>,
     /// `subset_of`: the wider `ApiError` enum this one is a subset of.
     pub(super) subset_of: Option<(Type, Span)>,
@@ -132,16 +134,9 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                          `subset_of`",
                     ));
                 }
-                "transparent" if position == Position::Variant => {
-                    args.transparent = Some(span);
-                }
-                "transparent" => {
-                    return Err(syn::Error::new(
-                        span,
-                        "`transparent` hands one variant to the error it holds, so it belongs on \
-                         a variant of an enum",
-                    ));
-                }
+                // On an enum, every variant; a struct's is refused where the
+                // outcomes are read, since only there is the item's kind known.
+                "transparent" => args.transparent = Some(span),
                 "describe" => args.described = Some((written::parse(&meta, position)?, span)),
                 "extension" if meta.input.peek(syn::token::Paren) => {
                     constants(&meta, &mut args.constants)?;
@@ -217,6 +212,15 @@ pub(super) fn error_transparent(attrs: &[Attribute]) -> Option<Span> {
         .filter_map(|attr| attr.parse_args::<syn::Ident>().ok())
         .find(|ident| ident == "transparent")
         .map(|ident| ident.span())
+}
+
+/// The span of the first `#[error(...)]` among `attrs`: `thiserror`'s, which
+/// implements `Display` for the item it is written on.
+pub(super) fn error_attribute(attrs: &[Attribute]) -> Option<Span> {
+    attrs
+        .iter()
+        .find(|attr| attr.path().is_ident("error"))
+        .map(|attr| attr.path().span())
 }
 
 /// Reads the `name = value` pairs of an item's `extension(...)` list into
