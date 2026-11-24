@@ -715,6 +715,8 @@ mod mixed_guards {
     struct Tokens;
 
     impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+        type Error = AuthRejection;
+
         async fn authenticate(
             &self,
             _: Presented<BearerToken>,

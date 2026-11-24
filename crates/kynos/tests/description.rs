@@ -2242,6 +2242,8 @@ struct Tokens;
 impl<C: Sync, P: kynos::security::Scope>
     kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims, P>, C> for Tokens
 {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         presented: kynos::security::carrier::presented::Presented<
@@ -2537,6 +2539,8 @@ struct Session;
 struct Sessions;
 
 impl<C: Sync> kynos::security::Authenticator<Session, C> for Sessions {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         presented: kynos::security::carrier::presented::Presented<kynos::security::carrier::ApiKey>,

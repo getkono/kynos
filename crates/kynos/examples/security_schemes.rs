@@ -66,8 +66,12 @@
 //! `Sessions` answers neither: its store is down, so it cannot say whether the
 //! session is valid. `#[security(unavailable)]` on `SessionCookie` is what lets
 //! it return `AuthRejection::unavailable`, a 503 with `Retry-After`, and what
-//! declares that 503 on `/preferences` alone. `ServiceKey` opts the other way,
-//! out of the 403 a key that is only right or wrong cannot send.
+//! declares that 503 on `/preferences` alone. A legacy session it cannot
+//! decode is neither a verdict nor an outage, so `Sessions` fails with its own
+//! `SessionError`, whose 500 `/preferences` declares beside the 401 and 503,
+//! and which holds an `AuthRejection` transparently so both still reach it.
+//! `ServiceKey` opts the other way, out of the 403 a key that is only right or
+//! wrong cannot send.
 //!
 //! `ReadReports` says that URI a second time as `Scopes::FORBIDDEN_TYPE`, which
 //! is the only seam a document assembled from *types* has for a value chosen at
@@ -248,6 +252,8 @@ impl Tokens {
 }
 
 impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -310,22 +316,50 @@ impl<C: Sync> Authorizer<AccessToken, C, Grant> for Tokens {
     }
 }
 
-/// A session store that is currently unreachable.
+/// A session store that is currently unreachable, beside its legacy rows that
+/// no longer decode.
 ///
 /// Answering 401 here would tell a browser its session is invalid, and it would
 /// sign its user out over a database blip. A 503 says nothing about the
 /// credential, and `Retry-After` says when to try again.
 struct Sessions;
 
+/// What reading a session fails with: the guard's own refusals, held
+/// transparently, and the one failure that is the application's.
+///
+/// A row that exists and will not decode is neither a verdict on the cookie
+/// nor an outage, so it is a 500, which no `AuthRejection` is. Naming this
+/// type as `Sessions`' `Error` declares its 500 on every operation a guard
+/// over `SessionCookie` covers, beside the guard's own 401 and 503.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum SessionError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+
+    #[error("the session could not be read")]
+    #[problem(status = 500, title = "Session unreadable")]
+    Unreadable,
+}
+
 impl<C: Sync> Authenticator<SessionCookie, C> for Sessions {
+    type Error = SessionError;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,
         head: Head<'_>,
         context: &C,
-    ) -> Result<String, AuthRejection> {
-        let _ = (presented, head, context);
-        Err(AuthRejection::unavailable::<SessionCookie>().with_retry_after(Duration::from_secs(5)))
+    ) -> Result<String, SessionError> {
+        let _ = (head, context);
+        // `?` carries a missing or malformed cookie's 401 in through `From`.
+        let session = presented.require()?;
+        if session.as_str().starts_with("legacy-") {
+            return Err(SessionError::Unreadable);
+        }
+        Err(AuthRejection::unavailable::<SessionCookie>()
+            .with_retry_after(Duration::from_secs(5))
+            .into())
     }
 }
 
@@ -363,6 +397,8 @@ struct RequestSignature {
 struct Peers;
 
 impl<C: Sync> Authenticator<PeerToken, C> for Peers {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<(BearerToken, RequestSignature)>,
@@ -399,6 +435,8 @@ impl Authenticates<PeerToken> for App {
 struct Rejects;
 
 impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<S::Presented>,

@@ -287,6 +287,8 @@ const VALID_TOKEN: &str = "valid";
 struct Tokens;
 
 impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -479,6 +481,168 @@ async fn an_authenticators_refusal_of_a_malformed_credential_carries_the_challen
             .get(header::WWW_AUTHENTICATE)
             .map(|value| value.to_str().expect("a visible challenge")),
         Some("Bearer"),
+    );
+}
+
+/// What `Accounts` fails with: the guard's own refusals, held transparently,
+/// a 401 of the application's own, and a lookup failing in a way that is no
+/// verdict on the token and no outage either.
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+#[problem(base = "https://errors.example.test/")]
+enum AccountError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+
+    #[error("no account holds this token")]
+    #[problem(status = 401)]
+    UnknownToken,
+
+    #[error("the account could not be read")]
+    #[problem(status = 500)]
+    Unreadable,
+}
+
+/// A context whose authenticator fails with `AccountError`.
+struct Accounts;
+
+impl Authenticator<Bearer, Accounts> for Accounts {
+    type Error = AccountError;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Self,
+    ) -> Result<String, AccountError> {
+        match presented.require()?.as_str() {
+            "broken" => Err(AccountError::Unreadable),
+            "unknown" => Err(AccountError::UnknownToken),
+            token => Ok(token.to_owned()),
+        }
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+#[kynos::get("/account")]
+async fn account(caller: Auth<Bearer>) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+/// `/account` mounted over `Accounts`.
+fn accounts() -> kynos::router::service::Service<Accounts> {
+    kynos::Router::<Accounts>::new()
+        .mount(kynos::routes![account])
+        .build(Accounts)
+        .expect("a describable router")
+}
+
+/// Sends `GET /account` to `service`, with `authorization` when given one.
+async fn send_account(
+    service: &kynos::router::service::Service<Accounts>,
+    authorization: Option<&str>,
+) -> kynos::http::Response {
+    use kynos::http::{HeaderValue, Request, header};
+
+    let mut request = Request::new(kynos::http::body::Body::empty());
+    *request.uri_mut() = "/account".parse().expect("a usable path");
+    if let Some(value) = authorization {
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(value).expect("a usable field value"),
+        );
+    }
+    service.call(request).await
+}
+
+/// The status, `WWW-Authenticate` and problem `type` of `response`.
+async fn refusal(response: kynos::http::Response) -> (u16, Option<String>, String) {
+    use http_body_util::BodyExt;
+    use kynos::http::header;
+
+    let status = response.status().as_u16();
+    let challenge = response
+        .headers()
+        .get(header::WWW_AUTHENTICATE)
+        .map(|value| value.to_str().expect("a visible challenge").to_owned());
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    let problem: serde_json::Value = serde_json::from_slice(&body).expect("a problem document");
+    let type_uri = problem["type"].as_str().expect("a problem type").to_owned();
+    (status, challenge, type_uri)
+}
+
+/// An authenticator failing with its own error answers with that error: a 500
+/// as the application's problem, which no `AuthRejection` can be. Every 401
+/// still carries the scheme's challenge RFC 9110 section 11.6.1 requires,
+/// whether the application's own variant or the guard's, which `?` carried in
+/// through the transparent variant, sent it; and no 500 carries one.
+#[tokio::test]
+async fn an_authenticators_own_error_reaches_the_wire_with_the_guards_challenge() {
+    let service = accounts();
+    let challenge = Some("Bearer".to_owned());
+
+    assert_eq!(
+        refusal(send_account(&service, Some("Bearer broken")).await).await,
+        (
+            500,
+            None,
+            "https://errors.example.test/unreadable".to_owned()
+        )
+    );
+    assert_eq!(
+        refusal(send_account(&service, Some("Bearer unknown")).await).await,
+        (
+            401,
+            challenge.clone(),
+            "https://errors.example.test/unknown-token".to_owned()
+        )
+    );
+    assert_eq!(
+        refusal(send_account(&service, None).await).await,
+        (401, challenge, "about:blank".to_owned())
+    );
+
+    let admitted = send_account(&service, Some("Bearer someone")).await;
+    assert_eq!(admitted.status().as_u16(), 204);
+}
+
+/// Every status the authenticator's error can answer with is declared on the
+/// operation the guard covers, beside the guard's own: the 500 no scheme
+/// constrains, and both 401s, which share the challenge every 401 is sent with,
+/// still required.
+#[test]
+fn an_authenticators_own_error_is_declared_where_its_guard_is() {
+    let document = kynos::Router::<Accounts>::new()
+        .mount(kynos::routes![account])
+        .openapi()
+        .expect("a describable router");
+    let described = serde_json::to_value(&document).expect("a serializable document");
+    let responses = &described["paths"]["/account"]["get"]["responses"];
+
+    assert!(responses.get("500").is_some(), "{responses}");
+    let unauthorized = &responses["401"];
+    assert_eq!(
+        unauthorized["headers"]["WWW-Authenticate"]["required"],
+        serde_json::json!(true),
+        "{unauthorized}"
+    );
+    let types = unauthorized.to_string();
+    assert!(
+        types.contains("about:blank")
+            && types.contains("https://errors.example.test/unknown-token"),
+        "{unauthorized}"
     );
 }
 

@@ -138,7 +138,7 @@ enum StoreError {
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
-| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`; implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
+| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`, or as `AuthRejection`, which an authenticator's own error holds ([`security.md`](security.md#an-authenticator-may-fail-with-the-applications-own-error)); implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
 | variant | `from` | on a transparent variant, generate `From` the error it holds, as `thiserror`'s `#[from]` would; never beside that `#[from]`, and one variant per held type |
 | variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
@@ -556,9 +556,10 @@ publishes would declare less than the operation sends. One declaration in Kynos
 is that shape on purpose — `AuthRejection`'s 403, below — and an interceptor's
 contribution or a hand-written `Responses` may be too.
 
-The rule cuts both ways, which is why `Scopes::FORBIDDEN_TYPE` is read by
-`ScopedRejection<R>` rather than only by `Scoped`'s `Describe`: a narrowing on
-one contributor is erased by a wide one on another, whichever arrives first.
+The rule cuts both ways, which is why `Scopes::FORBIDDEN_TYPE` is read by the
+guard's own declaration of its 403, and a guard's rejection type contributes
+nothing beside it: a narrowing on one contributor is erased by a wide one on
+another, whichever arrives first.
 
 **Not narrowed is not the same as admitting everything**, and the union keeps
 the two apart. A schema satisfied by nothing, an empty `oneOf`, and a `oneOf`
@@ -583,8 +584,8 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
 | `RangeRejection` | 416 | `Range<T>`'s `select`, `apply`, `select_parts` and `apply_parts`, and `Served::deliver` |
 | `ConnectInfoRejection` | 500 | `ConnectInfo`, on a connection with no IP peer |
-| `AuthRejection` | 401, 403, and 503 where the scheme opts in | `Auth<S>`, `MaybeAuth<S>` |
-| `ScopedRejection<R>` | 401, 403, and 503 where the scheme opts in | `Scoped<S, R>` |
+| `AuthRejection` | 401, 403, and 503 where the scheme opts in | an `Authenticator` or `Authorizer` whose `Error` it is |
+| `GuardRejection<E>` | `E`'s, beside the guard's own 401, 403, and 503 where the scheme opts in | `Auth<S>`, `MaybeAuth<S>`, `Scoped<S, R>` |
 
 The split is the whole point. A single shared rejection type would be *sound* —
 it satisfies `emitted ⊇ observable` — but every operation would advertise every
@@ -726,18 +727,20 @@ and what `Auth<S>` and `MaybeAuth<S>` therefore declare, unless every member
 of `S` is a `Scoped<_, R>` whose sets name one URI: that 403 narrows as
 `Scoped<S, R>`'s does, read from the members by the guard's own description.
 
-`ScopedRejection<R>` is the same two failures read against the scope set that
-demanded them, and it is what `Scoped<S, R>` raises. Where `R` names a
-`Scopes::FORBIDDEN_TYPE` the 403 narrows to a `oneOf` of that URI and
-`about:blank` — both, because `AuthRejection::forbidden()` stays available to
-every authorizer and declaring only the named one would say less than the
-operation sends.
+`Scoped<S, R>` declares the same two failures read against the scope set that
+demanded them. Where `R` names a `Scopes::FORBIDDEN_TYPE` the 403 narrows to a
+`oneOf` of that URI and `about:blank` — both, because
+`AuthRejection::forbidden()` stays available to every authorizer and declaring
+only the named one would say less than the operation sends.
 
-**It is a rejection type of its own for one reason, and the reason is the union
-rule below.** `Responses` is reached through the rejection, so the wide 403
-`AuthRejection` declares would be contributed beside any narrowing done
-elsewhere — and *a side that admits every problem document wins outright*. The
-narrowing has to be read by the contributor that decides the status.
+**The narrowing is read by the guard, and only the guard contributes the
+status, for the union rule's reason.** Were the wide 403 `AuthRejection`
+declares contributed beside a narrowing done elsewhere, *a side that admits
+every problem document wins outright*. So a handler merges no guard
+rejection's `Responses`, and every guard raises one `GuardRejection<E>`, which
+carries the challenge it owes, whatever its scope set. An authenticator's own
+`Error` is the exception: no scheme constrains it, so the guard declares every
+response it declares beside its own.
 
 The rest of the reasoning is in
 [`security.md`](security.md#a-403-may-name-itself-a-401-may-not).

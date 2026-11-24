@@ -20,7 +20,7 @@
 //! value's type names through
 //! [`Schema::CONSTRAINT_PROBLEM`](crate::schema::Schema::CONSTRAINT_PROBLEM).
 
-use std::{borrow::Cow, collections::BTreeMap, marker::PhantomData, time::Duration};
+use std::{borrow::Cow, collections::BTreeMap, time::Duration};
 
 use kynos_openapi::Schema as OpenApiSchema;
 
@@ -37,7 +37,7 @@ use crate::{
         constraints::{ConstraintDetail, ConstraintProblem},
         registry::Registry,
     },
-    security::{SecurityScheme, auth::Scopes},
+    security::SecurityScheme,
 };
 
 /// One response per declared status, each narrowing the shared [`Problem`]
@@ -993,10 +993,9 @@ pub enum AuthRejection {
         /// one.
         ///
         /// An [`Authenticator`](crate::security::Authenticator) leaves this
-        /// `None` — use [`AuthRejection::unauthenticated`] — and
-        /// [`Auth`](crate::security::auth::Auth) fills it in from
-        /// [`SecurityScheme::challenge`],
-        /// so the wire and the description carry the same string.
+        /// `None` — use [`AuthRejection::unauthenticated`] — and a guard sends
+        /// [`SecurityScheme::challenge`] on every 401 it answers, whatever
+        /// this holds, so the wire and the description carry the same string.
         challenge: Option<&'static str>,
     },
 
@@ -1013,11 +1012,11 @@ pub enum AuthRejection {
         /// scope and the scheme has a challenge for that.
         ///
         /// An [`Authenticator`](crate::security::Authenticator) leaves this
-        /// `None`, as both constructors do, and a guard replaces it: a refusal
-        /// from [`Authorizer::authorize`](crate::security::Authorizer::authorize)
-        /// carries
-        /// [`SecurityScheme::insufficient_scope_challenge`],
-        /// and one from
+        /// `None`, as both constructors do, and a guard replaces what it
+        /// sends: a refusal from
+        /// [`Authorizer::authorize`](crate::security::Authorizer::authorize)
+        /// carries [`SecurityScheme::insufficient_scope_challenge`], and one
+        /// from
         /// [`Authenticator::authenticate`](crate::security::Authenticator::authenticate)
         /// carries none, so the wire and the description carry the same string.
         challenge: Option<&'static str>,
@@ -1205,30 +1204,14 @@ impl AuthRejection {
 
     /// Sets the challenge a 401 carries, leaving a 403 or a 503 alone.
     ///
-    /// Replaces any challenge already set, so the one
-    /// [`Auth`](crate::security::auth::Auth) supplies from the scheme is the
-    /// one the description declares.
+    /// Replaces any challenge already set. For a hand-written extractor
+    /// refusing with this type; a guard writes its scheme's challenge onto the
+    /// response instead, whatever this holds.
     #[must_use]
     pub fn with_challenge(self, challenge: Option<&'static str>) -> Self {
         match self {
             Self::Unauthenticated { .. } => Self::Unauthenticated { challenge },
             other @ (Self::Forbidden { .. } | Self::Unavailable { .. }) => other,
-        }
-    }
-
-    /// Sets the challenge a 403 carries, leaving a 401 or a 503 alone.
-    ///
-    /// [`with_challenge`](Self::with_challenge)'s counterpart for a scope
-    /// refusal. Replaces any challenge already set, so a guard's 403 carries
-    /// exactly the one it declares, or none.
-    #[must_use]
-    pub(crate) fn with_scope_challenge(self, challenge: Option<&'static str>) -> Self {
-        match self {
-            Self::Forbidden { type_uri, .. } => Self::Forbidden {
-                type_uri,
-                challenge,
-            },
-            other @ (Self::Unauthenticated { .. } | Self::Unavailable { .. }) => other,
         }
     }
 }
@@ -1280,6 +1263,32 @@ impl IntoResponse for AuthRejection {
             Head::from(request),
             |response| fields.write(response),
         )
+    }
+}
+
+/// What an application's
+/// [`Authenticator::Error`](crate::security::Authenticator::Error) holds in a
+/// transparent variant, so `?` carries a guard's 401 into it. Held by name, as
+/// it has no `ShortCircuit`: no interceptor answers a challenge.
+///
+/// Its statuses are the ones its `Responses` declares, the 401 and the 403;
+/// the 503 is declared by the guard whose scheme opts in to it.
+impl crate::__private::problem::HeldError for AuthRejection {
+    const STATUSES: &'static [u16] = &[401, 403];
+
+    #[inline]
+    fn into_problem(self) -> Problem {
+        IntoProblem::into_problem(self)
+    }
+
+    #[inline]
+    fn into_response(self) -> crate::http::Response {
+        IntoResponse::into_response(self)
+    }
+
+    #[inline]
+    fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        <Self as Responses>::responses(registry)
     }
 }
 
@@ -1375,86 +1384,144 @@ fn forbidden(
     )
 }
 
-/// The rejection a [`Scoped<S, R>`](crate::security::auth::Scoped) argument
-/// raises: the same failures [`AuthRejection`] carries — it wraps one —
-/// described against the scope set that demanded them.
+/// How a guard refused: the error its authenticator or authorizer failed
+/// with, or the 401 the guard answers itself, together with the
+/// `WWW-Authenticate` challenge the guard owes on it.
 ///
-/// Its 403 narrows to what [`Scopes::FORBIDDEN_TYPE`] names; naming none
-/// declares exactly what `AuthRejection` does. An
-/// [`Authenticator`](crate::security::Authenticator) still returns an
-/// `AuthRejection`; only the guard constructs this.
-pub struct ScopedRejection<R: Scopes> {
-    rejection: AuthRejection,
-    scopes: PhantomData<R>,
+/// `E` is the [`Authenticator::Error`](crate::security::Authenticator::Error)
+/// of the schemes the guard names: [`AuthRejection`], unless the application
+/// chose its own. It renders as `E` does, with the guard's challenge written
+/// over whatever `E` sent: [`SecurityScheme::challenge`] on every 401, as RFC
+/// 9110 section 15.5.2 requires, and on a 403 the scheme's
+/// [`insufficient_scope_challenge`](SecurityScheme::insufficient_scope_challenge)
+/// where [`Authorizer::authorize`](crate::security::Authorizer::authorize)
+/// refused a scope, or none where the credential itself was declined. Every
+/// other status is left as `E` wrote it. Only a guard constructs one.
+#[derive(Debug)]
+pub struct GuardRejection<E = AuthRejection> {
+    error: E,
+    /// What a 401 sends.
+    challenge: Option<&'static str>,
+    /// What a 403 sends.
+    scope_challenge: Option<&'static str>,
 }
 
-impl<R: Scopes> ScopedRejection<R> {
-    /// Describes `rejection` against scope set `R`.
-    #[must_use]
-    pub const fn new(rejection: AuthRejection) -> Self {
+impl<E> GuardRejection<E> {
+    /// A refusal with `error`, owing no challenge yet.
+    pub(crate) const fn new(error: E) -> Self {
         Self {
-            rejection,
-            scopes: PhantomData,
+            error,
+            challenge: None,
+            scope_challenge: None,
         }
     }
 
-    /// The failure itself.
+    /// Sets the challenge a 401 sends, replacing any already set.
     #[must_use]
-    pub fn into_inner(self) -> AuthRejection {
-        self.rejection
+    pub(crate) fn with_challenge(mut self, challenge: Option<&'static str>) -> Self {
+        self.challenge = challenge;
+        self
+    }
+
+    /// Sets the challenge a 403 sends, replacing any already set.
+    #[must_use]
+    pub(crate) fn with_scope_challenge(mut self, challenge: Option<&'static str>) -> Self {
+        self.scope_challenge = challenge;
+        self
+    }
+
+    /// The error the guard refused with.
+    #[must_use]
+    pub const fn error(&self) -> &E {
+        &self.error
+    }
+
+    /// The error the guard refused with, without the challenge it owes.
+    #[must_use]
+    pub fn into_inner(self) -> E {
+        self.error
     }
 }
 
-/// Hand-written so the scope-set marker needs no `Debug` bound.
-impl<R: Scopes> std::fmt::Debug for ScopedRejection<R> {
+impl<E: From<AuthRejection>> GuardRejection<E> {
+    /// The guard's own 401, for a credential it found absent, as `E` renders
+    /// one.
+    pub(crate) fn unauthenticated() -> Self {
+        Self::new(E::from(AuthRejection::unauthenticated()))
+    }
+}
+
+/// Writes the challenge `response`'s status owes, replacing any its error
+/// wrote: `challenge` on a 401, `scope_challenge` on a 403, and nothing on any
+/// other status.
+fn owe_challenge(
+    response: &mut crate::http::Response,
+    challenge: Option<&'static str>,
+    scope_challenge: Option<&'static str>,
+) {
+    let owed = match response.status() {
+        StatusCode::UNAUTHORIZED => challenge,
+        StatusCode::FORBIDDEN => scope_challenge,
+        _ => return,
+    };
+
+    let headers = response.headers_mut();
+    headers.remove(header::WWW_AUTHENTICATE);
+    // `from_str` refuses a challenge that would splice a header, as
+    // `AuthFields::write` does.
+    if let Some(value) = owed.and_then(|challenge| HeaderValue::from_str(challenge).ok()) {
+        headers.insert(header::WWW_AUTHENTICATE, value);
+    }
+}
+
+impl<E: std::fmt::Display> std::fmt::Display for GuardRejection<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_tuple("ScopedRejection")
-            .field(&self.rejection)
-            .finish()
+        std::fmt::Display::fmt(&self.error, f)
     }
 }
 
-impl<R: Scopes> std::fmt::Display for ScopedRejection<R> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.rejection, f)
-    }
-}
+/// No `source`: `Display` is already the wrapped error's sentence.
+impl<E: std::error::Error> std::error::Error for GuardRejection<E> {}
 
-/// No `source`: `Display` is already the wrapped rejection's sentence.
-impl<R: Scopes> std::error::Error for ScopedRejection<R> {}
-
-impl<R: Scopes> From<AuthRejection> for ScopedRejection<R> {
-    fn from(rejection: AuthRejection) -> Self {
-        Self::new(rejection)
-    }
-}
-
-/// Byte for byte what the wrapped rejection writes; the scope set affects only
-/// the description.
-impl<R: Scopes> IntoResponse for ScopedRejection<R> {
+/// `E`'s response, carrying the challenge the guard owes on its status.
+impl<E: IntoResponse> IntoResponse for GuardRejection<E> {
     fn into_response(self) -> crate::http::Response {
-        self.rejection.into_response()
+        let mut response = self.error.into_response();
+        owe_challenge(&mut response, self.challenge, self.scope_challenge);
+        response
     }
 
     fn __into_response_for(self, request: &Parts) -> crate::http::Response {
-        self.rejection.__into_response_for(request)
+        let mut response = self.error.__into_response_for(request);
+        owe_challenge(&mut response, self.challenge, self.scope_challenge);
+        response
     }
 }
 
-/// The 401 and the 403, the second narrowed to what
-/// [`Scopes::FORBIDDEN_TYPE`] names.
-///
-/// No 503: the scope set does not know its scheme, so the guard declares that
-/// where the scheme opts in. A 403 always, since a scope set is demanded of an
-/// authorizer that may refuse it.
-impl<R: Scopes> Responses for ScopedRejection<R> {
+/// `E`'s, as `E` declares them. A guard declares its refusals from its schemes
+/// instead, joining `E`'s where `E` is the application's own.
+impl<E: Responses> Responses for GuardRejection<E> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, R::FORBIDDEN_TYPE, true, false, false)
+        E::responses(registry)
     }
 
     fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        auth_responses(registry, R::FORBIDDEN_TYPE, true, false, true)
+        E::__served_responses(registry)
     }
+}
+
+/// What a guard whose schemes fail with `E` declares beside
+/// [`auth_responses`]: nothing for [`AuthRejection`], whose statuses
+/// `auth_responses` declares as far as the schemes allow, and every response
+/// `E` declares for the application's own error, whose statuses no scheme
+/// constrains.
+pub(crate) fn guard_error_responses<E: Responses + 'static>(
+    registry: &mut Registry,
+) -> kynos_openapi::Responses {
+    if std::any::TypeId::of::<E>() == std::any::TypeId::of::<AuthRejection>() {
+        return kynos_openapi::Responses::new();
+    }
+    E::__served_responses(registry)
 }
 
 /// The 401 and the 403 left wide: what a hand-written extractor erroring with

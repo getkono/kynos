@@ -70,7 +70,8 @@ macro_rules! describe_argument {
 /// A guard's description declares its refusals itself, so its rejection's
 /// responses are not merged: only the guard knows its schemes, and its
 /// rejection's `Responses` would add a 403 a scheme that never forbids leaves
-/// out.
+/// out. It is described through `Guard::__describe`, which names the context,
+/// so the error its schemes' authenticators fail with is declared too.
 macro_rules! impl_handler {
     ( $($head:ident),* ; $last:ident ) => {
         // --- the last argument consumes the body ---------------------------
@@ -148,7 +149,7 @@ macro_rules! impl_handler {
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
-                <G as Describe>::describe(operation);
+                <G as Guard<C>>::__describe(operation);
                 $( describe_argument!($head as FromRequestParts, operation); )*
                 describe_argument!($last as FromRequest, operation);
                 let returned = <Res as Responses>::responses(operation.registry());
@@ -181,7 +182,7 @@ macro_rules! impl_handler {
             }
 
             fn describe(operation: &mut OperationCx<'_>) {
-                <G as Describe>::describe(operation);
+                <G as Guard<C>>::__describe(operation);
                 $( describe_argument!($head as FromRequestParts, operation); )*
                 describe_argument!($last as FromRequestParts, operation);
                 let returned = <Res as Responses>::responses(operation.registry());
@@ -235,7 +236,7 @@ where
 
     /// The guard declares its refusals itself, as in `impl_handler!`.
     fn describe(operation: &mut OperationCx<'_>) {
-        <G as Describe>::describe(operation);
+        <G as Guard<C>>::__describe(operation);
         let returned = <Res as Responses>::responses(operation.registry());
         operation.add_responses(&returned);
     }

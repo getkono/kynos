@@ -91,8 +91,8 @@ pub enum ProblemOrigin {
     /// The connection the request arrived on:
     /// [`ConnectInfoRejection`](crate::error::rejection::ConnectInfoRejection).
     Transport,
-    /// A credential: [`AuthRejection`](crate::error::rejection::AuthRejection)
-    /// and [`ScopedRejection`](crate::error::rejection::ScopedRejection).
+    /// A credential: [`AuthRejection`](crate::error::rejection::AuthRejection),
+    /// as a [`GuardRejection`](crate::error::rejection::GuardRejection) sends it.
     Authentication,
     /// The router, for a request no operation answers: the 404, 405 and 501
     /// under [`FallbackPolicy::Problem`](crate::router::policy::FallbackPolicy::Problem),

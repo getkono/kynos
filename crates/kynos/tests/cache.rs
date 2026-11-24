@@ -956,6 +956,8 @@ struct ReportKey;
 struct Keys;
 
 impl<C: Sync> Authenticator<ReportKey, C> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,
