@@ -208,6 +208,8 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) method_not_allowed: Option<FallbackPolicy>,
     pub(crate) trailing_slashes: Option<TrailingSlashPolicy>,
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
+    /// What [`operation_id_case`](Router::operation_id_case) set.
+    pub(crate) operation_id_case: Option<operation::OperationIdCase>,
     /// What [`problem_members`](Router::problem_members) installed.
     pub(crate) problem_members: Option<crate::error::members::Hook>,
     /// What [`declare_body_stall`](Router::declare_body_stall) set; declared
@@ -274,6 +276,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: None,
             trailing_slashes: None,
             trusted_proxies: None,
+            operation_id_case: None,
             problem_members: None,
             #[cfg(feature = "server")]
             body_stall: None,
@@ -309,6 +312,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
+            operation_id_case: self.operation_id_case,
             problem_members: self.problem_members,
             #[cfg(feature = "server")]
             body_stall: self.body_stall,
@@ -432,6 +436,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.method_not_allowed.is_some(), "method_not_allowed"),
             (other.trailing_slashes.is_some(), "trailing_slashes"),
             (other.trusted_proxies.is_some(), "trusted_proxies"),
+            // Every `operationId` is one document's, which only the root names.
+            (other.operation_id_case.is_some(), "operation_id_case"),
             (other.problem_members.is_some(), "problem_members"),
             // The server's timer is one per service, so its declaration is too.
             #[cfg(feature = "server")]
@@ -891,6 +897,44 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     pub fn trusted_proxies(mut self, trusted: crate::http::forwarded::TrustedProxies) -> Self {
         self.trusted_proxies = Some(trusted);
         self
+    }
+
+    /// Spells every `operationId` the framework derived in `case`: a route
+    /// attribute's handler name, the HEAD a bare `head` names after it, and an
+    /// asset's or a docs page's. One given explicitly is published exactly as
+    /// written; see [`OperationIdCase`](operation::OperationIdCase).
+    ///
+    /// The description, every interceptor and observer, and each
+    /// [`Link`](crate::extract::link::Link) read the recased name, and
+    /// validation checks the recased names for uniqueness.
+    ///
+    /// ```no_run
+    /// use kynos::{Router, router::operation::OperationIdCase};
+    ///
+    /// // Published as `listUsers`, since no `operation_id = "..."` names it.
+    /// #[kynos::get("/users")]
+    /// async fn list_users() -> kynos::response::status::NoContent {
+    ///     kynos::response::status::NoContent
+    /// }
+    ///
+    /// let router = Router::<()>::new()
+    ///     .operation_id_case(OperationIdCase::LowerCamel)
+    ///     .mount(kynos::routes![list_users]);
+    /// # let _ = router;
+    /// ```
+    ///
+    /// One document holds every `operationId`, so this is set on the root
+    /// router: on a router that is then nested or merged, it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    #[must_use]
+    pub fn operation_id_case(mut self, case: operation::OperationIdCase) -> Self {
+        self.operation_id_case = Some(case);
+        self
+    }
+
+    /// The case every derived `operationId` is published in.
+    fn id_case(&self) -> operation::OperationIdCase {
+        self.operation_id_case.unwrap_or_default()
     }
 
     /// Sets whether each operation a Kynos body extractor reads declares the

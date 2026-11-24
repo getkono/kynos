@@ -179,7 +179,9 @@ fn untyped_query(method: Method, request: &Request) -> bool {
 /// One declared operation, ready to serve.
 pub(crate) struct Served<C> {
     pub(crate) method: Method,
-    pub(crate) operation_id: String,
+    /// Where it is served and under what name, which routing hands on in
+    /// [`Routed`].
+    pub(crate) matched: &'static Matched,
     /// Erased because an unchecked route ends in a handler that is not an
     /// endpoint, and shared because one such handler serves several methods.
     pub(crate) terminal: Arc<dyn ErasedTerminal<C>>,
@@ -201,9 +203,9 @@ pub(crate) struct Served<C> {
 /// only through the extractors and keys that expose each fact.
 #[derive(Clone, Debug)]
 pub(crate) struct Routed {
-    /// The `paths` key that matched; `None` for a fallback, which only the
-    /// router's own interceptors see.
-    pub(crate) matched: Option<crate::extract::connection::MatchedPath>,
+    /// The `paths` key and the operation that matched; `None` for a fallback,
+    /// which only the router's own interceptors see.
+    pub(crate) matched: Option<&'static Matched>,
     /// What the match captured, when the template has variables.
     pub(crate) captures: Option<PathCaptures>,
     /// Where the request came from, resolved once under the router's trust
@@ -224,14 +226,43 @@ pub(crate) struct Routed {
     pub(crate) links: Option<Arc<crate::extract::link::Links>>,
 }
 
-/// The `paths` key routing matched `request` to, prefixes included; `None`
-/// where no router routed it.
-pub(crate) fn mounted_path(request: &Request) -> Option<&'static str> {
+/// Where one operation is served and the name it is published under.
+///
+/// Interned once per operation a build installs, so a request carries the
+/// pair as one pointer rather than widening [`Routed`], which every routed
+/// request allocates.
+#[derive(Debug)]
+pub(crate) struct Matched {
+    /// The `paths` key, prefixes included.
+    pub(crate) path: crate::extract::connection::MatchedPath,
+    /// The `operationId` the router published, recased by its
+    /// [`OperationIdCase`](crate::router::operation::OperationIdCase); empty
+    /// for an operation with none, such as a synthesized preflight.
+    pub(crate) operation_id: &'static str,
+}
+
+impl Matched {
+    /// Leaks the record of `operation_id`, empty where `None`, served at
+    /// `path`, the identifier with it; see [`intern`] for the bound on what a
+    /// build leaks.
+    pub(crate) fn intern(
+        path: &crate::extract::connection::MatchedPath,
+        operation_id: Option<&str>,
+    ) -> &'static Self {
+        Box::leak(Box::new(Self {
+            path: path.clone(),
+            operation_id: intern(operation_id.unwrap_or_default()),
+        }))
+    }
+}
+
+/// The operation routing matched `request` to; `None` where no router routed
+/// it, or none of its operations matched.
+pub(crate) fn matched(request: &Request) -> Option<&'static Matched> {
     request
         .extensions()
         .get::<Routed>()
-        .and_then(|routed| routed.matched.as_ref())
-        .map(|matched| matched.0)
+        .and_then(|routed| routed.matched)
 }
 
 /// Every operation declared on one `paths` key.
@@ -539,7 +570,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let forwarded = self.forwarded(request);
         request.extensions_mut().insert(Routed {
             // The template, not the request path, to bound label cardinality.
-            matched: Some(entry.matched.clone()),
+            matched: Some(entry.operations[position].matched),
             captures,
             forwarded,
             secured: entry.operations[position].secured,
@@ -717,7 +748,11 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         let entry = &self.paths[at.path];
         let operation = &entry.operations[at.position];
 
-        Route::new(&entry.template, &operation.operation_id, operation.method)
+        Route::new(
+            &entry.template,
+            operation.matched.operation_id,
+            operation.method,
+        )
     }
 
     /// Notifies every observer and hands the response on.
@@ -984,9 +1019,12 @@ pub(crate) fn implemented<C>(paths: &[PathEntry<C>]) -> Vec<Method> {
     methods
 }
 
-/// Leaks a path or a path variable name for the life of the process. Leaks once
-/// per call: once for each path a build installs and once for each variable
-/// occurrence in it, so each build leaks an amount bounded by its route table.
+/// Leaks a path, a path variable name or an `operationId` for the life of the
+/// process. Leaks once per call: once for each path a build installs, once for
+/// each variable occurrence in it, and once for each operation it serves, a
+/// synthesized `HEAD`, preflight or unchecked method included, with the
+/// [`Matched`] record holding it; so each build leaks an amount bounded by its
+/// route table.
 pub(crate) fn intern(name: &str) -> &'static str {
     Box::leak(name.to_owned().into_boxed_str())
 }

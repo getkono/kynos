@@ -56,6 +56,9 @@
 //! The eleventh is what the HEAD a `GET` describes says. It is that `GET`
 //! without content, and a document that copied the content, dropped a field,
 //! or let it stand beside a declared `head` would still validate.
+//!
+//! The twelfth is which `operationId`s a case policy recases. A document that
+//! recased a written one, or left a derived one alone, would still validate.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -3003,6 +3006,9 @@ fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
         ("trusted_proxies", |router| {
             router.trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
         }),
+        ("operation_id_case", |router| {
+            router.operation_id_case(kynos::router::operation::OperationIdCase::LowerCamel)
+        }),
         #[cfg(feature = "server")]
         ("declare_body_stall", |router| {
             router.declare_body_stall(true)
@@ -3558,4 +3564,129 @@ fn a_head_described_by_another_method_is_refused() {
         )
     });
     assert_eq!(located, ["#/paths/~1alpha/post"]);
+}
+
+// --- The case a derived operationId is published in -------------------------
+
+/// Named by the handler, and describing a HEAD named after it.
+#[kynos::get("/cased/derived", head)]
+async fn get_cased_report() -> NoContent {
+    NoContent
+}
+
+/// Named by the handler, and describing a HEAD named by hand.
+#[kynos::get("/cased/half", head = "probe_cased_half")]
+async fn get_cased_half() -> NoContent {
+    NoContent
+}
+
+/// Named by hand, the HEAD too.
+#[kynos::get(
+    "/cased/written",
+    operation_id = "fetch_cased_written",
+    head = "probe_cased_written"
+)]
+async fn get_cased_written() -> NoContent {
+    NoContent
+}
+
+/// Each `operationId` the document publishes, by `paths` key and method.
+fn operation_ids(document: &Document) -> BTreeSet<String> {
+    document
+        .paths
+        .items
+        .iter()
+        .flat_map(|(path, item)| {
+            [kynos::openapi::Method::Get, kynos::openapi::Method::Head]
+                .into_iter()
+                .filter_map(move |method| {
+                    let id = item.operation(method)?.operation_id.clone()?;
+                    Some(format!("{} {path} {id}", method.as_wire_str()))
+                })
+        })
+        .collect()
+}
+
+/// A case recases exactly what the framework derived: the handler's name and
+/// the HEAD a bare `head` names after it. What was written -- `operation_id`,
+/// `head = "..."` and the builder's -- is published as written, and a router
+/// that sets no case publishes each name as derived.
+#[test]
+fn a_case_recases_only_the_operation_ids_the_framework_derived() {
+    use kynos::router::operation::OperationIdCase;
+
+    let described = |case: Option<OperationIdCase>| {
+        let router = Router::<()>::new()
+            .mount(kynos::routes![
+                get_cased_report,
+                get_cased_half,
+                get_cased_written
+            ])
+            .mount(object_and_its_head());
+        let router = match case {
+            Some(case) => router.operation_id_case(case),
+            None => router,
+        };
+        operation_ids(&router.openapi().expect("a describable router"))
+    };
+    let expected = |derived: [&str; 3]| {
+        let [get, head, half] = derived;
+        [
+            format!("GET /cased/derived {get}"),
+            format!("HEAD /cased/derived {head}"),
+            format!("GET /cased/half {half}"),
+            "HEAD /cased/half probe_cased_half".to_owned(),
+            "GET /cased/written fetch_cased_written".to_owned(),
+            "HEAD /cased/written probe_cased_written".to_owned(),
+            "GET /objects/current get_object".to_owned(),
+            "HEAD /objects/current head_object".to_owned(),
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    };
+
+    let as_written = ["get_cased_report", "head_cased_report", "get_cased_half"];
+    assert_eq!(described(None), expected(as_written));
+    assert_eq!(
+        described(Some(OperationIdCase::AsWritten)),
+        expected(as_written)
+    );
+    assert_eq!(
+        described(Some(OperationIdCase::LowerCamel)),
+        expected(["getCasedReport", "headCasedReport", "getCasedHalf"])
+    );
+    assert_eq!(
+        described(Some(OperationIdCase::UpperCamel)),
+        expected(["GetCasedReport", "HeadCasedReport", "GetCasedHalf"])
+    );
+}
+
+/// Named by hand as `get_cased_report` is once recased.
+#[kynos::post("/cased/copy", operation_id = "getCasedReport")]
+async fn copy_cased_report() -> NoContent {
+    NoContent
+}
+
+/// Uniqueness is the published names': a derived name that only collides
+/// with a written one once recased is a repeated `operationId`, and is not
+/// one before.
+#[test]
+fn a_recased_operation_id_repeating_a_written_one_is_refused() {
+    use kynos::{openapi::SpecError, router::operation::OperationIdCase};
+
+    let repeated = |router: &Router<()>| {
+        violations_like(router, |error| {
+            matches!(
+                error,
+                RouterError::Spec(SpecError::DuplicateOperationId { operation_id, .. })
+                    if operation_id == "getCasedReport"
+            )
+        })
+    };
+    let router = || Router::<()>::new().mount(kynos::routes![get_cased_report, copy_cased_report]);
+
+    assert!(repeated(&router()).is_empty());
+    let cased = router().operation_id_case(OperationIdCase::LowerCamel);
+    assert_eq!(repeated(&cased).len(), 1);
+    assert!(cased.openapi().is_err());
 }

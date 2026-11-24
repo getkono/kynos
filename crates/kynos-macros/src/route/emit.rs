@@ -41,6 +41,10 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
         .as_ref()
         .map_or_else(|| name.to_string(), LitStr::value);
 
+    // Only a defaulted identifier is one a router's case policy recases.
+    let operation_id_defaulted = args.operation_id.is_none();
+    let head_defaulted = matches!(args.head, Some(Head::Derived(_)));
+
     let head = head_operation_id(method, args, &operation_id)?;
     let head = optional(head.as_deref());
     let summary = optional(summary.as_deref());
@@ -90,12 +94,14 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
             const PATH: &'static str = #raw_path;
             const PATH_VARIABLES: &'static [&'static str] = &[#(#variables),*];
             const OPERATION_ID: &'static str = #operation_id;
+            const OPERATION_ID_DEFAULTED: bool = #operation_id_defaulted;
             const SUMMARY: ::core::option::Option<&'static str> = #summary;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
             const DEPRECATED: bool = #deprecated;
             const PUBLIC: bool = #public;
             const TAGS: &'static [::kynos::router::operation::DeclaredTag] = #tags;
             const HEAD_OPERATION_ID: ::core::option::Option<&'static str> = #head;
+            const HEAD_OPERATION_ID_DEFAULTED: bool = #head_defaulted;
         }
 
         #uri_impl

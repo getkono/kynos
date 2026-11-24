@@ -7,6 +7,7 @@ use super::{Target, UnresolvedLink};
 /// What `#[kynos::get("/{id}")] async fn get_user(..)` declares.
 const GET_USER: Target = Target {
     operation_id: "get_user",
+    defaulted: true,
     method: "GET",
     path: "/{id}",
     variables: &["id"],

@@ -75,7 +75,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for DocsEndpoint {
     }
 
     fn describe(&self, operation: &mut OperationCx<'_>) {
-        operation.set_operation_id(&self.operation_id);
+        operation.set_derived_operation_id(&self.operation_id);
 
         // The operation's own tags, as a route attribute's are: each carries
         // its metadata into the document's `tags`.

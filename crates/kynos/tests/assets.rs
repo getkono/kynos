@@ -855,6 +855,36 @@ fn every_operation_has_an_identifier_of_its_own() {
     );
 }
 
+/// An asset's identifier is derived, so the router's case recases it as it
+/// does a handler's name.
+#[test]
+fn a_case_recases_every_asset_identifier() {
+    let document = served()
+        .operation_id_case(kynos::router::operation::OperationIdCase::LowerCamel)
+        .openapi()
+        .expect("a describable router");
+
+    let mut ids: Vec<&str> = document
+        .paths
+        .items
+        .values()
+        .filter_map(|item| item.get.as_ref())
+        .filter_map(|operation| operation.operation_id.as_deref())
+        .collect();
+    ids.sort_unstable();
+
+    assert_eq!(
+        ids,
+        [
+            "assetCssAppCss",
+            "assetDocs",
+            "assetDocsIndexHtml",
+            "assetIndex",
+            "assetIndexHtml",
+        ]
+    );
+}
+
 // --- The filesystem mode --------------------------------------------------
 
 #[cfg(feature = "assets-fs")]

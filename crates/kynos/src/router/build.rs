@@ -16,6 +16,10 @@ use super::{
 
 #[cfg(feature = "docs")]
 use super::docs;
+use crate::{
+    extract::link::{Links, Targets},
+    router::operation::OperationIdCase,
+};
 
 impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// Finalizes the router into something servable.
@@ -34,8 +38,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     where
         C: Send + Sync + 'static,
     {
-        let described = self.describe()?;
-        let linked = described.linked;
+        let mut described = self.describe()?;
+        let linked = std::mem::take(&mut described.linked);
         let document = described.into_document()?;
 
         // After the document and every violation: the reference describes its
@@ -68,9 +72,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let method = mounted.endpoint.method();
             let item = document.paths.items.get(&key);
             let described = item.and_then(|item| item.operation(method));
-            let operation_id = described
-                .and_then(|operation| operation.operation_id.clone())
-                .unwrap_or_default();
+            let operation_id = described.and_then(|operation| operation.operation_id.as_deref());
             let secured = described.is_some_and(declares_security);
 
             let interceptors = covering(&self.interceptors, self.guard_first, &mounted);
@@ -80,7 +82,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 [self.unchecked.layers.clone(), mounted.unchecked_layers].concat();
 
             // Where it describes a `HEAD`, the entry holding it.
-            let head = mounted.endpoint.described_head().and(item);
+            let head = mounted
+                .endpoint
+                .described_head(OperationIdCase::AsWritten)
+                .and(item);
             let terminal = EndpointTerminal::new(mounted.endpoint);
             #[cfg(feature = "openapi32")]
             let terminal = terminal.with_accept_query(record_accept_query(
@@ -91,7 +96,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
             let served = dispatch::Served {
                 method,
-                operation_id,
+                matched: dispatch::Matched::intern(&paths[index].matched, operation_id),
                 terminal: Arc::new(terminal),
                 interceptors,
                 catch_panics: mounted.catch_panics || catches::<P>(),
@@ -131,7 +136,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let dispatch = Arc::new(Dispatch {
             matcher,
             // Before `paths`, which moves into the dispatch.
-            links: linked.then(|| Arc::new(mounted_links(&paths))),
+            links: mounted_links(linked, &paths, &index_of),
             paths,
             context,
             observers: self.observers,
@@ -221,11 +226,19 @@ fn install_unchecked<C>(
         let mut covering = interceptors.to_vec();
         covering.extend(route.interceptors.iter().cloned());
 
+        let entry = &mut paths[index];
         for method in &route.methods {
-            paths[index].operations.push(dispatch::Served {
+            entry.operations.push(dispatch::Served {
                 // Distinct per route and method, since interceptors key on it;
                 // `unchecked:` marks it as synthesized.
-                operation_id: format!("unchecked:{} {}", method.as_wire_str(), route.pattern),
+                matched: dispatch::Matched::intern(
+                    &entry.matched,
+                    Some(&format!(
+                        "unchecked:{} {}",
+                        method.as_wire_str(),
+                        route.pattern
+                    )),
+                ),
                 method: *method,
                 terminal: Arc::clone(&route.terminal),
                 interceptors: covering.clone(),
@@ -361,20 +374,18 @@ fn match_table_refusal(pattern: &str, error: matchit::InsertError) -> RouterErro
     }
 }
 
-/// Where each described operation is served, by `operationId`.
-///
-/// An operation without one, such as a synthesized preflight, is nothing a
-/// `Link` can name.
-fn mounted_links<C>(paths: &[PathEntry<C>]) -> crate::extract::link::Links {
-    let mut links = crate::extract::link::Links::default();
-    for entry in paths {
-        for operation in &entry.operations {
-            if !operation.operation_id.is_empty() {
-                links.insert(&operation.operation_id, entry.matched.0);
-            }
-        }
-    }
-    links
+/// Where each target a `Link` names is served, at the `paths` key `paths`
+/// interned for it; `None` where no operation links.
+fn mounted_links<C>(
+    linked: Targets,
+    paths: &[PathEntry<C>],
+    index_of: &HashMap<String, usize>,
+) -> Option<Arc<Links>> {
+    (!linked.is_empty()).then(|| {
+        Arc::new(Links::new(linked, |template| {
+            paths[index_of[template]].matched.0
+        }))
+    })
 }
 
 /// Whether `operation` declares a security requirement: a non-empty list does,

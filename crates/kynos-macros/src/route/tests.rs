@@ -1595,6 +1595,12 @@ mod head {
     /// The `HEAD_OPERATION_ID` the expansion of `handler` under `arguments`
     /// sets, as tokens.
     fn described(arguments: TokenStream2, handler: &ItemFn) -> String {
+        constant("HEAD_OPERATION_ID", arguments, handler)
+    }
+
+    /// The constant `name` the expansion of `handler` under `arguments` sets,
+    /// as tokens.
+    fn constant(name: &str, arguments: TokenStream2, handler: &ItemFn) -> String {
         let args = RouteArgs::parse(arguments).expect("well-formed arguments");
         let expansion = emit("GET", &args, handler).expect("an accepted route");
         let file: syn::File = syn::parse2(expansion).expect("the expansion parses as items");
@@ -1606,12 +1612,45 @@ mod head {
             })
             .flat_map(|block| &block.items)
             .find_map(|item| match item {
-                syn::ImplItem::Const(constant) if constant.ident == "HEAD_OPERATION_ID" => {
+                syn::ImplItem::Const(constant) if constant.ident == name => {
                     Some(constant.expr.to_token_stream().to_string())
                 }
                 _ => None,
             })
-            .expect("the endpoint sets `HEAD_OPERATION_ID`")
+            .unwrap_or_else(|| panic!("the endpoint sets `{name}`"))
+    }
+
+    /// Only an identifier the attribute chose is marked defaulted, so only it
+    /// is one a router's case policy recases: the handler's name and a bare
+    /// `head`'s derivation are, an `operation_id` and a named `head` are not.
+    #[test]
+    fn only_a_chosen_operation_id_is_defaulted() {
+        let handler: ItemFn = syn::parse_quote!(
+            async fn get_file() {}
+        );
+        let cases = [
+            (quote!(path = "/file"), "true", "false"),
+            (quote!(path = "/file", head), "true", "true"),
+            (quote!(path = "/file", head = "probeFile"), "true", "false"),
+            (
+                quote!(path = "/file", operation_id = "getFile", head = "probeFile"),
+                "false",
+                "false",
+            ),
+        ];
+        for (arguments, get, head) in cases {
+            let written = arguments.to_string();
+            assert_eq!(
+                constant("OPERATION_ID_DEFAULTED", arguments.clone(), &handler),
+                get,
+                "{written}"
+            );
+            assert_eq!(
+                constant("HEAD_OPERATION_ID_DEFAULTED", arguments, &handler),
+                head,
+                "{written}"
+            );
+        }
     }
 
     fn some(id: &str) -> String {

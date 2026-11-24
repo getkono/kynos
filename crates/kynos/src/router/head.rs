@@ -9,28 +9,31 @@ use kynos_openapi::{Components, Method, Operation, Parameter, ParameterIn, RefOr
 
 use super::install::{error_at, path_location};
 use super::{Arc, Mounted, PathItem, Paths, RouterError, Violation, build, dispatch};
+use crate::router::operation::OperationIdCase;
 
 /// Each `HEAD` a `GET` describes, held until every declared operation is in
 /// `paths`: its key, its `operationId` and the `GET`.
 #[derive(Default)]
-pub(super) struct Heads(Vec<(String, &'static str, Operation)>);
+pub(super) struct Heads(Vec<(String, String, Operation)>);
 
 impl Heads {
     /// Holds the `HEAD` `mounted` describes, if any, from `operation`, its
-    /// finished description; refuses one described by anything but a `GET`.
+    /// finished description, named as a router spelling derived names in
+    /// `case` publishes it; refuses one described by anything but a `GET`.
     pub(super) fn defer<C: 'static>(
         &mut self,
         mounted: &Mounted<C>,
         method: Method,
         operation: &Operation,
+        case: OperationIdCase,
         violations: &mut Vec<Violation<RouterError>>,
     ) {
-        let Some(head) = mounted.endpoint.described_head() else {
+        let Some(head) = mounted.endpoint.described_head(case) else {
             return;
         };
         let path = mounted.path.as_str().to_owned();
         if method == Method::Get {
-            self.0.push((path, head, operation.clone()));
+            self.0.push((path, head.into_owned(), operation.clone()));
         } else {
             let location = format!(
                 "{}/{}",
@@ -57,7 +60,7 @@ impl Heads {
     ) {
         let mut derived: HashSet<String> = HashSet::new();
         for (key, head, get) in self.0 {
-            let operation = derived_head(get, head, components);
+            let operation = derived_head(get, &head, components);
             let item: &mut PathItem = paths.items.entry(key.clone()).or_default();
             if item.operation(Method::Head).is_some() {
                 if !derived.contains(&key) {
@@ -82,8 +85,12 @@ pub(super) fn described_operations<C: 'static>(mounted: &[Mounted<C>]) -> Vec<(&
         .iter()
         .flat_map(|mounted| {
             let method = mounted.endpoint.method();
-            let head = (method == Method::Get && mounted.endpoint.described_head().is_some())
-                .then_some(Method::Head);
+            let head = (method == Method::Get
+                && mounted
+                    .endpoint
+                    .described_head(OperationIdCase::AsWritten)
+                    .is_some())
+            .then_some(Method::Head);
             std::iter::once(method)
                 .chain(head)
                 .map(|method| (mounted.path.as_str(), method))
@@ -192,7 +199,7 @@ pub(super) fn with_head<C>(
         .and_then(|item| item.operation(Method::Head))
         .map(|head| dispatch::Served {
             method: Method::Head,
-            operation_id: head.operation_id.clone().unwrap_or_default(),
+            matched: dispatch::Matched::intern(&get.matched.path, head.operation_id.as_deref()),
             terminal: Arc::clone(&get.terminal),
             interceptors: get.interceptors.clone(),
             catch_panics: get.catch_panics,

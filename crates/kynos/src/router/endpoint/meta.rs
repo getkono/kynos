@@ -34,11 +34,25 @@ pub trait EndpointMeta {
     /// compile error rather than a runtime 500.
     const PATH_VARIABLES: &'static [&'static str];
 
-    /// The operation identifier.
+    /// The operation identifier, as the attribute emitted it.
     ///
     /// Defaults to the handler function's name; the attribute's `operation_id`
-    /// argument overrides it.
+    /// argument overrides it. The one published, unless
+    /// [`OPERATION_ID_DEFAULTED`](EndpointMeta::OPERATION_ID_DEFAULTED) and the
+    /// router recases it.
     const OPERATION_ID: &'static str;
+
+    /// Whether [`OPERATION_ID`](EndpointMeta::OPERATION_ID) is the handler's
+    /// name, which the route attribute defaulted it to, rather than one its
+    /// `operation_id` argument wrote.
+    ///
+    /// A defaulted identifier is one
+    /// [`Router::operation_id_case`](crate::Router::operation_id_case) recases;
+    /// a written one is published exactly as written, and a
+    /// [`Link`](crate::extract::link::Link) finds its target either way.
+    /// Defaults to `false`, so an implementation written before it existed
+    /// keeps the identifier it wrote.
+    const OPERATION_ID_DEFAULTED: bool = false;
 
     /// The first line of the handler's doc comment.
     const SUMMARY: Option<&'static str>;
@@ -75,6 +89,14 @@ pub trait EndpointMeta {
     /// Defaults to `None`, so an implementation written before it existed
     /// describes nothing it did not.
     const HEAD_OPERATION_ID: Option<&'static str> = None;
+
+    /// Whether [`HEAD_OPERATION_ID`](EndpointMeta::HEAD_OPERATION_ID) was
+    /// derived from the handler's name by a bare `head`, rather than named by
+    /// `head = "..."`.
+    ///
+    /// Read as [`OPERATION_ID_DEFAULTED`](EndpointMeta::OPERATION_ID_DEFAULTED)
+    /// is, and defaults to `false` for the same reason.
+    const HEAD_OPERATION_ID_DEFAULTED: bool = false;
 }
 
 /// How a route attribute renders its operation's URI against a path template.

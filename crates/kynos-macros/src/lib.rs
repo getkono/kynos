@@ -42,7 +42,10 @@ use proc_macro::TokenStream;
 ///
 /// Accepts `operation_id = "..."` and `tag = SomeTag` after the path. The tag
 /// becomes `EndpointMeta::TAGS` and may be named once; `Router::tag`,
-/// `Group::tag` and `EndpointBuilder::tag` add the rest.
+/// `Group::tag` and `EndpointBuilder::tag` add the rest. Without
+/// `operation_id` the handler's name is the `operationId`, which
+/// `Router::operation_id_case` may recase; a written one is published as
+/// written.
 ///
 /// `head` describes the `HEAD` this `GET` already answers (RFC 9110 section
 /// 9.3.2) as an operation of its own, so a generated client can call it

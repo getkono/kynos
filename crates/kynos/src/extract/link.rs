@@ -5,14 +5,17 @@
 //! resolved against the built router instead, so the URI it renders carries
 //! every prefix the target was mounted under, and moves when one changes.
 
-use std::{collections::HashMap, convert::Infallible, marker::PhantomData};
+use std::{borrow::Cow, collections::HashMap, convert::Infallible, marker::PhantomData};
 
 use kynos_openapi::{Method, PathTemplate};
 
 use crate::{
     extract::{FromRequestParts, describe::Describe},
     http::{Parts, Uri},
-    router::{endpoint::meta::EndpointUri, operation::OperationCx},
+    router::{
+        endpoint::meta::EndpointUri,
+        operation::{OperationCx, OperationIdCase},
+    },
 };
 
 /// The operation `E`, at the path the router mounted it at.
@@ -115,7 +118,7 @@ impl<C: Sync, E: EndpointUri> FromRequestParts<C> for Link<E> {
             .extensions
             .get::<crate::router::dispatch::Routed>()
             .and_then(|routed| routed.links.as_deref())
-            .and_then(|links| links.get(E::OPERATION_ID))
+            .and_then(|links| links.get(E::OPERATION_ID, E::OPERATION_ID_DEFAULTED))
             .expect("the router resolves every link it describes before it serves");
         Ok(Self {
             template,
@@ -162,11 +165,19 @@ pub enum UnresolvedLink {
     },
 }
 
+/// What a [`Link`] names its target by: the `operationId` its attribute
+/// emitted, and whether it derived it. Never recased, so a request looks its
+/// target up without allocating.
+type Key = (&'static str, bool);
+
 /// What a [`Link`] requires of the router, read from its target's
 /// [`EndpointMeta`](crate::router::endpoint::meta::EndpointMeta).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Target {
     operation_id: &'static str,
+    /// Whether the attribute derived `operation_id`, so the router's
+    /// [`OperationIdCase`] recases it before it is looked up.
+    defaulted: bool,
     method: &'static str,
     path: &'static str,
     variables: &'static [&'static str],
@@ -176,10 +187,26 @@ impl Target {
     fn of<E: EndpointUri>() -> Self {
         Self {
             operation_id: E::OPERATION_ID,
+            defaulted: E::OPERATION_ID_DEFAULTED,
             method: E::METHOD,
             path: E::PATH,
             variables: E::PATH_VARIABLES,
         }
+    }
+
+    /// The `operationId` the target is published under by a router spelling
+    /// derived ones in `case`.
+    fn published(&self, case: OperationIdCase) -> Cow<'static, str> {
+        if self.defaulted {
+            case.apply(self.operation_id)
+        } else {
+            Cow::Borrowed(self.operation_id)
+        }
+    }
+
+    /// What a request's `Link` looks this target up by.
+    fn key(&self) -> Key {
+        (self.operation_id, self.defaulted)
     }
 
     /// Checks the target against the operation the router mounts under its
@@ -248,29 +275,55 @@ impl<'a> Resolver<'a> {
             .or_insert((method, path));
     }
 
-    /// Resolves every link recorded, reporting whether there were any.
-    pub(crate) fn resolve(self) -> Result<bool, UnresolvedLink> {
+    /// Resolves every link recorded against the `operationId`s a router
+    /// spelling derived ones in `case` published, returning where each
+    /// target is mounted.
+    pub(crate) fn resolve(self, case: OperationIdCase) -> Result<Targets, UnresolvedLink> {
+        let mut targets = Targets::default();
         for (from, target) in &self.links {
-            target.resolve(from, self.mounted_at.get(target.operation_id).copied())?;
+            let mounted = self.mounted_at.get(&*target.published(case)).copied();
+            target.resolve(from, mounted)?;
+            if let Some((_, path)) = mounted {
+                targets.0.insert(target.key(), path.as_str().to_owned());
+            }
         }
-        Ok(!self.links.is_empty())
+        Ok(targets)
     }
 }
 
-/// Each linkable operation's `paths` key, by `operationId`.
+/// Every link target the describe walk resolved, and the `paths` key it is
+/// mounted at; empty where no operation links.
+#[derive(Debug, Default)]
+pub(crate) struct Targets(HashMap<Key, String>);
+
+impl Targets {
+    /// Whether no operation links.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Each link target's `paths` key, by what a [`Link`] names it with.
 ///
 /// Built once per service, and only for one where some operation links.
 #[derive(Debug, Default)]
-pub(crate) struct Links(HashMap<Box<str>, &'static str>);
+pub(crate) struct Links(HashMap<Key, &'static str>);
 
 impl Links {
-    /// Records the `paths` key `operation_id` is served at.
-    pub(crate) fn insert(&mut self, operation_id: &str, template: &'static str) {
-        self.0.insert(operation_id.into(), template);
+    /// Every target in `targets`, at the interned key `intern` gives its
+    /// `paths` key.
+    pub(crate) fn new(targets: Targets, intern: impl Fn(&str) -> &'static str) -> Self {
+        Self(
+            targets
+                .0
+                .into_iter()
+                .map(|(key, template)| (key, intern(&template)))
+                .collect(),
+        )
     }
 
-    fn get(&self, operation_id: &str) -> Option<&'static str> {
-        self.0.get(operation_id).copied()
+    fn get(&self, operation_id: &'static str, defaulted: bool) -> Option<&'static str> {
+        self.0.get(&(operation_id, defaulted)).copied()
     }
 }
 
