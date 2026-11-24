@@ -7,7 +7,8 @@
 //! and the unions that stay an `anyOf`, two sharing one summary, a status
 //! whose failures gave no summary at all, which titles a status whose
 //! description the declaration wrote keeps, which untitled lone branch is
-//! titled before a written description replaces its own, and a status with no
+//! titled before a written description replaces its own, the title failures
+//! sharing one URI give their lone branch either way, and a status with no
 //! failure answering it -- which no caller can emit and this refuses.
 //!
 //! One case is about the wire rather than a declaration: an extension keyed
@@ -363,6 +364,61 @@ fn a_lone_branch_is_titled_by_the_description_about_to_be_replaced() {
         titled(unnarrowed.clone()),
         serde_json::to_value(unnarrowed).expect("a response serializes")
     );
+}
+
+/// Two failures publishing one URI are one lone branch, titled by the first
+/// summary either gave whether or not a description is written over the one
+/// their summaries compose, and whether or not a written one is still to come:
+/// a description joining two summaries says neither as the branch's title.
+#[test]
+fn a_shared_uri_lone_branch_is_titled_by_its_first_summary() {
+    const URI: Option<&str> = Some("https://errors.example.com/unknown");
+    let title = |response: &kynos_openapi::Response| {
+        let response = serde_json::to_value(response).expect("a response serializes");
+        response["content"]["application/problem+json"]["schema"]["title"].clone()
+    };
+    let titled = |mut response: kynos_openapi::Response| {
+        title_lone_branch(&mut response);
+        response
+    };
+    let described = Some("No such origin is registered");
+
+    let differing: [Branch<'_>; 2] = [
+        (URI, Some("Unknown origin"), &[]),
+        (URI, Some("Unregistered origin"), &[]),
+    ];
+    let composed = narrowed_response(&component(), 404, &differing);
+    assert_eq!(
+        composed.description.as_deref(),
+        Some("Unknown origin; Unregistered origin")
+    );
+    for response in [
+        composed.clone(),
+        titled(composed),
+        written_response(&component(), 404, described, &differing),
+        titled(written_response(&component(), 404, described, &differing)),
+    ] {
+        assert_eq!(title(&response), serde_json::json!("Unknown origin"));
+    }
+
+    // The first failure gave none, so the first summary is the second's,
+    // which the composed description already says.
+    let unsummarized_first: [Branch<'_>; 2] =
+        [(URI, None, &[]), (URI, Some("Unregistered origin"), &[])];
+    let composed = narrowed_response(&component(), 404, &unsummarized_first);
+    assert_eq!(title(&composed), Value::Null);
+    for response in [
+        titled(composed),
+        written_response(&component(), 404, described, &unsummarized_first),
+        titled(written_response(
+            &component(),
+            404,
+            described,
+            &unsummarized_first,
+        )),
+    ] {
+        assert_eq!(title(&response), serde_json::json!("Unregistered origin"));
+    }
 }
 
 /// A status with no failure answering it is not a narrowing of anything, and
