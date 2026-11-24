@@ -816,9 +816,9 @@ type gets. And two rendered after the head is gone, under
 - A recovered panic's 500, at every scope a recovery branch covers. The
   request moved into the future that unwound, so the same holds.
 
-The policy reaches both through the chain the router starts, as two function
-pointers, and through the routed request where an endpoint runs its own
-interceptors or recovers its own panic.
+The policy reaches both through the chain the router starts, as one pointer
+to its two functions, and through the routed request where an endpoint runs
+its own interceptors or recovers its own panic.
 
 Each such response an operation declares narrows its branch to the identity
 `P` names for it, and to `P`'s members, required as `P::Members`'s schema
@@ -831,7 +831,9 @@ it, and why:
 
 - An application's own `ApiError`, which names its own type and title and has
   `#[problem(extension)]`. That includes the error an application's
-  `Authenticator` fails with: a guard sends it as the application wrote it.
+  `Authenticator` fails with: a guard sends every refusal through it, its own
+  401 for an absent credential included, and declares each as that error
+  renders it.
 - A rejection a handler *returns* (a `RangeRejection` from `Range::apply`) and
   a ranged `Delivery`'s 416, which the handler renders before it returns.
   Rendering either with the request would keep the head borrowed across the

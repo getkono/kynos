@@ -707,6 +707,14 @@ RateLimit::new(policy).problem_type::<Throttled>()
 `Infallible` because it declares no status. Those are the two of the twelve
 `ShortCircuit` implementations that have no problem document to name.
 
+**A builder overrides the router's policy.** `Router::problems` installs one
+`ProblemPolicy` whose identity for `ProblemOrigin::Interceptor` types every
+refusal above that would otherwise send `about:blank`, and whose members every
+one carries; a builder here names the more specific type for its own
+interceptor, and the members are added all the same. A `Short` an application
+writes is its own to type, as
+[`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders) records.
+
 **The marker goes on the refusal, not on the interceptor.** A `ProblemType`
 names one type URI, so a type answering with several statuses carries several
 markers: `Undecodable` takes three, one per status, and `Decompression` has a
