@@ -164,6 +164,7 @@ impl<C: Sync> Authenticator<Bearer, C> for Tokens {
         match token.as_str() {
             "tok_ok" => Ok(token.into_inner()),
             "tok_banned" => Err(AuthRejection::forbidden()),
+            "tok_panic" => panic!("the authenticator failed"),
             _ => Err(AuthRejection::unauthenticated()),
         }
     }
@@ -1074,6 +1075,58 @@ async fn an_interceptor_s_refusal_is_rendered_under_the_policy() {
     client.assert_conformance();
 }
 
+/// A refusal is rendered under the policy at every scope its interceptor is
+/// mounted at: a group's joins the chain the router runs for each operation
+/// it covers, and an endpoint's own runs in a chain the endpoint starts, which
+/// reads the policy from the routed request.
+#[tokio::test]
+async fn a_scoped_interceptor_s_refusal_is_rendered_under_the_policy() {
+    use kynos::{
+        openapi::{Method, PathTemplate},
+        router::endpoint::builder::EndpointBuilder,
+    };
+
+    let oversized = || BodySizeExceeded::<()>::new(64);
+    let group_scope = Router::<App>::new().group(
+        Group::new("/grouped")
+            .intercept(Refuses(oversized))
+            .mount(kynos::routes![open]),
+    );
+    let endpoint_scope = Router::<App>::new().mount(
+        EndpointBuilder::new(
+            Method::Get,
+            PathTemplate::parse("/alone").expect("a valid path"),
+            open,
+        )
+        .intercept(Refuses(oversized)),
+    );
+
+    for (router, path) in [(group_scope, "/grouped/open"), (endpoint_scope, "/alone")] {
+        let (client, document) = serving(
+            router
+                .problems::<AppProblems>()
+                .build(App)
+                .expect("a buildable router"),
+        );
+
+        let refused = client.get(path).send().await;
+
+        refused.assert_status(413);
+        let problem: Value = refused.json();
+        assert_eq!(problem["type"], OVERSIZED.type_uri(), "{path}: {problem}");
+        assert_eq!(problem["code"], "Refusal-413", "{path}: {problem}");
+
+        let declared = declared_problem(&document, path, "413");
+        assert_eq!(
+            declared["allOf"][1]["properties"]["type"]["const"],
+            OVERSIZED.type_uri(),
+            "{path}: {declared}"
+        );
+
+        client.assert_conformance();
+    }
+}
+
 /// A refusal naming its own type keeps it, and still carries the members
 /// beside the fields it writes.
 #[tokio::test]
@@ -1205,6 +1258,42 @@ async fn a_recovered_panic_s_500_is_rendered_under_the_policy() {
 
         client.assert_conformance();
     }
+}
+
+#[kynos::get("/vault", catch_panics)]
+async fn vault(Auth(_): Auth<Bearer>) -> NoContent {
+    NoContent
+}
+
+/// A guard a scope runs ahead of its interceptors is recovered there by its
+/// operation's own recovery, and the panic it raises is rendered under the
+/// policy as a handler's is.
+#[tokio::test]
+async fn a_panic_in_a_guard_run_ahead_is_rendered_under_the_policy() {
+    let reached = Arc::new(AtomicBool::new(false));
+    let (client, _) = serving(
+        Router::<App>::new()
+            .guard_first()
+            .intercept(Reached(Arc::clone(&reached)))
+            .mount(kynos::routes![vault])
+            .problems::<AppProblems>()
+            .build(App)
+            .expect("a buildable router"),
+    );
+
+    let crashed = client.get("/vault").bearer("tok_panic").send().await;
+
+    assert!(
+        !reached.load(Ordering::SeqCst),
+        "the guard ran behind the interceptor"
+    );
+    crashed.assert_status(500);
+    let problem: Value = crashed.json();
+    assert_eq!(problem["type"], CRASHED.type_uri(), "{problem}");
+    assert_eq!(problem["title"], CRASHED.title(), "{problem}");
+    assert_eq!(problem["code"], "Panic-500", "{problem}");
+
+    client.assert_conformance();
 }
 
 /// An authenticator's own error: a credential refused as Kynos refuses one,
