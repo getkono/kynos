@@ -120,19 +120,25 @@ impl<T: ParamValue + 'static> IntoPart for T {
 
 impl<T: IntoMultipart> IntoResponse for MultipartForm<T> {
     fn into_response(self) -> Response {
-        let parts = self.0.into_parts();
-        let boundary = framing::boundary(parts.iter().map(|part| part.bytes.as_ref()));
-        let body = framing::render(parts, &boundary);
-
-        let mut content_type = String::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
-        content_type.push_str(CONTENT_TYPE_PREFIX);
-        content_type.push_str(&boundary);
-
-        with_content_type(
-            Body::from_bytes(body),
-            HeaderValue::try_from(content_type).expect("a generated boundary is printable ASCII"),
-        )
+        let (content_type, body) = encode(self.0.into_parts());
+        with_content_type(Body::from_bytes(body), content_type)
     }
+}
+
+/// The `Content-Type` naming a delimiter no part contains, and the body framed
+/// by it; a response and a test request are written alike.
+pub(crate) fn encode(parts: Vec<Part>) -> (HeaderValue, Bytes) {
+    let boundary = framing::boundary(parts.iter().map(|part| part.bytes.as_ref()));
+    let body = framing::render(parts, &boundary);
+
+    let mut content_type = String::with_capacity(CONTENT_TYPE_PREFIX.len() + boundary.len());
+    content_type.push_str(CONTENT_TYPE_PREFIX);
+    content_type.push_str(&boundary);
+
+    (
+        HeaderValue::try_from(content_type).expect("a generated boundary is printable ASCII"),
+        body,
+    )
 }
 
 /// The response's `Content-Type`, up to the delimiter it names.
