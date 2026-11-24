@@ -1,5 +1,5 @@
-//! The members `Router::problem_members` installs, on the wire and in the
-//! description, held to each other.
+//! The identity and members the policy `Router::problems` installs, on the
+//! wire and in the description, held to each other.
 //!
 //! One reason: the property is that the two agree. The unit tests beside
 //! `error::members` see a problem rendered with members and a schema read for
@@ -27,14 +27,14 @@ use kynos::openapi::{Severity, Violation};
 use kynos::{
     HeaderParams, PathParams, QueryParams, Router, Schema,
     error::{
-        members::{ProblemCx, ProblemMembers},
+        members::{ProblemCx, ProblemIdentity, ProblemOrigin, ProblemPolicy},
         rejection::AuthRejection,
     },
     extract::{
         body::json::Json,
         params::{path::Path, query::Query},
     },
-    http::{Request, header},
+    http::{Request, StatusCode, header},
     middleware::{Continued, Interceptor, Next},
     response::status::NoContent,
     router::{error::RouterError, group::Group, service::Service},
@@ -58,9 +58,32 @@ struct Coded {
     request_id: String,
 }
 
-impl ProblemMembers for Coded {
-    fn for_problem(cx: &ProblemCx<'_>) -> Self {
-        Self {
+/// The policy every test here installs: [`Coded`] on every problem, and a
+/// type of the application's own on a missing credential and an unsupported
+/// media type.
+struct AppProblems;
+
+/// What [`AppProblems`] names a missing credential.
+const UNAUTHENTICATED: ProblemIdentity =
+    ProblemIdentity::new("urn:test:problem:unauthenticated", "Sign in first");
+
+/// What [`AppProblems`] names an unsupported media type.
+const UNSUPPORTED: ProblemIdentity =
+    ProblemIdentity::new("urn:test:problem:unsupported", "Send JSON");
+
+impl ProblemPolicy for AppProblems {
+    type Members = Coded;
+
+    fn identity(origin: ProblemOrigin, status: StatusCode) -> Option<ProblemIdentity> {
+        match (origin, status) {
+            (ProblemOrigin::Authentication, StatusCode::UNAUTHORIZED) => Some(UNAUTHENTICATED),
+            (ProblemOrigin::Content, StatusCode::UNSUPPORTED_MEDIA_TYPE) => Some(UNSUPPORTED),
+            _ => None,
+        }
+    }
+
+    fn members(cx: &ProblemCx<'_>) -> Coded {
+        Coded {
             code: format!("{:?}-{}", cx.origin(), cx.status().as_u16()),
             request_id: cx
                 .headers()
@@ -147,7 +170,7 @@ fn router() -> Router<App> {
 
 fn service() -> Service<App> {
     router()
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router")
 }
@@ -226,6 +249,20 @@ async fn every_refusal_carries_the_members_its_description_requires() {
         let problem: Value = response.json();
         assert_eq!(problem["code"], *code, "{problem}");
         assert_eq!(problem["request_id"], "-", "{problem}");
+
+        // The policy names these two; every other stays `about:blank`.
+        let identity = match *code {
+            "Authentication-401" => Some(UNAUTHENTICATED),
+            "Content-415" => Some(UNSUPPORTED),
+            _ => None,
+        };
+        match identity {
+            Some(identity) => {
+                assert_eq!(problem["type"], identity.type_uri(), "{problem}");
+                assert_eq!(problem["title"], identity.title(), "{problem}");
+            }
+            None => assert_eq!(problem["type"], "about:blank", "{problem}"),
+        }
     }
     // A field the refusal writes beside its problem is still written.
     assert!(
@@ -273,7 +310,7 @@ async fn a_fallback_carries_the_members() {
 #[test]
 fn a_rejection_s_response_declares_the_members() {
     let document = router()
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .openapi()
         .expect("a describable router");
     let document = serde_json::to_value(document).expect("a document serializes");
@@ -292,7 +329,43 @@ fn a_rejection_s_response_declares_the_members() {
     );
 }
 
-/// Without `problem_members`, nothing changes on either side.
+/// The 401 a guard declares narrows to the type the policy names, titled as
+/// it titles it; the 400 it names nothing for stays `about:blank`.
+#[test]
+fn a_rejection_s_response_declares_the_identity_the_policy_names() {
+    let document = router()
+        .problems::<AppProblems>()
+        .openapi()
+        .expect("a describable router");
+    let document = serde_json::to_value(document).expect("a document serializes");
+
+    let response =
+        |path: &str, status: &str| document["paths"][path]["get"]["responses"][status].clone();
+    let schema =
+        |response: &Value| response["content"]["application/problem+json"]["schema"].clone();
+
+    // A lone branch's summary is the response's description, as every
+    // problem type's is.
+    let unauthenticated = response("/me", "401");
+    assert_eq!(
+        schema(&unauthenticated)["allOf"][1]["properties"]["type"]["const"],
+        UNAUTHENTICATED.type_uri(),
+        "{unauthenticated}"
+    );
+    assert_eq!(
+        unauthenticated["description"],
+        UNAUTHENTICATED.title(),
+        "{unauthenticated}"
+    );
+
+    let malformed = schema(&response("/items/{id}", "400"));
+    assert_eq!(
+        malformed["allOf"][1]["properties"]["type"]["const"], "about:blank",
+        "{malformed}"
+    );
+}
+
+/// Without `problems`, nothing changes on either side.
 #[tokio::test]
 async fn no_members_are_added_unless_installed() {
     let client = TestClient::new(router().build(App).expect("a describable router"));
@@ -313,8 +386,10 @@ struct Shadowing {
     status: String,
 }
 
-impl ProblemMembers for Shadowing {
-    fn for_problem(_: &ProblemCx<'_>) -> Self {
+impl ProblemPolicy for Shadowing {
+    type Members = Self;
+
+    fn members(_: &ProblemCx<'_>) -> Self {
         Self {
             status: String::new(),
         }
@@ -326,7 +401,7 @@ impl ProblemMembers for Shadowing {
 #[test]
 fn a_member_a_problem_already_sends_is_refused() {
     let violations = router()
-        .problem_members::<Shadowing>()
+        .problems::<Shadowing>()
         .validate()
         .expect("a describable router");
 
@@ -344,7 +419,7 @@ fn a_member_a_problem_already_sends_is_refused() {
 #[test]
 fn an_absorbed_router_s_members_are_a_violation() {
     let violations = Router::<App>::new()
-        .nest("/v1", router().problem_members::<Coded>())
+        .nest("/v1", router().problems::<AppProblems>())
         .validate()
         .expect("a describable router");
 
@@ -352,9 +427,7 @@ fn an_absorbed_router_s_members_are_a_violation() {
         violations.contains(&Violation {
             location: "#".to_owned(),
             severity: Severity::Error,
-            error: RouterError::NestedRouterPolicy {
-                policy: "problem_members",
-            },
+            error: RouterError::NestedRouterPolicy { policy: "problems" },
         }),
         "{violations:?}"
     );
@@ -390,7 +463,7 @@ async fn a_guard_run_ahead_of_its_interceptors_carries_the_members() {
         .guard_first()
         .intercept(Reached(Arc::clone(&reached)))
         .mount(kynos::routes![me])
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router");
     let client = TestClient::new(service);
@@ -438,7 +511,7 @@ async fn search(Json(item): Json<Item>) -> Json<Item> {
 async fn an_untyped_query_s_400_carries_the_members() {
     let service = Router::<App>::new()
         .mount(kynos::routes![search])
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router");
     let client = TestClient::new(service);
@@ -558,7 +631,7 @@ async fn a_named_constraint_problem_requires_the_members_where_they_are_sent() {
                     .intercept(Labels)
                     .mount(kynos::routes![open]),
             )
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
     };
     let document = serde_json::to_value(router().openapi().expect("a describable router"))
         .expect("a document serializes");
@@ -655,7 +728,7 @@ async fn a_whole_constraint_problem_answers_a_parameter_as_a_body() {
     let client = TestClient::new(
         Router::<App>::new()
             .mount(kynos::routes![note])
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
             .build(App)
             .expect("a describable router"),
     );
@@ -702,7 +775,7 @@ async fn an_interceptor_s_reads_refusal_carries_the_members() {
                     .intercept(Numbers)
                     .mount(kynos::routes![open]),
             )
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
     };
     let document = serde_json::to_value(router().openapi().expect("a describable router"))
         .expect("a document serializes");
@@ -734,7 +807,7 @@ async fn an_interceptor_s_reads_refusal_in_front_of_a_fallback_carries_the_membe
     let service = Router::<App>::new()
         .mount(kynos::routes![open])
         .intercept(Numbers)
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router");
     let client = TestClient::new(service);
@@ -801,7 +874,7 @@ async fn a_cors_preflight_s_refusal_carries_the_members() {
             .intercept(
                 kynos::middleware::cors::Cors::new().allow_origins(["https://a.example.com"]),
             )
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
             .build(App)
             .expect("a describable router")
     };
@@ -840,7 +913,7 @@ async fn an_asset_s_416_carries_the_members() {
     let router = || {
         Router::<App>::new()
             .group(Group::new("/static").mount(Fixture::assets()))
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
     };
     let document = serde_json::to_value(router().openapi().expect("a describable router"))
         .expect("a document serializes");
@@ -879,7 +952,7 @@ async fn a_directory_s_416_carries_the_members() {
             "/files",
             kynos::router::assets::fs::Directory::new("tests/assets"),
         )
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a buildable router");
     let client = TestClient::new(service);

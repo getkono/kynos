@@ -75,9 +75,9 @@ pub trait IntoResponse {
     /// `request`, raised by a handler's argument or guard.
     ///
     /// Not part of the stable API: a rejection Kynos renders itself answers
-    /// it with the members
-    /// [`Router::problem_members`](crate::router::Router::problem_members)
-    /// installed, and declares them through
+    /// it under the policy
+    /// [`Router::problems`](crate::router::Router::problems) installed, and
+    /// declares what that policy renders through
     /// [`Responses::__served_responses`]. Anything else writes
     /// [`into_response`](IntoResponse::into_response); a type overrides both
     /// halves or neither.

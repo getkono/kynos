@@ -56,8 +56,9 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         // Each operation's interned `paths` key by `operationId`: no document
         // model, so a `Link` argument may read it.
         links,
-        // A function pointer producing a problem's members: no document model.
-        problem_members,
+        // Two function pointers, naming a problem's identity and producing its
+        // members: no document model.
+        problems,
     } = dispatch;
 
     let _ = (
@@ -73,7 +74,7 @@ fn dispatch_fields(dispatch: &Dispatch<()>) {
         trusted_proxies,
         implemented,
         links,
-        problem_members,
+        problems,
     );
 }
 

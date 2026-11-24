@@ -765,32 +765,54 @@ log line and rate-limit bucket believes, and an `Option` would put a branch
 for every IP-only deployment into every handler. A handler that runs over
 either transport takes `Connection` and matches `Connection::peer`.
 
-## Members on the problems Kynos renders
+## The policy over the problems Kynos renders
 
-A rejection is Kynos's type, so an application whose problem contract puts a
-member on *every* problem — a stable code a client localizes offline, the
-request ID — has no field to put it in. `Router::problem_members::<M>()` names
-one [`ProblemMembers`](../crates/kynos/src/error/members.rs) type that both
-produces those members and declares them, so the description cannot drift
-from the wire (RFC 9457 section 3.2). `M::for_problem` reads a `ProblemCx`: the
-problem as built, a `ProblemOrigin` saying which part of Kynos refused (a path
-parameter, the body, a credential, the router), and the request head the
-operation saw, interceptors' extensions included.
+A rejection is Kynos's type, so an application whose problem contract gives
+*every* problem its own `type` and title, or a member — a stable code a client
+localizes offline, the request ID — has no field to put them in.
+`Router::problems::<P>()` installs one
+[`ProblemPolicy`](../crates/kynos/src/error/members.rs) that sends and
+declares both from one place, so the description cannot drift from the wire
+(RFC 9457 section 3.2):
+
+- `P::identity(origin, status)` names the `type` and title of a problem Kynos
+  would send as `about:blank`, from a `ProblemOrigin` saying which part of
+  Kynos refused (a path parameter, the body, a credential, the router) and
+  the status. It reads nothing else, because those two are all a response's
+  description knows too: the `type` a response's schema narrows to is the
+  `type` it sends, and the title is that branch's summary. A problem that
+  already names a type keeps it, since an interceptor's `ProblemType`, an
+  authorizer's `forbidden_as` or a constraint's named problem is the more
+  specific answer.
+- `P::members(cx)` produces the members, read from a `ProblemCx`: the problem
+  as the identity left it, its origin, and the request head the operation saw,
+  interceptors' extensions included. `type Members = ()` sends and declares
+  none.
+
+One trait rather than an identity hook beside a members hook, so there is one
+setting to find, and no order between two to learn. An identity read from the
+whole `ProblemCx` would need a second, static answer for the description to
+declare, and the two could disagree; reading only what the description knows
+makes that impossible.
 
 **What it reaches.** Every problem Kynos renders while the request head is in
 hand: each rejection a handler's argument or guard raises, the 400 an
 interceptor's `Reads` header group answers with, an asset endpoint's 416, the
 404, 405 and 501 under `FallbackPolicy::Problem`, a CORS preflight's 405 and
 501 for an `OPTIONS` that is not one, and the 400 a `QUERY` naming no media
-type gets. Each such response an operation declares narrows its branch to
-`M`'s properties, required as `M`'s schema requires them; the wide 403
-`AuthRejection` declares stays wide, since it already admits them. The
+type gets. Each such response an operation declares narrows its branch to the
+identity `P` names for it, and to `P`'s members, required as `P::Members`'s
+schema requires them; the wide 403 `AuthRejection` declares stays wide, since
+it already admits both. The
 router's and the preflight's answers belong to no operation, so they are sent
 and declared nowhere, as they always were.
 
-**What it does not reach**, which carries none and declares none, and why:
+**What it does not reach**, which is sent and declared as it would be without
+it, and why:
 
-- An application's own `ApiError`, which has `#[problem(extension)]`.
+- An application's own `ApiError`, which names its own type and title and has
+  `#[problem(extension)]`. That includes the error an application's
+  `Authenticator` fails with: a guard sends it as the application wrote it.
 - A rejection a handler *returns* (a `RangeRejection` from `Range::apply`) and
   a ranged `Delivery`'s 416, which the handler renders before it returns.
   Rendering either with the request would keep the head borrowed across the
@@ -811,12 +833,13 @@ and declared nowhere, as they always were.
 **Sending and declaring are one switch.** A rejection reaches the request only
 where the handler renders it, so `IntoResponse` and `Responses` carry a hidden
 pair the handler calls for an argument's or guard's rejection instead of the
-public methods. A type overriding both sends and declares the members; every
-other type, an `ApiError` holding a rejection transparently included, does
-neither. A status two contributors share keeps a member required only where
-both send it, by [the union rule](#what-the-declared-response-narrows-to).
+public methods. A type overriding both sends and declares the policy's identity
+and members; every other type, an `ApiError` holding a rejection transparently
+included, does neither. A status two contributors share keeps a member
+required only where both send it, by
+[the union rule](#what-the-declared-response-narrows-to).
 
-**What `M` must be.** An object naming each member as a property — a struct
+**What `P::Members` must be.** `()`, or an object naming each member as a property — a struct
 deriving `Schema` and `Serialize`, with no `flatten`. A member named like one
 RFC 9457 registers, or `errors`, is a `ProblemMemberReserved` violation while
 the router is described, and a schema of another shape is
@@ -830,9 +853,9 @@ refused, and eight bytes in the future of an endpoint whose last argument
 reads a body: the handler keeps the head it lent that extractor, to render its
 rejection ([`nfr.md`](nfr.md#routing) records the width). With it, a routed
 request, and one no operation answers that the root router's interceptors
-see, carries one extension more, holding a function pointer: its own block,
+see, carries one extension more, holding two function pointers: its own block,
 since `http::Extensions` boxes every value, so an application that did not ask
-for members does not pay it.
+for a policy does not pay it.
 
 ## What is not an error type
 
@@ -938,8 +961,9 @@ the refusal it rests on is recorded there.
 `IntoResponse::into_response(self)` takes no context, and an extraction
 rejection short-circuits to a response before any handler runs. **There is no
 point in the pipeline where a request and an application's `Problem`
-coexist.** [`problem_members`](#members-on-the-problems-kynos-renders) is one
-for Kynos's own, and it only adds members. So localizing an error is something
+coexist.** [`problems`](#the-policy-over-the-problems-kynos-renders) is one
+for Kynos's own, and its title is one per problem type, not per language. So
+localizing an error is something
 done *to* a finished response, and an interceptor is the only thing that holds
 one.
 

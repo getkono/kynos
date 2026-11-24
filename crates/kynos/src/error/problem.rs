@@ -28,7 +28,7 @@ mod tests;
 ///
 /// RFC 9457 registers it as the value assumed when `type` is absent; Kynos
 /// writes it out, because the schema declares `type` as required.
-const ABOUT_BLANK: &str = "about:blank";
+pub(crate) const ABOUT_BLANK: &str = "about:blank";
 
 /// The members RFC 9457 registers, which an extension may not shadow.
 pub(crate) const RESERVED: [&str; 5] = ["type", "title", "status", "detail", "instance"];

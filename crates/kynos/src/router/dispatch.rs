@@ -11,7 +11,7 @@ use kynos_openapi::Method;
 
 use crate::{
     error::{
-        members::{Head, Installed, ProblemOrigin, Produce, Rendered, render},
+        members::{Head, Installed, Policy, ProblemOrigin, Rendered, render},
         problem::Problem,
     },
     extract::params::path::PathCaptures,
@@ -360,10 +360,10 @@ pub(crate) struct Dispatch<C> {
     pub(crate) implemented: Vec<Method>,
     /// Handed to every routed request; see [`Routed::links`].
     pub(crate) links: Option<Arc<crate::extract::link::Links>>,
-    /// What [`Router::problem_members`](crate::router::Router::problem_members)
-    /// installed: handed to every routed request as [`Installed`], and read by
-    /// each fallback the router renders itself.
-    pub(crate) problem_members: Option<Produce>,
+    /// What [`Router::problems`](crate::router::Router::problems) installed:
+    /// handed to every routed request as [`Installed`], and read by each
+    /// fallback the router renders itself.
+    pub(crate) problems: Option<Policy>,
 }
 
 /// Why no operation answers a request.
@@ -685,8 +685,8 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
         });
         // An extension of its own rather than a field of the record, so a
         // service installing none pays nothing for it.
-        if let Some(produce) = self.problem_members {
-            request.extensions_mut().insert(Installed(produce));
+        if let Some(policy) = self.problems {
+            request.extensions_mut().insert(Installed(policy));
         }
 
         for observer in &self.observers {
@@ -812,10 +812,10 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
                 secured: false,
                 links: None,
             });
-            // So a refusal an interceptor renders here carries the members
-            // the fallback it stands in front of does.
-            if let Some(produce) = self.problem_members {
-                request.extensions_mut().insert(Installed(produce));
+            // So a refusal an interceptor renders here is rendered under the
+            // policy the fallback it stands in front of is.
+            if let Some(policy) = self.problems {
+                request.extensions_mut().insert(Installed(policy));
             }
         }
 
@@ -828,7 +828,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
 
     /// The fallback `unanswered` names, for `request`.
     fn answer(&self, unanswered: Unanswered, request: &Request) -> Response {
-        let members = self.problem_members.map(|produce| (produce, request));
+        let members = self.problems.map(|policy| (policy, request));
         match unanswered {
             Unanswered::Path => self.unmatched(request),
             Unanswered::Method { path } => refusal(
@@ -928,7 +928,7 @@ impl<C: Send + Sync + 'static> Dispatch<C> {
             }
         }
 
-        let members = self.problem_members.map(|produce| (produce, request));
+        let members = self.problems.map(|policy| (policy, request));
         fallback(StatusCode::NOT_FOUND, &self.not_found, members).into_response()
     }
 
@@ -974,19 +974,20 @@ pub(crate) fn flip_trailing_slash(path: &str) -> Option<String> {
     }
 }
 
-/// The members a fallback's problem carries, and the request it answers.
-type Members<'a> = Option<(Produce, &'a Request)>;
+/// The problem policy a fallback's problem is rendered under, and the request
+/// it answers.
+type Members<'a> = Option<(Policy, &'a Request)>;
 
 /// The body shape a fallback takes, which is all a [`FallbackPolicy`]
-/// chooses — never the status — carrying `members` as a problem.
+/// chooses — never the status — rendered under `members` as a problem.
 fn fallback(status: StatusCode, policy: &FallbackPolicy, members: Members<'_>) -> Rendered {
     match (policy, members) {
         (FallbackPolicy::Problem, None) => Rendered::Kept(Problem::new(status).into_response()),
-        (FallbackPolicy::Problem, Some((produce, request))) => render(
+        (FallbackPolicy::Problem, Some((problems, request))) => render(
             Problem::new(status),
             ProblemOrigin::Routing,
             Head::from(request),
-            Some(produce),
+            Some(problems),
         ),
         (FallbackPolicy::Empty, _) => Rendered::Kept(bodiless(status)),
     }
@@ -1003,7 +1004,7 @@ pub(crate) fn method_refusal(
     policy: &FallbackPolicy,
     request: &Request,
 ) -> Response {
-    let members = Installed::on(request.extensions()).map(|produce| (produce, request));
+    let members = Installed::on(request.extensions()).map(|problems| (problems, request));
     refusal(allow, policy, members)
 }
 

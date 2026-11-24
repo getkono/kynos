@@ -609,8 +609,8 @@ const ENDPOINT_FUTURE_BYTES: usize = 320;
 
 /// The same, for a handler whose last argument consumes a JSON body: 584 bytes
 /// on Linux. 576 before the handler kept the head it lends the body extractor
-/// across that read, to render the extractor's rejection with the members
-/// `Router::problem_members` installs; 632 while the read collected through
+/// across that read, to render the extractor's rejection under the policy
+/// `Router::problems` installs; 632 while the read collected through
 /// `http-body-util`'s collector, with its frame queue and trailer map, and 1528
 /// before that, when each `async fn` from the endpoint down to the codec's read
 /// kept a request of its own. What it holds past [`ENDPOINT_FUTURE_BYTES`] is

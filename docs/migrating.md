@@ -53,6 +53,8 @@ the section for the release that ships it.
 | `<unmatched>` as the method label of a request no operation matched, since `on_response` was handed no method | `exchange.method` (`middleware::Exchange`), the method the request arrived with, matched or not | #1399 |
 | A credential type wrapping `Result<Account, StoreError>`, so a lookup failure that is no outage could reach a 500, and an authorizer admitting its `Err` unchecked | `type Error = AuthError;` on the `security::Authenticator`, an `ApiError` holding `error::rejection::AuthRejection` in a transparent variant beside its own 500, and `?` inside `authenticate` | #1421 |
 | `auth.into_inner().resolve()?` at the top of every protected handler, unwrapping that deferred failure | `auth.into_inner()`: the guard already answered with the authenticator's error | #1421 |
+| `Router::problem_members::<M>()` and `impl error::members::ProblemMembers for M` | `Router::problems::<P>()` and `impl error::members::ProblemPolicy for P`, with `type Members = M` and `fn members(cx) -> M` returning what `for_problem` did | #1422 |
+| An `ApiError` re-implementing a Kynos rejection only to give it the application's `type` and title | `ProblemPolicy::identity`, naming them by `ProblemOrigin` and status for every problem Kynos would send as `about:blank` | #1422 |
 
 ## 0.5 to 0.6
 

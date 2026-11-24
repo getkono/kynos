@@ -115,8 +115,33 @@ impl<'a> core::marker::Unpin for kynos::error::members::ProblemCx<'a>
 impl<'a> core::marker::UnsafeUnpin for kynos::error::members::ProblemCx<'a>
 impl<'a> !core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemCx<'a>
 impl<'a> !core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemCx<'a>
-pub trait kynos::error::members::ProblemMembers: kynos::schema::Schema + serde_core::ser::Serialize
-pub fn kynos::error::members::ProblemMembers::for_problem(&kynos::error::members::ProblemCx<'_>) -> Self
+pub struct kynos::error::members::ProblemIdentity
+impl kynos::error::members::ProblemIdentity
+pub const fn kynos::error::members::ProblemIdentity::new(&'static str, &'static str) -> Self
+pub const fn kynos::error::members::ProblemIdentity::title(&self) -> &'static str
+pub const fn kynos::error::members::ProblemIdentity::type_uri(&self) -> &'static str
+impl core::clone::Clone for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::clone(&self) -> kynos::error::members::ProblemIdentity
+impl core::cmp::Eq for kynos::error::members::ProblemIdentity
+impl core::cmp::PartialEq for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::eq(&self, &kynos::error::members::ProblemIdentity) -> bool
+impl core::fmt::Debug for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::error::members::ProblemIdentity
+impl core::marker::StructuralPartialEq for kynos::error::members::ProblemIdentity
+impl core::marker::Freeze for kynos::error::members::ProblemIdentity
+impl core::marker::Send for kynos::error::members::ProblemIdentity
+impl core::marker::Sync for kynos::error::members::ProblemIdentity
+impl core::marker::Unpin for kynos::error::members::ProblemIdentity
+impl core::marker::UnsafeUnpin for kynos::error::members::ProblemIdentity
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemIdentity
+impl core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemIdentity
+pub trait kynos::error::members::ProblemPolicy: 'static
+pub type kynos::error::members::ProblemPolicy::Members: kynos::schema::Schema + serde_core::ser::Serialize + 'static
+pub fn kynos::error::members::ProblemPolicy::identity(kynos::error::members::ProblemOrigin, http::status::StatusCode) -> core::option::Option<kynos::error::members::ProblemIdentity>
+pub fn kynos::error::members::ProblemPolicy::members(&kynos::error::members::ProblemCx<'_>) -> Self::Members
 pub mod kynos::error::problem
 #[non_exhaustive] pub struct kynos::error::problem::PointerError
 pub kynos::error::problem::PointerError::detail: alloc::string::String
@@ -6556,7 +6581,7 @@ pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_pani
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
 pub fn kynos::router::Router<C, P, I, S>::operation_id_case(self, kynos::router::operation::OperationIdCase) -> Self
-pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problems<Q: kynos::error::members::ProblemPolicy>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
@@ -9130,7 +9155,7 @@ pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_pani
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
 pub fn kynos::router::Router<C, P, I, S>::operation_id_case(self, kynos::router::operation::OperationIdCase) -> Self
-pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problems<Q: kynos::error::members::ProblemPolicy>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
@@ -11810,7 +11835,7 @@ pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_pani
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
 pub fn kynos::router::Router<C, P, I, S>::operation_id_case(self, kynos::router::operation::OperationIdCase) -> Self
-pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problems<Q: kynos::error::members::ProblemPolicy>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self

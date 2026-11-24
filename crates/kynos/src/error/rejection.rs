@@ -26,7 +26,7 @@ use kynos_openapi::Schema as OpenApiSchema;
 
 use crate::{
     error::{
-        members::{Head, ProblemOrigin, Rendered, served},
+        members::{Head, ProblemOrigin, Rendered, declared_identity, served},
         problem::{
             Branch, IntoProblem, Member, PointerError, Problem, narrowed_response, problem_response,
         },
@@ -47,10 +47,11 @@ use crate::{
 ///
 /// `errors` names the status a schema failure answers with, if any, and
 /// whether every response at it sends the [`pointer_errors`] member. `served`
-/// adds the members the router installs, which only a rejection the router
-/// serves carries.
+/// declares what the problem policy the router installs renders a rejection
+/// from `origin` with, which only a rejection the router serves carries.
 fn problem_responses(
     registry: &mut Registry,
+    origin: ProblemOrigin,
     statuses: &[StatusCode],
     errors: Option<(StatusCode, bool)>,
     served: bool,
@@ -66,30 +67,33 @@ fn problem_responses(
 
             responses.with(
                 status.as_u16(),
-                narrowed_problem(registry, *status, &members, served),
+                narrowed_problem(registry, origin, *status, &members, served),
             )
         })
 }
 
 /// The response one status declares: the shared component narrowed to
-/// `about:blank` and sending `members`, and those the router installs where
-/// `served`, with no summary beyond the reason phrase.
+/// `about:blank` and sending `members`, with no summary beyond the reason
+/// phrase; or, where `served`, to the identity and with the members the
+/// problem policy the router installs gives a problem from `origin`.
 fn narrowed_problem(
     registry: &mut Registry,
+    origin: ProblemOrigin,
     status: StatusCode,
     members: &[Member<'static>],
     served: bool,
 ) -> kynos_openapi::Response {
     let problem = registry.resolve::<Problem>();
+    let (uri, title) = declared_identity(registry, origin, status, served);
     let members = with_installed(registry, members, served);
 
-    narrowed_response(&problem, status.as_u16(), &[(None, None, &members)])
+    narrowed_response(&problem, status.as_u16(), &[(uri, title, &members)])
 }
 
-/// `own`, followed where `served` by each member
-/// [`Router::problem_members`](crate::router::Router::problem_members)
-/// declares on every problem the router serves.
-fn with_installed<'a>(
+/// `own`, followed where `served` by each member the problem policy
+/// [`Router::problems`](crate::router::Router::problems) installs declares on
+/// every problem the router serves.
+pub(crate) fn with_installed<'a>(
     registry: &'a Registry,
     own: &[Member<'static>],
     served: bool,
@@ -155,11 +159,11 @@ macro_rules! rejection_response {
 
         impl Responses for $rejection {
             fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                problem_responses(registry, $declared, $errors, false)
+                problem_responses(registry, $origin, $declared, $errors, false)
             }
 
             fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-                problem_responses(registry, $declared, $errors, true)
+                problem_responses(registry, $origin, $declared, $errors, true)
             }
         }
     };
@@ -735,7 +739,13 @@ impl BodyRejection {
     /// an operation a body extractor reads.
     #[cfg(feature = "server")]
     pub(crate) fn stalled_responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        problem_responses(registry, &[StatusCode::REQUEST_TIMEOUT], None, true)
+        problem_responses(
+            registry,
+            ProblemOrigin::Content,
+            &[StatusCode::REQUEST_TIMEOUT],
+            None,
+            true,
+        )
     }
 }
 
@@ -746,6 +756,7 @@ impl Responses for BodyRejection {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         problem_responses(
             registry,
+            ProblemOrigin::Content,
             Self::DECLARED,
             Some((StatusCode::UNPROCESSABLE_ENTITY, true)),
             false,
@@ -755,6 +766,7 @@ impl Responses for BodyRejection {
     fn __served_responses(registry: &mut Registry) -> kynos_openapi::Responses {
         problem_responses(
             registry,
+            ProblemOrigin::Content,
             Self::DECLARED,
             Some((StatusCode::UNPROCESSABLE_ENTITY, true)),
             true,
@@ -919,6 +931,7 @@ impl Responses for RangeRejection {
 fn range_responses(registry: &mut Registry, served: bool) -> kynos_openapi::Responses {
     let mut responses = problem_responses(
         registry,
+        ProblemOrigin::ByteRange,
         <RangeRejection as IntoProblem>::statuses(),
         None,
         served,
@@ -1354,9 +1367,21 @@ pub(crate) fn auth_responses(
                 StatusCode::FORBIDDEN if !forbids => return responses,
                 StatusCode::FORBIDDEN => forbidden(registry, *status, named, served),
                 StatusCode::SERVICE_UNAVAILABLE if !unavailable => return responses,
-                StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(registry, *status, &[], served)
-                    .with_header("Retry-After", retry_after_header()),
-                _ => narrowed_problem(registry, *status, &[], served),
+                StatusCode::SERVICE_UNAVAILABLE => narrowed_problem(
+                    registry,
+                    ProblemOrigin::Authentication,
+                    *status,
+                    &[],
+                    served,
+                )
+                .with_header("Retry-After", retry_after_header()),
+                _ => narrowed_problem(
+                    registry,
+                    ProblemOrigin::Authentication,
+                    *status,
+                    &[],
+                    served,
+                ),
             };
 
             responses.with(status.as_u16(), declared)
@@ -1383,12 +1408,15 @@ fn forbidden(
     };
 
     let problem = registry.resolve::<Problem>();
+    // The policy names the type of the `about:blank` branch, never the one
+    // the scope set names.
+    let (uri, title) = declared_identity(registry, ProblemOrigin::Authentication, status, served);
     let members = with_installed(registry, &[], served);
 
     narrowed_response(
         &problem,
         status.as_u16(),
-        &[(None, None, &members), (Some(named), None, &members)],
+        &[(uri, title, &members), (Some(named), None, &members)],
     )
 }
 

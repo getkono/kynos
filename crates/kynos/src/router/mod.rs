@@ -210,8 +210,8 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
     /// What [`operation_id_case`](Router::operation_id_case) set.
     pub(crate) operation_id_case: Option<operation::OperationIdCase>,
-    /// What [`problem_members`](Router::problem_members) installed.
-    pub(crate) problem_members: Option<crate::error::members::Hook>,
+    /// What [`problems`](Router::problems) installed.
+    pub(crate) problems: Option<crate::error::members::Hook>,
     /// What [`declare_body_stall`](Router::declare_body_stall) set; declared
     /// until it is.
     #[cfg(feature = "server")]
@@ -277,7 +277,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             trailing_slashes: None,
             trusted_proxies: None,
             operation_id_case: None,
-            problem_members: None,
+            problems: None,
             #[cfg(feature = "server")]
             body_stall: None,
             deny_unchecked_schemas: false,
@@ -313,7 +313,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
             operation_id_case: self.operation_id_case,
-            problem_members: self.problem_members,
+            problems: self.problems,
             #[cfg(feature = "server")]
             body_stall: self.body_stall,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
@@ -438,7 +438,7 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.trusted_proxies.is_some(), "trusted_proxies"),
             // Every `operationId` is one document's, which only the root names.
             (other.operation_id_case.is_some(), "operation_id_case"),
-            (other.problem_members.is_some(), "problem_members"),
+            (other.problems.is_some(), "problems"),
             // The server's timer is one per service, so its declaration is too.
             #[cfg(feature = "server")]
             (other.body_stall.is_some(), "declare_body_stall"),
@@ -984,27 +984,28 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self
     }
 
-    /// Adds `M`'s extension members to every problem Kynos renders itself,
-    /// and declares them on every response describing one.
+    /// Renders every problem Kynos renders itself under `Q`: the type and
+    /// title `Q` names in place of `about:blank`, and `Q`'s extension
+    /// members, each declared on every response describing one.
     ///
     /// Reaches each rejection a handler's argument or guard raises, the 400
     /// an interceptor's `Reads` answers with, an asset endpoint's 416, the
     /// 404, 405 and 501 under [`FallbackPolicy::Problem`], a CORS preflight's
     /// 405 and 501, and the 400 a `QUERY` naming no media type gets. An
-    /// application's own `#[derive(ApiError)]` type carries its own members;
-    /// a rejection or `Delivery` a handler returns, an interceptor's own
-    /// refusal and a recovered panic's 500 carry none. See
-    /// [`ProblemMembers`] for what `M` must describe.
+    /// application's own `#[derive(ApiError)]` type names its own type, title
+    /// and members; a rejection or `Delivery` a handler returns, an
+    /// interceptor's own refusal and a recovered panic's 500 are left as they
+    /// are. See [`ProblemPolicy`] for what `Q` names.
     ///
     /// One application-level policy, so it is set on the root router: on a
     /// router that is then nested or merged, it is a
     /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
     /// Calling it twice keeps the second.
     ///
-    /// [`ProblemMembers`]: crate::error::members::ProblemMembers
+    /// [`ProblemPolicy`]: crate::error::members::ProblemPolicy
     #[must_use]
-    pub fn problem_members<M: crate::error::members::ProblemMembers>(mut self) -> Self {
-        self.problem_members = Some(crate::error::members::Hook::of::<M>());
+    pub fn problems<Q: crate::error::members::ProblemPolicy>(mut self) -> Self {
+        self.problems = Some(crate::error::members::Hook::of::<Q>());
         self
     }
 

@@ -145,8 +145,8 @@ pub enum RouterError {
         policy: &'static str,
     },
 
-    /// The type [`problem_members`](crate::Router::problem_members) names
-    /// does not describe an object naming its members as properties, so no
+    /// The members of the policy [`problems`](crate::Router::problems) names
+    /// do not describe an object naming each member as a property, so no
     /// problem could carry them beside its own.
     ///
     /// A struct deriving `Schema` describes one; a `#[serde(flatten)]`, an
@@ -157,8 +157,8 @@ pub enum RouterError {
         members: &'static str,
     },
 
-    /// The type [`problem_members`](crate::Router::problem_members) names
-    /// declares a member a problem Kynos renders already sends: one RFC 9457
+    /// The members of the policy [`problems`](crate::Router::problems) names
+    /// declare a member a problem Kynos renders already sends: one RFC 9457
     /// registers, or `errors`.
     #[error(
         "problem members `{members}` declare `{member}`, which a problem Kynos renders already \
