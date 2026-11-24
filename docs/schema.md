@@ -367,6 +367,28 @@ schema, and the derive refuses each:
   limit serde's own check of an enum's internal tag has too. A flattened type
   writing a key named as the tag gets a schema serde's document does not meet.
 
+### The tag as a type
+
+The derive also implements `schema::SerdeTagged` for every type whose schema
+names a tag: an internally or adjacently tagged enum, and a tagged struct. It
+carries what the schema's tag property holds, as constants — `TAG`, the member,
+and `VARIANTS`, each value serde writes — and `variant(&self)`, the value one
+value is written with, read by a `match` rather than by serializing it.
+
+It exists so a bound can say "this type is tagged". A tag is otherwise
+invisible to the type system, and serde writes a struct whose first field is
+a string exactly as it writes a tag, so reading it from the wire cannot tell
+the two apart. An externally tagged enum names its variant as a key rather
+than a tag, so it has no `SerdeTagged`. A variant serde skips when serializing
+is left out of `VARIANTS`, since no document carries it. The name carries
+`Serde` because `middleware::cache::Tagged` is the unrelated `ETag` marker.
+
+Under `openapi32`, `Event::tagged` is bounded on it, and the `TaggedEvent` it
+makes has no name of its own to set. A stream of them is the one event stream
+whose every name is known, so its `itemSchema` describes `event` as a required
+`enum` of `VARIANTS`; a stream of `Event`s, which name themselves or not at
+all, keeps a bare optional `string`.
+
 ### Why untagged is refused
 
 `oneOf` without a discriminator is not a decoding rule. It says a payload

@@ -8201,6 +8201,92 @@ mod no_prelude {
     }
 }
 
+// --- A tagged type names its tag as serde writes it -------------------------
+//
+// `SerdeTagged` is a derive's output read at run time, so its names are pinned
+// against serde's own: the member and value `serde_json` writes for each
+// value, and every value only once, in declaration order.
+
+mod serde_tagged {
+    use kynos::{Schema, schema::SerdeTagged};
+    use serde::Serialize;
+
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Internal {
+        ReadingTaken {
+            value: u8,
+        },
+        #[serde(rename = "alarm")]
+        Alert(Inner),
+        Closed,
+        #[serde(skip_serializing)]
+        Retired,
+    }
+
+    #[derive(Schema, Serialize)]
+    struct Inner {
+        level: u8,
+    }
+
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "t", content = "c")]
+    enum Adjacent<T> {
+        Moved(T),
+        Stopped,
+    }
+
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "type", rename = "ping")]
+    struct Ping {
+        at: u8,
+    }
+
+    #[allow(non_camel_case_types)]
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "type")]
+    struct r#pong {
+        at: u8,
+    }
+
+    /// Each value's `variant` is what serde writes under its type's `TAG`.
+    fn agrees<T: Serialize + SerdeTagged>(data: &T) {
+        let value = serde_json::to_value(data).expect("a written value serializes");
+        assert_eq!(value[T::TAG].as_str(), Some(data.variant()), "{value}");
+    }
+
+    #[test]
+    fn an_internally_tagged_enum_names_each_variant_as_serde_writes_it() {
+        agrees(&Internal::ReadingTaken { value: 1 });
+        agrees(&Internal::Alert(Inner { level: 2 }));
+        agrees(&Internal::Closed);
+        assert_eq!(Internal::VARIANTS, ["reading_taken", "alarm", "closed"]);
+    }
+
+    /// serde refuses to write it, so it is no value the tag is written with.
+    #[test]
+    fn a_variant_serde_never_writes_is_not_among_the_variants() {
+        assert!(serde_json::to_value(Internal::Retired).is_err());
+        assert_eq!(Internal::Retired.variant(), "retired");
+        assert!(!Internal::VARIANTS.contains(&"retired"));
+    }
+
+    #[test]
+    fn an_adjacently_tagged_enum_names_each_variant_as_serde_writes_it() {
+        agrees(&Adjacent::Moved(1_u8));
+        agrees(&Adjacent::<u8>::Stopped);
+        assert_eq!(Adjacent::<u8>::VARIANTS, ["Moved", "Stopped"]);
+    }
+
+    #[test]
+    fn a_tagged_struct_is_its_own_variant_under_its_serde_name() {
+        agrees(&Ping { at: 1 });
+        assert_eq!(Ping::VARIANTS, ["ping"]);
+        agrees(&r#pong { at: 1 });
+        assert_eq!(r#pong::VARIANTS, ["pong"]);
+    }
+}
+
 // --- A derived 5xx logs its cause, and only a 5xx ---------------------------
 //
 // The other runtime exception: the event `into_response` emits before the

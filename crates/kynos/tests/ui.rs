@@ -167,6 +167,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
             "macros/api_error_retry_after_not_a_delay.stderr",
         ),
         ("Schema", "schema/serde_json_value.stderr"),
+        ("SerdeTagged", "traits/serde_tagged.stderr"),
         ("ShortCircuit", "traits/short_circuit.stderr"),
         ("Textual", "macros/schema_length_bound_on_a_number.stderr"),
         (
