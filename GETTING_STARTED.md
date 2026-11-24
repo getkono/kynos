@@ -55,7 +55,7 @@ by the release that shipped each, for code written before it.
 | A oneshot, a `JoinHandle` and an address struct around `serve()` | `server::BoundServer::spawn`, and `test::TestClient::connect` to its `server::Running` |
 | Response coverage merged across test clients, or held to one area of the document | `test::Coverage::for_document`, given to each client by `test::TestClient::with_coverage`, then `assert_covered`, `assert_covered_where` and `assert_conformance` |
 | A 403 deleted from the document before asserting coverage | `#[security(forbids = false)]` on a scheme whose credential grants nothing beyond itself |
-| A credential carrying a store failure into every handler | `#[security(unavailable)]` on the scheme, and `error::rejection::AuthRejection::unavailable` from its authenticator |
+| A credential carrying a store failure into every handler | `#[security(unavailable)]` on the scheme, and `error::rejection::AuthRejection::unavailable` from its authenticator, for a 503; for the application's own 500, `type Error` on the `security::Authenticator`, and `?` inside `authenticate` |
 | A `code` field and a constructor on every failure | `#[problem(extension(code = CONST))]` |
 | Failure variants copied from one `ApiError` enum into another | `#[problem(transparent, from)]`, `#[problem(subset_of = Wider)]` or `#[problem(variant_of = Wider::Variant)]` |
 | A `Location` joined from a mount prefix with `format!` | `extract::link::Link<E>`, rendered into `Created::at` |
