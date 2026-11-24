@@ -7,8 +7,8 @@ use syn::{DeriveInput, spanned::Spanned};
 use crate::derive::{
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
     params::{
-        Param, check_field, constraint_problems_body, construct, decode_field, group_problem,
-        parameters_body,
+        Param, check_field, constraint_problems_body, construct, decode_field,
+        describe::parameters_body, group_problem,
     },
 };
 
