@@ -330,7 +330,7 @@ enum Phase {
     Stopped { code: u8 },
 }
 
-impl crate::schema::Tagged for Phase {
+impl crate::schema::SerdeTagged for Phase {
     const TAG: &'static str = "phase";
     const VARIANTS: &'static [&'static str] = &["started", "stopped"];
 

@@ -8067,7 +8067,7 @@ pub kynos::response::stream::sse::Event::data: T
 pub kynos::response::stream::sse::Event::event: core::option::Option<alloc::string::String>
 pub kynos::response::stream::sse::Event::id: core::option::Option<alloc::string::String>
 pub kynos::response::stream::sse::Event::retry: core::option::Option<core::time::Duration>
-impl<T: kynos::schema::Tagged> kynos::response::stream::sse::Event<T>
+impl<T: kynos::schema::SerdeTagged> kynos::response::stream::sse::Event<T>
 pub fn kynos::response::stream::sse::Event<T>::tagged(T) -> kynos::response::stream::sse::TaggedEvent<T>
 impl<T> kynos::response::stream::sse::Event<T>
 pub fn kynos::response::stream::sse::Event<T>::comment(self, impl core::convert::Into<alloc::string::String>) -> Self
@@ -8153,7 +8153,7 @@ impl<T: core::cmp::PartialEq> core::cmp::PartialEq for kynos::response::stream::
 pub fn kynos::response::stream::sse::TaggedEvent<T>::eq(&self, &kynos::response::stream::sse::TaggedEvent<T>) -> bool
 impl<T: core::fmt::Debug> core::fmt::Debug for kynos::response::stream::sse::TaggedEvent<T>
 pub fn kynos::response::stream::sse::TaggedEvent<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl<T: kynos::schema::Tagged> kynos::response::stream::sse::SseItem for kynos::response::stream::sse::TaggedEvent<T>
+impl<T: kynos::schema::SerdeTagged> kynos::response::stream::sse::SseItem for kynos::response::stream::sse::TaggedEvent<T>
 pub type kynos::response::stream::sse::TaggedEvent<T>::Data = T
 pub type kynos::response::stream::sse::TaggedEvent<T>::Error = core::convert::Infallible
 pub fn kynos::response::stream::sse::TaggedEvent<T>::into_event(self) -> core::result::Result<kynos::response::stream::sse::Event<T>, Self::Error>
@@ -8173,11 +8173,11 @@ impl<T, E: core::convert::Into<kynos::http::body::BoxError>> kynos::response::st
 pub type core::result::Result<kynos::response::stream::sse::Event<T>, E>::Data = T
 pub type core::result::Result<kynos::response::stream::sse::Event<T>, E>::Error = E
 pub fn core::result::Result<kynos::response::stream::sse::Event<T>, E>::into_event(self) -> Self
-impl<T: kynos::schema::Tagged, E: core::convert::Into<kynos::http::body::BoxError>> kynos::response::stream::sse::SseItem for core::result::Result<kynos::response::stream::sse::TaggedEvent<T>, E>
+impl<T: kynos::schema::SerdeTagged, E: core::convert::Into<kynos::http::body::BoxError>> kynos::response::stream::sse::SseItem for core::result::Result<kynos::response::stream::sse::TaggedEvent<T>, E>
 pub type core::result::Result<kynos::response::stream::sse::TaggedEvent<T>, E>::Data = T
 pub type core::result::Result<kynos::response::stream::sse::TaggedEvent<T>, E>::Error = E
 pub fn core::result::Result<kynos::response::stream::sse::TaggedEvent<T>, E>::into_event(self) -> core::result::Result<kynos::response::stream::sse::Event<T>, E>
-impl<T: kynos::schema::Tagged> kynos::response::stream::sse::SseItem for kynos::response::stream::sse::TaggedEvent<T>
+impl<T: kynos::schema::SerdeTagged> kynos::response::stream::sse::SseItem for kynos::response::stream::sse::TaggedEvent<T>
 pub type kynos::response::stream::sse::TaggedEvent<T>::Data = T
 pub type kynos::response::stream::sse::TaggedEvent<T>::Error = core::convert::Infallible
 pub fn kynos::response::stream::sse::TaggedEvent<T>::into_event(self) -> core::result::Result<kynos::response::stream::sse::Event<T>, Self::Error>
@@ -9931,10 +9931,10 @@ pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::opti
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::schema::unchecked::Unchecked<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::schema::unchecked::Unchecked<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
-pub trait kynos::schema::Tagged
-pub const kynos::schema::Tagged::TAG: &'static str
-pub const kynos::schema::Tagged::VARIANTS: &'static [&'static str]
-pub fn kynos::schema::Tagged::variant(&self) -> &'static str
+pub trait kynos::schema::SerdeTagged
+pub const kynos::schema::SerdeTagged::TAG: &'static str
+pub const kynos::schema::SerdeTagged::VARIANTS: &'static [&'static str]
+pub fn kynos::schema::SerdeTagged::variant(&self) -> &'static str
 pub fn kynos::schema::instantiation_name(&str, &[core::option::Option<kynos_openapi::model::components::ComponentName>]) -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub mod kynos::security
 pub mod kynos::security::auth

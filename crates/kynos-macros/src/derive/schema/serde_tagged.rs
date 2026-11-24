@@ -1,4 +1,4 @@
-//! The `Tagged` implementation of a type serde writes under its own tag.
+//! The `SerdeTagged` implementation of a type serde writes under its own tag.
 
 use super::{
     Container, DeriveInput, Fields, TokenStream2, attributes::variant_name, container::Visitor,
@@ -7,7 +7,7 @@ use super::{
 
 use syn::Data;
 
-/// The `Tagged` implementation of a type serde writes under its own tag, or
+/// The `SerdeTagged` implementation of a type serde writes under its own tag, or
 /// nothing for one it writes untagged.
 ///
 /// Its names are the ones the schema gives the tag property: each variant's
@@ -49,7 +49,7 @@ pub(super) fn emit(
     Some(quote! {
         // The impl names the type, as the `Schema` impl does.
         #[allow(deprecated)]
-        impl #impl_generics ::kynos::schema::Tagged for #name #ty_generics #where_clause {
+        impl #impl_generics ::kynos::schema::SerdeTagged for #name #ty_generics #where_clause {
             const TAG: &'static str = #tag;
             const VARIANTS: &'static [&'static str] = #variants;
 

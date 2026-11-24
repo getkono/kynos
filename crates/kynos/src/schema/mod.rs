@@ -113,7 +113,7 @@
 //!
 //! # How this module is laid out
 //!
-//! [`Schema`] lives here, with [`Tagged`] for a type serde writes under a
+//! [`Schema`] lives here, with [`SerdeTagged`] for a type serde writes under a
 //! tag of its own; [`registry`] collects what a description refers to,
 //! [`unchecked`] is the explicit escape from constraint, [`constraints`] holds
 //! what a derive attaches to a field, and [`flatten`] holds the markers that
@@ -253,7 +253,7 @@ pub trait Schema {
 /// ```
 /// # #[cfg(feature = "macros")]
 /// # {
-/// use kynos::schema::Tagged;
+/// use kynos::schema::SerdeTagged;
 ///
 /// #[derive(kynos::Schema, serde::Serialize)]
 /// #[serde(tag = "kind", rename_all = "snake_case")]
@@ -276,9 +276,9 @@ pub trait Schema {
     message = "`{Self}` is not written under a serde tag",
     label = "untagged",
     note = "tag it with `#[serde(tag = \"...\")]` and derive `kynos::Schema`, which implements \
-            `Tagged` for an internally or adjacently tagged enum and a tagged named struct"
+            `SerdeTagged` for an internally or adjacently tagged enum and a tagged named struct"
 )]
-pub trait Tagged {
+pub trait SerdeTagged {
     /// The member serde writes the tag as: the value of `#[serde(tag = "...")]`.
     const TAG: &'static str;
 

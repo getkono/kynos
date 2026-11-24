@@ -25,7 +25,7 @@ use crate::{
         codec::{ok, with_content_type},
         stream::records::RecordBuffer,
     },
-    schema::{Schema, Tagged, registry::Registry},
+    schema::{Schema, SerdeTagged, registry::Registry},
 };
 
 /// A Server-Sent Events response.
@@ -279,11 +279,11 @@ impl<T> Event<T> {
     }
 }
 
-impl<T: Tagged> Event<T> {
+impl<T: SerdeTagged> Event<T> {
     /// Creates an event named by its payload's serde tag.
     ///
     /// The name is the value serde writes the tag with, the renames applied,
-    /// read from `T`'s [`Tagged`], which `#[derive(Schema)]` implements for an
+    /// read from `T`'s [`SerdeTagged`], which `#[derive(Schema)]` implements for an
     /// internally or adjacently tagged enum and a struct carrying its own
     /// `tag`. The tag is spelled once and the event's name cannot drift from
     /// it, and a payload serde writes untagged does not compile.
@@ -317,7 +317,7 @@ impl<T: Tagged> Event<T> {
     /// ```
     ///
     /// A payload serde writes untagged, here an externally tagged enum, has
-    /// no [`Tagged`]; name its event with `Event::new(data).event(name)`:
+    /// no [`SerdeTagged`]; name its event with `Event::new(data).event(name)`:
     ///
     /// ```compile_fail
     /// use kynos::{Schema, response::stream::sse::Event};
@@ -346,10 +346,10 @@ impl<T: Tagged> Event<T> {
 /// One Server-Sent Event named by its payload's serde tag, made by
 /// [`Event::tagged`].
 ///
-/// Its name is always `data`'s [`Tagged::variant`], so it has none of its own
+/// Its name is always `data`'s [`SerdeTagged::variant`], so it has none of its own
 /// to set. That is what lets a stream of them describe its names: the `event`
 /// field of its `itemSchema` is an `enum` of `T`'s
-/// [`VARIANTS`](Tagged::VARIANTS), and required, where an [`Event`]'s is any
+/// [`VARIANTS`](SerdeTagged::VARIANTS), and required, where an [`Event`]'s is any
 /// string it may omit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaggedEvent<T> {
@@ -439,13 +439,13 @@ impl<T, E> sealed::Sealed for Result<Event<T>, E> {
     }
 }
 
-impl<T: Tagged> sealed::Sealed for TaggedEvent<T> {
+impl<T: SerdeTagged> sealed::Sealed for TaggedEvent<T> {
     fn names() -> Option<&'static [&'static str]> {
         Some(T::VARIANTS)
     }
 }
 
-impl<T: Tagged, E> sealed::Sealed for Result<TaggedEvent<T>, E> {
+impl<T: SerdeTagged, E> sealed::Sealed for Result<TaggedEvent<T>, E> {
     fn names() -> Option<&'static [&'static str]> {
         Some(T::VARIANTS)
     }
@@ -469,7 +469,7 @@ impl<T, E: Into<BoxError>> SseItem for Result<Event<T>, E> {
     }
 }
 
-impl<T: Tagged> SseItem for TaggedEvent<T> {
+impl<T: SerdeTagged> SseItem for TaggedEvent<T> {
     type Data = T;
     type Error = std::convert::Infallible;
 
@@ -478,7 +478,7 @@ impl<T: Tagged> SseItem for TaggedEvent<T> {
     }
 }
 
-impl<T: Tagged, E: Into<BoxError>> SseItem for Result<TaggedEvent<T>, E> {
+impl<T: SerdeTagged, E: Into<BoxError>> SseItem for Result<TaggedEvent<T>, E> {
     type Data = T;
     type Error = E;
 
@@ -487,7 +487,7 @@ impl<T: Tagged, E: Into<BoxError>> SseItem for Result<TaggedEvent<T>, E> {
     }
 }
 
-impl<T: Tagged> TaggedEvent<T> {
+impl<T: SerdeTagged> TaggedEvent<T> {
     /// The event this one is sent as, named by its payload's variant.
     fn named(self) -> Event<T> {
         Event {

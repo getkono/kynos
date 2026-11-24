@@ -319,7 +319,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// to tell apart, and a `transparent` struct writes no tag. A type whose
 /// schema names a tag, an internally or adjacently tagged enum or a tagged
 /// named struct, also implements
-/// [`Tagged`](https://docs.rs/kynos/latest/kynos/schema/trait.Tagged.html),
+/// [`SerdeTagged`](https://docs.rs/kynos/latest/kynos/schema/trait.SerdeTagged.html),
 /// carrying the same names. A tuple is the
 /// array of the members serde does not skip both ways, and a newtype variant
 /// whose member serde skips is the unit variant serde writes, provided serde

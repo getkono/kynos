@@ -48,8 +48,8 @@ pub(crate) mod members;
 #[cfg(feature = "pattern")]
 mod pattern;
 mod refusals;
+mod serde_tagged;
 mod shape;
-mod tagged;
 
 use attributes::{
     constraints, field_read_name, is_described, is_flattened, is_open, is_phantom, is_required,
@@ -149,7 +149,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let check = check::body(input, &container);
     let kinds = kinds::newtype(input, &container, &generics);
     let flatten = flatten::emit(input, &container, &generics);
-    let tagged = tagged::emit(input, &container, &struct_name(input, &container));
+    let tagged = serde_tagged::emit(input, &container, &struct_name(input, &container));
 
     Ok(quote! {
         #flatten

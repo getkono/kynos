@@ -8203,12 +8203,12 @@ mod no_prelude {
 
 // --- A tagged type names its tag as serde writes it -------------------------
 //
-// `Tagged` is a derive's output read at run time, so its names are pinned
+// `SerdeTagged` is a derive's output read at run time, so its names are pinned
 // against serde's own: the member and value `serde_json` writes for each
 // value, and every value only once, in declaration order.
 
-mod tagged {
-    use kynos::{Schema, schema::Tagged};
+mod serde_tagged {
+    use kynos::{Schema, schema::SerdeTagged};
     use serde::Serialize;
 
     #[derive(Schema, Serialize)]
@@ -8250,7 +8250,7 @@ mod tagged {
     }
 
     /// Each value's `variant` is what serde writes under its type's `TAG`.
-    fn agrees<T: Serialize + Tagged>(data: &T) {
+    fn agrees<T: Serialize + SerdeTagged>(data: &T) {
         let value = serde_json::to_value(data).expect("a written value serializes");
         assert_eq!(value[T::TAG].as_str(), Some(data.variant()), "{value}");
     }
