@@ -418,6 +418,40 @@ async fn a_coverage_reports_the_response_a_client_never_checked() {
     coverage.assert_conformance();
 }
 
+/// What a description of `/users/{id}` other than this service's own promises.
+#[derive(Schema, Serialize)]
+struct Account {
+    email: String,
+}
+
+/// Fetches one account where this service fetches a user.
+#[kynos::get("/users/{id}")]
+async fn get_account(Path(path): Path<UserPath>) -> Json<Account> {
+    Json(Account {
+        email: format!("{}@example.com", path.id),
+    })
+}
+
+/// A body streamed to its end through a client recording into a coverage is
+/// checked by the coverage's own conformance, as a buffered one is.
+#[tokio::test]
+#[should_panic(expected = "1 response did not conform to the description:\n  \
+                           GET /users/42 -> 200: the body does not match the declared schema")]
+async fn a_coverage_checks_the_body_a_client_streamed() {
+    let accounts = Router::<()>::new()
+        .mount(kynos::routes![get_account])
+        .build(())
+        .expect("a describable router");
+    let coverage = Coverage::for_document(accounts.openapi().clone());
+    let users = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    let mut stream = users.get("/users/42").send_streaming().await;
+    assert_eq!(stream.status(), StatusCode::OK);
+    while stream.next_chunk().await.is_some() {}
+
+    coverage.assert_conformance();
+}
+
 /// A coverage built with no document has nothing for `assert_conformance` to
 /// check against, which is refused rather than passed vacuously.
 #[test]
