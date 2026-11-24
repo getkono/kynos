@@ -6,6 +6,7 @@ use syn::{
     ext::IdentExt, meta::ParseNestedMeta, spanned::Spanned,
 };
 
+use super::written::{self, Described};
 use crate::derive::attribute::{Keys, status, unknown};
 
 /// The range a problem detail's status may fall in: RFC 9457 errors, 4xx and
@@ -47,6 +48,9 @@ pub(super) struct ProblemArgs {
     /// `extension(name = value, ...)`: the members this failure always sends
     /// the same value of, in declaration order.
     pub(super) constants: Vec<Constant>,
+    /// `describe(status = "text", ...)`: the descriptions an enum writes for
+    /// its statuses, in declaration order, at the span of `describe`.
+    pub(super) described: Option<(Vec<Described>, Span)>,
 }
 
 /// One `extension(name = value)` member: sent under `name`, as `value`
@@ -138,6 +142,7 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                          a variant of an enum",
                     ));
                 }
+                "describe" => args.described = Some((written::parse(&meta, position)?, span)),
                 "extension" if meta.input.peek(syn::token::Paren) => {
                     constants(&meta, &mut args.constants)?;
                 }

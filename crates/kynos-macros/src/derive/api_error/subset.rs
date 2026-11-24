@@ -87,11 +87,12 @@ pub(super) fn expand(
         || args.type_uri.is_some()
         || args.base.is_some()
         || !args.constants.is_empty()
+        || args.described.is_some()
     {
         return Err(syn::Error::new(
             span,
             "a subset answers with the wider enum's declarations, so `subset_of` takes no \
-             `status`, `title`, `type`, `base` or `extension` of its own",
+             `status`, `title`, `type`, `base`, `extension` or `describe` of its own",
         ));
     }
 

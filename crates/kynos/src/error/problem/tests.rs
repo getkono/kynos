@@ -5,7 +5,8 @@
 //! where a reader meets them. What is left here is what no declaration reaches
 //! as readably: two failures publishing one type, the constants they union
 //! and the unions that stay an `anyOf`, two sharing one summary, a status
-//! whose failures gave no summary at all, and a status with no failure
+//! whose failures gave no summary at all, which titles a status whose
+//! description the declaration wrote keeps, and a status with no failure
 //! answering it -- which no caller can emit and this refuses.
 //!
 //! One case is about the wire rather than a declaration: an extension keyed
@@ -13,7 +14,7 @@
 
 use serde_json::Value;
 
-use crate::error::problem::{Branch, Member, constant, narrowed_response};
+use crate::error::problem::{Branch, Member, constant, narrowed_response, written_response};
 
 /// The `Problem` component, as `Registry::resolve` hands it over.
 fn component() -> kynos_openapi::Schema {
@@ -32,6 +33,12 @@ fn declared(status: u16, branches: &[(Option<&'static str>, Option<&'static str>
 /// The schema one status declares, as JSON.
 fn declared_with(status: u16, branches: &[Branch<'_>]) -> Value {
     let response = narrowed_response(&component(), status, branches);
+    serde_json::to_value(response).expect("a response serializes")
+}
+
+/// The schema a status declares under the description `described`, as JSON.
+fn written(described: &str, branches: &[Branch<'_>]) -> Value {
+    let response = written_response(&component(), 403, Some(described), branches);
     serde_json::to_value(response).expect("a response serializes")
 }
 
@@ -239,6 +246,63 @@ fn one_summary_two_failures_share_is_written_once() {
         "{schema}"
     );
     assert_eq!(response["description"], serde_json::json!("Not found"));
+}
+
+/// A description the declaration wrote replaces the joined summaries, and a
+/// lone branch then keeps its summary as its title, since the description no
+/// longer says it; with several, each branch keeps its own as before.
+#[test]
+fn a_written_description_replaces_the_summaries_and_frees_a_lone_title() {
+    let rejected = (
+        Some("https://errors.example.com/cross-origin"),
+        Some("Cross-origin request rejected"),
+        &[][..],
+    );
+    let malformed = (
+        Some("https://errors.example.com/malformed-origin"),
+        Some("Malformed Origin header"),
+        &[][..],
+    );
+
+    let lone = written("The request's origin is not allowed", &[rejected]);
+    assert_eq!(
+        lone["description"],
+        serde_json::json!("The request's origin is not allowed")
+    );
+    assert_eq!(
+        lone["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Cross-origin request rejected"),
+        "{lone}"
+    );
+
+    let several = written(
+        "The request's origin is not allowed",
+        &[rejected, malformed],
+    );
+    assert_eq!(
+        several["description"],
+        serde_json::json!("The request's origin is not allowed")
+    );
+    let titles: Vec<&Value> = several["content"]["application/problem+json"]["schema"]["oneOf"]
+        .as_array()
+        .expect("two types are a `oneOf`")
+        .iter()
+        .map(|branch| &branch["title"])
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            &serde_json::json!("Cross-origin request rejected"),
+            &serde_json::json!("Malformed Origin header"),
+        ]
+    );
+
+    // Without one, the lone title stays off: the description already says it.
+    let composed = declared_with(403, &[rejected]);
+    assert_eq!(
+        composed["content"]["application/problem+json"]["schema"]["title"],
+        Value::Null
+    );
 }
 
 /// A status with no failure answering it is not a narrowing of anything, and

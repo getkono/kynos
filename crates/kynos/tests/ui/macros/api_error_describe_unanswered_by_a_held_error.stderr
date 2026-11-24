@@ -1,0 +1,5 @@
+error[E0080]: evaluation panicked: no variant of `GatewayRefused` answers with 409, so `describe` has no response of it to write the description of
+  --> tests/ui/macros/api_error_describe_unanswered_by_a_held_error.rs:18:20
+   |
+18 | #[problem(describe(409 = "The origin conflicts"))]
+   |                    ^^^ evaluation of `_` failed here

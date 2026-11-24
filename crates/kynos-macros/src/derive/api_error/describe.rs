@@ -5,7 +5,10 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::{format_ident, quote, quote_spanned};
 use syn::{Ident, spanned::Spanned};
 
-use super::{Constant, Extension, Failure, Transparent};
+use super::{
+    Constant, Extension, Failure, Transparent,
+    written::{self, Described},
+};
 use crate::derive::common::optional;
 
 /// The `responses` body: one response per distinct status, over the `Problem`
@@ -18,12 +21,23 @@ use crate::derive::common::optional;
 /// described by this enum's own declarations of the variants it holds. A
 /// status no kept failure answers with is left out, and so is the `Problem`
 /// component until one does.
+///
+/// A status `described` writes a description of is described by it, once the
+/// transparent variants' responses have joined theirs, so it is what the
+/// whole enum says of that status.
 pub(super) fn responses(
     failures: &[&Failure],
     statuses: &[u16],
     delegates: &[&Transparent],
+    described: &[Described],
     filtered: bool,
 ) -> TokenStream2 {
+    let text = |status: u16| {
+        described
+            .iter()
+            .find(|described| described.status == status)
+            .map(|described| described.text.as_str())
+    };
     // Whether the variant is described, as an expression of the body.
     let kept = |variant: Option<&Ident>| match variant {
         Some(variant) if filtered => {
@@ -43,7 +57,7 @@ pub(super) fn responses(
             .iter()
             .map(|failure| kept(failure.variant.as_ref()))
             .collect();
-        entry(*status, &declaring, &kept)
+        entry(*status, text(*status), &declaring, &kept)
     });
 
     let handed_over = delegates.iter().map(|delegate| {
@@ -55,6 +69,9 @@ pub(super) fn responses(
             }
         }
     });
+    // A held error's description joins the enum's on a status both answer
+    // with, so the enum's own is written again over the union.
+    let rewritten = written::rewritten(described, delegates);
 
     let keep = filtered.then(|| {
         quote! {
@@ -76,6 +93,7 @@ pub(super) fn responses(
         let mut responses = ::kynos::openapi::Responses::new();
         #(#entries)*
         #(#handed_over)*
+        #rewritten
         responses
     }
 }
@@ -134,8 +152,14 @@ impl Failure {
 }
 
 /// The statement describing `status`, answered by `declaring`, each described
-/// where its expression in `kept` holds, and the status only where one does.
-fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenStream2 {
+/// where its expression in `kept` holds, and the status only where one does;
+/// under `described` where the enum wrote its description.
+fn entry(
+    status: u16,
+    described: Option<&str>,
+    declaring: &[&&Failure],
+    kept: &[TokenStream2],
+) -> TokenStream2 {
     // Each kept failure's members are resolved into a list of their own,
     // which its branch borrows.
     let lists = declaring
@@ -180,8 +204,14 @@ fn entry(status: u16, declaring: &[&&Failure], kept: &[TokenStream2]) -> TokenSt
                 }
             }
         });
+    let described = optional(described);
     let response = quote! {
-        ::kynos::__private::problem::response(__kynos_schema, #status, &__kynos_branches)
+        ::kynos::__private::problem::response(
+            __kynos_schema,
+            #status,
+            #described,
+            &__kynos_branches,
+        )
     };
 
     let describe = if declaring.iter().any(|failure| failure.sends_headers()) {

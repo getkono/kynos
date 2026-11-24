@@ -501,6 +501,7 @@ pub fn refusal_response<T: ProblemType>(
         &problem,
         summary.to_owned(),
         &[(T::TYPE_URI, Some(summary), &[])],
+        false,
     )
 }
 
@@ -533,14 +534,39 @@ pub(crate) fn narrowed_response(
     branches: &[Branch<'_>],
 ) -> Response {
     // From every branch, not the deduplicated ones: prose has no exactly-one rule.
-    described_response(problem, description(status, branches), branches)
+    described_response(problem, description(status, branches), branches, false)
 }
 
-/// [`narrowed_response`] under a `description` already written.
+/// [`narrowed_response`] under the description `described`, where the
+/// declaration wrote one for the status in place of the one [`description`]
+/// composes from the branches' summaries.
+///
+/// # Panics
+///
+/// If `branches` is empty.
+#[must_use]
+pub(crate) fn written_response(
+    problem: &OpenApiSchema,
+    status: u16,
+    described: Option<&str>,
+    branches: &[Branch<'_>],
+) -> Response {
+    match described {
+        // The summaries are no longer the description, so a lone branch keeps
+        // its own as its title rather than losing it.
+        Some(described) => described_response(problem, described.to_owned(), branches, true),
+        None => narrowed_response(problem, status, branches),
+    }
+}
+
+/// [`narrowed_response`] under a `description` already written; a lone
+/// branch carries its summary as its title only where `lone_title` says the
+/// description does not already say it.
 fn described_response(
     problem: &OpenApiSchema,
     description: String,
     branches: &[Branch<'_>],
+    lone_title: bool,
 ) -> Response {
     let distinct = distinct(branches);
 
@@ -549,8 +575,7 @@ fn described_response(
             "a status narrows to the failures answering with it: no caller passes an \
              empty branch list"
         ),
-        // A lone branch's title would repeat the description.
-        [only] => narrowed_branch(problem, only, None),
+        [only] => narrowed_branch(problem, only, only.summary.filter(|_| lone_title)),
         several => object(SchemaObject {
             one_of: Some(
                 several

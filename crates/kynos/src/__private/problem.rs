@@ -29,13 +29,15 @@ use crate::{
 /// Each branch is the type URI a failure publishes, or `None` where it names
 /// none, the summary its declaration gave it, and its extension members: each
 /// one's name, its type's schema, and whether every occurrence sends it.
+/// `described` is the enum's `describe` text for the status, if it wrote one.
 #[must_use]
 pub fn response(
     problem: &OpenApiSchema,
     status: u16,
+    described: Option<&'static str>,
     branches: &[crate::error::problem::Branch<'_>],
 ) -> Response {
-    crate::error::problem::narrowed_response(problem, status, branches)
+    crate::error::problem::written_response(problem, status, described, branches)
 }
 
 /// The headers group `H` declares, as one failure's entry in

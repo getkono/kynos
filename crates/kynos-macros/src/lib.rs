@@ -826,6 +826,34 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// refused, since the held error's would replace it. A held type that is no
 /// `ApiError` is reported as such, naming both ways out.
 ///
+/// A status's description joins the `title` of every variant answering with
+/// it, in declaration order. An enum writes its own with `describe`, which
+/// leaves each variant's `title` on the wire and on its branch of the schema:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// #[problem(describe(403 = "The request's origin is not allowed"))]
+/// enum OriginRejected {
+///     #[error("cross-origin request rejected")]
+///     #[problem(status = 403, title = "Cross-origin request rejected")]
+///     CrossOrigin,
+///
+///     #[error("malformed Origin header")]
+///     #[problem(status = 403, title = "Malformed Origin header")]
+///     Malformed,
+/// }
+/// ```
+///
+/// It is what the whole enum says of the status, so it replaces what a
+/// transparent variant's held error would join to it, and may describe a
+/// status only that error answers with; a subset of the enum is described by
+/// it too. Each status is written once and says something, and one no variant
+/// answers with is refused, at the derive or, where only a held error could
+/// answer with it, in a `const`. A struct has no `describe`: its `title` is its
+/// status's description. Where another type on the same operation answers with
+/// the status too, the two descriptions join, each saying what its own
+/// failures mean.
+///
 /// An operation that fails only some of a derived enum's ways returns a
 /// subset of it, so it declares no status it cannot send:
 ///
