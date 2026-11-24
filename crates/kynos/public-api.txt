@@ -2326,14 +2326,14 @@ impl kynos::extract::params::header::EncodeHeaders for kynos::http::retry_after:
 pub fn kynos::http::retry_after::RetryAfter::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::compression::ContentEncoding
 pub fn kynos::middleware::compression::ContentEncoding::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
-impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::cookies::SetCookieHeaders
-pub fn kynos::middleware::cookies::SetCookieHeaders::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::rate_limit::headers::RateLimitFields
 pub fn kynos::middleware::rate_limit::headers::RateLimitFields::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::rate_limit::headers::RateLimitHeaders
 pub fn kynos::middleware::rate_limit::headers::RateLimitHeaders::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::request_id::XRequestId
 pub fn kynos::middleware::request_id::XRequestId::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
+impl kynos::extract::params::header::EncodeHeaders for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::response::disposition::ContentDisposition
 pub fn kynos::response::disposition::ContentDisposition::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
 impl kynos::extract::params::header::EncodeHeaders for kynos::response::language::headers::ContentLanguage
@@ -2396,14 +2396,6 @@ pub const kynos::middleware::conditional::Preconditions::VARIES: &'static [&'sta
 pub fn kynos::middleware::conditional::Preconditions::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::conditional::Preconditions::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::conditional::Preconditions::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
-impl kynos::extract::params::header::HeaderParams for kynos::middleware::cookies::SetCookieHeaders
-pub const kynos::middleware::cookies::SetCookieHeaders::DESCRIBED: bool
-pub const kynos::middleware::cookies::SetCookieHeaders::NAMES: &'static [&'static str]
-pub const kynos::middleware::cookies::SetCookieHeaders::REPEATABLE: bool
-pub const kynos::middleware::cookies::SetCookieHeaders::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cookies::SetCookieHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
-pub fn kynos::middleware::cookies::SetCookieHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
-pub fn kynos::middleware::cookies::SetCookieHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::middleware::rate_limit::headers::RateLimitFields
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::DESCRIBED: bool
 pub const kynos::middleware::rate_limit::headers::RateLimitFields::NAMES: &'static [&'static str]
@@ -2428,6 +2420,14 @@ pub const kynos::middleware::request_id::XRequestId::VARIES: &'static [&'static 
 pub fn kynos::middleware::request_id::XRequestId::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
 pub fn kynos::middleware::request_id::XRequestId::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::request_id::XRequestId::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
+impl kynos::extract::params::header::HeaderParams for kynos::response::cookie::SetCookieHeaders
+pub const kynos::response::cookie::SetCookieHeaders::DESCRIBED: bool
+pub const kynos::response::cookie::SetCookieHeaders::NAMES: &'static [&'static str]
+pub const kynos::response::cookie::SetCookieHeaders::REPEATABLE: bool
+pub const kynos::response::cookie::SetCookieHeaders::VARIES: &'static [&'static str]
+pub fn kynos::response::cookie::SetCookieHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::response::cookie::SetCookieHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+pub fn kynos::response::cookie::SetCookieHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 impl kynos::extract::params::header::HeaderParams for kynos::response::disposition::ContentDisposition
 pub const kynos::response::disposition::ContentDisposition::DESCRIBED: bool
 pub const kynos::response::disposition::ContentDisposition::NAMES: &'static [&'static str]
@@ -3980,46 +3980,17 @@ impl core::marker::UnsafeUnpin for kynos::middleware::contribution::Contribution
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::contribution::ContributionConflict
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::contribution::ContributionConflict
 pub mod kynos::middleware::cookies
-pub struct kynos::middleware::cookies::SetCookieHeaders
-pub kynos::middleware::cookies::SetCookieHeaders::cookies: alloc::vec::Vec<kynos::response::cookie::Cookie>
-impl core::clone::Clone for kynos::middleware::cookies::SetCookieHeaders
-pub fn kynos::middleware::cookies::SetCookieHeaders::clone(&self) -> kynos::middleware::cookies::SetCookieHeaders
-impl core::cmp::Eq for kynos::middleware::cookies::SetCookieHeaders
-impl core::cmp::PartialEq for kynos::middleware::cookies::SetCookieHeaders
-pub fn kynos::middleware::cookies::SetCookieHeaders::eq(&self, &kynos::middleware::cookies::SetCookieHeaders) -> bool
-impl core::default::Default for kynos::middleware::cookies::SetCookieHeaders
-pub fn kynos::middleware::cookies::SetCookieHeaders::default() -> kynos::middleware::cookies::SetCookieHeaders
-impl core::fmt::Debug for kynos::middleware::cookies::SetCookieHeaders
-pub fn kynos::middleware::cookies::SetCookieHeaders::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
-impl core::marker::StructuralPartialEq for kynos::middleware::cookies::SetCookieHeaders
-impl kynos::extract::params::header::EncodeHeaders for kynos::middleware::cookies::SetCookieHeaders
-pub fn kynos::middleware::cookies::SetCookieHeaders::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
-impl kynos::extract::params::header::HeaderParams for kynos::middleware::cookies::SetCookieHeaders
-pub const kynos::middleware::cookies::SetCookieHeaders::DESCRIBED: bool
-pub const kynos::middleware::cookies::SetCookieHeaders::NAMES: &'static [&'static str]
-pub const kynos::middleware::cookies::SetCookieHeaders::REPEATABLE: bool
-pub const kynos::middleware::cookies::SetCookieHeaders::VARIES: &'static [&'static str]
-pub fn kynos::middleware::cookies::SetCookieHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
-pub fn kynos::middleware::cookies::SetCookieHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
-pub fn kynos::middleware::cookies::SetCookieHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
-impl core::marker::Freeze for kynos::middleware::cookies::SetCookieHeaders
-impl core::marker::Send for kynos::middleware::cookies::SetCookieHeaders
-impl core::marker::Sync for kynos::middleware::cookies::SetCookieHeaders
-impl core::marker::Unpin for kynos::middleware::cookies::SetCookieHeaders
-impl core::marker::UnsafeUnpin for kynos::middleware::cookies::SetCookieHeaders
-impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::cookies::SetCookieHeaders
-impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::cookies::SetCookieHeaders
 pub struct kynos::middleware::cookies::SetCookies<S>
 impl<S> kynos::middleware::cookies::SetCookies<S>
 pub fn kynos::middleware::cookies::SetCookies<S>::new(S) -> Self
 impl<C, S> kynos::middleware::Interceptor<C> for kynos::middleware::cookies::SetCookies<S> where C: core::marker::Sync + 'static, S: kynos::middleware::cookies::CookieSource<C>
-pub type kynos::middleware::cookies::SetCookies<S>::Adds = kynos::middleware::cookies::SetCookieHeaders
+pub type kynos::middleware::cookies::SetCookies<S>::Adds = kynos::response::cookie::SetCookieHeaders
 pub type kynos::middleware::cookies::SetCookies<S>::Reads = ()
 pub type kynos::middleware::cookies::SetCookies<S>::Short = core::convert::Infallible
 pub const kynos::middleware::cookies::SetCookies<S>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cookies::SetCookies<S>::COVERS: kynos::middleware::Covers
 pub const kynos::middleware::cookies::SetCookies<S>::READS_BODY: bool
-pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::cookies::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
+pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::response::cookie::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
 impl<S: core::clone::Clone> core::clone::Clone for kynos::middleware::cookies::SetCookies<S>
 pub fn kynos::middleware::cookies::SetCookies<S>::clone(&self) -> kynos::middleware::cookies::SetCookies<S>
 impl<S: core::fmt::Debug> core::fmt::Debug for kynos::middleware::cookies::SetCookies<S>
@@ -5815,13 +5786,13 @@ pub const kynos::middleware::request_id::RequestId<S, H>::COVERS: kynos::middlew
 pub const kynos::middleware::request_id::RequestId<S, H>::READS_BODY: bool
 pub fn kynos::middleware::request_id::RequestId<S, H>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<H>, core::convert::Infallible>> + core::marker::Send
 impl<C, S> kynos::middleware::Interceptor<C> for kynos::middleware::cookies::SetCookies<S> where C: core::marker::Sync + 'static, S: kynos::middleware::cookies::CookieSource<C>
-pub type kynos::middleware::cookies::SetCookies<S>::Adds = kynos::middleware::cookies::SetCookieHeaders
+pub type kynos::middleware::cookies::SetCookies<S>::Adds = kynos::response::cookie::SetCookieHeaders
 pub type kynos::middleware::cookies::SetCookies<S>::Reads = ()
 pub type kynos::middleware::cookies::SetCookies<S>::Short = core::convert::Infallible
 pub const kynos::middleware::cookies::SetCookies<S>::ADDS_ON: kynos::middleware::Placement
 pub const kynos::middleware::cookies::SetCookies<S>::COVERS: kynos::middleware::Covers
 pub const kynos::middleware::cookies::SetCookies<S>::READS_BODY: bool
-pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::middleware::cookies::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
+pub fn kynos::middleware::cookies::SetCookies<S>::intercept(&self, kynos::http::Request, (), &C, kynos::middleware::Next<'_, C>) -> impl core::future::future::Future<Output = core::result::Result<kynos::middleware::Continued<kynos::response::cookie::SetCookieHeaders>, core::convert::Infallible>> + core::marker::Send
 impl<C, T, U> kynos::middleware::Interceptor<C> for kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>> where C: core::marker::Sync + 'static, T: kynos::error::problem::ProblemType, U: kynos::error::problem::ProblemType
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Adds = ()
 pub type kynos::middleware::limits::body_size::BodySize<T, kynos::middleware::limits::body_size::BodyTooSlow<U>>::Reads = ()
@@ -7131,6 +7102,35 @@ impl core::marker::Unpin for kynos::response::cookie::Cookie
 impl core::marker::UnsafeUnpin for kynos::response::cookie::Cookie
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::response::cookie::Cookie
 impl core::panic::unwind_safe::UnwindSafe for kynos::response::cookie::Cookie
+pub struct kynos::response::cookie::SetCookieHeaders
+pub kynos::response::cookie::SetCookieHeaders::cookies: alloc::vec::Vec<kynos::response::cookie::Cookie>
+impl core::clone::Clone for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::clone(&self) -> kynos::response::cookie::SetCookieHeaders
+impl core::cmp::Eq for kynos::response::cookie::SetCookieHeaders
+impl core::cmp::PartialEq for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::eq(&self, &kynos::response::cookie::SetCookieHeaders) -> bool
+impl core::default::Default for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::default() -> kynos::response::cookie::SetCookieHeaders
+impl core::fmt::Debug for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kynos::response::cookie::SetCookieHeaders
+impl kynos::extract::params::header::EncodeHeaders for kynos::response::cookie::SetCookieHeaders
+pub fn kynos::response::cookie::SetCookieHeaders::encode(&self) -> core::result::Result<alloc::vec::Vec<(http::header::name::HeaderName, http::header::value::HeaderValue)>, kynos::extract::params::header::UnencodableHeader>
+impl kynos::extract::params::header::HeaderParams for kynos::response::cookie::SetCookieHeaders
+pub const kynos::response::cookie::SetCookieHeaders::DESCRIBED: bool
+pub const kynos::response::cookie::SetCookieHeaders::NAMES: &'static [&'static str]
+pub const kynos::response::cookie::SetCookieHeaders::REPEATABLE: bool
+pub const kynos::response::cookie::SetCookieHeaders::VARIES: &'static [&'static str]
+pub fn kynos::response::cookie::SetCookieHeaders::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::response::cookie::SetCookieHeaders::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+pub fn kynos::response::cookie::SetCookieHeaders::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
+impl core::marker::Freeze for kynos::response::cookie::SetCookieHeaders
+impl core::marker::Send for kynos::response::cookie::SetCookieHeaders
+impl core::marker::Sync for kynos::response::cookie::SetCookieHeaders
+impl core::marker::Unpin for kynos::response::cookie::SetCookieHeaders
+impl core::marker::UnsafeUnpin for kynos::response::cookie::SetCookieHeaders
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::response::cookie::SetCookieHeaders
+impl core::panic::unwind_safe::UnwindSafe for kynos::response::cookie::SetCookieHeaders
 pub mod kynos::response::disposition
 #[non_exhaustive] pub enum kynos::response::disposition::Disposition
 pub kynos::response::disposition::Disposition::Attachment
