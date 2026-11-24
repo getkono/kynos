@@ -913,6 +913,10 @@ impl<C: 'static> BoundServer<C> {
 
     /// Serves on every listener until shutdown or a terminal accept failure.
     ///
+    /// To serve in the background, as a test or a second listener does,
+    /// [`spawn`](Self::spawn) instead: its handle keeps the bound address
+    /// and begins graceful shutdown.
+    ///
     /// # Errors
     ///
     /// [`Error::Server`](crate::error::Error::Server), carrying:
