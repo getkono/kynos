@@ -1733,6 +1733,203 @@ fn a_shared_status_describes_both_halves_of_what_it_publishes() {
     );
 }
 
+/// The 403 an enum writes the description of, its two variants in one order.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/", describe(403 = "The request's origin is not allowed"))]
+#[allow(dead_code)]
+enum OriginRefused {
+    #[error("cross-origin request rejected")]
+    #[problem(status = 403, title = "Cross-origin request rejected")]
+    CrossOrigin,
+
+    #[error("malformed Origin header")]
+    #[problem(status = 403, title = "Malformed Origin header")]
+    Malformed,
+
+    #[error("no such origin")]
+    #[problem(status = 404, title = "Unknown origin")]
+    Unknown,
+}
+
+/// [`OriginRefused`] with its 403 variants the other way round.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/", describe(403 = "The request's origin is not allowed"))]
+#[allow(dead_code)]
+enum OriginRefusedReordered {
+    #[error("malformed Origin header")]
+    #[problem(status = 403, title = "Malformed Origin header")]
+    Malformed,
+
+    #[error("cross-origin request rejected")]
+    #[problem(status = 403, title = "Cross-origin request rejected")]
+    CrossOrigin,
+}
+
+/// An enum holding [`OriginRefused`] beside a 403 of its own, and writing
+/// the description of a status only the held error answers with.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/", describe(403 = "The request is not allowed", 404 = "No such origin is registered"))]
+#[allow(dead_code)]
+enum GatewayRefused {
+    #[error("the gateway is closed")]
+    #[problem(status = 403, title = "Gateway closed")]
+    Closed,
+
+    #[error(transparent)]
+    Origin(OriginRefused),
+}
+
+/// A subset of [`OriginRefused`] keeping one of its 403 variants.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(subset_of = OriginRefused)]
+#[allow(dead_code)]
+enum OnlyCrossOrigin {
+    #[error("cross-origin request rejected")]
+    CrossOrigin,
+}
+
+/// The responses `E` declares, as JSON keyed by status.
+fn responses_of<E: kynos::response::Responses>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::default();
+    serde_json::to_value(E::responses(&mut registry)).expect("responses serialize")
+}
+
+/// An enum's `describe` replaces the titles its variants' declarations would
+/// join, so the description no longer depends on the order they are written
+/// in; each variant's title still labels its branch, and a status it does not
+/// name keeps the joined one.
+#[test]
+fn a_written_description_replaces_the_joined_titles_in_any_order() {
+    let responses = responses_of::<OriginRefused>();
+    let reordered = responses_of::<OriginRefusedReordered>();
+
+    for described in [&responses["403"], &reordered["403"]] {
+        assert_eq!(
+            described["description"],
+            serde_json::json!("The request's origin is not allowed"),
+            "{described}"
+        );
+    }
+    let mut titles: Vec<&str> =
+        responses["403"]["content"]["application/problem+json"]["schema"]["oneOf"]
+            .as_array()
+            .expect("two types are a `oneOf`")
+            .iter()
+            .filter_map(|branch| branch["title"].as_str())
+            .collect();
+    titles.sort_unstable();
+    assert_eq!(
+        titles,
+        ["Cross-origin request rejected", "Malformed Origin header"]
+    );
+    assert_eq!(
+        responses["404"]["description"],
+        serde_json::json!("Unknown origin")
+    );
+}
+
+/// What an enum writes is what the whole enum says of the status: it replaces
+/// the description a transparent variant's held error joins to its own, and
+/// describes a status only that held error answers with. The held error's
+/// branches still reach the schema, each under its title: a lone one keeps
+/// the title its description said, as the enum's text no longer says it.
+#[test]
+fn a_written_description_covers_what_a_transparent_variant_answers() {
+    let responses = responses_of::<GatewayRefused>();
+
+    assert_eq!(
+        responses["403"]["description"],
+        serde_json::json!("The request is not allowed")
+    );
+    let schema = &responses["403"]["content"]["application/problem+json"]["schema"];
+    assert_eq!(published(schema).len(), 3, "{}", responses["403"]);
+    let mut titles: Vec<&str> = schema["oneOf"]
+        .as_array()
+        .expect("three types are a `oneOf`")
+        .iter()
+        .filter_map(|branch| branch["title"].as_str())
+        .collect();
+    titles.sort_unstable();
+    assert_eq!(
+        titles,
+        [
+            "Cross-origin request rejected",
+            "Gateway closed",
+            "Malformed Origin header"
+        ]
+    );
+    let unknown = &responses["404"];
+    assert_eq!(
+        unknown["description"],
+        serde_json::json!("No such origin is registered")
+    );
+    assert_eq!(
+        unknown["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Unknown origin"),
+        "{unknown}"
+    );
+}
+
+/// A subset is described as the wider enum describes the variants it keeps,
+/// so the wider enum's written description reaches it; and a lone branch keeps
+/// its title, which the description no longer says.
+#[test]
+fn a_subset_is_described_by_the_wider_enums_written_description() {
+    let responses = responses_of::<OnlyCrossOrigin>();
+    let described = &responses["403"];
+
+    assert_eq!(
+        described["description"],
+        serde_json::json!("The request's origin is not allowed")
+    );
+    assert_eq!(
+        described["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Cross-origin request rejected"),
+        "{described}"
+    );
+    assert!(responses.get("404").is_none(), "{responses}");
+}
+
+/// A failure answering with the capture's 400, whose enum writes the
+/// description of it.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(describe(400 = "The review cannot be published"))]
+enum PublishError {
+    #[error("the review says nothing")]
+    #[problem(
+        status = 400,
+        type = "https://errors.example.com/empty-review",
+        title = "Empty review"
+    )]
+    Empty,
+}
+
+/// One operation, the capture's rejection and a described enum on one status.
+#[kynos::get("/published/{id}")]
+async fn publish_review(Path(path): Path<ReviewPath>) -> Result<NoContent, PublishError> {
+    let _ = path;
+    Err(PublishError::Empty)
+}
+
+/// An enum's written description is that enum's half of a status another
+/// contributor shares, joined as a composed one is: it says what the enum's
+/// failures mean, and says nothing for the extractor's, so neither replaces
+/// the other.
+#[test]
+fn a_written_description_joins_another_contributors_on_one_operation() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![publish_review])
+        .openapi()
+        .expect("a describable router");
+    let response = declared_problem(&operation(&document, "/published/{id}"), "400");
+
+    assert_eq!(
+        response["description"],
+        serde_json::json!("Bad Request; The review cannot be published"),
+        "{response}"
+    );
+}
+
 /// The field a turned-away client waits on.
 #[derive(Debug, kynos::HeaderParams)]
 struct RetryAfter {

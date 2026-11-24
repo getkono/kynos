@@ -7,7 +7,8 @@ use serde::ser::SerializeMap;
 use serde_json::Value;
 
 use kynos_openapi::{
-    ComponentName, Map, MediaType, Response, Schema as OpenApiSchema, SchemaObject,
+    ComponentName, Map, MediaType, RefOr, Response, Responses, Schema as OpenApiSchema,
+    SchemaObject,
     model::{
         body::mime_names::APPLICATION_PROBLEM_JSON,
         schema::types::{SchemaType, TypeSet},
@@ -501,6 +502,7 @@ pub fn refusal_response<T: ProblemType>(
         &problem,
         summary.to_owned(),
         &[(T::TYPE_URI, Some(summary), &[])],
+        false,
     )
 }
 
@@ -533,14 +535,73 @@ pub(crate) fn narrowed_response(
     branches: &[Branch<'_>],
 ) -> Response {
     // From every branch, not the deduplicated ones: prose has no exactly-one rule.
-    described_response(problem, description(status, branches), branches)
+    described_response(problem, description(status, branches), branches, false)
 }
 
-/// [`narrowed_response`] under a `description` already written.
+/// [`narrowed_response`] under the description `described`, where the
+/// declaration wrote one for the status in place of the one [`description`]
+/// composes from the branches' summaries.
+///
+/// # Panics
+///
+/// If `branches` is empty.
+#[must_use]
+pub(crate) fn written_response(
+    problem: &OpenApiSchema,
+    status: u16,
+    described: Option<&str>,
+    branches: &[Branch<'_>],
+) -> Response {
+    match described {
+        // The summaries are no longer the description, so a lone branch keeps
+        // its own as its title rather than losing it.
+        Some(described) => described_response(problem, described.to_owned(), branches, true),
+        None => narrowed_response(problem, status, branches),
+    }
+}
+
+/// A transparent variant's `held` responses, readied for an enum writing the
+/// description of each status in `written` over them: there a lone branch the
+/// held error left untitled, since its description said it, takes that
+/// description as its title, as [`title_lone_branch`] says.
+pub(crate) fn titled(mut held: Responses, written: &[u16]) -> Responses {
+    for status in written {
+        if let Some(RefOr::Item(response)) = held.responses.get_mut(&status.to_string()) {
+            title_lone_branch(response);
+        }
+    }
+    held
+}
+
+/// Gives `response`'s lone problem branch its description as its title, where
+/// the branch carries none, since another description is about to be written
+/// over the one that said it.
+///
+/// [`narrowed_response`] leaves a lone branch untitled because its description
+/// is its title; the branches of a `oneOf`, a titled branch, and any schema
+/// that is not a narrowed branch are left as they are.
+pub(crate) fn title_lone_branch(response: &mut Response) {
+    let Some(description) = &response.description else {
+        return;
+    };
+    let Some(RefOr::Item(media)) = response.content.get_mut(APPLICATION_PROBLEM_JSON) else {
+        return;
+    };
+    if let Some(OpenApiSchema::Object(branch)) = &mut media.schema {
+        if branch.title.is_none() && branch.one_of.is_none() && branch.all_of.is_some() {
+            branch.title = Some(description.clone());
+        }
+    }
+}
+
+/// [`narrowed_response`] under a `description` already written; a lone
+/// branch carries its summary as its title only where `lone_title` says the
+/// description does not already say it.
 fn described_response(
     problem: &OpenApiSchema,
     description: String,
     branches: &[Branch<'_>],
+    lone_title: bool,
 ) -> Response {
     let distinct = distinct(branches);
 
@@ -549,8 +610,7 @@ fn described_response(
             "a status narrows to the failures answering with it: no caller passes an \
              empty branch list"
         ),
-        // A lone branch's title would repeat the description.
-        [only] => narrowed_branch(problem, only, None),
+        [only] => narrowed_branch(problem, only, only.summary.filter(|_| lone_title)),
         several => object(SchemaObject {
             one_of: Some(
                 several

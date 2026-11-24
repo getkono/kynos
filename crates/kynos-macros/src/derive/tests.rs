@@ -5815,7 +5815,7 @@ mod api_error {
                         NotFound,
                     }
                 ),
-                "takes no `status`, `title`, `type`, `base` or `extension` of its own",
+                "takes no `status`, `title`, `type`, `base`, `extension` or `describe` of its own",
             ),
             case(
                 "`subset_of` naming the subset's generic parameter",
@@ -5837,6 +5837,75 @@ mod api_error {
                     }
                 ),
                 "answers as the wider enum's variant `NotFound`",
+            ),
+        ]
+    }
+
+    /// The refusals of `#[problem(describe(...))]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn describe_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`describe` on a variant, when it is what the whole enum says",
+                quote::quote!(
+                    enum OriginRefused {
+                        #[problem(status = 403, describe(403 = "Not allowed"))]
+                        CrossOrigin,
+                    }
+                ),
+                "belongs on the enum rather than on one variant",
+            ),
+            case(
+                "`describe` on a struct, whose `title` already describes its status",
+                quote::quote!(
+                    #[problem(status = 403, describe(403 = "Not allowed"))]
+                    struct CrossOrigin;
+                ),
+                "a struct fails one way",
+            ),
+            case(
+                "an empty `describe(...)`",
+                quote::quote!(
+                    #[problem(describe())]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "`describe(...)` names no status",
+            ),
+            case(
+                "one status described twice",
+                quote::quote!(
+                    #[problem(describe(403 = "Not allowed", 403 = "Refused"))]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "already writes the description of 403",
+            ),
+            case(
+                "a description saying nothing",
+                quote::quote!(
+                    #[problem(describe(403 = "  "))]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "the description of 403 is empty",
+            ),
+            case(
+                "a status no variant answers with",
+                quote::quote!(
+                    #[problem(describe(409 = "Conflicting origin"))]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "answers with 409, so `describe` has no response of it",
             ),
         ]
     }
@@ -5972,6 +6041,7 @@ mod api_error {
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
         each_case_is_refused(field_names_ledger(), expand_inner);
+        each_case_is_refused(describe_ledger(), expand_inner);
     }
 
     /// One diagnostic site refuses three keys, so the ledger's single row per
@@ -6023,6 +6093,7 @@ mod api_error {
                 include_str!("api_error/outcomes.rs"),
                 include_str!("api_error/subset.rs"),
                 include_str!("api_error/variant_of.rs"),
+                include_str!("api_error/written.rs"),
             ]
             .concat(),
             ledger().len()
@@ -6034,6 +6105,7 @@ mod api_error {
                 + keys_ledger().len()
                 + constants_ledger().len()
                 + field_names_ledger().len()
+                + describe_ledger().len()
                 - IN_ATTRIBUTE,
         );
     }

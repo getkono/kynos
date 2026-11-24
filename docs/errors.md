@@ -131,6 +131,7 @@ enum StoreError {
 | Position | Key | Meaning |
 | --- | --- | --- |
 | type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
+| type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
 | type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
@@ -410,6 +411,37 @@ summaries of every
 variant answering with the status, in declaration order and with `"; "`,
 dropping only a summary already written word for word — so a shared status
 names each of them rather than whichever came first.
+
+**An enum writes a status's description with `describe`**, where the joined
+summaries read wrong or would change with the order the variants are written
+in:
+
+```rust
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(describe(403 = "The request's origin is not allowed"))]
+enum OriginRejected { /* two 403 variants, each with its own title */ }
+```
+
+The text replaces the joined summaries and nothing else: each variant's
+`title` still reaches the wire and its branch, and a lone branch keeps its
+`title` too, since the description no longer says it. It is what the whole
+enum says of the status, so it is written over what a transparent variant's
+held error joins to it, whose lone branch keeps the title its own description
+said, may describe a status only that error answers with,
+and describes a subset of the enum as well. A subset writes none of its own,
+as it declares nothing else of its own. A struct has no `describe`: it fails
+one way, so its `title` is its status's description already.
+
+Writing is per type, and composing across types is unchanged. Where an
+extractor's rejection or another error type answers with the same status on
+one operation, the written description is the enum's half and joins the
+other's as two contributors' descriptions always join (see *A status an
+extractor also claims* below). Neither replaces the other, so neither depends
+on which arrives first, and no conflict arises: each side describes only its
+own failures.
+Within one enum the derive refuses a status written twice, an empty text, and
+a status no variant answers with — the last in a `const` where only a held
+error's statuses could say.
 
 Two rules follow from what is actually on the wire:
 

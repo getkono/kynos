@@ -2,6 +2,8 @@
 //!
 //! ```text
 //! #[problem( base = <prefix> )]                    on the type, optional
+//! #[problem( describe( <code> = "<text>" [, <code> = "<text>"]* ) )]
+//!                                                  on an enum, optional
 //! #[problem( subset_of = <type> )]                 on an enum, alone, instead of
 //!                                                  every list below it
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
@@ -31,6 +33,8 @@
 //! `Responses` keys, so the three agree. `base` is the prefix a variant without
 //! its own `type` hangs its slug under; a literal is joined here, a `const`
 //! in the expansion's own `const` items. `detail` comes from `Display`.
+//!
+//! `describe` writes a status's description as [`written`] says.
 //!
 //! An `extension` field is sent through `kynos::__private::problem::to_member`,
 //! its type's `Serialize`, and declared by its type's `Schema` on its failure's
@@ -84,6 +88,7 @@ mod fields;
 mod outcomes;
 mod subset;
 mod variant_of;
+mod written;
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{ToTokens, quote, quote_spanned};
@@ -126,6 +131,9 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     let statuses = distinct_statuses(&failures);
     let codes = codes(&outcomes, &statuses);
     let name = &input.ident;
+    let described = args.described.as_ref();
+    let answered = written::answered(input, described, &statuses, &delegates, &codes)?;
+    let described = described.map_or(&[][..], |(described, _)| described);
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
 
     // `detail` comes from `Display`; asserted here rather than bounded so the
@@ -157,7 +165,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
             }
             Outcome::Transparent(delegate) => (delegate.variant.clone(), delegate.statuses()),
         });
-        let body = responses(&failures, &statuses, &delegates, true);
+        let body = responses(&failures, &statuses, &delegates, described, true);
         (
             quote!(Self::__kynos_problem_responses(
                 registry,
@@ -167,7 +175,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         )
     } else {
         (
-            responses(&failures, &statuses, &delegates, false),
+            responses(&failures, &statuses, &delegates, described, false),
             TokenStream2::new(),
         )
     };
@@ -178,6 +186,7 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
     // `Responses` and `into_problem` come from the same declarations.
     Ok(quote! {
         #display
+        #answered
         #impls
         #handles
         #back
