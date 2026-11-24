@@ -4,7 +4,8 @@
 //! description promises, so a suite exercising every operation proves the
 //! document truthful — see [`TestClient::assert_conformance`]. Where the
 //! declared responses need several differently built services to produce, a
-//! [`Coverage`] shared between their clients checks them together.
+//! [`Coverage`] shared between their clients checks them together, for
+//! coverage and for conformance.
 
 mod body;
 mod conformance;
@@ -22,7 +23,8 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 use kynos_openapi::{
-    Document, Method, model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
+    Document, Method, OperationAt,
+    model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
 };
 use serde_json::{Map, Value};
 
@@ -41,7 +43,7 @@ use crate::{
 
 /// One response, as it was received, with the request target; the template is
 /// matched against the description when an assertion runs.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Observed {
     method: HttpMethod,
     /// The target as the test wrote it, for reporting.
@@ -212,8 +214,9 @@ impl<C> TestClient<C> {
     /// Records every response this client receives into `coverage` as well.
     ///
     /// The client's own assertions still read only what it received; the
-    /// shared record is read by [`Coverage::assert_declared_responses_covered`]
-    /// or [`Coverage::assert_covered`].
+    /// shared record is read by [`Coverage`]'s own: coverage, such as
+    /// [`Coverage::assert_covered`], and conformance,
+    /// [`Coverage::assert_conformance`].
     /// A second call replaces the first.
     #[must_use]
     pub fn with_coverage(mut self, coverage: &Coverage) -> Self {
@@ -474,8 +477,8 @@ impl<C> TestClient<C> {
     }
 
     /// Records one exchange as its head arrived, into the shared coverage
-    /// too, and returns where it was observed, for a [`TestStream`] to file
-    /// the body under once it ends.
+    /// too, and returns where it was filed in each, for a [`TestStream`] to
+    /// file the body under once it ends.
     fn record(
         &self,
         method: &HttpMethod,
@@ -483,28 +486,23 @@ impl<C> TestClient<C> {
         uri: Uri,
         parts: &::http::response::Parts,
         body: Option<Bytes>,
-    ) -> usize {
-        if let Some(coverage) = &self.coverage {
-            push(
-                coverage,
-                Exchange {
-                    method: method.clone(),
-                    uri: uri.clone(),
-                    status: parts.status,
-                },
-            );
-        }
-
-        let mut recorded = self.recorded();
-        recorded.push(Observed {
+    ) -> (usize, Option<usize>) {
+        let observed = Observed {
             method: method.clone(),
             target: target.to_owned(),
             uri,
             status: parts.status,
             headers: parts.headers.clone(),
             body,
-        });
-        recorded.len() - 1
+        };
+        let shared = self
+            .coverage
+            .as_ref()
+            .map(|coverage| push(coverage, Exchange::Received(observed.clone())));
+
+        let mut recorded = self.recorded();
+        recorded.push(observed);
+        (recorded.len() - 1, shared)
     }
 
     /// Reads back what has been observed so far.
@@ -535,26 +533,7 @@ impl<C> TestClient<C> {
     /// Panics listing every response that did not conform.
     #[track_caller]
     pub fn assert_conformance(&self) {
-        let document = self.service().openapi();
-        let mut failures = Vec::new();
-
-        for record in self.recorded().iter() {
-            for reason in conformance(document, record) {
-                failures.push(format!(
-                    "  {} {} -> {}: {reason}",
-                    record.method,
-                    record.target,
-                    record.status.as_u16()
-                ));
-            }
-        }
-
-        assert!(
-            failures.is_empty(),
-            "{} did not conform to the description:\n{}",
-            responses(failures.len()),
-            failures.join("\n")
-        );
+        assert_conforms(self.service().openapi(), self.recorded().iter());
     }
 
     /// Asserts that every declared response was exercised at least once.
@@ -571,6 +550,7 @@ impl<C> TestClient<C> {
         let recorded = self.recorded();
         assert_covered(
             self.service().openapi(),
+            |_| true,
             recorded
                 .iter()
                 .map(|record| (&record.method, &record.uri, record.status)),
@@ -869,7 +849,9 @@ fn connection_from(peer: Option<std::net::SocketAddr>) -> Connection {
 /// present and absent. Each of those clients is built
 /// [`with_coverage`](TestClient::with_coverage) over the same `Coverage`, and
 /// the declared responses are asserted once, after all of them ran, against
-/// the description that declares them all.
+/// the description that declares them all. The responses those clients
+/// received are checked for conformance to it once too, with
+/// [`assert_conformance`](Self::assert_conformance).
 ///
 /// A clone is the same record, not a copy of it: what one clone's clients
 /// record, every clone reads, and every clone is bound to the same document.
@@ -907,7 +889,10 @@ impl Coverage {
     /// or [`assert_covered`](Self::assert_covered) to count.
     ///
     /// `path` is the concrete request target, matched against the
-    /// description when asserted, as a client's own exchanges are.
+    /// description when asserted, as a client's own exchanges are. No
+    /// response is recorded with it, so
+    /// [`assert_conformance`](Self::assert_conformance) has nothing of it to
+    /// check.
     ///
     /// # Panics
     ///
@@ -919,12 +904,64 @@ impl Coverage {
         };
         push(
             &self.exchanges,
-            Exchange {
+            Exchange::Recorded {
                 method: method.clone(),
                 uri,
                 status,
             },
         );
+    }
+
+    /// Asserts that every response a client recording here received conforms
+    /// to `document`, as [`TestClient::assert_conformance`] checks one
+    /// client's against its own service's description.
+    ///
+    /// One assertion over every client sharing the record, so a client added
+    /// to a suite is checked without a call of its own. Each response is
+    /// held to its declared status, schema and required headers, whichever
+    /// client received it. An exchange [`record`](Self::record)ed by hand
+    /// carries no response, and is not checked.
+    ///
+    /// # Panics
+    ///
+    /// Panics listing every response that did not conform.
+    #[track_caller]
+    pub fn assert_conformance_to(&self, document: &Document) {
+        let exchanges = self.exchanges();
+        assert_conforms(document, exchanges.iter().filter_map(Exchange::received));
+    }
+
+    /// Asserts that every response a client recording here received conforms
+    /// to the document given to [`for_document`](Self::for_document), as
+    /// [`assert_conformance_to`](Self::assert_conformance_to) does for an
+    /// explicit document.
+    ///
+    /// ```
+    /// use kynos::{Router, test::{Coverage, TestClient}};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let service = Router::<()>::new().build(())?;
+    /// let coverage = Coverage::for_document(service.openapi().clone());
+    /// let anonymous = TestClient::new(service.clone()).with_coverage(&coverage);
+    /// let signed_in = TestClient::new(service)
+    ///     .with_default_header("authorization", "Bearer token")
+    ///     .with_coverage(&coverage);
+    /// # let _ = (anonymous, signed_in);
+    /// // ... exercise both clients, then check them together:
+    /// coverage.assert_conformance();
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), and otherwise listing every
+    /// response that did not conform.
+    #[track_caller]
+    pub fn assert_conformance(&self) {
+        self.assert_conformance_to(self.bound("assert_conformance_to"));
     }
 
     /// Asserts that every response `document` declares was exercised by at
@@ -941,7 +978,7 @@ impl Coverage {
     /// Panics listing every declared response that was never seen.
     #[track_caller]
     pub fn assert_declared_responses_covered(&self, document: &Document) {
-        self.assert_against(document);
+        self.assert_against(document, |_| true);
     }
 
     /// Asserts that every response the document given to
@@ -957,51 +994,195 @@ impl Coverage {
     /// declared response that was never seen.
     #[track_caller]
     pub fn assert_covered(&self) {
-        let document = self.document.as_deref().expect(
-            "a Coverage built without a document has nothing to assert against; \
-             build it with `Coverage::for_document`, or name the document with \
-             `assert_declared_responses_covered`",
-        );
-        self.assert_against(document);
+        self.assert_against(self.bound("assert_declared_responses_covered"), |_| true);
     }
 
-    /// Asserts the recorded exchanges cover what `document` declares.
+    /// Asserts that every response declared by the operations of `document`
+    /// that `keep` selects was exercised by at least one client recording
+    /// here, as
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// does for all of them.
+    ///
+    /// `keep` is asked of each operation under `document`'s `paths`, as
+    /// [`Document::operations`] yields it, so it can select by tag, by path
+    /// or by anything else the operation declares. One suite per area of an
+    /// API asserts that area's responses alone:
+    ///
+    /// ```
+    /// use kynos::{openapi::Document, test::Coverage};
+    ///
+    /// fn assert_lists_covered(coverage: &Coverage, document: &Document) {
+    ///     coverage.assert_declared_responses_covered_where(document, |op| {
+    ///         op.operation.tags.iter().any(|tag| tag == "lists")
+    ///     });
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `keep` selects no operation, which would assert nothing,
+    /// and otherwise listing every declared response of a selected operation
+    /// that was never seen.
     #[track_caller]
-    fn assert_against(&self, document: &Document) {
-        let exchanges = self
-            .exchanges
-            .lock()
-            .expect("a coverage record whose recorder panicked cannot be asserted on");
-        assert_covered(
-            document,
-            exchanges
-                .iter()
-                .map(|exchange| (&exchange.method, &exchange.uri, exchange.status)),
+    pub fn assert_declared_responses_covered_where(
+        &self,
+        document: &Document,
+        keep: impl Fn(&OperationAt<'_>) -> bool,
+    ) {
+        assert!(
+            routed(document).any(|(_, _, at)| keep(&at)),
+            "the predicate selects no operation under the description's `paths`, \
+             so there is nothing to assert"
         );
+        self.assert_against(document, keep);
+    }
+
+    /// Asserts that every response declared by the operations that `keep`
+    /// selects, of the document given to [`for_document`](Self::for_document),
+    /// was exercised by at least one client recording here, as
+    /// [`assert_declared_responses_covered_where`](Self::assert_declared_responses_covered_where)
+    /// does for an explicit document.
+    ///
+    /// ```
+    /// use kynos::test::Coverage;
+    ///
+    /// fn assert_lists_covered(coverage: &Coverage) {
+    ///     coverage.assert_covered_where(|op| op.operation.tags.iter().any(|tag| tag == "lists"));
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), when `keep` selects no
+    /// operation, and otherwise listing every declared response of a
+    /// selected operation that was never seen.
+    #[track_caller]
+    pub fn assert_covered_where(&self, keep: impl Fn(&OperationAt<'_>) -> bool) {
+        self.assert_declared_responses_covered_where(
+            self.bound("assert_declared_responses_covered_where"),
+            keep,
+        );
+    }
+
+    /// The document this record was built for, or a panic naming `explicit`,
+    /// the assertion that takes one instead.
+    #[track_caller]
+    fn bound(&self, explicit: &str) -> &Document {
+        let Some(document) = self.document.as_deref() else {
+            panic!(
+                "a Coverage built without a document has nothing to assert against; \
+                 build it with `Coverage::for_document`, or name the document with \
+                 `{explicit}`"
+            )
+        };
+        document
+    }
+
+    /// Asserts the recorded exchanges cover what the operations of `document`
+    /// that `keep` selects declare.
+    #[track_caller]
+    fn assert_against(&self, document: &Document, keep: impl Fn(&OperationAt<'_>) -> bool) {
+        let exchanges = self.exchanges();
+        assert_covered(document, keep, exchanges.iter().map(Exchange::matched));
+    }
+
+    /// Reads back what has been recorded so far.
+    #[track_caller]
+    fn exchanges(&self) -> std::sync::MutexGuard<'_, Vec<Exchange>> {
+        self.exchanges
+            .lock()
+            .expect("a coverage record whose recorder panicked cannot be asserted on")
     }
 }
 
-/// What a [`Coverage`] keeps of one exchange: enough to match it against a
-/// description later.
+/// What a [`Coverage`] keeps of one exchange.
 #[derive(Debug)]
-struct Exchange {
-    method: HttpMethod,
-    uri: Uri,
-    status: StatusCode,
+enum Exchange {
+    /// One a client received, kept whole, so it can be held to a
+    /// description as the client's own record is.
+    Received(Observed),
+    /// One [`Coverage::record`] was told of, which carries no response.
+    Recorded {
+        method: HttpMethod,
+        uri: Uri,
+        status: StatusCode,
+    },
 }
 
-/// Adds `exchange` to a shared coverage record.
-fn push(exchanges: &Mutex<Vec<Exchange>>, exchange: Exchange) {
-    exchanges
+impl Exchange {
+    /// What a declared response is matched by: the method, the target and
+    /// the status.
+    fn matched(&self) -> (&HttpMethod, &Uri, StatusCode) {
+        match self {
+            Self::Received(observed) => (&observed.method, &observed.uri, observed.status),
+            Self::Recorded {
+                method,
+                uri,
+                status,
+            } => (method, uri, *status),
+        }
+    }
+
+    /// The response, where one was received.
+    fn received(&self) -> Option<&Observed> {
+        match self {
+            Self::Received(observed) => Some(observed),
+            Self::Recorded { .. } => None,
+        }
+    }
+}
+
+/// Adds `exchange` to a shared coverage record, returning where it was filed.
+fn push(exchanges: &Mutex<Vec<Exchange>>, exchange: Exchange) -> usize {
+    let mut exchanges = exchanges
         .lock()
-        .expect("a coverage record whose recorder panicked cannot be written to")
-        .push(exchange);
+        .expect("a coverage record whose recorder panicked cannot be written to");
+    exchanges.push(exchange);
+    exchanges.len() - 1
 }
 
-/// Asserts that every response `document` declares is among `received`.
+/// Asserts that each of `received` conforms to `document`.
+#[track_caller]
+fn assert_conforms<'r>(document: &Document, received: impl Iterator<Item = &'r Observed>) {
+    let mut failures = Vec::new();
+
+    for record in received {
+        for reason in conformance(document, record) {
+            failures.push(format!(
+                "  {} {} -> {}: {reason}",
+                record.method,
+                record.target,
+                record.status.as_u16()
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} did not conform to the description:\n{}",
+        responses(failures.len()),
+        failures.join("\n")
+    );
+}
+
+/// Each operation under `document`'s `paths` that a request can name, with
+/// its template and method: the operations a response is matched to, and
+/// the only ones coverage asks of.
+fn routed(document: &Document) -> impl Iterator<Item = (&str, Method, OperationAt<'_>)> {
+    document.operations().filter_map(|at| {
+        let template = at.path?;
+        let method = Method::from_wire_str(at.method)?;
+        Some((template, method, at))
+    })
+}
+
+/// Asserts that every response the operations of `document` that `keep`
+/// selects declare is among `received`.
 #[track_caller]
 fn assert_covered<'r>(
     document: &Document,
+    keep: impl Fn(&OperationAt<'_>) -> bool,
     received: impl Iterator<Item = (&'r HttpMethod, &'r Uri, StatusCode)>,
 ) {
     let exercised: BTreeSet<(&str, Method, String)> = received
@@ -1015,12 +1196,10 @@ fn assert_covered<'r>(
         .collect();
 
     let mut missing = Vec::new();
-    for (template, item) in &document.paths.items {
-        for (method, operation) in item.operations() {
-            for key in declared_keys(&operation.responses) {
-                if !exercised.contains(&(template.as_str(), method, key.clone())) {
-                    missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
-                }
+    for (template, method, at) in routed(document).filter(|(_, _, at)| keep(at)) {
+        for key in declared_keys(&at.operation.responses) {
+            if !exercised.contains(&(template, method, key.clone())) {
+                missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
             }
         }
     }
@@ -1404,9 +1583,10 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// The exchange is recorded once its head arrives, so a dropped stream
     /// counts toward [`TestClient::assert_declared_responses_covered`] and a
-    /// shared [`Coverage`]. [`TestClient::assert_conformance`] checks its
-    /// status and fields, and its body once the stream has read the body to
-    /// its end, by [`finish`](TestStream::finish) or by reading until `None`.
+    /// shared [`Coverage`]. [`TestClient::assert_conformance`] and
+    /// [`Coverage::assert_conformance`] check its status and fields, and its
+    /// body once the stream has read the body to its end, by
+    /// [`finish`](TestStream::finish) or by reading until `None`.
     ///
     /// ```
     /// use kynos::{Router, test::TestClient};
@@ -1436,7 +1616,7 @@ impl<'a, C> TestRequest<'a, C> {
         } = self.answered().await;
 
         let (parts, body) = response.into_parts();
-        let record = client.record(&method, &path, uri, &parts, None);
+        let (record, shared) = client.record(&method, &path, uri, &parts, None);
 
         TestStream {
             method,
@@ -1447,6 +1627,7 @@ impl<'a, C> TestRequest<'a, C> {
             read: 0,
             observed: &client.observed,
             record,
+            coverage: client.coverage.as_deref().zip(shared),
             problem_base: client.problem_base.clone(),
         }
     }
@@ -1637,6 +1818,9 @@ pub struct TestStream<'a> {
     observed: &'a Mutex<Vec<Observed>>,
     /// This exchange's place in `observed`.
     record: usize,
+    /// The shared [`Coverage`] the client records into, and this exchange's
+    /// place in it, where the body is filed too.
+    coverage: Option<(&'a Mutex<Vec<Exchange>>, usize)>,
     /// The client's [`with_problem_base`](TestClient::with_problem_base),
     /// for the response [`finish`](Self::finish) returns.
     problem_base: Option<Arc<str>>,
@@ -1751,10 +1935,19 @@ impl TestStream<'_> {
             }
         }
         self.body = None;
+        let body = Bytes::copy_from_slice(&self.received);
+        if let Some((coverage, at)) = self.coverage {
+            let mut exchanges = coverage
+                .lock()
+                .expect("a coverage record whose recorder panicked cannot be written to");
+            if let Exchange::Received(shared) = &mut exchanges[at] {
+                shared.body = Some(body.clone());
+            }
+        }
         self.observed
             .lock()
             .expect("a test client whose recorder panicked cannot be written to")[self.record]
-            .body = Some(Bytes::copy_from_slice(&self.received));
+            .body = Some(body);
         false
     }
 

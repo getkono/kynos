@@ -339,6 +339,127 @@ fn an_unbound_coverage_refuses_to_assert_covered() {
     Coverage::new().assert_covered();
 }
 
+/// A predicate scopes coverage to the operations it selects: the reads alone
+/// cover `GET /users/{id}`, whatever `POST /users` declares, whether the
+/// document is the bound one or named.
+#[tokio::test]
+async fn a_scoped_coverage_asks_only_of_the_operations_it_selects() {
+    let document = service().expect("a describable router").openapi().clone();
+    let coverage = Coverage::for_document(document.clone());
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+
+    coverage.assert_covered_where(|op| op.method == "GET");
+    coverage
+        .assert_declared_responses_covered_where(&document, |op| op.path == Some("/users/{id}"));
+}
+
+/// What a selected operation declares and nobody exercised is reported, and
+/// nothing of the operations the predicate left out.
+#[test]
+#[should_panic(expected = "2 responses declared but never exercised:\n  \
+                           GET /users/{id} -> 400\n  GET /users/{id} -> 200")]
+fn a_scoped_coverage_reports_only_what_its_operations_declare() {
+    let document = service().expect("a describable router").openapi().clone();
+
+    Coverage::for_document(document).assert_covered_where(|op| op.method == "GET");
+}
+
+/// A predicate selecting nothing, as a misspelt tag does, would assert
+/// nothing, which is refused rather than passed vacuously.
+#[test]
+#[should_panic(expected = "the predicate selects no operation under the description's `paths`")]
+fn a_predicate_selecting_no_operation_is_refused() {
+    let document = service().expect("a describable router").openapi().clone();
+
+    Coverage::new().assert_declared_responses_covered_where(&document, |op| {
+        op.operation.tags.iter().any(|tag| tag == "lsits")
+    });
+}
+
+/// Every client recording into one coverage is checked for conformance by
+/// one assertion, against the bound document or a named one; an exchange
+/// recorded by hand carries no response, so nothing of it is checked.
+#[tokio::test(start_paused = true)]
+async fn a_coverage_checks_every_client_recording_into_it_for_conformance() {
+    let document = service().expect("a describable router").openapi().clone();
+    let coverage = Coverage::for_document(document.clone());
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+    let writes = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+    exercise_writes(&writes).await;
+    coverage.record(&kynos::http::Method::GET, "/nowhere", StatusCode::NOT_FOUND);
+
+    coverage.assert_conformance();
+    coverage.assert_conformance_to(&document);
+}
+
+/// A response one client received is reported by the shared coverage, though
+/// that client's own conformance was never asserted.
+#[tokio::test]
+#[should_panic(expected = "1 response did not conform to the description:\n  \
+                           GET /nowhere -> 404: no declared path matches this request")]
+async fn a_coverage_reports_the_response_a_client_never_checked() {
+    let coverage =
+        Coverage::for_document(service().expect("a describable router").openapi().clone());
+    let reads = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+    let strays = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    exercise_reads(&reads).await;
+    strays
+        .get("/nowhere")
+        .send()
+        .await
+        .assert_status(StatusCode::NOT_FOUND);
+
+    reads.assert_conformance();
+    coverage.assert_conformance();
+}
+
+/// What a description of `/users/{id}` other than this service's own promises.
+#[derive(Schema, Serialize)]
+struct Account {
+    email: String,
+}
+
+/// Fetches one account where this service fetches a user.
+#[kynos::get("/users/{id}")]
+async fn get_account(Path(path): Path<UserPath>) -> Json<Account> {
+    Json(Account {
+        email: format!("{}@example.com", path.id),
+    })
+}
+
+/// A body streamed to its end through a client recording into a coverage is
+/// checked by the coverage's own conformance, as a buffered one is.
+#[tokio::test]
+#[should_panic(expected = "1 response did not conform to the description:\n  \
+                           GET /users/42 -> 200: the body does not match the declared schema")]
+async fn a_coverage_checks_the_body_a_client_streamed() {
+    let accounts = Router::<()>::new()
+        .mount(kynos::routes![get_account])
+        .build(())
+        .expect("a describable router");
+    let coverage = Coverage::for_document(accounts.openapi().clone());
+    let users = TestClient::new(service().expect("a describable router")).with_coverage(&coverage);
+
+    let mut stream = users.get("/users/42").send_streaming().await;
+    assert_eq!(stream.status(), StatusCode::OK);
+    while stream.next_chunk().await.is_some() {}
+
+    coverage.assert_conformance();
+}
+
+/// A coverage built with no document has nothing for `assert_conformance` to
+/// check against, which is refused rather than passed vacuously.
+#[test]
+#[should_panic(expected = "name the document with `assert_conformance_to`")]
+fn an_unbound_coverage_refuses_to_assert_conformance() {
+    Coverage::new().assert_conformance();
+}
+
 /// Naming a document asserts against that document even on a bound record:
 /// bound to one declaring nothing, the record still reports what the named
 /// document declares and nobody exercised.

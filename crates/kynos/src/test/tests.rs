@@ -1,7 +1,8 @@
 //! The request body a `TestRequest` sends: what it yields, and what it tells a
 //! reader about its end and its length before the reader polls. And, in
-//! [`assertions`], how each `TestResponse::assert_*` helper fails, and in
-//! `connected`, what a client built `connect` reaches and refuses.
+//! [`assertions`], how each `TestResponse::assert_*` helper fails, in
+//! [`shared_conformance`], what a shared `Coverage` holds a response to, and
+//! in `connected`, what a client built `connect` reaches and refuses.
 //!
 //! `tests/client.rs` holds what a service reads from it; the end and length
 //! signals are read by a body's consumer rather than by the frames, so they
@@ -1476,15 +1477,25 @@ mod assertions {
                 response
             });
             let coverage = Coverage::new();
-            let client = crate::test::TestClient::new(service).with_coverage(&coverage);
+            let bound = Coverage::for_document(document.clone());
+            let client = crate::test::TestClient::new(service.clone()).with_coverage(&coverage);
             client.get("/things").send().await;
+            let into_bound = crate::test::TestClient::new(service).with_coverage(&bound);
+            into_bound.get("/things").send().await;
 
             fails_here!(client.assert_conformance());
             fails_here!(client.assert_declared_responses_covered());
             fails_here!(coverage.assert_declared_responses_covered(&document));
             fails_here!(coverage.assert_covered());
-            let bound = Coverage::for_document(document);
+            fails_here!(coverage.assert_declared_responses_covered_where(&document, |_| true));
+            fails_here!(coverage.assert_declared_responses_covered_where(&document, |_| false));
+            fails_here!(coverage.assert_covered_where(|_| true));
+            fails_here!(coverage.assert_conformance_to(&document));
+            fails_here!(coverage.assert_conformance());
             fails_here!(bound.assert_covered());
+            fails_here!(bound.assert_covered_where(|_| true));
+            fails_here!(bound.assert_covered_where(|_| false));
+            fails_here!(bound.assert_conformance());
         }
     }
 }
@@ -1672,6 +1683,58 @@ const _: fn(&super::TestClient<()>) = |client| assert_send(&client.get("/").send
 /// shared client. Compiled, never run.
 const _: fn(&super::TestClient<()>) = |client| assert_send(&client.get("/").send_streaming());
 
+/// What a shared `Coverage` holds a client's response to: its fields and its
+/// body, as the client's own `assert_conformance` does, which only a service
+/// answering against its own description can show.
+mod shared_conformance {
+    use crate::{
+        http::{Response, StatusCode, body::Body, header::CONTENT_TYPE},
+        router::service::Service,
+        test::{Coverage, TestClient},
+    };
+
+    /// A body breaking the declared schema and a declared required header
+    /// left out are both reported from the shared record, for the client
+    /// that received them.
+    #[tokio::test]
+    #[should_panic(expected = "2 responses did not conform to the description:\n  \
+                               GET /things -> 200: the declared required header `x-trace` \
+                               was not sent\n  GET /things -> 200: ")]
+    async fn a_shared_coverage_holds_the_fields_and_body_each_client_received() {
+        let document: kynos_openapi::Document = serde_json::from_value(serde_json::json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1" },
+            "paths": { "/things": { "get": { "responses": { "200": {
+                "description": "",
+                "headers": { "x-trace": { "required": true, "schema": { "type": "string" } } },
+                "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": { "id": { "type": "integer" } }
+                } } }
+            } } } } }
+        }))
+        .expect("a description");
+        let service = Service::<()>::new(document.clone(), |_| async {
+            let mut response = Response::new(Body::from_bytes(bytes::Bytes::from_static(
+                br#"{"id":"one"}"#,
+            )));
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, "application/json".parse().unwrap());
+            *response.status_mut() = StatusCode::OK;
+            response
+        });
+        let coverage = Coverage::for_document(document);
+        TestClient::new(service)
+            .with_coverage(&coverage)
+            .get("/things")
+            .send()
+            .await;
+
+        coverage.assert_conformance();
+    }
+}
+
 /// How a `TestStream` reads a body that arrives in frames: what each read
 /// returns, and when the body is filed for `assert_conformance`.
 mod streaming {
@@ -1685,7 +1748,7 @@ mod streaming {
             HeaderMap, HeaderValue, Method, Response, StatusCode, Uri,
             body::{Body, BoxError},
         },
-        test::{Observed, TestEvent, TestStream},
+        test::{Exchange, Observed, TestEvent, TestStream},
     };
 
     /// Frames handed out one per poll, in order.
@@ -1727,6 +1790,7 @@ mod streaming {
             read: 0,
             observed,
             record: 0,
+            coverage: None,
             problem_base: Some("https://errors.example.com/".into()),
         }
     }
@@ -1858,6 +1922,32 @@ mod streaming {
         assert_eq!(stream.next_event().await, None);
         assert_eq!(
             observed.lock().unwrap()[0].body,
+            Some(Bytes::from_static(b"data: a\n\ndata: b\n\n"))
+        );
+    }
+
+    /// A shared coverage is given the body when the client's own record is,
+    /// once it ends, so its conformance holds the same octets.
+    #[tokio::test]
+    async fn the_body_is_filed_in_a_shared_coverage_once_it_ends() {
+        let observed = record();
+        let shared = Mutex::new(vec![Exchange::Received(
+            observed.lock().unwrap()[0].clone(),
+        )]);
+        let mut stream = stream(framed("data: a\n\ndata: b\n\n", &[9]), &observed);
+        stream.coverage = Some((&shared, 0));
+        let filed = |shared: &Mutex<Vec<Exchange>>| {
+            shared.lock().unwrap()[0]
+                .received()
+                .and_then(|observed| observed.body.clone())
+        };
+
+        assert!(stream.next_event().await.is_some());
+        assert_eq!(filed(&shared), None);
+        assert!(stream.next_event().await.is_some());
+        assert_eq!(stream.next_event().await, None);
+        assert_eq!(
+            filed(&shared),
             Some(Bytes::from_static(b"data: a\n\ndata: b\n\n"))
         );
     }
