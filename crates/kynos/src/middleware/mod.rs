@@ -680,6 +680,15 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 /// [`on_abandoned`](Observer::on_abandoned) follows each
 /// [`on_request`](Observer::on_request), so a gauge one raises the other
 /// lowers, and it never only climbs.
+///
+/// That holds only while no hook panics, since no hook call is guarded: a
+/// hook is called on each observer in turn, and one that panics ends that
+/// turn. A panicking `on_request` leaves the observers already told of the
+/// request with neither ending, and a panicking `on_response` or
+/// `on_abandoned` leaves the observers after it with neither. An
+/// `on_abandoned` that panics while a panic nothing recovered is unwinding
+/// aborts the process, as any panic in a drop does then. A hook should
+/// record and return, never panic.
 pub trait Observer<C>: Send + Sync + 'static {
     /// Called when a request arrives, before any interceptor.
     ///
