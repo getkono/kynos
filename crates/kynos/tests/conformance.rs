@@ -17,9 +17,10 @@
 
 use kynos::{
     http::StatusCode,
+    openapi::{RefOr, Response, StatusPattern},
     prelude::*,
     router::service::Service,
-    test::{Coverage, TestClient},
+    test::{Coverage, Exemptions, TestClient},
 };
 use serde::{Deserialize, Serialize};
 
@@ -376,6 +377,183 @@ fn a_predicate_selecting_no_operation_is_refused() {
     Coverage::new().assert_declared_responses_covered_where(&document, |op| {
         op.operation.tags.iter().any(|tag| tag == "lsits")
     });
+}
+
+/// A coverage bound to the fixture's document, with every response but
+/// `POST /users`'s 409 recorded by hand.
+fn coverage_without_the_conflict() -> Coverage {
+    let coverage =
+        Coverage::for_document(service().expect("a describable router").openapi().clone());
+    let written = [201, 400, 413, 415, 422];
+    #[cfg(feature = "server")]
+    let written = [written.as_slice(), &[408]].concat();
+    for status in written {
+        let status = StatusCode::from_u16(status).expect("a status code");
+        coverage.record(&kynos::http::Method::POST, "/users", status);
+    }
+    for status in [StatusCode::OK, StatusCode::BAD_REQUEST] {
+        coverage.record(&kynos::http::Method::GET, "/users/1", status);
+    }
+    coverage
+}
+
+/// An exempted response needs no exchange, against the bound document or a
+/// named one, whichever way its method and status are written.
+#[test]
+fn an_exempted_response_needs_no_exchange() {
+    let coverage = coverage_without_the_conflict();
+    let document = service().expect("a describable router").openapi().clone();
+
+    coverage.assert_covered_except(&Exemptions::new().except(
+        "POST",
+        "/users",
+        409,
+        "the store never holds a name twice",
+    ));
+    coverage.assert_declared_responses_covered_except(
+        &document,
+        &Exemptions::new().except(
+            kynos::http::Method::POST,
+            "/users",
+            StatusCode::CONFLICT,
+            "the store never holds a name twice",
+        ),
+    );
+}
+
+/// A range and `default` are exempted by the key the document writes, the
+/// first by its `StatusPattern` and the second by its text.
+#[test]
+fn a_range_and_the_default_are_exempted_by_their_keys() {
+    let mut document = service().expect("a describable router").openapi().clone();
+    let responses = &mut document
+        .paths
+        .items
+        .get_mut("/users/{id}")
+        .and_then(|item| item.operation_mut(kynos::openapi::Method::Get))
+        .expect("the fixture declares `GET /users/{id}`")
+        .responses;
+    *responses = std::mem::take(responses)
+        .with_pattern(
+            StatusPattern::ServerError,
+            RefOr::Item(Response::new("A failure upstream.")),
+        )
+        .with_default(Response::new("Anything else."));
+
+    coverage_without_the_conflict().assert_declared_responses_covered_except(
+        &document,
+        &Exemptions::new()
+            .except("POST", "/users", 409, "the store never holds a name twice")
+            .except(
+                "GET",
+                "/users/{id}",
+                StatusPattern::ServerError,
+                "nothing upstream fails in a test",
+            )
+            .except(
+                "GET",
+                "/users/{id}",
+                "default",
+                "no handler answers otherwise",
+            ),
+    );
+}
+
+/// An exemption leaves every response it does not name asserted.
+#[test]
+#[should_panic(expected = "1 response declared but never exercised:\n  POST /users -> 409")]
+fn an_exemption_leaves_every_other_response_asserted() {
+    let mut exempt = Exemptions::new();
+    #[cfg(feature = "server")]
+    {
+        exempt = exempt.except("POST", "/users", 408, "unrelated to the 409");
+    }
+    exempt = exempt.except("POST", "/users", 413, "unrelated to the 409");
+    let coverage =
+        Coverage::for_document(service().expect("a describable router").openapi().clone());
+    for status in [201, 400, 415, 422] {
+        coverage.record(
+            &kynos::http::Method::POST,
+            "/users",
+            StatusCode::from_u16(status).expect("a status code"),
+        );
+    }
+    for status in [StatusCode::OK, StatusCode::BAD_REQUEST] {
+        coverage.record(&kynos::http::Method::GET, "/users/1", status);
+    }
+
+    coverage.assert_covered_except(&exempt);
+}
+
+/// An exemption whose response a test exercised is refused, so it is
+/// dropped rather than left to hide the response once it stops being seen.
+#[test]
+#[should_panic(
+    expected = "1 exemption names a response a test exercised, which needs no \
+                           exemption:\n  GET /users/{id} -> 200 (never reached)"
+)]
+fn an_exemption_of_an_exercised_response_is_refused() {
+    coverage_without_the_conflict().assert_covered_except(
+        &Exemptions::new()
+            .except("POST", "/users", 409, "the store never holds a name twice")
+            .except("GET", "/users/{id}", 200, "never reached"),
+    );
+}
+
+/// An exemption naming no declared response is refused, each saying what
+/// the description declares instead: a key the operation lacks, an
+/// operation the path lacks, a request target written for its template,
+/// and a path the description lacks. A missing response is reported first.
+#[test]
+#[should_panic(expected = "1 response declared but never exercised:\n  \
+                           POST /users -> 409\n\
+                           4 exemptions name no declared response:\n  \
+                           GET /users/{id} -> 5XX (a range): the operation declares no `5XX` \
+                           response, only `400`, `200`\n  \
+                           DELETE /users/{id} -> 500 (an operation): `/users/{id}` declares \
+                           no `DELETE` operation\n  \
+                           GET /users/1 -> 200 (a target): `/users/1` is a request target; \
+                           name the template it matches, `/users/{id}`\n  \
+                           GET /health -> 500 (a path): no path `/health` is declared")]
+fn a_stale_exemption_is_refused_naming_what_is_declared() {
+    coverage_without_the_conflict().assert_covered_except(
+        &Exemptions::new()
+            .except("GET", "/users/{id}", "5XX", "a range")
+            .except("DELETE", "/users/{id}", 500, "an operation")
+            .except("GET", "/users/1", 200, "a target")
+            .except("GET", "/health", 500, "a path"),
+    );
+}
+
+/// An exemption with no reason is refused when it is written, as one
+/// repeating another is.
+#[test]
+#[should_panic(expected = "the exemption of `GET /users/{id} -> 400` gives no reason")]
+fn an_exemption_without_a_reason_is_refused() {
+    let _ = Exemptions::new().except("GET", "/users/{id}", 400, " ");
+}
+
+#[test]
+#[should_panic(expected = "`GET /users/{id} -> 400` is exempted twice")]
+fn an_exemption_repeated_is_refused() {
+    let _ = Exemptions::new()
+        .except("GET", "/users/{id}", 400, "once")
+        .except("GET", "/users/{id}", StatusCode::BAD_REQUEST, "twice");
+}
+
+/// A key a `Responses` object cannot hold is refused, in text or as a
+/// number: the lowercase range a reader would not match, and a status past
+/// 599.
+#[test]
+#[should_panic(expected = "`5xx` is no response key")]
+fn an_exemption_of_a_lowercase_range_is_refused() {
+    let _ = Exemptions::new().except("GET", "/users/{id}", "5xx", "a range");
+}
+
+#[test]
+#[should_panic(expected = "`600` is no response key")]
+fn an_exemption_of_a_status_past_599_is_refused() {
+    let _ = Exemptions::new().except("GET", "/users/{id}", 600, "no class");
 }
 
 /// Every client recording into one coverage is checked for conformance by
