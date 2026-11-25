@@ -276,7 +276,8 @@ fn refused_body_responses<T: ProblemType, U: ProblemType>(
 /// does not run on them, and they declare neither its 413 nor, with a
 /// [`deadline`](BodySize::deadline), its 408, since neither is a refusal they
 /// could make. A router's own `BodySize` leaves the router's fallbacks alone
-/// too. So one limit covers a whole resource, and its group stays one per
+/// too, unless a router interceptor running beneath it may read the body. So
+/// one limit covers a whole resource, and its group stays one per
 /// resource rather than one per body class.
 ///
 /// Above an interceptor that buffers the body, such as one printing it, it

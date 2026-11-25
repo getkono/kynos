@@ -776,7 +776,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// [`Next::route`](crate::middleware::Next::route) is `None`; the
     /// description is unchanged, since a fallback has no `paths` entry. One
     /// covering [`Covers::BodyReading`](crate::middleware::Covers::BodyReading)
-    /// leaves the fallbacks alone, since none of them reads a body. On a
+    /// covers a fallback only while a root router interceptor running beneath
+    /// it may read the body
+    /// ([`READS_BODY`](crate::middleware::Interceptor::READS_BODY)), since no
+    /// handler reads that one. On a
     /// router that is nested or merged into another it covers that router's
     /// operations alone, as a group's interceptor does.
     ///
