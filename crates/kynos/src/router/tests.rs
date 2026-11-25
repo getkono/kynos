@@ -1037,6 +1037,7 @@ mod router_errors {
     use kynos_openapi::{Method, SpecError};
 
     use super::RouterError;
+    use crate::router::error::ExampleRefusal;
 
     /// Every variant, named. An exhaustive match, so a variant added to
     /// [`RouterError`] stops this file compiling until it is given a case.
@@ -1054,6 +1055,7 @@ mod router_errors {
             RouterError::ProblemMembersNotObject { .. } => "ProblemMembersNotObject",
             RouterError::ProblemMemberReserved { .. } => "ProblemMemberReserved",
             RouterError::MappedOperation { .. } => "MappedOperation",
+            RouterError::StringExample { .. } => "StringExample",
         }
     }
 
@@ -1153,6 +1155,14 @@ mod router_errors {
                  security requirement, change the media types its `QUERY` body accepts, or \
                  remove its `x-kynos-opaque` marker",
             ),
+            (
+                RouterError::StringExample {
+                    schema: "app::TitleRef",
+                    example: "tmdb".to_owned(),
+                    refusal: ExampleRefusal::Unparsed,
+                },
+                "`app::TitleRef` lists the example \"tmdb\", which its own `FromStr` refuses",
+            ),
         ]
     }
 
@@ -1163,6 +1173,23 @@ mod router_errors {
 
             assert_eq!(error.to_string(), expected, "{name}");
         }
+    }
+
+    /// What follows an example's refusal, which a `StringExample` reads after
+    /// the example: every broken bound, in the order the check found them.
+    #[test]
+    fn an_example_refusal_says_why() {
+        assert_eq!(
+            ExampleRefusal::OutOfBounds {
+                failures: vec![
+                    "must be at most 4 characters long".to_owned(),
+                    "must match the pattern `^a`".to_owned(),
+                ],
+            }
+            .to_string(),
+            "breaks the type's own bounds: must be at most 4 characters long; must match the \
+             pattern `^a`"
+        );
     }
 
     /// The ledger against the variants, transcribed, for the reason
@@ -1186,6 +1213,7 @@ mod router_errors {
             "ProblemMembersNotObject",
             "ProblemMemberReserved",
             "MappedOperation",
+            "StringExample",
         ]
         .into_iter()
         .collect();

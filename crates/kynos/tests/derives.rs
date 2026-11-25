@@ -1526,18 +1526,74 @@ fn a_string_type_is_a_parameter_through_its_own_text() {
     );
 }
 
-/// An example the type's own `FromStr` refuses stops the document.
-#[test]
-#[should_panic(expected = "`MisdescribedRef`'s example \"tmdb\" is refused by its own `FromStr`")]
-fn a_string_example_its_type_refuses_panics() {
-    emitted::<MisdescribedRef>();
+/// What `/misdescribed/{title}/{overlong}` captures: two string types whose
+/// examples their own types refuse.
+#[derive(PathParams)]
+struct ByBrokenExamples {
+    title: MisdescribedRef,
+    overlong: OverlongRef,
 }
 
-/// An example breaking the text's own bounds stops the document.
+impl kynos::schema::ParamValue for MisdescribedRef {}
+impl kynos::schema::ParamValue for OverlongRef {}
+
+#[kynos::get("/misdescribed/{title}/{overlong}")]
+async fn by_broken_examples(
+    kynos::extract::params::path::Path(path): kynos::extract::params::path::Path<ByBrokenExamples>,
+) -> kynos::response::status::NoContent {
+    let _ = path;
+    kynos::response::status::NoContent
+}
+
+/// An example the type's own `FromStr` refuses, or whose value breaks the
+/// text's own bounds, is a violation located at the example, so the router
+/// refuses to build rather than publish it.
 #[test]
-#[should_panic(expected = "`OverlongRef`'s example \"tmdb:550\" breaks its own bounds")]
-fn a_string_example_breaking_its_bounds_panics() {
-    emitted::<OverlongRef>();
+fn a_router_refuses_a_string_example_its_type_does_not_carry() {
+    use kynos::{
+        Error,
+        router::error::{ExampleRefusal, RouterError},
+    };
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_broken_examples]);
+    let Err(Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing refused examples was built");
+    };
+    let refused: Vec<_> = violations
+        .iter()
+        .filter_map(|violation| match &violation.error {
+            RouterError::StringExample {
+                schema,
+                example,
+                refusal,
+            } => Some((
+                violation.location.as_str(),
+                schema.rsplit("::").next(),
+                example.as_str(),
+                refusal.clone(),
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "#/components/schemas/MisdescribedRef/examples/0",
+                Some("MisdescribedRef"),
+                "tmdb",
+                ExampleRefusal::Unparsed,
+            ),
+            (
+                "#/components/schemas/OverlongRef/examples/0",
+                Some("OverlongRef"),
+                "tmdb:550",
+                ExampleRefusal::OutOfBounds {
+                    failures: vec!["must be at most 4 characters long".to_owned()],
+                },
+            ),
+        ]
+    );
 }
 
 /// A deprecated type says so, and says nothing about the note.

@@ -89,6 +89,7 @@ reportable! {
     fn a_build_failure_is_reportable {
         kynos::Error;
         kynos::router::error::RouterError;
+        kynos::router::error::ExampleRefusal;
         kynos::schema::registry::SchemaConflict;
         kynos::schema::registry::InstantiationNameRefusal;
         kynos::schema::registry::UnenforceableKeyPattern;

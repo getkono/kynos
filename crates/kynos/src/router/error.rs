@@ -194,4 +194,37 @@ pub enum RouterError {
         /// The `paths` key it is at.
         path: String,
     },
+
+    /// A `#[schema(string)]` type lists an example it does not carry as that
+    /// string, so the document would show a reader a value the API refuses.
+    ///
+    /// Found while the type's schema is described, which cannot fail, and
+    /// reported once per example, located at it under the type's component.
+    #[error("`{schema}` lists the example {example:?}, which {refusal}")]
+    StringExample {
+        /// The type, as `std::any::type_name` spells it.
+        schema: &'static str,
+        /// The example, as listed.
+        example: String,
+        /// Why the type does not carry it.
+        refusal: ExampleRefusal,
+    },
+}
+
+/// Why a `#[schema(string)]` type does not carry an example it lists, as a
+/// [`StringExample`](RouterError::StringExample) violation says.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ExampleRefusal {
+    /// The type's own `FromStr` refuses the example.
+    #[error("its own `FromStr` refuses")]
+    Unparsed,
+
+    /// The value `FromStr` reads breaks the bounds the type declares on its
+    /// text, checked on what its `Display` writes.
+    #[error("breaks the type's own bounds: {}", failures.join("; "))]
+    OutOfBounds {
+        /// What each broken bound says.
+        failures: Vec<String>,
+    },
 }

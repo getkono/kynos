@@ -467,9 +467,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `pattern`, `content_encoding` and `content_media_type`, under the field
 /// grammar's rules, and `examples("...", ...)`. The bounds are described and
 /// checked on the text `Display` writes for the decoded value, so a `FromStr`
-/// that normalizes is bounded on what it normalizes to. `schema` asserts that
-/// `FromStr` reads each example and that it keeps the bounds, so a broken
-/// example stops the router being built rather than misleading a reader. A
+/// that normalizes is bounded on what it normalizes to. An example `FromStr`
+/// refuses, or whose value breaks the bounds, is a `StringExample` violation
+/// located at it, so the router refuses to build rather than mislead a reader. A
 /// `format` is not taken, for the reason it is not on a field. No member is
 /// described, so a member's `#[schema(...)]`, a type or const parameter, and a
 /// derived kind are not either.

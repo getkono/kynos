@@ -18,10 +18,9 @@ use crate::doc::{doc_string, is_deprecated};
 /// `constraint_problem`, the type's own `CONSTRAINT_PROBLEM` item if it names
 /// one.
 ///
-/// `schema` asserts that `FromStr` reads each example and that the value read
-/// keeps the text's bounds, so a document never shows an example the type
-/// refuses. The document is built once, when the router is, so a broken
-/// example stops the application there rather than misleading a reader.
+/// `schema` records on the registry each example `FromStr` refuses or whose
+/// value breaks the text's bounds, which the router reports as a violation
+/// when it is built, so a document never shows an example the type refuses.
 pub(super) fn expand(
     input: &DeriveInput,
     form: &StringForm,
@@ -62,25 +61,12 @@ pub(super) fn expand(
         let _: fn(&::core::primitive::str) -> _ = <Self as ::core::str::FromStr>::from_str;
         let _ = <Self as ::core::fmt::Display>::fmt;
     };
-    let refused = format!("`{name}`'s example {{example:?}} is refused by its own `FromStr`");
-    let broken = format!("`{name}`'s example {{example:?}} breaks its own bounds: {{failures:?}}");
-    let asserted = (!examples.is_empty()).then(|| {
+    let admitted = (!examples.is_empty()).then(|| {
         quote! {
-            for example in [#(#examples),*] {
-                let ::core::result::Result::Ok(read) =
-                    <Self as ::core::str::FromStr>::from_str(example)
-                else {
-                    ::core::panic!(#refused);
-                };
-                if let ::core::result::Result::Err(failures) =
-                    ::kynos::schema::constraints::Violations::of(
-                        &read,
-                        ::kynos::schema::constraints::Pointer::root(),
-                    )
-                {
-                    ::core::panic!(#broken);
-                }
-            }
+            ::kynos::__private::string_form::admit_examples::<Self>(
+                registry,
+                &[#(#examples),*],
+            );
         }
     });
 
@@ -107,7 +93,7 @@ pub(super) fn expand(
                 registry: &mut ::kynos::schema::registry::Registry,
             ) -> ::kynos::openapi::Schema {
                 #carried
-                #asserted
+                #admitted
                 #schema
             }
 
