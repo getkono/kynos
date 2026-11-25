@@ -4,6 +4,7 @@ use crate::model::{
     document::{Document, SpecVersion},
     info::Info,
     paths::{item::PathItem, template::PathTemplate},
+    schema::{Schema, object::SchemaObject},
 };
 
 fn document() -> Document {
@@ -87,6 +88,32 @@ fn a_key_written_twice_is_refused_by_name() {
         .expect_err("`info` is written twice");
     assert!(
         error.to_string().contains("the key `info` appears twice"),
+        "{error}"
+    );
+}
+
+/// A Schema Object's unknown keywords sit beside its typed keywords too, so
+/// one named like a typed keyword is refused the same way.
+#[test]
+fn an_unknown_keyword_named_like_a_schema_keyword_is_refused() {
+    let mut object = SchemaObject {
+        title: Some("Order".to_owned()),
+        ..SchemaObject::default()
+    };
+    object
+        .unknown_keywords
+        .insert("title".to_owned(), json!("Other"));
+    let mut document = document();
+    document
+        .components
+        .schemas
+        .insert("Order".to_owned(), Schema::Object(Box::new(object)));
+
+    let error = document
+        .to_canonical_json()
+        .expect_err("`title` is written twice");
+    assert!(
+        error.to_string().contains("the key `title` appears twice"),
         "{error}"
     );
 }

@@ -1,6 +1,9 @@
 use std::{ffi::OsStr, path::Path};
 
-use super::{Mode, Verdict, judge, line_diff, resolve};
+use kynos_openapi::{Document, Info, SpecVersion};
+
+use super::{Mode, Verdict, check, judge, line_diff, resolve};
+use crate::test::tests::fails_here;
 
 const PATH: &str = "/spec/openapi.json";
 
@@ -130,4 +133,25 @@ fn a_long_side_is_counted_past_the_limit() {
     let diff = line_diff(&committed, "");
     assert_eq!(diff.matches("\n-x").count(), super::SHOWN);
     assert!(diff.ends_with("\n-... 10 more lines\n \n"), "{diff}");
+}
+
+/// Every way the assertion fails is reported at the test's own line, not
+/// inside kynos: the document without a canonical form, the variable, the
+/// relative path, the read, the write, and the difference.
+#[test]
+fn every_failure_is_reported_at_the_callers_line() {
+    let document = Document::new(SpecVersion::V3_1, Info::new("Orders", "1.0.0"));
+    let mut twice = document.clone();
+    twice.extensions.insert("info", 1);
+    let package = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // Neither exists, so reading finds nothing and writing has no directory.
+    let missing = package.join("no-such-directory/openapi.json");
+    let update = Some(OsStr::new("1"));
+
+    fails_here!(check(&missing, None, None, &twice));
+    fails_here!(check(&missing, None, Some(OsStr::new("true")), &document));
+    fails_here!(check(Path::new("openapi.json"), None, None, &document));
+    fails_here!(check(package, None, None, &document));
+    fails_here!(check(&missing, None, update, &document));
+    fails_here!(check(&missing, None, None, &document));
 }

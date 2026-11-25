@@ -38,9 +38,12 @@ impl Document {
     /// # Errors
     ///
     /// Returns an error where [`to_json`](Self::to_json) would, and where one
-    /// object would carry the same key twice, which only an extension named
-    /// like a field of its object does: an object with no single canonical
-    /// form.
+    /// object would carry the same key twice, an object with no single
+    /// canonical form. Only a map flattened beside an object's fields can
+    /// name one of them again: an extension named like a field of its
+    /// object, or an entry of a Schema Object's
+    /// [`unknown_keywords`](crate::model::schema::object::SchemaObject::unknown_keywords)
+    /// named like one of its typed keywords.
     pub fn to_canonical_json(&self) -> Result<String, serde_json::Error> {
         let direct = serde_json::to_string(self)?;
         DuplicateKeys::refuse_in(&direct)?;

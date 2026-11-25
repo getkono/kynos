@@ -62,14 +62,26 @@ const SHOWN: usize = 40;
 /// cannot be read or written; and where the document has no canonical form.
 #[track_caller]
 pub fn assert_file_matches(path: impl AsRef<Path>, document: &Document) {
-    let path = resolve(
+    check(
         path.as_ref(),
         std::env::var_os("CARGO_MANIFEST_DIR").as_deref(),
+        std::env::var_os(UPDATE_VARIABLE).as_deref(),
+        document,
     );
-    let mode = Mode::from_variable(std::env::var_os(UPDATE_VARIABLE).as_deref());
-    let emitted = document
-        .to_canonical_json()
-        .unwrap_or_else(|error| panic!("the document has no canonical JSON: {error}"));
+}
+
+/// [`assert_file_matches`] over the two variables' values as read.
+///
+/// Every panic is raised in this frame or a `#[track_caller]` one, never in
+/// a closure, which `#[track_caller]` does not reach.
+#[track_caller]
+fn check(path: &Path, manifest_dir: Option<&OsStr>, update: Option<&OsStr>, document: &Document) {
+    let path = resolve(path, manifest_dir);
+    let mode = Mode::from_variable(update);
+    let emitted = match document.to_canonical_json() {
+        Ok(emitted) => emitted,
+        Err(error) => panic!("the document has no canonical JSON: {error}"),
+    };
     let committed = match std::fs::read(&path) {
         Ok(bytes) => Some(bytes),
         Err(error) if error.kind() == ErrorKind::NotFound => None,
@@ -79,9 +91,9 @@ pub fn assert_file_matches(path: impl AsRef<Path>, document: &Document) {
     match judge(&path, committed.as_deref(), &emitted, mode) {
         Verdict::Matches => {}
         Verdict::Rewrite => {
-            std::fs::write(&path, &emitted).unwrap_or_else(|error| {
-                panic!("`{}` could not be written: {error}", path.display())
-            });
+            if let Err(error) = std::fs::write(&path, &emitted) {
+                panic!("`{}` could not be written: {error}", path.display());
+            }
             panic!(
                 "`{}` now holds the document this code builds, since {UPDATE_VARIABLE}=1; a run \
                  that rewrites the file fails, so it is never mistaken for one that checked \
