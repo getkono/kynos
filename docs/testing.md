@@ -476,7 +476,7 @@ halve.
 
 | Element | Named by | Named only in | Why a request cannot reach it |
 | --- | --- | --- | --- |
-| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/map.rs`, `router/mod.rs`, `router/sealed.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `test/mod.rs`, `unchecked/describe.rs` | every site builds it, annotates it, hands it back to the application, or takes it from a test to assert against; `router/map.rs` runs the application's `map_openapi` edits on it inside `describe`. `docs::render::render` serializes it while the router is built, and `Published::publish` again after each `openapi_mut` edit, so the endpoint serving a description holds finished bytes rather than a `Document`. `router/build.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and is not a site: it never names the type, only moving the value `describe` returned into `Service`. One site also serves a request, so for it the reason is an argument the rule does not check: `router/service.rs`'s `Service` owns the document, hands it to the application only through `Service::openapi`, and edits it only through `openapi_mut` -- at bind and at the tower conversion, both of which take the service by value, so no request is in flight |
+| the emitted document | `Document` | `router/describe.rs`, `router/docs/render.rs`, `router/install.rs`, `router/map.rs`, `router/mod.rs`, `router/sealed.rs`, `router/service.rs`, `server/describe.rs`, `server/tls/document.rs`, `test/conformance.rs`, `test/document.rs`, `test/mod.rs`, `unchecked/describe.rs` | every site builds it, annotates it, hands it back to the application, or takes it from a test to assert against; `router/map.rs` runs the application's `map_openapi` edits on it inside `describe`. `docs::render::render` serializes it while the router is built, and `Published::publish` again after each `openapi_mut` edit, so the endpoint serving a description holds finished bytes rather than a `Document`. `router/build.rs` builds the per-request closure where the document is in scope and moves only the dispatch table into it, and is not a site: it never names the type, only moving the value `describe` returned into `Service`. One site also serves a request, so for it the reason is an argument the rule does not check: `router/service.rs`'s `Service` owns the document, hands it to the application only through `Service::openapi`, and edits it only through `openapi_mut` -- at bind and at the tower conversion, both of which take the service by value, so no request is in flight |
 | the schema registry | `owned Registry` | `router/describe.rs`, `schema/registry.rs` | the one registry a build mints is consumed by `describe`, which has finished before a service exists to accept a request. `schema/registry.rs` defines the type and its two constructors, `new` and the derived `Default`, and holds no registry of its own |
 | the document validators | `Validator` | `router/describe.rs` | a description is validated where it is built. The build either fails or drops the validator, and nothing on the request path holds one to run |
 | the JSON Schema interpreter | `jsonschema` | `test/conformance.rs` | it is behind `test-util` and exists to check an observed response against the description. The request parser is the other projection of the same declaration and interprets no schema |
@@ -835,6 +835,36 @@ The requirement these snapshots enforce is
 [`nfr.md`](nfr.md#macros)'s "no diagnostic names an internal type", which is the
 reason the suite has to be exhaustive rather than illustrative. A diagnostic
 nobody snapshotted is a diagnostic nobody checked.
+
+## A committed description
+
+An application committing its description, for a client generator or as a
+reviewed contract, holds the file to the router with one test:
+
+```rust,ignore
+kynos::test::document::assert_file_matches("../spec/openapi.json", &router.openapi()?);
+```
+
+- **The file is the canonical form.** `Document::to_canonical_json` sorts every
+  object's keys and no array, so the file changes only when the description
+  does: not when a dependency unifies `serde_json/preserve_order` on, and not
+  when mounts or fields are reordered. `to_json` keeps the model's order, which
+  is fixed by the code, but free-form JSON inside it is in whatever order the
+  build's `serde_json` keeps.
+- **A relative path is the package's.** It is read against
+  `CARGO_MANIFEST_DIR`, as Cargo sets it for the test, never against the
+  working directory.
+- **A rewrite is never green.** `KYNOS_UPDATE_DOCUMENTS=1` writes the document
+  over a file that differs, then fails the test anyway, so a CI job that sets
+  the variable by mistake cannot pass by rewriting its own expectation. Commit
+  the rewrite and run again without it. Any value but `1` or empty is refused,
+  since `true` or `0` would otherwise read as one or the other.
+- **A failure carries the diff,** one hunk from the first differing line to the
+  last, so a reader sees what moved without regenerating the file.
+
+It takes a `Document` rather than a `TestClient`: the one function serves a
+client's [`openapi()`](../crates/kynos/src/test/mod.rs), a router never served,
+and a 3.1 description emitted from an `openapi32` build by `openapi_as`.
 
 ## Rationale
 

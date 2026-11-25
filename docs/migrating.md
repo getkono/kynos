@@ -79,6 +79,7 @@ by task.
 | `header(..).to_ascii_lowercase().contains("authorization")`, which `X-Authorization` also passes | `resp.assert_header_lists("access-control-allow-headers", "authorization")`, which compares whole list elements across every field line | #1438 |
 | `assert!(resp.header("content-type").unwrap().starts_with("text/plain"))`, which `text/plainer` also passes | `resp.assert_content_type("text/plain")`, which compares the media type's essence in any case, its parameters aside | #1438 |
 | `let body: Value = resp.json(); body["token"].as_str().expect("token")` | `resp.json_at::<String>("/token")`, an RFC 6901 pointer; behind `json` | #1438 |
+| `to_json()` through a `serde_json::Value` and `to_string_pretty` plus `'\n'`, compared with a committed file and rewritten under an environment variable | `test::document::assert_file_matches(path, &document)`, over `Document::to_canonical_json`; `KYNOS_UPDATE_DOCUMENTS=1` rewrites the file and fails the run | #1441 |
 
 ## 0.5 to 0.6
 
