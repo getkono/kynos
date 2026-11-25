@@ -13,6 +13,7 @@
 //! log, so the logging facade stays named where the runtime allowance lists.
 
 pub mod slug;
+
 use std::time::Duration;
 
 use kynos_openapi::{Header, Map, RefOr, Response, Responses, Schema as OpenApiSchema};

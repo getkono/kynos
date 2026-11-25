@@ -1167,6 +1167,21 @@ marker is the opt-in its builder method records and the declared name its
 group reads, so the three are one concern: which fields the interceptor sends
 and declares.
 
+`__private/problem.rs` is doc-hidden macro support, so a split would cost no
+path an application names, but it would lengthen paths a user reads: the
+`on_unimplemented` notes and bound notes `rustc` prints for a misused
+`#[problem(...)]` attribute name `__private::problem::RetryAfterField`,
+`HeldError`, `headers` and the member functions, and the `ui/macros/`
+snapshots record them. It is one concern: the runtime half of the
+`ApiError` derive's expansion, every item a function or bound that
+expansion names. What pushed it over was issue #1477's slug check, and
+that is the one piece that left: `problem/slug.rs` serves `problem_type!`
+rather than the derive, and changes when the derive's slug rule does. Split
+by attribute instead, a `#[problem(retry_after)]` field's writer, its
+declaration and its clash check would each still sit beside the one
+expansion that calls them, so the split would only move the file boundary.
+One concern, so one file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1179,6 +1194,7 @@ The budget, which may only shrink:
 - `crates/kynos-openapi/src/validate/violation.rs`
 - `crates/kynos-profile/src/lib.rs`
 - `crates/kynos/src/__private/fuzz.rs`
+- `crates/kynos/src/__private/problem.rs`
 - `crates/kynos/src/error/members.rs`
 - `crates/kynos/src/error/problem.rs`
 - `crates/kynos/src/error/rejection.rs`
