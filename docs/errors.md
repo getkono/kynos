@@ -651,7 +651,9 @@ a field's type names, which answers only where the group names none: the value
 holding a bound answers for it, as a body's type does for its members, so one
 group reads alike as a `Query<T>` and as a `QueryString<T>`. A bounded `u32`
 field thus answers with the application's problem without a newtype naming
-it.
+it. Such a group says a `#[param(default)]` or `#[param(flatten)]` to serde
+too, which the `Schema` derive holds it to, as
+[`schema.md`](schema.md#parameter-values) sets out.
 
 What a body that does not decode into `T` sends is unchanged: `about:blank`,
 since no bound was consulted. Each input therefore declares a choice at its

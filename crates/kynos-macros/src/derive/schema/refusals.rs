@@ -7,6 +7,7 @@ mod absence;
 mod grammar;
 mod naming;
 mod object_keys;
+mod params;
 mod recursion;
 mod skips;
 mod wire_form;
@@ -39,6 +40,7 @@ pub(super) fn check(input: &DeriveInput, container: &Container) -> syn::Result<(
     object_keys::reject_unread_field_in_closed_object(input, container)?;
     skips::reject_one_way_member_skip(input, container)?;
     skips::reject_skipped_adjacent_payload(input, container)?;
+    params::reject_param_unspelt_to_serde(input, container)?;
     grammar::check_constraints(input, container)?;
     recursion::reject_recursive_generic(input, container)
 }

@@ -584,6 +584,77 @@ mod schema {
         ]
     }
 
+    /// The refusals of a query group's `#[param(...)]` serde is not also told,
+    /// which `Query<T>` and the `QueryString<T>` this derive describes would
+    /// read differently.
+    fn param_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`#[param(flatten)]` on a field serde reads nested",
+                quote::quote!(
+                    struct Listing {
+                        #[param(flatten)]
+                        page: Page,
+                    }
+                ),
+                "Add `#[serde(flatten)]` beside `#[param(flatten)]`",
+            ),
+            case(
+                "`#[param(default = ...)]` on a field serde requires",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        limit: u32,
+                    }
+                ),
+                "would refuse what `Query<T>` fills with its default",
+            ),
+        ]
+    }
+
+    /// Each `#[param(...)]` serde is also told, on the field or, for a
+    /// default, on the struct, is accepted.
+    #[test]
+    fn a_param_serde_is_also_told_is_accepted() {
+        for (description, accepted) in [
+            (
+                "both `flatten`s",
+                quote::quote!(
+                    struct Listing {
+                        #[param(flatten)]
+                        #[serde(flatten)]
+                        page: Page,
+                    }
+                ),
+            ),
+            (
+                "a field `default` naming a function",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        #[serde(default = "fifty")]
+                        limit: u32,
+                    }
+                ),
+            ),
+            (
+                "the struct's `default`",
+                quote::quote!(
+                    #[serde(default)]
+                    struct Page {
+                        #[param(default = 0)]
+                        offset: u32,
+                    }
+                ),
+            ),
+        ] {
+            let input = syn::parse2(accepted).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("{description} was refused: {error}");
+            }
+        }
+    }
+
     /// The refusal a split `rename` raises where serde writes a member under
     /// one name and reads it under another.
     ///
@@ -771,6 +842,7 @@ mod schema {
         each_case_is_refused(field_ledger(), expand_inner);
         each_case_is_refused(tag_ledger(), expand_inner);
         each_case_is_refused(rename_ledger(), expand_inner);
+        each_case_is_refused(param_ledger(), expand_inner);
     }
 
     /// A qualified key matches no constraint, so it reaches the unknown-key
@@ -971,6 +1043,7 @@ mod schema {
                 include_str!("schema/refusals/grammar.rs"),
                 include_str!("schema/refusals/naming.rs"),
                 include_str!("schema/refusals/object_keys.rs"),
+                include_str!("schema/refusals/params.rs"),
                 include_str!("schema/refusals/recursion.rs"),
                 include_str!("schema/refusals/skips.rs"),
                 include_str!("schema/refusals/wire_form.rs"),
@@ -988,6 +1061,7 @@ mod schema {
                 + field_ledger().len()
                 + tag_ledger().len()
                 + rename_ledger().len()
+                + param_ledger().len()
                 - IN_ATTRIBUTE,
         );
     }

@@ -1,0 +1,11 @@
+error: this group derives `Schema`, which describes it as serde reads it for `QueryString<T>`, and serde requires this field, so `QueryString<T>` would refuse what `Query<T>` fills with its default. Add `#[serde(default = "...")]` naming a function returning the same value, or `#[serde(default)]` where the type's `Default` is that value
+ --> tests/ui/macros/schema_query_params_unspelt_to_serde.rs:7:13
+  |
+7 |     #[param(default = 50)]
+  |             ^^^^^^^
+
+error: this group derives `Schema`, which describes it as serde reads it for `QueryString<T>`, and serde reads this field as one nested member, so `QueryString<T>` and `Query<T>` would read the group differently. Add `#[serde(flatten)]` beside `#[param(flatten)]`, so both read the flattened group's members in its place
+  --> tests/ui/macros/schema_query_params_unspelt_to_serde.rs:19:13
+   |
+19 |     #[param(flatten)]
+   |             ^^^^^^^

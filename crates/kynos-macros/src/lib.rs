@@ -680,6 +680,13 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `field_identifier` or `variant_identifier` enum's container rule is not
 ///   refused: serde only reads the enum, so its deserialize side names every
 ///   variant.
+/// - A parameter group's `#[param(flatten)]` on a field serde reads nested,
+///   lacking serde's own `flatten`, and its `#[param(default = ...)]` on a
+///   field serde requires, lacking serde's own `default` on the field or its
+///   struct: `Query<T>` would read the group one way and `QueryString<T>`,
+///   which this derive describes, another. Say each to serde too; serde's
+///   default names a function, so returning the same value is the
+///   application's to keep.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::schema::expand_inner)
@@ -1263,6 +1270,12 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 ///     status: Option<EntryStatus>,
 /// }
 /// ```
+///
+/// A group that also derives [`Schema`](macro@Schema) and serde's
+/// `Deserialize`, to be read as a `QueryString<T>` too, says each of these to
+/// serde as well: the `Schema` derive refuses a `default` whose field serde
+/// would require, and a `flatten` serde would read nested, so the two
+/// extractors cannot read one group differently.
 ///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
