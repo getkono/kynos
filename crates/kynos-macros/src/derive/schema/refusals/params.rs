@@ -52,9 +52,7 @@ pub(super) fn reject_param_unspelt_to_serde(
         return Ok(());
     };
     for field in &named.named {
-        if let Some(key) = param_key(field, "flatten")
-            && !is_flattened(field)
-        {
+        if let Some(key) = param_key(field, "flatten").filter(|_| !is_flattened(field)) {
             return Err(syn::Error::new(
                 key.span(),
                 "this group derives `Schema`, which describes it as serde reads it for \
@@ -64,10 +62,8 @@ pub(super) fn reject_param_unspelt_to_serde(
                  group's members in its place",
             ));
         }
-        if let Some(key) = param_key(field, "default")
-            && !container.default
-            && !serde_flag(&field.attrs, &["default"])
-        {
+        let unfilled = !container.default && !serde_flag(&field.attrs, &["default"]);
+        if let Some(key) = param_key(field, "default").filter(|_| unfilled) {
             return Err(syn::Error::new(
                 key.span(),
                 "this group derives `Schema`, which describes it as serde reads it for \
