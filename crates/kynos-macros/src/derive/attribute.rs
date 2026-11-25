@@ -115,6 +115,9 @@ pub(crate) struct FieldArgs {
     pub(crate) value: Option<LitStr>,
     /// `style = "..."`, which `#[cookie]` alone takes.
     pub(crate) style: Option<LitStr>,
+    /// `explode = true | false`, which `#[param]` takes and only a query
+    /// group's `Vec` field honours.
+    pub(crate) explode: Option<LitBool>,
 }
 
 /// Reads a field's `#[param]`, `#[header]` or `#[cookie]` lists, named by
@@ -134,6 +137,21 @@ pub(crate) fn field_args(field: &Field, attribute: &str) -> syn::Result<FieldArg
                 "rename" => args.rename = Some(meta.value()?.parse()?),
                 "value" if attribute == "header" => args.value = Some(meta.value()?.parse()?),
                 "style" if attribute == "cookie" => args.style = Some(meta.value()?.parse()?),
+                "explode" if attribute == "param" => {
+                    let value: Expr = meta.value()?.parse()?;
+                    let Expr::Lit(ExprLit {
+                        lit: Lit::Bool(flag),
+                        ..
+                    }) = value
+                    else {
+                        return Err(syn::Error::new(
+                            value.span(),
+                            "`explode` is `true` or `false`, written as a literal: how a list \
+                             is carried is settled at the derive",
+                        ));
+                    };
+                    args.explode = Some(flag);
+                }
                 _ => {
                     return Err(unknown(
                         &meta.path,

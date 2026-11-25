@@ -362,8 +362,8 @@ fn a_query_api_key_reads_plus_as_a_space() {
     }
 }
 
-/// The first pair named the key decides, as it does for a derived query
-/// parameter; a later pair never stands in for one that could not be read.
+/// The first pair named the key decides; a later pair never stands in for one
+/// that could not be read.
 #[test]
 fn a_query_api_key_is_the_first_pair_named_the_key() {
     let head = targeting("/reports?api_key&api_key=second");

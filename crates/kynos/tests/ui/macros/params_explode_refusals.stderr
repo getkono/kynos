@@ -1,0 +1,17 @@
+error: `explode` says how a list's items are carried, and this field is one value. Only a `Vec<T>` field takes it
+ --> tests/ui/macros/params_explode_refusals.rs:7:23
+  |
+7 |     #[param(explode = false)]
+  |                       ^^^^^
+
+error: `explode` is `true` or `false`, written as a literal: how a list is carried is settled at the derive
+  --> tests/ui/macros/params_explode_refusals.rs:13:23
+   |
+13 |     #[param(explode = "true")]
+   |                       ^^^^^^
+
+error: `explode` says how a query list's items are carried, and a path parameter is one value. Only a `QueryParams` group's `Vec<T>` field takes it
+  --> tests/ui/macros/params_explode_refusals.rs:19:23
+   |
+19 |     #[param(explode = false)]
+   |                       ^^^^^
