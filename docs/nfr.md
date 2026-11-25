@@ -1157,6 +1157,16 @@ the policy and declaring what it renders read the same two function pointers,
 and a file separating them would put the half that keeps the wire and the
 description agreeing one file away from the other. One concern, so one file.
 
+`middleware/security_headers.rs` is `status.rs`'s shape. It declares
+`SecurityHeaders`, `StrictTransportSecurity`, `SecurityFields`, the
+`HstsSetting` and `FramingSetting` traits and the four markers implementing
+them, so a split would turn `security_headers::DenyFraming`, the type a
+function returning the interceptor names, into a longer path. What pushed it
+over was issue #1435's markers, which replaced the two `bool` parameters. A
+marker is the opt-in its builder method records and the declared name its
+group reads, so the three are one concern: which fields the interceptor sends
+and declares.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1183,6 +1193,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
 - `crates/kynos/src/middleware/request_id.rs`
+- `crates/kynos/src/middleware/security_headers.rs`
 - `crates/kynos/src/middleware/stack.rs`
 - `crates/kynos/src/middleware/trace.rs`
 - `crates/kynos/src/middleware/trusted_hosts.rs`

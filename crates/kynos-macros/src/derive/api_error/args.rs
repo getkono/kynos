@@ -37,8 +37,10 @@ pub(super) enum Position {
 #[derive(Default)]
 pub(super) struct ProblemArgs {
     pub(super) status: Option<(u16, Span)>,
-    pub(super) title: Option<String>,
-    pub(super) type_uri: Option<String>,
+    /// `title`, at the span of `title`.
+    pub(super) title: Option<(String, Span)>,
+    /// `type`, at the span of `type`.
+    pub(super) type_uri: Option<(String, Span)>,
     /// `slug`: the part of the type URI after `base`, in place of the
     /// kebab-cased name, at the span of `slug`.
     pub(super) slug: Option<(LitStr, Span)>,
@@ -109,8 +111,8 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                     "a problem detail describes a failure",
                     &mut args.status,
                 )?,
-                "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
-                "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
+                "title" => args.title = Some((meta.value()?.parse::<LitStr>()?.value(), span)),
+                "type" => args.type_uri = Some((meta.value()?.parse::<LitStr>()?.value(), span)),
                 // Spelled, and checked against `type` and `base`, where the
                 // outcomes are read, since a variant's `base` is its enum's.
                 "slug" => args.slug = Some((meta.value()?.parse::<LitStr>()?, span)),

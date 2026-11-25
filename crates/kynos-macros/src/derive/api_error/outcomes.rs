@@ -19,12 +19,18 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
 
     match &input.data {
         Data::Enum(data) => {
-            // A status belongs on each variant, not the enum.
             if let Some(status) = args.status {
                 return Err(syn::Error::new(
                     status.1,
                     "a status belongs on each variant, because the point of an `ApiError` enum is \
                      that its variants fail differently. Move it to the variants",
+                ));
+            }
+            if let Some((_, span)) = args.title.as_ref().or(args.type_uri.as_ref()) {
+                return Err(syn::Error::new(
+                    *span,
+                    "a `title` or `type` names one failure, so it belongs on each variant, \
+                     which never reads the enum's. Move it to them; a shared URI prefix is `base`",
                 ));
             }
             if let Some((_, span)) = &args.slug {
@@ -93,7 +99,7 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                 retry_after: retry_after_field(&data.fields, &markers)?,
                 status,
                 type_uri: type_uri(args, base, &input.ident)?,
-                title: args.title.clone(),
+                title: args.title.as_ref().map(|(title, _)| title.clone()),
                 doc: doc_string(&input.attrs),
             })])
         }
@@ -173,7 +179,7 @@ fn variant_outcome(
         retry_after: retry_after_field(&variant.fields, &markers)?,
         status,
         type_uri: type_uri(&args, base, &variant.ident)?,
-        title: args.title,
+        title: args.title.map(|(title, _)| title),
         doc: doc_string(&variant.attrs),
     }))
 }
@@ -245,7 +251,7 @@ fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> syn::Resul
         }
         _ => {}
     }
-    if let Some(uri) = &args.type_uri {
+    if let Some((uri, _)) = &args.type_uri {
         return Ok(Some(TypeUri::Literal(uri.clone())));
     }
     let slug = match &args.slug {

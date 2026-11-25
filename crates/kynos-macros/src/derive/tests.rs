@@ -5030,17 +5030,6 @@ mod api_error {
                 "cannot describe a union",
             ),
             case(
-                "a status on the enum, where variants answer with their own",
-                quote::quote!(
-                    #[problem(status = 404)]
-                    enum StoreError {
-                        #[problem(status = 404)]
-                        NotFound,
-                    }
-                ),
-                "a status belongs on each variant",
-            ),
-            case(
                 "a variant that never says what status it produces",
                 quote::quote!(
                     enum StoreError {
@@ -5135,6 +5124,36 @@ mod api_error {
             ),
             "the field `title` would be published as a member RFC 9457 defines",
         )]
+    }
+
+    /// The refusals of a key naming one failure written on the enum, where no
+    /// variant would read it; apart, so [`ledger`] stays one a reader can
+    /// hold.
+    fn enum_position_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a status on the enum, where variants answer with their own",
+                quote::quote!(
+                    #[problem(status = 404)]
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        NotFound,
+                    }
+                ),
+                "a status belongs on each variant",
+            ),
+            case(
+                "a type URI on the enum, which no variant publishes",
+                quote::quote!(
+                    #[problem(type = "https://errors.example.com/store")]
+                    enum StoreError {
+                        #[problem(status = 410)]
+                        Gone,
+                    }
+                ),
+                "a `title` or `type` names one failure, so it belongs on each variant",
+            ),
+        ]
     }
 
     /// The refusals of `slug`, each a `slug` that would otherwise be dropped
@@ -6346,6 +6365,7 @@ mod api_error {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(enum_position_ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
         each_case_is_refused(from_ledger(), expand_inner);
         each_case_is_refused(subset_ledger(), expand_inner);
@@ -6586,6 +6606,7 @@ mod api_error {
             ]
             .concat(),
             ledger().len()
+                + enum_position_ledger().len()
                 + transparent_ledger().len()
                 + from_ledger().len()
                 + subset_ledger().len()

@@ -477,7 +477,10 @@ async fn security_headers_add_only_the_names_they_declare() {
 
     use kynos::{
         http::forwarded::{ProxyHeader, TrustedProxies},
-        middleware::security_headers::{SecurityFields, SecurityHeaders, StrictTransportSecurity},
+        middleware::security_headers::{
+            DenyFraming, Hsts, NoDenyFraming, NoHsts, SecurityFields, SecurityHeaders,
+            StrictTransportSecurity,
+        },
     };
 
     let hsts = || StrictTransportSecurity::max_age(Duration::from_secs(600));
@@ -490,21 +493,21 @@ async fn security_headers_add_only_the_names_they_declare() {
                 .intercept(SecurityHeaders::new())
                 .build(App::new())
                 .expect(built),
-            declared::<SecurityFields<false, false>>(),
+            declared::<SecurityFields<NoHsts, NoDenyFraming>>(),
         ),
         (
             behind_proxy()
                 .intercept(SecurityHeaders::new().deny_framing())
                 .build(App::new())
                 .expect(built),
-            declared::<SecurityFields<false, true>>(),
+            declared::<SecurityFields<NoHsts, DenyFraming>>(),
         ),
         (
             behind_proxy()
                 .intercept(SecurityHeaders::new().strict_transport_security(hsts()))
                 .build(App::new())
                 .expect(built),
-            declared::<SecurityFields<true, false>>(),
+            declared::<SecurityFields<Hsts, NoDenyFraming>>(),
         ),
         (
             behind_proxy()
@@ -515,7 +518,7 @@ async fn security_headers_add_only_the_names_they_declare() {
                 )
                 .build(App::new())
                 .expect(built),
-            declared::<SecurityFields<true, true>>(),
+            declared::<SecurityFields<Hsts, DenyFraming>>(),
         ),
     ];
     let baseline = baseline().await;

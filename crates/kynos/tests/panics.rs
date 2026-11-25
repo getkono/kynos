@@ -91,6 +91,44 @@ fn a_router_that_did_not_ask_for_recovery_lets_a_panic_through() {
     assert_eq!(outcome(&service, "/fine"), Ok(StatusCode::NO_CONTENT));
 }
 
+/// Sealing erases the policy from the type, not from the router: what was
+/// asked for before `seal` is still what the service does, either way.
+#[test]
+fn a_sealed_router_keeps_the_recovery_it_was_given() {
+    let caught = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![boom, fine])
+        .seal()
+        .build(())
+        .expect("a describable router");
+    let propagated = Router::<()>::new()
+        .mount(kynos::routes![boom, fine])
+        .seal()
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&caught, "/boom"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(
+        outcome(&propagated, "/boom"),
+        Err(()),
+        "sealing recovered a panic the router never asked to catch"
+    );
+
+    // The recovery's 500 is declared as the unsealed router declares it.
+    let recovering = || {
+        Router::<()>::new()
+            .catch_panics()
+            .mount(kynos::routes![boom])
+    };
+    assert_eq!(
+        recovering().seal().openapi().expect("a describable router"),
+        recovering().openapi().expect("a describable router"),
+    );
+}
+
 /// Group scope: recovery covers what the group encloses and stops there.
 #[test]
 fn recovery_asked_for_on_a_group_covers_that_group_alone() {
