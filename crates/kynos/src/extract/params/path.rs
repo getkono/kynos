@@ -187,7 +187,10 @@ pub trait EncodePath: PathParams {
     label = "not extractable from the path",
     note = "`Path<T>` takes a group deriving `kynos::PathParams`, whose fields name the \
             template's variables, or one `kynos::schema::ParamValue`, which reads a template's \
-            lone variable"
+            lone variable",
+    note = "a group implementing `PathParams` by hand binds its names as the derive does: add \
+            `impl PathInput for {Self} {{ type Binding = Named<Self>; }}`, both from \
+            `kynos::extract::params::path`"
 )]
 pub trait PathInput: Sized {
     /// How the value binds its route's variables: [`Named<Self>`] for a

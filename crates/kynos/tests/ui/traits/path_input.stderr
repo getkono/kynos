@@ -10,6 +10,7 @@ help: the trait `ParamValue` is not implemented for `NotAPathInput`
 4 | struct NotAPathInput;
   | ^^^^^^^^^^^^^^^^^^^^
   = note: `Path<T>` takes a group deriving `kynos::PathParams`, whose fields name the template's variables, or one `kynos::schema::ParamValue`, which reads a template's lone variable
+  = note: a group implementing `PathParams` by hand binds its names as the derive does: add `impl PathInput for NotAPathInput { type Binding = Named<Self>; }`, both from `kynos::extract::params::path`
   = help: the following other types implement trait `ParamValue`:
             IpAddr
             Ipv4Addr
