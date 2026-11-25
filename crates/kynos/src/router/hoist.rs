@@ -3,7 +3,9 @@
 //!
 //! Called by `describe.rs` after the application's `map_openapi` edits, so an
 //! edit reads every response inline, and every component it declares is
-//! there to be kept rather than overwritten.
+//! there to be kept rather than overwritten; and after the document is
+//! validated, so a violation inside a response is reported at each operation
+//! that declares it.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

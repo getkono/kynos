@@ -166,10 +166,12 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// operation says.
 ///
 /// It happens after every [`map_openapi`](Router::map_openapi) edit, so an
-/// edit reads every response inline. A response component an edit declares
-/// is never overwritten: a minted name passes over its name, and over any
-/// name a response `$ref` already gives, and a response with exactly its
-/// bytes refers to it instead of minting another.
+/// edit reads every response inline, and after the description is
+/// validated, so a violation inside a shared response is reported at each
+/// operation declaring it. A response component an edit declares is never
+/// overwritten: a minted name passes over its name, and over any name a
+/// response `$ref` already gives, and a response with exactly its bytes
+/// refers to it instead of minting another.
 ///
 /// # Returning one from a function
 ///
