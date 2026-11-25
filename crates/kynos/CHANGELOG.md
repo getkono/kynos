@@ -7,6 +7,192 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/getkono/kynos/compare/kynos-v0.6.2...kynos-v0.7.0) - 2026-11-25
+
+### Added
+
+- *(schema)* take format on a #[schema(string)] type
+- *(schema)* put each #[schema(string)] example through the type's own serde
+- *(router)* report a #[schema(string)] example its type refuses as a violation
+- *(schema)* derive ParamValue for a #[schema(string)] type through its own text
+- *(schema)* describe a string-encoded type with #[schema(string)]
+- *(test)* tell a reset from an orderly close in TestClosed
+- *(openapi)* [**breaking**] share responses repeated across operations in components.responses
+- *(test)* send a request head that never finishes
+- *(test)* assert a committed OpenAPI description matches the document
+- *(router)* keep the unchecked gate readable on a Sealed router
+- *(test)* assert a problem extension, a header's presence or list member, and a media type
+- *(middleware)* [**breaking**] name SecurityHeaders opt-ins with marker types
+- *(test)* borrow a TestClient view carrying a prefix and a credential
+- *(router)* add Router::seal, a nameable finished router
+- *(test)* exempt named declared responses from coverage
+- *(test)* read the served document from TestClient::openapi
+- *(macros)* name a type URI under base with #[problem(slug = ...)]
+- *(macros)* expose a derived unit enum's wire names through UnitEnum
+- *(macros)* decode a QueryParams Vec<T> field as a list parameter
+- *(macros)* [**breaking**] refuse a declared query parameter given more than once
+- *(error)* [**breaking**] render interceptor refusals and recovered panics under the problem policy
+- *(error)* [**breaking**] replace problem_members with a router-level ProblemPolicy
+- *(security)* [**breaking**] let an authenticator fail with its own error
+- *(test)* build multipart/form-data request bodies
+- *(csrf)* add Csrf::trusting_origins, mirroring Cors::allow_origins
+- *(macros)* make a transparent ApiError enum a std::error::Error
+- *(macros)* let subset_of name several wider ApiError enums
+- *(macros)* build a transparent ApiError variant from its held error
+- *(trace)* name an unmatched request's method and close an abandoned one
+- *(middleware)* [**breaking**] end every observed request in a response or an abandonment
+- *(macros)* mark a whole ApiError enum transparent to display as it holds
+- *(router)* recase the operationIds the framework derives
+- *(macros)* mark a route attribute's defaulted operationIds
+- *(macros)* write an ApiError status's description with describe
+- *(cookie)* build a handler's SetCookieHeaders from a Cookie
+- *(test)* check every client sharing a Coverage for conformance at once
+- *(test)* assert coverage over the operations a predicate selects
+- *(sse)* [**breaking**] bound Event::tagged on Tagged and describe its event names
+- *(schema)* derive Tagged for a type serde writes under its own tag
+- *(middleware)* [**breaking**] pass the application context to Observer::on_response
+- *(test)* report a test's own misuse of the client at the line that made it
+- *(test)* report a failed assertion at the test line that made it
+- *(macros)* refuse a Nullable field the Schema derive reads without a default
+- *(test)* read a Set-Cookie's attributes and tell a removal apart
+- *(schema)* add Nullable<T>, a merge-patch member that is absent, null or a value
+- *(test)* merge a client's default cookies with a request's own
+- *(router)* [**breaking**] impl Clone for Service, refusing an edit a clone's reference would serve
+- *(macros)* describe a GET's HEAD with the route attribute's head argument
+- *(kynos)* describe the HEAD a GET answers through EndpointBuilder::describe_head
+- *(security)* let each AnyOf alternative carry its own scope set
+- *(compression)* [**breaking**] run and declare Decompression only on operations that read a body
+- *(test)* [**breaking**] send TestClient::new's requests from the loopback through_server uses
+- *(test)* name a problem type by its slug under a client's problem base
+- *(test)* assert a status with the reason it checks
+- *(test)* [**breaking**] name a TestClient request's method as text
+- *(macros)* forward a Provider struct's types to the context holding it
+- *(router)* collect routes! into a nameable Endpoints that keeps its stacks
+- *(server)* share one shutdown trigger across servers and tasks
+- *(limits)* [**breaking**] run and declare BodySize only on operations that read a body
+- *(test)* make Coverage Clone, and bind it to the document it is asserted against
+- *(macros)* mark a Provider field as a scheme's authenticator
+- *(stream)* name an event from its payload's serde tag
+- *(server)* expose the io::Error a ServerError carries
+- *(stream)* accept an infallible event stream in Sse
+- *(kynos)* read the time Quotas counts against from an injectable Clock
+- *(test)* send a TestClient's requests over a spawned server's socket
+- *(router)* [**breaking**] refuse a group mixing guarded and unguarded operations
+- *(server)* [**breaking**] lend the spawned server's service through Running
+- *(error)* declare a crate-wide problem base once
+- *(trace)* run a hook inside TraceSpan once the span opens
+- *(trace)* let TraceSpan take its parent from the request
+- *(macros)* send a failure's delay as Retry-After with #[problem(retry_after)]
+- *(router)* let a hand-written body extractor declare the stall 408
+- *(test)* read a response body as it streams with TestRequest::send_streaming
+- *(error)* make refusal_problem and refusal_response public
+- *(http)* add a public RetryAfter header group
+- *(server)* [**breaking**] hold the router's stall 408 and the idle timer to agree
+- *(trace)* choose the closing event's level by response status
+- *(middleware)* give Observer::on_request a default empty body
+- *(trace)* log the AssignedId rather than a header of its name
+- *(middleware)* hand on the identifier RequestId assigns as AssignedId
+- *(schema)* describe Box and Arc over an unsized T as what they hold
+- *(extract)* [**breaking**] let a parameter group stand without a Schema derive
+- *(security)* [**breaking**] hand the authenticator the request head and a classified credential
+- *(macros)* take one wider ApiError variant with #[problem(variant_of)]
+- *(http)* read the resolved Forwarded off a request head
+- *(macros)* read #[error(transparent)] as #[problem(transparent)]
+- *(macros)* derive ParamValue for a newtype through its field
+- *(schema)* describe str, &T and Cow<'_, B> as what they hold
+- *(extract)* let TextAs carry UTF-8 text under a non-text type declaring charset=utf-8
+- *(server)* publish the Http2Config defaults
+- *(middleware)* make the trusted-host decision reusable from an authenticator
+- *(test)* set a client's body idle timeout and stall a body midway
+- *(test)* time an exchange on a paused clock with TestRequest::send_timed
+- *(middleware)* name the rule that refused a cross-site request
+- *(server)* expose the default request-body idle timeout as a constant
+- *(schema)* let a parameter group name the problem its fields answer with
+- *(schema)* [**breaking**] answer a broken declared bound with a whole ConstraintProblem
+- *(kynos)* demonstrate a 202 that points at its status monitor
+- *(response)* [**breaking**] point a 202 at its status monitor with Accepted::at
+- *(schema)* make Violations::of public
+
+### Documentation
+
+- *(router)* state that a new response may rename a shared one
+- *(nfr)* list __private/problem.rs in the module-size budget
+- *(middleware)* state the BodyReading fallback rule on BodySize and Decompression
+- *(router)* state the BodyReading rule for fallbacks on Router::intercept
+- *(response)* say why the multipart encoder is inlined
+- *(nfr)* record the problem policy's 8 bytes per interceptor beside the dispatch future's 8
+- *(error)* [**breaking**] say the problem policy reaches interceptor refusals and the panic 500
+- point the APIs reached for first at the features that replace workarounds
+- *(middleware)* state that a panicking observer hook breaks the one-ending rule
+- *(errors)* show a transparent ApiError enum and record its migration rows
+- *(examples)* keep an in-flight count that on_abandoned lowers
+- *(cookie)* point SetCookies and WithHeaders at a handler's own cookies
+- *(test)* restore problem_type's doc comment above problem_type
+- *(examples)* say which security example operations narrow their 403
+- *(security)* drop the redundant Scoped link targets in requirement
+- *(examples)* scope one AnyOf alternative in the security example
+- *(test)* say the Retry-After test runs on the default SystemClock
+- *(kynos)* forward a services struct to the context in the state example
+- *(test)* say Coverage::record's exchanges count toward assert_covered too
+- *(server)* show one shutdown trigger shared by a server and a worker
+- *(examples)* name SSE events by their serde tag in the sse example
+- *(examples)* wire the examples' authenticators through the Provider derive
+- *(test)* say a connected request leaves from its socket's own address
+- *(kynos)* declare the errors example's problem base once
+- *(router)* point set_request_body at read_request_body for the stall 408
+- *(security)* say which schemes a combination hands a malformed credential
+- *(schema)* point the kind diagnostics at #[schema(as, via)]
+- *(response)* say the TextAs writer sends a non-text UTF-8 marker as-is
+- *(kynos)* stall a body with stalled_after and time it in the testing example
+- *(trace)* say the opening event names request_id only when it has one
+- *(server)* say the head and idle timeouts are one bound set twice
+- *(security)* refuse a posture's cross-site and rebound requests in the authenticator
+
+### Fixed
+
+- *(router)* share responses only once the description is validated
+- *(openapi)* name a shared response for what it carries, not its byte order
+- *(test)* report every document assertion failure at the caller's line
+- *(error)* [**breaking**] refuse a problem_type! slug the ApiError derive refuses
+- *(test)* gate the JSON pointer check on json, beside its only reader
+- *(middleware)* let code generic over SecurityHeaders settings clone it
+- *(macros)* [**breaking**] refuse an enum-level ApiError title or type
+- *(macros)* refuse a slug segment that names another type URI
+- *(schema)* keep UnitEnum out of kynos::prelude
+- *(security)* [**breaking**] refuse a query API key named by more than one pair
+- *(error)* name an interceptor's refusal origin ProblemOrigin::Refusal
+- *(security)* declare a guard's refusals under the problem policy only where Kynos renders them
+- *(security)* [**breaking**] keep a scope set's 403 narrowed under an authenticator's own error
+- *(server)* wake every shutdown waiter when the trigger future panics
+- *(error)* title a lone problem branch from its first summary
+- *(macros)* keep a held error's lone branch title under describe
+- *(examples)* declare the middleware example's head-only interceptors
+- *(schema)* name Nullable where a bound's diagnostic lists its wrappers
+- *(test)* read a Set-Cookie Expires by the RFC 6265 cookie-date algorithm
+- *(router)* leave range handling out of the HEAD a GET describes
+- *(security)* narrow a requirement's 403 where every member names one refusal
+- *(limits)* keep BodySize over a body an interceptor beneath it reads
+- *(server)* let any polled shutdown clone advance the shared trigger
+- *(server)* hold Running's TLS flag only where the test client reads it
+- *(test)* compile the peer refusal only where a client can connect
+- *(openapi)* keep an operation's own 408 as written beside the stall
+- *(params)* read a query group's problem through its Schema
+- *(trace)* leave request_id off the opening event when it has none
+
+### Other
+
+- *(cookie)* [**breaking**] move SetCookieHeaders to response::cookie
+- *(schema)* [**breaking**] rename the serde tag trait to SerdeTagged
+
+### Performance
+
+- *(response)* inline the multipart/form-data encoder
+- *(security)* decode only the query API key's own value
+- *(security)* skip the redundant header removal when a guard writes its 401 challenge
+- *(security)* drop check_member's extra async layer
+- *(router)* keep the request's method without widening the dispatch future
+- *(router)* carry an operation's published name without widening Routed
+
 ## [0.6.2](https://github.com/getkono/kynos/compare/kynos-v0.6.1...kynos-v0.6.2) - 2026-11-21
 
 ### Added
