@@ -803,6 +803,24 @@ Everything else follows the same rule one level up: `paths` in mount order,
 `tags` in declaration order, an operation's `responses` in the order the handler
 and the interceptors covering it declared them.
 
+`components/responses` is the exception, because its names are minted rather
+than declared, and a name has to survive remounting. A response two or more
+operations declare under one status key with the same serialized bytes is
+written there once
+([`router/hoist.rs`](../crates/kynos/src/router/hoist.rs)), named for the key
+alone: `Status404`, `Status4XX`, `Default`. The key, not a Rust type, because
+the type is gone by the time two operations' responses are compared, and not a
+reason phrase, which the `http` crate is free to reword. Two different
+responses at one key are told apart by suffix, `Status400`, `Status400_2`, in
+the order of their bytes, so the names, and the order they are emitted in, are
+the same whatever order the operations were mounted in. Sameness is the bytes,
+not equality: two responses differing in a description, a header, a link or
+the order of two media types are not one response, and a `$ref` carries no
+siblings, so sharing never changes what an operation says. Headers inside a
+shared response are shared with it; a header is not hoisted on its own into
+`components/headers`, since a `$ref` to one is no shorter than most headers it
+would stand for.
+
 **This is a guarantee, not an accident of the current implementation.** A
 description that changes between two builds of the same code cannot be diffed in
 review or pinned by a client generator, and a conformance-fixture corpus is only worth committing if regenerating it produces
