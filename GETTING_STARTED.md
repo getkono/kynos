@@ -56,6 +56,7 @@ by the release that shipped each, for code written before it.
 | A `multipart/form-data` test body framed by hand | `test::TestRequest::multipart`; behind `multipart` |
 | A loopback socket to test what a configured server's timeouts answer | `test::TestClient::through_server` |
 | A raw socket sending a body that stalls, arrives short or runs long | `test::TestRequest::stalled_body`, or `body_stream` with `content_length` |
+| A raw socket sending a request head that never finishes, to test the header-read timeout | `test::TestRequest::send_stalled_head` |
 | A oneshot, a `JoinHandle` and an address struct around `serve()` | `server::BoundServer::spawn`, and `test::TestClient::connect` to its `server::Running` |
 | Response coverage merged across test clients, or held to one area of the document | `test::Coverage::for_document`, given to each client by `test::TestClient::with_coverage`, then `assert_covered`, `assert_covered_where` and `assert_conformance` |
 | The router built a second time in a test, for the document a client serves | `test::TestClient::openapi` |

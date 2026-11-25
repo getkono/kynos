@@ -730,6 +730,127 @@ fn a_served_client_refuses_an_idle_timeout_of_its_own() {
         .with_request_body_idle_timeout(None);
 }
 
+// --- A stalled head ----------------------------------------------------------
+
+/// `service` behind a server whose header-read timeout is `timeout`.
+#[cfg(all(feature = "server", feature = "http1"))]
+fn reading_heads_for(timeout: std::time::Duration) -> kynos::server::Server<()> {
+    kynos::server::Server::new(service()).http1(
+        kynos::server::protocol::http1::Http1Config::default().header_read_timeout(Some(timeout)),
+    )
+}
+
+/// Through a server, a head missing only its blank line is never read as
+/// complete: the server closes the connection at its header-read deadline,
+/// on the paused clock, having written nothing. Ten seconds is short of
+/// HTTP/2's 30-second idle timeout, which bounds the first head too.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test(start_paused = true)]
+async fn a_stalled_head_through_a_server_is_closed_at_its_header_read_timeout() {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let closed = TestClient::through_server(reading_heads_for(TIMEOUT))
+        .get("/probe")
+        .header("host", "example.test")
+        .send_stalled_head()
+        .await;
+
+    assert_answered_at(closed.after(), TIMEOUT);
+    assert!(closed.received().is_empty(), "{:?}", closed.received());
+    assert!(!closed.is_reset(), "a deadline close is an orderly one");
+}
+
+/// Over a real socket, the listener's connection is closed at the same
+/// deadline, never before it, and with nothing written.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+async fn a_stalled_head_over_a_socket_is_closed_at_its_header_read_timeout() {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
+    let running = spawned(reading_heads_for(TIMEOUT)).await;
+
+    let closed = TestClient::connect(&running)
+        .get("/probe")
+        .send_stalled_head()
+        .await;
+
+    assert!(
+        closed.after() >= TIMEOUT,
+        "closed after {:?}",
+        closed.after()
+    );
+    assert!(closed.received().is_empty(), "{:?}", closed.received());
+    assert!(!closed.is_reset(), "a deadline close is an orderly one");
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
+/// A head past the server's buffer is answered `431` and hung up on with the
+/// rest of it unread, so the close is a reset rather than an orderly one: the
+/// write the server stopped reading is refused. A megabyte is past both
+/// HTTP/1's default buffer and what the duplex holds beside it.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+async fn a_stalled_head_past_the_servers_buffer_is_answered_and_reset() {
+    let closed = TestClient::through_server(kynos::server::Server::new(service()))
+        .get("/probe")
+        .header("x-padding", &"a".repeat(1 << 20))
+        .send_stalled_head()
+        .await;
+
+    assert!(closed.is_reset());
+    assert!(
+        closed
+            .received()
+            .starts_with(b"HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "{:?}",
+        String::from_utf8_lossy(closed.received())
+    );
+}
+
+/// Once the listener is closed, the connection is refused, which is a failure
+/// rather than a close the server chose.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+#[should_panic(expected = "GET /probe: the connection failed before the server closed it: ")]
+async fn a_stalled_head_once_its_server_shut_down_is_refused() {
+    let running = spawned(kynos::server::Server::new(service())).await;
+    let client = TestClient::connect(&running);
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+
+    let _ = client.get("/probe").send_stalled_head().await;
+}
+
+/// A client with no connection has no head to stall, so the request is
+/// refused rather than answered some other way.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[test]
+#[should_panic(
+    expected = "GET /probe: a client built with `TestClient::new` has no connection to stall a head on"
+)]
+fn a_stalled_head_without_a_connection_is_refused() {
+    drop(client().get("/probe").send_stalled_head());
+}
+
+/// A body never follows a head that never ends, so setting one is refused
+/// rather than silently dropped.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[test]
+#[should_panic(
+    expected = "POST /echo: a stalled head never ends, so the body set on it is never sent"
+)]
+fn a_stalled_head_with_a_body_is_refused() {
+    drop(
+        TestClient::through_server(kynos::server::Server::new(service()))
+            .post("/echo")
+            .text("hello")
+            .send_stalled_head(),
+    );
+}
+
 /// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the
 /// service octet for octet.
 #[tokio::test]
