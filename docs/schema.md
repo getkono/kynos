@@ -182,6 +182,38 @@ many items, described as an array of `T` with `style: form`.
   `explode` on a scalar field or a path parameter is refused at compile time,
   since OpenAPI gives it no effect there.
 
+A query parameter may carry a default, written where the field is declared so
+the decoder, the description and the handler share one value:
+
+```rust,ignore
+#[derive(QueryParams)]
+struct Page {
+    #[param(default = DEFAULT_LIMIT)]
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+}
+```
+
+- **An absent parameter binds the default**, and the field is the plain type:
+  `limit: u32`, never `Option<u32>`, so a handler has no `unwrap_or` left to
+  write. An `Option` beside `default` is refused, since it would never be
+  `None`.
+- **The description states it**: the parameter is `required: false`, and its
+  schema's `default` is what the value's `Display` writes, typed as the schema
+  types it (a number, a boolean, else a string).
+- **A literal or a path**, such as `50`, `"en"`, `DEFAULT_LIMIT` or
+  `Order::Asc`. A number, `bool` or `char` literal is typed by the field; a
+  string literal or a path converts through the field type's `From`, so a
+  `const` the handlers share may be narrower than the field.
+- **A default breaking its bounds** is a `RouterError::ParameterDefault`
+  violation located at each operation taking the group, so the router refuses
+  to build rather than state a value the API refuses. It is checked when the
+  router is built, not at compile time, because a bound or a default may be a
+  `const` the derive cannot evaluate.
+- **A list takes none.** No pair is the empty list, so a default would leave no
+  query string able to send it; nor does a path parameter, which is always
+  captured.
+
 | Implements `ParamValue` | Feature |
 | --- | --- |
 | `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |

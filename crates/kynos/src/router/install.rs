@@ -92,6 +92,26 @@ pub(super) fn refused_examples(
         .map(|(location, error)| error_at(location.as_str(), error.clone()))
 }
 
+/// What the parameters of the `method` operation at the `paths` key `path`
+/// recorded wrong on `registry`, as violations located at the operation, taken
+/// so the next operation starts from none.
+pub(super) fn refused_params(
+    registry: &mut Registry,
+    path: &str,
+    method: kynos_openapi::Method,
+) -> Vec<Violation<RouterError>> {
+    let operation = format!(
+        "{}/{}",
+        path_location(path),
+        method.as_wire_str().to_lowercase()
+    );
+    registry
+        .take_parameter_refusals()
+        .into_iter()
+        .map(|error| error_at(operation.as_str(), error))
+        .collect()
+}
+
 /// The visibly placeholder `info` block a router that declared none emits.
 pub(super) fn placeholder_info() -> Info {
     Info::new("API", "0.0.0")

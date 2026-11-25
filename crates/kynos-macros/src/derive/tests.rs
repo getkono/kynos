@@ -5060,16 +5060,63 @@ mod attribute {
     /// The `#[param(...)]` keys only a parameter group reads, driven through
     /// the `QueryParams` derive.
     fn param_ledger() -> Vec<Case> {
-        vec![case(
-            "`explode` written as a string, which would read as a flag it is not",
-            quote::quote!(
-                struct Search {
-                    #[param(explode = "false")]
-                    diet: Vec<String>,
-                }
+        vec![
+            case(
+                "`explode` written as a string, which would read as a flag it is not",
+                quote::quote!(
+                    struct Search {
+                        #[param(explode = "false")]
+                        diet: Vec<String>,
+                    }
+                ),
+                "`explode` is `true` or `false`, written as a literal",
             ),
-            "`explode` is `true` or `false`, written as a literal",
-        )]
+            case(
+                "`default` computed, where the description states a settled value",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 25 * 2)]
+                        limit: u32,
+                    }
+                ),
+                "`default` is a literal or a path to a constant",
+            ),
+        ]
+    }
+
+    /// `default` is the `#[param]` grammar's alone, as `explode` is.
+    #[test]
+    fn default_is_no_header_or_cookie_key() {
+        let header: DeriveInput = syn::parse_quote!(
+            struct Traced {
+                #[header(default = "x")]
+                id: String,
+            }
+        );
+        let cookie: DeriveInput = syn::parse_quote!(
+            struct Session {
+                #[cookie(default = "x")]
+                id: String,
+            }
+        );
+        for (input, expand, grammar) in [
+            (
+                header,
+                crate::derive::headers::expand_inner as fn(&DeriveInput) -> _,
+                "`#[header(...)]`",
+            ),
+            (cookie, expand_inner, "`#[cookie(...)]`"),
+        ] {
+            let Err(error) = expand(&input) else {
+                panic!("{grammar} accepted `default`");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("`default` is not part of the {grammar} grammar")),
+                "{error}"
+            );
+        }
     }
 
     #[test]
@@ -8556,6 +8603,16 @@ mod path_params {
                 ),
                 "a path parameter is one value",
             ),
+            case(
+                "`default`, which a captured variable never reads",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(default = 1)]
+                        id: u64,
+                    }
+                ),
+                "a path parameter is always captured, so a `default` would never be read",
+            ),
         ]
     }
 
@@ -8598,6 +8655,26 @@ mod query_params {
                     }
                 ),
                 "this field is one value",
+            ),
+            case(
+                "`default` on an `Option`, which would then never be `None`",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        limit: Option<u32>,
+                    }
+                ),
+                "a defaulted parameter is never absent once decoded",
+            ),
+            case(
+                "`default` on a list, which would leave the empty list unsendable",
+                quote::quote!(
+                    struct Search {
+                        #[param(default = DIET)]
+                        diet: Vec<String>,
+                    }
+                ),
+                "a default would leave no query string able to send the empty list",
             ),
         ]
     }

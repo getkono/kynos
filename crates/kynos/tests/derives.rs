@@ -11,8 +11,9 @@
 //! the path, query, header and cookie decoders' refusal of a value that breaks
 //! a bound; the query decoder's refusal of a declared value that is not UTF-8,
 //! and its decoding of `+` as a space and of an escaped `+` as a `+`; the
-//! cookie decoder's refusal of a declared cookie that is not ASCII; the header
-//! decoder's refusal of a missing required header or a value that is not
+//! query decoder's binding of an absent defaulted parameter, and the router's
+//! refusal of a default breaking its bounds; the cookie decoder's refusal of a
+//! declared cookie that is not ASCII; the header decoder's refusal of a missing required header or a value that is not
 //! ASCII, its reading of an absent optional header as `None`, the value a
 //! fixed header is written, compared and described as, and the 500 a value
 //! that is no field value is refused with; the text a derived `ParamValue`
@@ -3248,6 +3249,203 @@ fn a_derived_query_list_encodes_and_round_trips() {
         scores: vec![],
     };
     assert_eq!(empty.encode(), "");
+}
+
+// --- A defaulted query parameter binds its default when absent -------------
+//
+// A recorded runtime exception for the reason the bounds one is: a field's
+// `#[param(default = ...)]` is what the decoder binds when no pair names it,
+// what the description states as the schema's `default`, and a default
+// breaking the field's bounds is refused when the router is built.
+
+/// The default `limit`, a constant the group names.
+const DEFAULT_LIMIT: u32 = 50;
+
+#[derive(Schema, ParamValue, serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Order {
+    Asc,
+    Desc,
+}
+
+#[derive(QueryParams, Debug)]
+struct Defaulted {
+    /// A number literal, typed by the field.
+    #[param(default = false)]
+    deleted: bool,
+    /// A `const` the group shares with its handlers, widened by `From`.
+    #[param(default = DEFAULT_LIMIT)]
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u64,
+    /// A unit variant.
+    #[param(default = Order::Desc)]
+    order: Order,
+    /// A string literal, through `String`'s `From<&str>`.
+    #[param(default = "en")]
+    lang: String,
+    /// A negated literal.
+    #[param(default = -1.5)]
+    offset: f64,
+}
+
+/// An absent defaulted parameter binds its default, and one a pair names
+/// binds what it carries, under the field's bounds as any other value is.
+#[test]
+fn an_absent_defaulted_query_parameter_binds_its_default() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for query in [None, Some(""), Some("other=1")] {
+        let decoded = <Defaulted as DecodeQuery>::decode(query).expect("every parameter defaults");
+        assert_eq!(
+            (
+                decoded.deleted,
+                decoded.limit,
+                decoded.order,
+                decoded.lang.as_str(),
+                decoded.offset,
+            ),
+            (false, 50, Order::Desc, "en", -1.5),
+            "{query:?}"
+        );
+    }
+
+    let decoded =
+        <Defaulted as DecodeQuery>::decode(Some("deleted=true&limit=7&order=asc&lang=fr&offset=2"))
+            .expect("every parameter given");
+    assert_eq!(
+        (
+            decoded.deleted,
+            decoded.limit,
+            decoded.order,
+            decoded.lang.as_str(),
+            decoded.offset,
+        ),
+        (true, 7, Order::Asc, "fr", 2.0)
+    );
+
+    assert!(matches!(
+        <Defaulted as DecodeQuery>::decode(Some("limit=201")),
+        Err(QueryRejection::Schema { name, .. }) if name == "limit"
+    ));
+}
+
+/// A defaulted parameter is `required: false`, since a client may leave it
+/// out, and its schema states the default as the JSON its schema types: a
+/// number, a boolean, or the text a named string type writes.
+#[test]
+fn a_defaulted_query_parameter_states_its_default() {
+    let parameters = query_parameters::<Defaulted>();
+    let stated: Vec<(&str, &serde_json::Value, &serde_json::Value)> = parameters
+        .as_array()
+        .expect("a parameter list")
+        .iter()
+        .map(|parameter| {
+            (
+                parameter["name"].as_str().expect("a name"),
+                &parameter["required"],
+                &parameter["schema"]["default"],
+            )
+        })
+        .collect();
+    assert_eq!(
+        stated,
+        [
+            (
+                "deleted",
+                &serde_json::json!(false),
+                &serde_json::json!(false)
+            ),
+            ("limit", &serde_json::json!(false), &serde_json::json!(50)),
+            (
+                "order",
+                &serde_json::json!(false),
+                &serde_json::json!("desc")
+            ),
+            ("lang", &serde_json::json!(false), &serde_json::json!("en")),
+            (
+                "offset",
+                &serde_json::json!(false),
+                &serde_json::json!(-1.5)
+            ),
+        ]
+    );
+}
+
+/// A default `limit` above the field's own `maximum`.
+const OVERSIZED_LIMIT: u32 = 500;
+
+/// A default score above the type's own `maximum`.
+const OVERSIZED_SCORE: Score = Score(101);
+
+#[derive(QueryParams)]
+struct MisdefaultedPage {
+    #[param(default = OVERSIZED_LIMIT)]
+    #[schema(maximum = 200)]
+    limit: u32,
+    #[param(default = OVERSIZED_SCORE)]
+    #[schema(minimum = 1)]
+    score: Score,
+}
+
+#[kynos::get("/misdefaulted")]
+async fn by_misdefaulted_page(
+    kynos::extract::params::query::Query(page): kynos::extract::params::query::Query<
+        MisdefaultedPage,
+    >,
+) -> kynos::response::status::NoContent {
+    let _ = page;
+    kynos::response::status::NoContent
+}
+
+/// A default breaking its field's bounds, or its type's, is a violation
+/// located at each operation taking the group, so the router refuses to build
+/// rather than state a default the API refuses or bind a value no request
+/// could carry.
+#[test]
+fn a_router_refuses_a_default_breaking_its_parameters_bounds() {
+    use kynos::router::error::RouterError;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_misdefaulted_page]);
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing a broken default was built");
+    };
+    let refused: Vec<_> = violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            RouterError::ParameterDefault {
+                group,
+                parameter,
+                default,
+                failures,
+            } => Some((
+                violation.location,
+                group.rsplit("::").next().unwrap_or(group),
+                parameter,
+                default,
+                failures,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "#/paths/~1misdefaulted/get".to_owned(),
+                "MisdefaultedPage",
+                "limit".to_owned(),
+                "500".to_owned(),
+                vec!["must be at most 200".to_owned()],
+            ),
+            (
+                "#/paths/~1misdefaulted/get".to_owned(),
+                "MisdefaultedPage",
+                "score".to_owned(),
+                "101".to_owned(),
+                vec!["must be at most 100".to_owned()],
+            ),
+        ]
+    );
 }
 
 // --- Path, header and cookie parameters keep their fields' bounds -----------

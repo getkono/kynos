@@ -1056,6 +1056,7 @@ mod router_errors {
             RouterError::ProblemMemberReserved { .. } => "ProblemMemberReserved",
             RouterError::MappedOperation { .. } => "MappedOperation",
             RouterError::StringExample { .. } => "StringExample",
+            RouterError::ParameterDefault { .. } => "ParameterDefault",
         }
     }
 
@@ -1063,6 +1064,7 @@ mod router_errors {
     ///
     /// `Spec` is transparent: a document's violation reads the same whether a
     /// validator or a router reports it.
+    #[expect(clippy::too_many_lines)]
     fn ledger() -> Vec<(RouterError, &'static str)> {
         vec![
             (
@@ -1163,6 +1165,16 @@ mod router_errors {
                 },
                 "`app::TitleRef` lists the example \"tmdb\", which its own `FromStr` refuses",
             ),
+            (
+                RouterError::ParameterDefault {
+                    group: "app::Page",
+                    parameter: "limit".to_owned(),
+                    default: "500".to_owned(),
+                    failures: vec!["must be at most 200".to_owned()],
+                },
+                "`app::Page` defaults the query parameter `limit` to \"500\", which breaks its \
+                 bounds: must be at most 200",
+            ),
         ]
     }
 
@@ -1224,6 +1236,7 @@ mod router_errors {
             "ProblemMemberReserved",
             "MappedOperation",
             "StringExample",
+            "ParameterDefault",
         ]
         .into_iter()
         .collect();

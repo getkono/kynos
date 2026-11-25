@@ -4,7 +4,7 @@
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-use super::{List, Param};
+use super::{List, Param, default};
 use crate::{
     derive::schema::{aliases::named_string, attributes::constraints},
     doc::doc_string,
@@ -62,10 +62,11 @@ pub(crate) fn parameters_body(
         let required = if param.list.is_some() {
             required_list(param)
         } else {
-            let required = always_required || param.optional().is_none();
+            let required = always_required || (param.optional().is_none() && !param.has_default());
             quote!(#required)
         };
         let constrained = bounds(param);
+        let defaulted = default::described(param);
         let described = doc_string(&param.field.attrs).map(|text| {
             quote!(parameter.description = ::core::option::Option::Some(
                 <::std::string::String as ::core::convert::From<_>>::from(#text)
@@ -86,6 +87,7 @@ pub(crate) fn parameters_body(
             parameters.push({
                 let schema = #schema;
                 #constrained
+                #defaulted
                 let mut parameter =
                     ::kynos::openapi::Parameter::new(#name, #location, schema);
                 parameter.required = ::core::option::Option::Some(#required);

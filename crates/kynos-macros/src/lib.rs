@@ -1216,6 +1216,31 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// A field one value under `#[param(default = ...)]` binds that value when no
+/// pair names it, so it is the plain type rather than an `Option`, and is
+/// described `required: false` with the value as its schema's `default`,
+/// written by its `Display` and typed as the schema types it. The value is a
+/// literal, typed by the field, or a path such as a `const` or a unit
+/// variant; a string literal or a path converts through the field type's
+/// `From`. A default breaking the field's bounds, or its type's, is a
+/// `RouterError::ParameterDefault` violation when the router is built. It is
+/// refused on an `Option`, which would never be `None`, and on a list, whose
+/// absence is already its emptiness.
+///
+/// ```ignore
+/// const DEFAULT_LIMIT: u32 = 50;
+///
+/// #[derive(kynos::QueryParams)]
+/// struct Page {
+///     /// Absent: 50.
+///     #[param(default = DEFAULT_LIMIT)]
+///     #[schema(minimum = 1, maximum = 200)]
+///     limit: u32,
+///     #[param(default = false)]
+///     deleted: bool,
+/// }
+/// ```
+///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
 /// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos

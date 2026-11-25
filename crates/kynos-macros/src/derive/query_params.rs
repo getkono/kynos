@@ -1,7 +1,7 @@
 //! `#[derive(QueryParams)]`.
 
 use quote::{quote, quote_spanned};
-use syn::{DeriveInput, Ident, spanned::Spanned};
+use syn::{DeriveInput, Expr, Ident, LitBool, spanned::Spanned};
 
 use crate::derive::{
     attribute::field_args,
@@ -18,8 +18,7 @@ use crate::derive::{
 /// Refuses an `Option<Vec<T>>`, whose `Some` of an empty list no query string
 /// carries, and `explode` on a field that is one value, where OpenAPI says it
 /// has no effect and so would say nothing.
-fn list(param: &Param<'_>) -> syn::Result<Option<List>> {
-    let explode = field_args(param.field(), "param")?.explode;
+fn list(param: &Param<'_>, explode: Option<LitBool>) -> syn::Result<Option<List>> {
     if param
         .optional()
         .is_some_and(|inner| wrapped(inner, "Vec").is_some())
@@ -47,6 +46,35 @@ fn list(param: &Param<'_>) -> syn::Result<Option<List>> {
     }))
 }
 
+/// What the field binds when no pair names it, where its
+/// `#[param(default = ...)]` says.
+///
+/// Refuses a default on an `Option<T>`, which would never be `None` and so
+/// reads as optional while it is not, and on a list, whose absence is its
+/// emptiness: a default would leave the empty list no query string could ask
+/// for.
+fn default(param: &Param<'_>, default: Option<Expr>) -> syn::Result<Option<Expr>> {
+    let Some(value) = default else {
+        return Ok(None);
+    };
+    if param.optional().is_some() {
+        return Err(syn::Error::new(
+            param.ty().span(),
+            "a defaulted parameter is never absent once decoded, so an `Option` around it would \
+             never be `None`. Use the inner type, which binds the default when no pair names it",
+        ));
+    }
+    if wrapped(param.ty(), "Vec").is_some() {
+        return Err(syn::Error::new(
+            value.span(),
+            "a list parameter is absent exactly when it has no items, so a default would leave \
+             no query string able to send the empty list. Drop the `default`: no pair already \
+             binds the empty list",
+        ));
+    }
+    Ok(Some(value))
+}
+
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "QueryParams")?;
     let names = wire_names(input, fields, "param")?;
@@ -63,8 +91,10 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let params = Param::pair(fields, &names, group.as_ref())
         .into_iter()
         .map(|param| {
-            let list = list(&param)?;
-            Ok(param.listed(list))
+            let args = field_args(param.field(), "param")?;
+            let list = list(&param, args.explode)?;
+            let default = default(&param, args.default)?;
+            Ok(param.listed(list).defaulted(default))
         })
         .collect::<syn::Result<Vec<_>>>()?;
     let rejection = quote!(::kynos::error::rejection::QueryRejection);

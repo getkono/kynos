@@ -118,6 +118,9 @@ pub(crate) struct FieldArgs {
     /// `explode = true | false`, which `#[param]` takes and only a query
     /// group's `Vec` field honours.
     pub(crate) explode: Option<LitBool>,
+    /// `default = <literal or path>`, which `#[param]` takes and only a query
+    /// group's field honours.
+    pub(crate) default: Option<Expr>,
 }
 
 /// Reads a field's `#[param]`, `#[header]` or `#[cookie]` lists, named by
@@ -152,6 +155,9 @@ pub(crate) fn field_args(field: &Field, attribute: &str) -> syn::Result<FieldArg
                     };
                     args.explode = Some(flag);
                 }
+                "default" if attribute == "param" => {
+                    args.default = Some(default_value(meta.value()?.parse()?)?);
+                }
                 _ => {
                     return Err(unknown(
                         &meta.path,
@@ -164,6 +170,40 @@ pub(crate) fn field_args(field: &Field, attribute: &str) -> syn::Result<FieldArg
         })?;
     }
     Ok(args)
+}
+
+/// A `#[param(default = ...)]` value: a literal, a negated number, or a path
+/// such as a `const` or a unit variant, so the value the description states is
+/// settled where the field is declared rather than computed per request.
+fn default_value(value: Expr) -> syn::Result<Expr> {
+    let admitted = match &value {
+        Expr::Path(_)
+        | Expr::Lit(ExprLit {
+            lit: Lit::Int(_) | Lit::Float(_) | Lit::Bool(_) | Lit::Str(_) | Lit::Char(_),
+            ..
+        }) => true,
+        Expr::Unary(syn::ExprUnary {
+            op: syn::UnOp::Neg(_),
+            expr,
+            ..
+        }) => matches!(
+            &**expr,
+            Expr::Lit(ExprLit {
+                lit: Lit::Int(_) | Lit::Float(_),
+                ..
+            })
+        ),
+        _ => false,
+    };
+    if admitted {
+        return Ok(value);
+    }
+    Err(syn::Error::new(
+        value.span(),
+        "`default` is a literal or a path to a constant, such as `50`, `\"asc\"`, \
+         `DEFAULT_LIMIT` or `Order::Asc`: the value the description states is settled where \
+         the field is declared",
+    ))
 }
 
 /// What a header group's own `#[header(...)]`, on the struct, said.

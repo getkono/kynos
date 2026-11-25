@@ -26,14 +26,23 @@ fn reject_optional(params: &[Param<'_>]) -> syn::Result<()> {
     }
 }
 
-/// `#[param(explode)]` is the query list's: a path variable is one value.
-fn reject_explode(fields: &FieldsNamed) -> syn::Result<()> {
+/// `#[param(explode)]` and `default` are the query group's: a path variable
+/// is one value, always captured.
+fn reject_query_keys(fields: &FieldsNamed) -> syn::Result<()> {
     for field in &fields.named {
-        if let Some(flag) = field_args(field, "param")?.explode {
+        let args = field_args(field, "param")?;
+        if let Some(flag) = args.explode {
             return Err(syn::Error::new(
                 flag.span(),
                 "`explode` says how a query list's items are carried, and a path parameter is \
                  one value. Only a `QueryParams` group's `Vec<T>` field takes it",
+            ));
+        }
+        if let Some(default) = args.default {
+            return Err(syn::Error::new(
+                default.span(),
+                "a path parameter is always captured, so a `default` would never be read. Only \
+                 a `QueryParams` group's field takes it",
             ));
         }
     }
@@ -43,7 +52,7 @@ fn reject_explode(fields: &FieldsNamed) -> syn::Result<()> {
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "PathParams")?;
     let names = wire_names(input, fields, "param")?;
-    reject_explode(fields)?;
+    reject_query_keys(fields)?;
     reject_duplicate_names(fields, &names, "path parameter", NameCase::Sensitive)?;
 
     let name = &input.ident;

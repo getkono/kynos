@@ -603,3 +603,51 @@ fn each_numeric_bound_refuses_nan() {
         );
     }
 }
+
+/// A parameter's default is typed as its schema types the value it writes: a
+/// number where the schema admits one, a boolean where it admits one, and the
+/// string otherwise, a `$ref` and a text that is no number included.
+#[test]
+fn a_parameter_default_is_typed_by_its_schema() {
+    use kynos_openapi::{Schema, SchemaType, TypeSet};
+    use serde_json::json;
+
+    use crate::__private::query::with_default;
+
+    let typed = |ty: Option<TypeSet>| {
+        Schema::Object(Box::new(kynos_openapi::SchemaObject {
+            ty,
+            ..Default::default()
+        }))
+    };
+    let one = |ty| typed(Some(TypeSet::One(ty)));
+    let referenced = Schema::Object(Box::new(kynos_openapi::SchemaObject {
+        reference: Some("#/components/schemas/Order".to_owned()),
+        ..Default::default()
+    }));
+    for (schema, text, expected) in [
+        (one(SchemaType::Integer), "50", json!(50)),
+        (one(SchemaType::Integer), "-3", json!(-3)),
+        (one(SchemaType::Number), "0.5", json!(0.5)),
+        (one(SchemaType::Number), "NaN", json!("NaN")),
+        (one(SchemaType::Boolean), "false", json!(false)),
+        (one(SchemaType::String), "50", json!("50")),
+        (one(SchemaType::String), "true", json!("true")),
+        (
+            typed(Some(TypeSet::Many(vec![
+                SchemaType::String,
+                SchemaType::Integer,
+            ]))),
+            "7",
+            json!(7),
+        ),
+        (typed(None), "7", json!("7")),
+        (referenced, "asc", json!("asc")),
+        (Schema::Bool(true), "1", json!("1")),
+    ] {
+        let Schema::Object(object) = with_default(schema, text.to_owned()) else {
+            panic!("{text}: a default needs a schema object to sit on");
+        };
+        assert_eq!(object.default, Some(expected), "{text}");
+    }
+}

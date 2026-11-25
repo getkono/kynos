@@ -209,6 +209,29 @@ pub enum RouterError {
         /// Why the type does not carry it.
         refusal: ExampleRefusal,
     },
+
+    /// A query parameter's `#[param(default = ...)]` breaks the bounds its
+    /// field or its type declares, so the document would state a default the
+    /// API refuses when a client sends it, and the decoder would bind a value
+    /// no request could carry.
+    ///
+    /// Found while the group describes its parameters, which cannot fail, and
+    /// located at each operation taking the group.
+    #[error(
+        "`{group}` defaults the query parameter `{parameter}` to {default:?}, which breaks its \
+         bounds: {}",
+        failures.join("; ")
+    )]
+    ParameterDefault {
+        /// The group, as `std::any::type_name` spells it.
+        group: &'static str,
+        /// The parameter's wire name.
+        parameter: String,
+        /// The default, as its type's `Display` writes it.
+        default: String,
+        /// What each broken bound says.
+        failures: Vec<String>,
+    },
 }
 
 /// Why a `#[schema(string)]` type does not carry an example it lists, as a
