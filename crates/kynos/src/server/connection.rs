@@ -184,6 +184,8 @@ pub(crate) mod test_client {
     use hyper_util::rt::TokioExecutor;
     use hyper_util::rt::TokioIo;
     use tokio::io::{AsyncRead, AsyncWrite};
+    #[cfg(feature = "http1")]
+    use {bytes::Bytes, std::time::Duration, tokio::time::Instant};
 
     use crate::{
         extract::connection::Connection,
@@ -191,6 +193,9 @@ pub(crate) mod test_client {
         router::service::Service,
         server::{Running, Server},
     };
+
+    /// Room for a head and a few frames each way, as a socket buffer has.
+    const DUPLEX_CAPACITY: usize = 64 * 1024;
 
     impl<C> Server<C> {
         /// The service every connection shares, for its description.
@@ -230,9 +235,6 @@ pub(crate) mod test_client {
             request: Request,
             connection: Connection,
         ) -> Pin<Box<dyn Future<Output = std::io::Result<Response>> + Send>> {
-            /// Room for a head and a few frames each way, as a socket buffer has.
-            const DUPLEX_CAPACITY: usize = 64 * 1024;
-
             let (client, io) = tokio::io::duplex(DUPLEX_CAPACITY);
             let serving = self.serve_io(io, connection);
             Box::pin(async move {
@@ -252,6 +254,77 @@ pub(crate) mod test_client {
                     }
                 }
             })
+        }
+
+        /// Writes `head` over a duplex [`serve_io`](Server::serve_io) serves
+        /// as `connection`, as [`stall_on`] does.
+        #[cfg(feature = "http1")]
+        pub(crate) fn stall(&self, head: Bytes, connection: Connection) -> Stalled {
+            let started = Instant::now();
+            let (client, io) = tokio::io::duplex(DUPLEX_CAPACITY);
+            let serving = self.serve_io(io, connection);
+            Box::pin(async move {
+                // Detached: once the client half reads the close, the server
+                // half has ended.
+                tokio::spawn(serving.map_err(std::io::Error::other)?);
+                stall_on(client, &head, started).await
+            })
+        }
+    }
+
+    /// What a stalled head resolves to: the octets the server wrote before
+    /// it closed the connection, and how long after the connection opened
+    /// it closed, on tokio's clock.
+    #[cfg(feature = "http1")]
+    pub(crate) type Stalled =
+        Pin<Box<dyn Future<Output = std::io::Result<(Bytes, Duration)>> + Send>>;
+
+    /// Writes `head` over a fresh TCP connection to `address`, as
+    /// [`stall_on`] does.
+    #[cfg(feature = "http1")]
+    pub(crate) async fn stall_at(
+        address: SocketAddr,
+        head: Bytes,
+    ) -> std::io::Result<(Bytes, Duration)> {
+        let started = Instant::now();
+        let stream = tokio::net::TcpStream::connect(address).await?;
+        // The head leaves in one segment rather than waiting on an
+        // acknowledgement that a quiet server delays.
+        stream.set_nodelay(true)?;
+        stall_on(stream, &head, started).await
+    }
+
+    /// Writes `head` on `io` and nothing after it, then reads what the server
+    /// writes until it closes the connection, timed from `started`.
+    ///
+    /// A reset or a refused write is a close too: a server that answers an
+    /// oversized head and hangs up may do either before the client is done.
+    #[cfg(feature = "http1")]
+    async fn stall_on<I>(
+        mut io: I,
+        head: &[u8],
+        started: Instant,
+    ) -> std::io::Result<(Bytes, Duration)>
+    where
+        I: AsyncRead + AsyncWrite + Unpin,
+    {
+        use std::io::ErrorKind::{BrokenPipe, ConnectionAborted, ConnectionReset};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let closing = |error: &std::io::Error| {
+            matches!(
+                error.kind(),
+                BrokenPipe | ConnectionAborted | ConnectionReset
+            )
+        };
+        match io.write_all(head).await {
+            Err(error) if !closing(&error) => return Err(error),
+            _ => {}
+        }
+        let mut received = Vec::new();
+        match io.read_to_end(&mut received).await {
+            Err(error) if !closing(&error) => Err(error),
+            _ => Ok((Bytes::from(received), started.elapsed())),
         }
     }
 

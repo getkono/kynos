@@ -32,6 +32,8 @@ use kynos_openapi::{
 };
 use serde_json::{Map, Value};
 
+#[cfg(all(feature = "server", feature = "http1"))]
+use crate::server::connection::test_client::Stalled;
 use crate::{
     extract::connection::Connection,
     http::{
@@ -687,6 +689,8 @@ impl<C: 'static> TestClient<C> {
         Self::over(Transport::Served {
             server: Box::new(server),
             exchange: crate::server::Server::exchange,
+            #[cfg(feature = "http1")]
+            stall: crate::server::Server::stall,
         })
     }
 
@@ -785,6 +789,9 @@ enum Transport<C> {
         /// `Server::exchange`, taken where `C: 'static` is known so sending
         /// needs no such bound.
         exchange: fn(&crate::server::Server<C>, Request, Connection) -> Exchanged,
+        /// `Server::stall`, taken for the same reason.
+        #[cfg(feature = "http1")]
+        stall: fn(&crate::server::Server<C>, Bytes, Connection) -> Stalled,
     },
     /// Over one fresh TCP connection each, to a spawned server's listener.
     #[cfg(feature = "server")]
@@ -845,15 +852,29 @@ impl<C> Transport<C> {
                 Ok(with_content_length(&method, response))
             }
             #[cfg(feature = "server")]
-            Self::Served { server, exchange } => {
-                exchange(server, request, connection_from(peer)).await
-            }
+            Self::Served {
+                server, exchange, ..
+            } => exchange(server, request, connection_from(peer)).await,
             // The peer is the socket's own; `with_peer` and `peer` refuse
             // to set one.
             #[cfg(feature = "server")]
             Self::Connected { address, .. } => {
                 crate::server::connection::test_client::exchange_at(*address, request).await
             }
+        }
+    }
+
+    /// Writes `head` on a fresh connection from `peer`, and resolves once the
+    /// server closes it, or `None` for [`Self::Direct`], which has no
+    /// connection to write on.
+    #[cfg(all(feature = "server", feature = "http1"))]
+    fn stall(&self, head: Bytes, peer: Option<std::net::SocketAddr>) -> Option<Stalled> {
+        match self {
+            Self::Direct(_) => None,
+            Self::Served { server, stall, .. } => Some(stall(server, head, connection_from(peer))),
+            Self::Connected { address, .. } => Some(Box::pin(
+                crate::server::connection::test_client::stall_at(*address, head),
+            )),
         }
     }
 }
@@ -2138,6 +2159,138 @@ impl<'a, C> TestRequest<'a, C> {
                      nothing bounds the wait on the paused clock"
                 )
             })
+    }
+
+    /// Writes the request's head up to, and not including, the blank line
+    /// that ends it, then nothing more, and resolves once the server closes
+    /// the connection: a client that stalled mid-head.
+    ///
+    /// The head is the HTTP/1.1 request line and every field the request
+    /// carries, its cookies and the client's defaults included, each ended
+    /// by its CRLF. A server holds it to its
+    /// [`header_read_timeout`](crate::server::protocol::http1::Http1Config::header_read_timeout),
+    /// or to an earlier first-head deadline where HTTP/2's idle timeout is
+    /// shorter, and closes the connection without a response. With neither
+    /// set, nothing closes it and the future never resolves.
+    ///
+    /// The wait is on tokio's clock, from before the connection opened, so
+    /// [`TestClosed::after`] is never short of the server's deadline. A
+    /// client built [`through_server`](TestClient::through_server) resolves
+    /// at once in real time under
+    /// `#[tokio::test(start_paused = true)]`, at the deadline on the paused
+    /// clock; one built [`connect`](TestClient::connect) waits the
+    /// deadline out on the real clock, so give its server a short one.
+    ///
+    /// Nothing is recorded: with no response, there is nothing to conform
+    /// or to cover.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use kynos::{
+    ///     Router,
+    ///     server::{Server, protocol::http1::Http1Config},
+    ///     test::TestClient,
+    /// };
+    ///
+    /// #[tokio::main(flavor = "current_thread", start_paused = true)]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let timeout = Duration::from_secs(5);
+    ///     let server = Server::new(Router::<()>::new().build(())?)
+    ///         .http1(Http1Config::default().header_read_timeout(Some(timeout)));
+    ///     let client = TestClient::through_server(server);
+    ///     let closed = client
+    ///         .get("/health")
+    ///         .header("host", "example.test")
+    ///         .send_stalled_head()
+    ///         .await;
+    ///     assert!(closed.after() >= timeout);
+    ///     assert!(closed.received().is_empty());
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics on a client built with [`TestClient::new`], which has no
+    /// connection to write a head on; when the request was given a body,
+    /// which a head that never ends never reaches; when the path is not a
+    /// request target; and when the connection is refused or fails for any
+    /// reason other than the server closing it.
+    #[cfg(all(feature = "server", feature = "http1"))]
+    #[track_caller]
+    pub fn send_stalled_head(self) -> impl std::future::Future<Output = TestClosed> {
+        let exchange = format!("{} {}", self.method, self.path);
+        assert!(
+            matches!(&self.body, RequestBody::Whole(bytes) if bytes.is_empty()),
+            "{exchange}: a stalled head never ends, so the body set on it is never sent"
+        );
+        assert!(
+            self.path.parse::<Uri>().is_ok(),
+            "`{}` is not a request target",
+            self.path
+        );
+        let (client, peer) = (self.client, self.peer);
+        let Some(stalled) = client.transport.stall(self.stalled_head(), peer) else {
+            panic!(
+                "{exchange}: a client built with `TestClient::new` has no connection to stall a \
+                 head on; build it `through_server` or `connect`"
+            )
+        };
+        async move {
+            let (received, after) = stalled.await.unwrap_or_else(|error| {
+                panic!("{exchange}: the connection failed before the server closed it: {error}")
+            });
+            TestClosed { after, received }
+        }
+    }
+
+    /// The octets [`send_stalled_head`](Self::send_stalled_head) writes: the
+    /// request line and every field, each ended by its CRLF, and no blank
+    /// line after them.
+    #[cfg(all(feature = "server", feature = "http1"))]
+    fn stalled_head(mut self) -> Bytes {
+        if let Some(jar) = self.cookie_field() {
+            self.headers.insert(
+                crate::http::header::COOKIE,
+                HeaderValue::from_str(&jar).expect("a cookie a test wrote"),
+            );
+        }
+        let mut head = BytesMut::new();
+        head.extend_from_slice(format!("{} {} HTTP/1.1\r\n", self.method, self.path).as_bytes());
+        for (name, value) in &self.headers {
+            head.extend_from_slice(name.as_str().as_bytes());
+            head.extend_from_slice(b": ");
+            head.extend_from_slice(value.as_bytes());
+            head.extend_from_slice(b"\r\n");
+        }
+        head.freeze()
+    }
+}
+
+/// How a connection ended that
+/// [`TestRequest::send_stalled_head`] left waiting mid-head.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[derive(Debug)]
+pub struct TestClosed {
+    after: std::time::Duration,
+    received: Bytes,
+}
+
+#[cfg(all(feature = "server", feature = "http1"))]
+impl TestClosed {
+    /// How long after the connection opened the server closed it, on tokio's
+    /// clock: the server's deadline, or later by the time the close took.
+    #[must_use]
+    pub fn after(&self) -> std::time::Duration {
+        self.after
+    }
+
+    /// The octets the server wrote before it closed the connection: empty
+    /// where it closed at its header-read deadline, which answers nothing.
+    #[must_use]
+    pub fn received(&self) -> &[u8] {
+        &self.received
     }
 }
 

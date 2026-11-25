@@ -245,6 +245,62 @@ mod stalled_body {
     }
 }
 
+/// `TestRequest::send_stalled_head`'s head: every octet a complete one has
+/// but the blank line that ends it. `tests/client.rs` holds how a server
+/// closes it.
+#[cfg(all(feature = "server", feature = "http1"))]
+mod stalled_head {
+    use crate::{Router, test::TestClient};
+
+    /// The request line, then the client's default field and the request's
+    /// own, then the `Cookie` field its jar assembles, each ended by CRLF and
+    /// no further CRLF after the last.
+    #[test]
+    fn the_head_carries_every_field_and_stops_short_of_its_blank_line() {
+        let client = TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        )
+        .with_default_header("x-default", "a")
+        .with_default_cookie("session", "s1");
+        let head = client
+            .get("/health?probe=1")
+            .header("host", "example.test")
+            .header_bytes("x-opaque", b"\xff")
+            .cookie("theme", "dark")
+            .stalled_head();
+
+        assert_eq!(
+            &head[..],
+            b"GET /health?probe=1 HTTP/1.1\r\n\
+              x-default: a\r\n\
+              host: example.test\r\n\
+              x-opaque: \xff\r\n\
+              cookie: session=s1; theme=dark\r\n"
+        );
+    }
+
+    /// Each refusal is reported at the test's line, not inside the client,
+    /// a request a view begins included.
+    #[test]
+    fn a_stalled_heads_refusal_points_at_its_caller() {
+        let direct = TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        );
+        let served = TestClient::through_server(crate::server::Server::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        ));
+        fails_here!(drop(direct.get("/").send_stalled_head()));
+        fails_here!(drop(direct.view().get("/").send_stalled_head()));
+        fails_here!(drop(served.post("/").text("hello").send_stalled_head()));
+    }
+}
+
 /// What a client sets once seeds every request it begins, and what a request
 /// sets itself replaces it, read off the request `send` would assemble.
 mod defaults {
