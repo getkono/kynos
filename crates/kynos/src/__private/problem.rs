@@ -1,10 +1,9 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
 //! URI prefix with, reads a transparent variant's held error through and
-//! unions its statuses with, sends its
-//! extension members through, declares a constant one by, and sends and
-//! declares a failure's
-//! `#[problem(headers)]` group and `#[problem(retry_after)]` delay with, and
-//! logs a 5xx failure through before its problem consumes it.
+//! unions its statuses with, sends its extension members through, declares a
+//! constant one by, and sends and declares a failure's `#[problem(headers)]`
+//! group and `#[problem(retry_after)]` delay with, and logs a 5xx failure
+//! through before its problem consumes it.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built, and the header helpers to
@@ -12,6 +11,8 @@
 //! and declares its own; a `pub use` would give each a second path. The 5xx
 //! event is emitted by `middleware::trace::reported`, next to the request
 //! log, so the logging facade stays named where the runtime allowance lists.
+
+pub mod slug;
 
 use std::time::Duration;
 

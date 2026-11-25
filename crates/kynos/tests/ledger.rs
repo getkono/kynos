@@ -5,7 +5,9 @@
 //! a set the suites next door witness — so a macro added without a witness
 //! fails the build rather than expanding to whatever it likes, and a refusal
 //! the `Schema` derive documents, or a diagnostic its ledgers assert, without a
-//! snapshot fails it rather than going unchecked.
+//! snapshot fails it rather than going unchecked. A fifth compiles the
+//! `ApiError` derive's slug rule from its file, and holds the `const` port
+//! `kynos::problem_type!` checks its slug by to it.
 //!
 //! That is why they are not in the files whose witnesses they count.
 //! `crates/kynos/Cargo.toml` keeps this target out of the published archive:
@@ -17,8 +19,13 @@
 #[path = "support/literal.rs"]
 mod literal;
 
+// The `ApiError` derive's slug rule, compiled here as it is there.
+#[path = "../../kynos-macros/src/derive/api_error/slug.rs"]
+mod derive_slug;
+
 use std::{collections::BTreeSet, fs, path::Path};
 
+use kynos::__private::problem::slug;
 use literal::string_literal;
 
 /// The macro crate's entry points, as text.
@@ -368,6 +375,97 @@ fn every_ledgered_diagnostic_has_a_snapshot() {
         "the sweep read only {} ledger row(s) from {} file(s)",
         rows.len(),
         ledgers.len()
+    );
+}
+
+/// `kynos::problem_type!` refuses a slug exactly where `#[problem(slug)]`
+/// does, and for the same reason.
+///
+/// The derive's rule is the oracle: its file is compiled into this target,
+/// and `kynos::__private::problem::slug::refusal`, the `const` port the
+/// macro asserts through, is held to it over every string of up to six
+/// characters drawn from an alphabet holding each byte class either rule
+/// branches on.
+#[test]
+fn problem_type_refuses_the_slugs_the_derive_refuses() {
+    const ALPHABET: [char; 10] = ['a', 'z', '2', 'E', 'e', '%', '.', '/', ' ', 'é'];
+
+    let mut reasons = BTreeSet::new();
+    let mut candidate = String::new();
+    let mut odometer = Vec::new();
+    loop {
+        let derive = derive_slug::refusal(&candidate);
+        let port = slug::refusal(&candidate);
+        assert_eq!(
+            format!("{derive:?}"),
+            format!("{port:?}"),
+            "the derive and `problem_type!` disagree on {candidate:?}"
+        );
+        reasons.insert(format!("{derive:?}"));
+
+        // The next string, shortest first, as an odometer over the alphabet.
+        let digit = odometer
+            .iter()
+            .rposition(|&digit| digit + 1 < ALPHABET.len());
+        match digit {
+            Some(at) => {
+                odometer[at] += 1;
+                odometer[at + 1..].fill(0);
+            }
+            None if odometer.len() == 6 => break,
+            None => {
+                odometer.fill(0);
+                odometer.push(0);
+            }
+        }
+        candidate = odometer.iter().map(|&digit| ALPHABET[digit]).collect();
+    }
+
+    // The control: the walk reached a slug and every refusal.
+    assert_eq!(
+        reasons.len(),
+        6,
+        "the walk reached only {reasons:?}, so the alphabet no longer spans both rules"
+    );
+}
+
+/// The two rules agree on every single ASCII character, and a few multi-byte
+/// ones, alone, inside a segment and as a segment of its own.
+///
+/// The short-string walk above covers each branch with a handful of
+/// characters; this covers each byte, so the two hand-copied punctuation
+/// lists cannot drift apart unnoticed.
+#[test]
+fn problem_type_and_the_derive_agree_on_every_ascii_character() {
+    let characters = (0..=0x7F_u8)
+        .map(char::from)
+        .chain(['\u{80}', 'é', '€', '\u{1F600}']);
+
+    let mut admitted = 0;
+    for character in characters {
+        let inside = format!("a{character}b");
+        for candidate in [
+            format!("{character}"),
+            format!("a/{character}/b"),
+            inside.clone(),
+        ] {
+            let derive = derive_slug::refusal(&candidate);
+            assert_eq!(
+                format!("{derive:?}"),
+                format!("{:?}", slug::refusal(&candidate)),
+                "the derive and `problem_type!` disagree on {candidate:?}"
+            );
+            if candidate == inside && derive.is_none() {
+                admitted += 1;
+            }
+        }
+    }
+
+    // RFC 3986's `pchar` outside a percent-encoding: 62 letters and digits,
+    // `-._~`, the 11 sub-delims and `:@`; and `/` between segments.
+    assert_eq!(
+        admitted, 80,
+        "both rules admit {admitted} characters inside a segment, not the 79 `pchar`s and `/`"
     );
 }
 

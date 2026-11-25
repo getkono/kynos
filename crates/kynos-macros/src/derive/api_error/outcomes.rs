@@ -9,6 +9,7 @@ use super::{
     Extension, Failure, Outcome, TypeUri,
     args::{Base, Constant, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
     fields::{header_field, retry_after_field},
+    slug::{self, Refusal},
     transparent::{self, error_transparent},
 };
 use crate::doc::doc_string;
@@ -273,77 +274,44 @@ fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> syn::Resul
     }))
 }
 
-/// What a `slug` names: one or more `/`-separated path segments, each a
-/// non-empty run of RFC 3986 `pchar`s, each `%` opening a percent-encoded
-/// octet, and none a dot segment. It is joined verbatim onto `base`, as the
-/// kebab-cased name is, so it is refused wherever it would publish a URI a
-/// sibling's slug names differently or one resolution would rewrite.
+/// A `slug` as [`slug::refusal`] admits it. It is joined verbatim onto
+/// `base`, as the kebab-cased name is, so it is refused wherever it would
+/// publish a URI a sibling's slug names differently or one resolution would
+/// rewrite.
 fn spelled(literal: &LitStr) -> syn::Result<String> {
-    let slug = characters(literal)?;
+    let slug = literal.value();
     let span = literal.span();
-    if slug.starts_with('/') {
-        return Err(syn::Error::new(
+    Err(match slug::refusal(&slug) {
+        None => return Ok(slug),
+        Some(Refusal::Characters) => syn::Error::new(
+            span,
+            "`slug` is the part of the type URI after `base`, so it is a non-empty run of the \
+             characters a URI path admits, written percent-encoded as it is sent",
+        ),
+        Some(Refusal::LeadingSlash) => syn::Error::new(
             span,
             "`slug` is joined onto `base` verbatim, as the kebab-cased name is, so `base` \
              carries the separator; a leading `/` under a `base` ending in one publishes an \
              empty path segment, a type URI other than the one a sibling's `slug` without it \
              names. Drop the leading `/`",
-        ));
-    }
-    if slug.ends_with('/') {
-        return Err(syn::Error::new(
+        ),
+        Some(Refusal::TrailingSlash) => syn::Error::new(
             span,
             "a `slug` ending in `/` publishes a type URI other than the same slug without it, \
              as a kebab-cased name never ends in one. Drop the trailing `/`",
-        ));
-    }
-    for segment in slug.split('/') {
-        if segment.is_empty() {
-            return Err(syn::Error::new(
-                span,
-                "`//` in a `slug` is an empty path segment, publishing a type URI other than \
-                 the one naming it with a single `/`. Write a single `/` between segments",
-            ));
-        }
-        let decoded = segment.replace("%2E", ".").replace("%2e", ".");
-        if decoded == "." || decoded == ".." {
-            return Err(syn::Error::new(
-                span,
-                "`.` and `..` in a `slug`, percent-encoded as `%2E` or not, are dot segments, \
-                 which RFC 3986 reference resolution removes, so a client resolving the type \
-                 URI reads another one. Name the segment",
-            ));
-        }
-    }
-    Ok(slug)
-}
-
-/// A `slug`'s characters: a non-empty run of the characters RFC 3986 admits
-/// in a path, `pchar` and `/`, each `%` opening a percent-encoded octet.
-fn characters(literal: &LitStr) -> syn::Result<String> {
-    let slug = literal.value();
-    let bytes = slug.as_bytes();
-    let mut index = 0;
-    let mut admitted = !bytes.is_empty();
-    while let (true, Some(&byte)) = (admitted, bytes.get(index)) {
-        let width = if byte == b'%' { 3 } else { 1 };
-        admitted = if byte == b'%' {
-            bytes
-                .get(index + 1..index + 3)
-                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
-        } else {
-            byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/".contains(&byte)
-        };
-        index += width;
-    }
-    if !admitted {
-        return Err(syn::Error::new(
-            literal.span(),
-            "`slug` is the part of the type URI after `base`, so it is a non-empty run of the \
-             characters a URI path admits, written percent-encoded as it is sent",
-        ));
-    }
-    Ok(slug)
+        ),
+        Some(Refusal::EmptySegment) => syn::Error::new(
+            span,
+            "`//` in a `slug` is an empty path segment, publishing a type URI other than \
+             the one naming it with a single `/`. Write a single `/` between segments",
+        ),
+        Some(Refusal::DotSegment) => syn::Error::new(
+            span,
+            "`.` and `..` in a `slug`, percent-encoded as `%2E` or not, are dot segments, \
+             which RFC 3986 reference resolution removes, so a client resolving the type \
+             URI reads another one. Name the segment",
+        ),
+    })
 }
 
 /// A Rust type or variant name as a URI slug.

@@ -96,6 +96,7 @@ mod describe;
 mod emit;
 mod fields;
 mod outcomes;
+mod slug;
 mod subset;
 mod transparent;
 mod variant_of;

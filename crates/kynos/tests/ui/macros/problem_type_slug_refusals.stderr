@@ -1,0 +1,257 @@
+error[E0080]: evaluation panicked: a `problem_type!` slug is the part of the type URI after the base, so it is a non-empty run of the characters a URI path admits, written percent-encoded as it is sent
+  --> tests/ui/macros/problem_type_slug_refusals.rs:10:26
+   |
+10 | const CHARACTERS: &str = kynos::problem_type!("insufficient scope");
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `CHARACTERS::__KYNOS_PROBLEM_BYTES` failed inside this call
+   |
+note: inside `kynos::__private::problem::slug::checked`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/__private/problem/slug.rs
+   |
+   |           Some(Refusal::Characters) => panic!(
+   |  ______________________________________-
+   | |             "a `problem_type!` slug is the part of the type URI after the base, so it is a \
+   | |              non-empty run of the characters a URI path admits, written percent-encoded as it \
+   | |              is sent"
+   | |         ),
+   | |_________- in this macro invocation
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:10:26
+   |
+10 | const CHARACTERS: &str = kynos::problem_type!("insufficient scope");
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:10:26
+   |
+10 | const CHARACTERS: &str = kynos::problem_type!("insufficient scope");
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:10:26
+   |
+10 | const CHARACTERS: &str = kynos::problem_type!("insufficient scope");
+   |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: a `problem_type!` slug is joined onto the base verbatim, so the base carries the separator; a leading `/` publishes an empty path segment, a type URI other than the derive's for the same slug. Drop the leading `/`
+  --> tests/ui/macros/problem_type_slug_refusals.rs:11:29
+   |
+11 | const LEADING_SLASH: &str = kynos::problem_type!("/insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `LEADING_SLASH::__KYNOS_PROBLEM_BYTES` failed inside this call
+   |
+note: inside `kynos::__private::problem::slug::checked`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/__private/problem/slug.rs
+   |
+   |           Some(Refusal::LeadingSlash) => panic!(
+   |  ________________________________________-
+   | |             "a `problem_type!` slug is joined onto the base verbatim, so the base carries the \
+   | |              separator; a leading `/` publishes an empty path segment, a type URI other than \
+   | |              the derive's for the same slug. Drop the leading `/`"
+   | |         ),
+   | |_________- in this macro invocation
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:11:29
+   |
+11 | const LEADING_SLASH: &str = kynos::problem_type!("/insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:11:29
+   |
+11 | const LEADING_SLASH: &str = kynos::problem_type!("/insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:11:29
+   |
+11 | const LEADING_SLASH: &str = kynos::problem_type!("/insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: a `problem_type!` slug ending in `/` publishes a type URI other than the same slug without it, as a kebab-cased name never ends in one. Drop the trailing `/`
+  --> tests/ui/macros/problem_type_slug_refusals.rs:12:30
+   |
+12 | const TRAILING_SLASH: &str = kynos::problem_type!("insufficient-scope/");
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `TRAILING_SLASH::__KYNOS_PROBLEM_BYTES` failed inside this call
+   |
+note: inside `kynos::__private::problem::slug::checked`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/__private/problem/slug.rs
+   |
+   |           Some(Refusal::TrailingSlash) => panic!(
+   |  _________________________________________-
+   | |             "a `problem_type!` slug ending in `/` publishes a type URI other than the same slug \
+   | |              without it, as a kebab-cased name never ends in one. Drop the trailing `/`"
+   | |         ),
+   | |_________- in this macro invocation
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:12:30
+   |
+12 | const TRAILING_SLASH: &str = kynos::problem_type!("insufficient-scope/");
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:12:30
+   |
+12 | const TRAILING_SLASH: &str = kynos::problem_type!("insufficient-scope/");
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:12:30
+   |
+12 | const TRAILING_SLASH: &str = kynos::problem_type!("insufficient-scope/");
+   |                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: `//` in a `problem_type!` slug is an empty path segment, publishing a type URI other than the one naming it with a single `/`. Write a single `/` between segments
+  --> tests/ui/macros/problem_type_slug_refusals.rs:13:29
+   |
+13 | const EMPTY_SEGMENT: &str = kynos::problem_type!("auth//insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `EMPTY_SEGMENT::__KYNOS_PROBLEM_BYTES` failed inside this call
+   |
+note: inside `kynos::__private::problem::slug::checked`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/__private/problem/slug.rs
+   |
+   |           Some(Refusal::EmptySegment) => panic!(
+   |  ________________________________________-
+   | |             "`//` in a `problem_type!` slug is an empty path segment, publishing a type URI \
+   | |              other than the one naming it with a single `/`. Write a single `/` between segments"
+   | |         ),
+   | |_________- in this macro invocation
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:13:29
+   |
+13 | const EMPTY_SEGMENT: &str = kynos::problem_type!("auth//insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:13:29
+   |
+13 | const EMPTY_SEGMENT: &str = kynos::problem_type!("auth//insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:13:29
+   |
+13 | const EMPTY_SEGMENT: &str = kynos::problem_type!("auth//insufficient-scope");
+   |                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+error[E0080]: evaluation panicked: `.` and `..` in a `problem_type!` slug, percent-encoded as `%2E` or not, are dot segments, which RFC 3986 reference resolution removes, so a client resolving the type URI reads another one. Name the segment
+  --> tests/ui/macros/problem_type_slug_refusals.rs:14:27
+   |
+14 | const DOT_SEGMENT: &str = kynos::problem_type!("auth/%2e./insufficient-scope");
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ evaluation of `DOT_SEGMENT::__KYNOS_PROBLEM_BYTES` failed inside this call
+   |
+note: inside `kynos::__private::problem::slug::checked`
+  --> $RUST/core/src/panic.rs
+   |
+   |           $crate::panicking::panic_fmt($crate::const_format_args!($($t)+));
+   |           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ the failure occurred here
+   |
+  ::: src/__private/problem/slug.rs
+   |
+   |           Some(Refusal::DotSegment) => panic!(
+   |  ______________________________________-
+   | |             "`.` and `..` in a `problem_type!` slug, percent-encoded as `%2E` or not, are dot \
+   | |              segments, which RFC 3986 reference resolution removes, so a client resolving the \
+   | |              type URI reads another one. Name the segment"
+   | |         ),
+   | |_________- in this macro invocation
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:14:27
+   |
+14 | const DOT_SEGMENT: &str = kynos::problem_type!("auth/%2e./insufficient-scope");
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:14:27
+   |
+14 | const DOT_SEGMENT: &str = kynos::problem_type!("auth/%2e./insufficient-scope");
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:14:27
+   |
+14 | const DOT_SEGMENT: &str = kynos::problem_type!("auth/%2e./insufficient-scope");
+   |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: this note originates in the macro `kynos::problem_type` (in Nightly builds, run with -Z macro-backtrace for more info)
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:17:14
+   |
+17 |     let _ = (CHARACTERS, LEADING_SLASH, TRAILING_SLASH, EMPTY_SEGMENT, DOT_SEGMENT);
+   |              ^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:17:26
+   |
+17 |     let _ = (CHARACTERS, LEADING_SLASH, TRAILING_SLASH, EMPTY_SEGMENT, DOT_SEGMENT);
+   |                          ^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:17:41
+   |
+17 |     let _ = (CHARACTERS, LEADING_SLASH, TRAILING_SLASH, EMPTY_SEGMENT, DOT_SEGMENT);
+   |                                         ^^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:17:57
+   |
+17 |     let _ = (CHARACTERS, LEADING_SLASH, TRAILING_SLASH, EMPTY_SEGMENT, DOT_SEGMENT);
+   |                                                         ^^^^^^^^^^^^^
+
+note: erroneous constant encountered
+  --> tests/ui/macros/problem_type_slug_refusals.rs:17:72
+   |
+17 |     let _ = (CHARACTERS, LEADING_SLASH, TRAILING_SLASH, EMPTY_SEGMENT, DOT_SEGMENT);
+   |                                                                        ^^^^^^^^^^^
