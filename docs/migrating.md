@@ -74,6 +74,11 @@ by task.
 | `#[problem(type = "<base literal>removed")]` beside a `const` base, and a test that the two agree | `#[problem(base = PROBLEM_BASE, slug = "removed")]` on a struct, or `slug = "removed"` on a variant under its enum's `base` | #1425 |
 | `-> Router<App, impl PanicPolicy, impl Sized + use<>, impl Sized + use<>>`, the `use<>` only so a call on a temporary compiles | `-> router::sealed::Sealed<App>`, and `.seal()` last in the body | #1435 |
 | `middleware::security_headers::SecurityHeaders<false, true>`, or any other pair of `bool`s, in a type naming one | `SecurityHeaders<NoHsts, DenyFraming>`, each marker from `middleware::security_headers`: `Hsts` or `NoHsts` first, `DenyFraming` or `NoDenyFraming` second; `SecurityFields` takes the same two | #1435 |
+| An `assert_code` helper comparing `content-type` and `body["code"]` | `resp.assert_problem_extension("code", code)`, which also holds `Content-Type` to `application/problem+json`, chained after `resp.assert_problem(status, type_uri)` | #1438 |
+| `assert!(resp.header(name).is_some())`, whose failure names neither the request nor the field | `resp.assert_has_header(name)` | #1438 |
+| `header(..).to_ascii_lowercase().contains("authorization")`, which `X-Authorization` also passes | `resp.assert_header_lists("access-control-allow-headers", "authorization")`, which compares whole list elements across every field line | #1438 |
+| `assert!(resp.header("content-type").unwrap().starts_with("text/plain"))`, which `text/plainer` also passes | `resp.assert_content_type("text/plain")`, which compares the media type's essence in any case, its parameters aside | #1438 |
+| `let body: Value = resp.json(); body["token"].as_str().expect("token")` | `resp.json_at::<String>("/token")`, an RFC 6901 pointer; behind `json` | #1438 |
 
 ## 0.5 to 0.6
 

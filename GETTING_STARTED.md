@@ -47,8 +47,11 @@ by the release that shipped each, for code written before it.
 | An `authorization` header formatting a bearer token in a test | `test::TestRequest::bearer` |
 | The same header or cookie on every request a test sends | `test::TestClient::with_default_header` or `with_default_cookie` |
 | `get`/`post` wrappers prepending a mount prefix and a token minted mid-test | `test::TestClient::at(prefix)` or `view()`, then `bearer(&token)`: a `test::view::ClientView` whose requests the client still records |
-| A helper checking a problem response's status, type URI and members | `test::TestResponse::assert_problem`, with the base set once by `test::TestClient::with_problem_base`, and `test::TestProblem::extension` |
-| `assert!(resp.header(name).is_none())` | `test::TestResponse::assert_no_header` |
+| A helper checking a problem response's status, type URI and members | `test::TestResponse::assert_problem`, with the base set once by `test::TestClient::with_problem_base`, then `assert_problem_extension`, or `test::TestProblem::extension` to read one |
+| `assert!(resp.header(name).is_none())`, or `is_some()` | `test::TestResponse::assert_no_header`, or `assert_has_header` |
+| A substring search of a comma-separated field such as `Vary` or `Access-Control-Allow-Headers` | `test::TestResponse::assert_header_lists` |
+| `starts_with` on a `Content-Type` to skip its parameters | `test::TestResponse::assert_content_type` |
+| A `serde_json::Value` read only to index one member of a response body | `test::TestResponse::json_at`, with an RFC 6901 pointer; behind `json` |
 | A parser for a `Set-Cookie` field's attributes | `test::TestResponse::set_cookie`, `assert_cookie_set` and `assert_cookie_cleared`; behind `cookie` |
 | A `multipart/form-data` test body framed by hand | `test::TestRequest::multipart`; behind `multipart` |
 | A loopback socket to test what a configured server's timeouts answer | `test::TestClient::through_server` |
