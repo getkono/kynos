@@ -46,6 +46,7 @@ by the release that shipped each, for code written before it.
 | --- | --- |
 | An `authorization` header formatting a bearer token in a test | `test::TestRequest::bearer` |
 | The same header or cookie on every request a test sends | `test::TestClient::with_default_header` or `with_default_cookie` |
+| `get`/`post` wrappers prepending a mount prefix and a token minted mid-test | `test::TestClient::at(prefix)` or `view()`, then `bearer(&token)`: a `test::view::ClientView` whose requests the client still records |
 | A helper checking a problem response's status, type URI and members | `test::TestResponse::assert_problem`, with the base set once by `test::TestClient::with_problem_base`, and `test::TestProblem::extension` |
 | `assert!(resp.header(name).is_none())` | `test::TestResponse::assert_no_header` |
 | A parser for a `Set-Cookie` field's attributes | `test::TestResponse::set_cookie`, `assert_cookie_set` and `assert_cookie_cleared`; behind `cookie` |
