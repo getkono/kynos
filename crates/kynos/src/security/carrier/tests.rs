@@ -453,9 +453,10 @@ fn with_cookies(fields: &[&[u8]]) -> Parts {
     request.into_parts().0
 }
 
-/// The first cookie of the key's name decides, as the first query pair does: a
-/// key that was sent and cannot be read is refused, never read as absent and
-/// never stood in for by a later cookie of the same name.
+/// The first cookie of the key's name decides, since a user agent orders a
+/// name's cookies most specific path first: a key that was sent and cannot be
+/// read is refused, never read as absent and never stood in for by a later
+/// cookie of the same name.
 #[test]
 fn a_cookie_api_key_that_is_not_ascii_is_refused() {
     for fields in [
