@@ -13,8 +13,11 @@ use crate::http::Parts;
 /// refuses a second pair: choosing either would let whatever appends a pair
 /// pick the credential. Otherwise [`MalformedReason::NotText`] when the value's
 /// octets are not UTF-8.
+///
+/// Only the one pair's value is decoded, as in the derived decoder: every other
+/// pair costs its name's decoding alone.
 pub(super) fn value(parts: &Parts, name: &str) -> Presented<String> {
-    let mut named = crate::__private::uri::query_pairs(parts.uri.query())
+    let mut named = crate::__private::uri::query_names(parts.uri.query())
         .filter(|(key, _)| **key == *name.as_bytes())
         .map(|(_, value)| value);
     let Some(value) = named.next() else {
@@ -23,7 +26,7 @@ pub(super) fn value(parts: &Parts, name: &str) -> Presented<String> {
     if named.next().is_some() {
         return Presented::Malformed(Malformed::new(MalformedReason::Repeated));
     }
-    match String::from_utf8(value.into_owned()) {
+    match String::from_utf8(crate::__private::uri::decode_query_component(value).into_owned()) {
         Ok(value) => Presented::Present(value),
         Err(_) => Presented::Malformed(Malformed::new(MalformedReason::NotText)),
     }

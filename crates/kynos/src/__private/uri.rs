@@ -67,16 +67,20 @@ pub(crate) fn decode_path_value(
 /// The pairs a raw query string carries, each half decoded to octets, in the
 /// order the target wrote them.
 ///
-/// Shared by `QueryParams` and query API keys, so they cannot disagree about
-/// what the client sent; octets, so each reader decides what non-UTF-8 means
-/// to it. `Form<T>` does not read its body through this: it checks the body
-/// in place with `check_percent_decoded_utf8`, which the `__private` test
+/// What `QueryParams` and query API keys read, so they cannot disagree about
+/// what the client sent; each composes [`query_names`] and
+/// [`decode_query_component`] itself, decoding only the values it reads, so
+/// only the tests and the `query` fuzz target call this whole reading. Octets,
+/// so each reader decides what non-UTF-8 means to it. `Form<T>` does not read
+/// its body through this: it checks the body in place with
+/// `check_percent_decoded_utf8`, which the `__private` test
 /// `the_in_place_utf8_check_agrees_with_decoding_every_pair` and the `query`
 /// fuzz target hold to this reader plus `str::from_utf8` on every half.
 ///
 /// Form rules, as OpenAPI requires of `in: query`: `+` is a space and `%2B` a
 /// plus sign. An empty pair is skipped, a pair with no `=` has an empty value,
 /// and a malformed escape is kept as the literal `%`.
+#[cfg(any(test, fuzzing))]
 pub(crate) fn query_pairs(
     query: Option<&str>,
 ) -> impl Iterator<Item = (std::borrow::Cow<'_, [u8]>, std::borrow::Cow<'_, [u8]>)> {
@@ -102,7 +106,7 @@ pub fn query_names(
 /// into memory.
 ///
 /// `+`, `&` and `=` are ASCII, so this is also whether every half of every
-/// pair [`query_pairs`] reads from `text` is UTF-8. A malformed escape is the
+/// pair `query_pairs` reads from `text` is UTF-8. A malformed escape is the
 /// literal `%`, as there.
 ///
 /// # Errors
