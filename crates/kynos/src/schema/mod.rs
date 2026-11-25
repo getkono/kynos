@@ -660,8 +660,15 @@ impl std::error::Error for UnknownVariant {}
 /// ```
 ///
 /// A trait rather than inherent items, so a type's own `as_str` or `VARIANTS`
-/// is left alone, and generic code can range over any such enum. Reading a name
-/// back is `FromStr`, which the derive also implements.
+/// still compiles, and generic code can range over any such enum. Reading a
+/// name back is `FromStr`, which the derive also implements.
+///
+/// It is not in `kynos::prelude`; import it where you call it. Once it is in
+/// scope its `as_str(&self)` wins a method call through a reference over an
+/// inherent by-value `fn as_str(self)`, and `T::VARIANTS` is ambiguous beside
+/// another imported trait declaring `VARIANTS`, such as strum's
+/// `VariantNames`. Where a type has either, call the trait by its path:
+/// `UnitEnum::as_str(&value)`, `<T as UnitEnum>::VARIANTS`.
 ///
 /// Implement it by hand only beside a hand-written `Display`; the names are
 /// then yours to keep equal to what it writes.

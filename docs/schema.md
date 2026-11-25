@@ -217,8 +217,13 @@ as a search filter, is a whole `QueryString` under `openapi32` instead.
 The derived enum is also a `UnitEnum`, so a database column or a log field
 reads the same names without restating them: `status.as_str()` is the
 `&'static str` `Display` writes, and `Status::VARIANTS` lists every variant.
-They sit on a trait, in the prelude, rather than on the type, so an `as_str` the
-enum already declares keeps compiling and keeps winning a method call.
+They sit on a trait rather than on the type, so an `as_str` the enum already
+declares keeps compiling. The trait is not in the prelude, so it changes no
+method call until you `use kynos::schema::UnitEnum`. Once imported, its
+`as_str(&self)` beats an inherent by-value `as_str(self)` called through a
+reference, and `T::VARIANTS` is ambiguous beside strum's `VariantNames`; call
+it by path, `UnitEnum::as_str(&status)`, where a type has either. `as_str` is
+not `const`.
 
 ## Binary content
 

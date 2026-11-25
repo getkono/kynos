@@ -47,7 +47,7 @@ use kynos::{
     openapi::{Parameter, ParameterIn},
     prelude::*,
     router::operation::OperationCx,
-    schema::registry::Registry,
+    schema::{UnitEnum, registry::Registry},
     server::Server,
 };
 use serde::{Deserialize, Serialize};

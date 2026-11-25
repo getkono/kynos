@@ -1278,8 +1278,9 @@ impl Severity {
 }
 
 /// The derive's names sit on a trait, so a type's own items of the same names
-/// still compile and still win a path or a method call, and the wire names
-/// stay reachable through the trait.
+/// still compile and, with a `&self` receiver, still win a path or a method
+/// call even where the trait is imported, and the wire names stay reachable
+/// through the trait.
 #[test]
 fn a_derived_unit_enum_leaves_the_types_own_items_alone() {
     assert_eq!(Severity::High.as_str(), "High severity");
@@ -1290,6 +1291,54 @@ fn a_derived_unit_enum_leaves_the_types_own_items_alone() {
         [Severity::Low, Severity::High]
     );
     assert_eq!(Severity::High.to_string(), "high");
+}
+
+/// Code importing only the prelude, whose method calls and associated paths
+/// the derive's `UnitEnum` must leave resolving as they did before it.
+mod unit_enum_beside_the_prelude {
+    use kynos::prelude::*;
+
+    /// A strum-style trait declaring its own `VARIANTS`.
+    trait VariantNames {
+        const VARIANTS: &'static [&'static str];
+    }
+
+    /// The issue's own shape: a by-value `const fn as_str(self)`.
+    #[derive(
+        Clone, Copy, Debug, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize,
+    )]
+    #[serde(rename_all = "lowercase")]
+    enum Status {
+        Open,
+        Dismissed,
+    }
+
+    impl Status {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::Open => "Open status",
+                Self::Dismissed => "Dismissed status",
+            }
+        }
+    }
+
+    impl VariantNames for Status {
+        const VARIANTS: &'static [&'static str] = &["Open", "Dismissed"];
+    }
+
+    /// Were `UnitEnum` in the prelude, a call through a reference would
+    /// resolve to its `as_str(&self)` and `Status::VARIANTS` would not compile.
+    #[test]
+    fn a_by_value_as_str_and_a_foreign_variants_keep_resolving() {
+        let status = &Status::Dismissed;
+        assert_eq!(status.as_str(), "Dismissed status");
+        let found = [Status::Open, Status::Dismissed]
+            .iter()
+            .find(|status| status.as_str() == "Open status");
+        assert_eq!(found, Some(&Status::Open));
+        assert_eq!(Status::VARIANTS, ["Open", "Dismissed"]);
+        assert_eq!(kynos::schema::UnitEnum::as_str(status), "dismissed");
+    }
 }
 
 /// A newtype over one parameter value, written by serde as itself.

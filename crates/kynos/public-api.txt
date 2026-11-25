@@ -7094,9 +7094,6 @@ pub const kynos::schema::unchecked::Unchecked<T>::CONSTRAINT_PROBLEM: core::opti
 pub fn kynos::schema::unchecked::Unchecked<T>::check_constraints(&self, kynos::schema::constraints::Pointer<'_>, &mut kynos::schema::constraints::Violations)
 pub fn kynos::schema::unchecked::Unchecked<T>::name() -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub fn kynos::schema::unchecked::Unchecked<T>::schema(&mut kynos::schema::registry::Registry) -> kynos_openapi::model::schema::Schema
-pub trait kynos::prelude::UnitEnum: core::marker::Sized + 'static
-pub const kynos::prelude::UnitEnum::VARIANTS: &'static [Self]
-pub fn kynos::prelude::UnitEnum::as_str(&self) -> &'static str
 pub type kynos::prelude::Result<T, E> = core::result::Result<T, E>
 pub mod kynos::response
 pub mod kynos::response::codec
