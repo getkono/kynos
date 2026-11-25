@@ -32,6 +32,10 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
+#[path = "support/inline.rs"]
+mod inline;
+
+use inline::inlined;
 use support::{caught, outcome};
 
 /// The operation under test. Nothing else in the fixture panics, so a 500 here
@@ -686,7 +690,7 @@ fn recovery_below_the_router_declares_its_500_on_what_it_covers_alone() {
         ))
         .openapi()
         .expect("a describable router");
-    let document = serde_json::to_value(&document).expect("a serializable document");
+    let document = serde_json::to_value(inlined(document)).expect("a serializable document");
 
     for (path, recovered) in [
         ("/guarded/boom", true),

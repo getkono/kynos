@@ -8,8 +8,8 @@
 //! `deny_unchecked_schemas` refuses the whole build.
 //!
 //! Below those, what a router makes of a malformed mount site, the
-//! `operationId`s a mounted reference publishes, and what a `map_openapi` edit
-//! reaches and may not change.
+//! `operationId`s a mounted reference publishes, what a `map_openapi` edit
+//! reaches and may not change, and which responses the document shares.
 
 use std::sync::{Arc, Mutex};
 
@@ -1191,5 +1191,201 @@ mod router_errors {
         .collect();
 
         assert_eq!(covered, declared);
+    }
+}
+
+/// Which responses the document names once under `components/responses`,
+/// under what name, and what it leaves inline.
+mod shared_responses {
+    use kynos_openapi::{Document, Header, Method, Ref, RefOr, Response, Schema};
+
+    use super::{Router, handled};
+    use crate::router::endpoint::builder::EndpointBuilder;
+
+    /// A `GET` on each of `paths`, in that order.
+    fn router(paths: &[&'static str]) -> Router<()> {
+        paths.iter().fold(Router::<()>::new(), |router, &path| {
+            router.mount(EndpointBuilder::<(), _, _>::new(
+                Method::Get,
+                kynos_openapi::PathTemplate::parse(path).expect("a usable path template"),
+                handled,
+            ))
+        })
+    }
+
+    /// Declares `response` at `key` on the `GET` at each of `paths`.
+    fn declare(document: &mut Document, paths: &[&str], key: &str, response: &Response) {
+        for path in paths {
+            let operation = document.paths.items[*path]
+                .operation_mut(Method::Get)
+                .expect("a mounted GET");
+            let entry = RefOr::Item(response.clone());
+            if key == "default" {
+                operation.responses.default_response = Some(entry);
+            } else {
+                operation.responses.responses.insert(key.to_owned(), entry);
+            }
+        }
+    }
+
+    /// The entry the `GET` at `path` declares at `key`.
+    fn entry<'d>(document: &'d Document, path: &str, key: &str) -> &'d RefOr<Response> {
+        let responses = &document.paths.items[path]
+            .operation(Method::Get)
+            .expect("a mounted GET")
+            .responses;
+        if key == "default" {
+            responses.default_response.as_ref()
+        } else {
+            responses.responses.get(key)
+        }
+        .expect("a declared response")
+    }
+
+    fn reference(name: &str) -> RefOr<Response> {
+        RefOr::Ref(Ref::response(name))
+    }
+
+    fn component<'d>(document: &'d Document, name: &str) -> &'d Response {
+        document.components.responses[name]
+            .as_item()
+            .expect("an inline component")
+    }
+
+    /// The `204` every mounted operation answers, given its own name, and
+    /// referred to from each; once, it stays where it is.
+    #[test]
+    fn a_response_two_operations_declare_alike_is_named_once() {
+        let alone = router(&["/a"]).openapi().expect("describes");
+        let RefOr::Item(answered) = entry(&alone, "/a", "204") else {
+            panic!("a response one operation declares stays inline");
+        };
+        assert!(alone.components.responses.is_empty());
+
+        let shared = router(&["/a", "/b"]).openapi().expect("describes");
+
+        assert_eq!(component(&shared, "Status204"), answered);
+        for path in ["/a", "/b"] {
+            assert_eq!(
+                entry(&shared, path, "204"),
+                &reference("Status204"),
+                "{path}"
+            );
+        }
+    }
+
+    /// Every way two responses can differ keeps them apart; the names follow
+    /// the bytes, never the order the operations were mounted in.
+    #[test]
+    fn responses_differing_anywhere_stay_apart_named_by_their_bytes() {
+        let headed = || {
+            Response::new("first").with_header(
+                "Retry-After",
+                Header::new(Schema::of_type(kynos_openapi::SchemaType::Integer)),
+            )
+        };
+
+        for paths in [
+            ["/a", "/b", "/c", "/d", "/e", "/f", "/g"],
+            ["/g", "/f", "/e", "/d", "/c", "/b", "/a"],
+        ] {
+            let document = router(&paths)
+                .map_openapi(move |document| {
+                    declare(document, &["/a", "/b"], "500", &Response::new("second"));
+                    declare(document, &["/c", "/d"], "500", &Response::new("first"));
+                    declare(document, &["/e", "/f"], "500", &headed());
+                    declare(document, &["/g"], "500", &Response::new("once"));
+                })
+                .openapi()
+                .expect("describes");
+
+            // `{"description":"first","headers":...}` sorts before
+            // `{"description":"first"}`, since `,` precedes `}`, and both
+            // before `{"description":"second"}`.
+            assert_eq!(component(&document, "Status500"), &headed());
+            assert_eq!(component(&document, "Status500_2"), &Response::new("first"));
+            assert_eq!(
+                component(&document, "Status500_3"),
+                &Response::new("second")
+            );
+            assert_eq!(entry(&document, "/e", "500"), &reference("Status500"));
+            assert_eq!(entry(&document, "/c", "500"), &reference("Status500_2"));
+            assert_eq!(entry(&document, "/a", "500"), &reference("Status500_3"));
+            assert_eq!(
+                entry(&document, "/g", "500").as_item(),
+                Some(&Response::new("once"))
+            );
+        }
+    }
+
+    /// A component is named for the key it is declared at, so one response
+    /// declared at two keys is two components, and `default` is `Default`.
+    #[test]
+    fn a_response_is_named_for_its_key() {
+        let denied = Response::new("denied");
+        let document = router(&["/a", "/b"])
+            .map_openapi(move |document| {
+                for key in ["401", "4XX", "default"] {
+                    declare(document, &["/a", "/b"], key, &denied);
+                }
+            })
+            .openapi()
+            .expect("describes");
+
+        for (key, name) in [
+            ("401", "Status401"),
+            ("4XX", "Status4XX"),
+            ("default", "Default"),
+        ] {
+            assert_eq!(entry(&document, "/b", key), &reference(name), "{key}");
+            assert_eq!(component(&document, name), &Response::new("denied"));
+        }
+    }
+
+    /// The application's own components are never overwritten: a name it
+    /// took is passed over, and a component of the same bytes is referred to
+    /// rather than repeated. Its edits read every response inline.
+    #[test]
+    fn the_application_s_components_are_kept_and_reused() {
+        let document = router(&["/a", "/b"])
+            .map_openapi(|document| {
+                for path in ["/a", "/b"] {
+                    assert!(!entry(document, path, "204").is_ref(), "{path}");
+                }
+                let components = &mut document.components.responses;
+                components.insert("Status503".to_owned(), RefOr::Item(Response::new("theirs")));
+                components.insert("Busy".to_owned(), RefOr::Item(Response::new("busy")));
+                declare(document, &["/a", "/b"], "503", &Response::new("ours"));
+                declare(document, &["/a", "/b"], "429", &Response::new("busy"));
+            })
+            .openapi()
+            .expect("describes");
+
+        assert_eq!(component(&document, "Status503"), &Response::new("theirs"));
+        assert_eq!(component(&document, "Status503_2"), &Response::new("ours"));
+        assert_eq!(entry(&document, "/a", "503"), &reference("Status503_2"));
+        assert_eq!(entry(&document, "/a", "429"), &reference("Busy"));
+        assert!(!document.components.responses.contains_key("Status429"));
+    }
+
+    /// A name a `$ref` already gives is passed over even where nothing
+    /// declares it, so a minted component never answers a reference written
+    /// for another.
+    #[test]
+    fn a_name_a_reference_gives_is_never_minted() {
+        let mut document = router(&["/a", "/b"]).openapi().expect("describes");
+        declare(&mut document, &["/a", "/b"], "503", &Response::new("ours"));
+        document.paths.items["/a"]
+            .operation_mut(Method::Get)
+            .expect("a mounted GET")
+            .responses
+            .responses
+            .insert("502".to_owned(), reference("Status503"));
+
+        crate::router::hoist::shared_responses(&mut document.paths, &mut document.components);
+
+        assert!(!document.components.responses.contains_key("Status503"));
+        assert_eq!(component(&document, "Status503_2"), &Response::new("ours"));
+        assert_eq!(entry(&document, "/a", "502"), &reference("Status503"));
     }
 }

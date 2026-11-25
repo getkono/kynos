@@ -62,7 +62,12 @@
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
+#[path = "support/inline.rs"]
+mod inline;
+
 use std::{collections::BTreeSet, num::NonZeroUsize};
+
+use inline::inlined;
 
 use kynos::{
     ApiError, PathParams, Router, Schema,
@@ -277,8 +282,9 @@ async fn preview_recording(range: Range<Binary<OctetStream>>) -> Binary<OctetStr
     Binary::new(&b"0123456789"[..])
 }
 
-/// The one operation under `path`.
+/// The one operation under `path`, every response it shares written out.
 fn operation(document: &Document, path: &str) -> kynos::openapi::Operation {
+    let document = inlined(document.clone());
     let item = document.paths.items.get(path).expect("a described path");
     let (_, operation) = item.operations().next().expect("one operation");
     operation.clone()
@@ -3706,11 +3712,13 @@ fn object_and_its_head() -> impl kynos::router::endpoint::set::IntoEndpoints<(),
 /// none leaves its HEAD out.
 #[test]
 fn a_described_head_is_its_get_without_content() {
-    let document = Router::<()>::new()
-        .mount(object_and_its_head())
-        .mount(kynos::routes![alpha])
-        .openapi()
-        .expect("a describable router");
+    let document = inlined(
+        Router::<()>::new()
+            .mount(object_and_its_head())
+            .mount(kynos::routes![alpha])
+            .openapi()
+            .expect("a describable router"),
+    );
 
     let item = &document.paths.items["/objects/current"];
     let get = item

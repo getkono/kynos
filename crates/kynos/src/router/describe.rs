@@ -47,7 +47,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// 3.1 for an API using no 3.2-only construct, and 3.2 for one that does —
     /// a `QUERY` operation, an item stream such as `Sse`, an `in: querystring`
     /// parameter. The `openapi32` feature does not decide it, since Cargo
-    /// unifies features across the dependency graph.
+    /// unifies features across the dependency graph. A response several
+    /// operations declare alike is [shared](Router#responses-operations-share).
     ///
     /// # Errors
     ///
@@ -328,6 +329,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         // Before the version is chosen and the document validated, so both
         // read what the application publishes.
         super::map::apply(&self.document_edits, &mut document, &mut violations);
+        super::hoist::shared_responses(&mut document.paths, &mut document.components);
 
         // From what the document uses, never from a (unified) cargo feature.
         let document = lowest_expressing(&document)?;
@@ -340,10 +342,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             document
         };
 
-        let version = document.spec_version().unwrap_or_default();
-
         violations.extend(
-            kynos_openapi::validate::Validator::new(version)
+            kynos_openapi::validate::Validator::new(document.spec_version().unwrap_or_default())
                 .validate(&document)
                 .into_iter()
                 .map(lift),

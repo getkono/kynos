@@ -8,6 +8,10 @@
 #![cfg(all(feature = "macros", feature = "json"))]
 #![allow(dead_code)]
 
+#[path = "support/inline.rs"]
+mod inline;
+
+use inline::inlined;
 use kynos::{
     http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
     middleware::cors::Cors,
@@ -1154,7 +1158,7 @@ mod documented {
         middleware::cors::Cors,
     };
 
-    use super::{cors_fields, field, router, send};
+    use super::{cors_fields, field, inlined, router, send};
 
     fn cors() -> kynos::middleware::cors::Cors<kynos::middleware::cors::Documented> {
         Cors::new()
@@ -1257,14 +1261,14 @@ mod documented {
             names
         };
 
-        let documented = serde_json::to_value(
+        let documented = serde_json::to_value(inlined(
             router()
                 .intercept(cors())
                 .openapi()
                 .expect("a describable router"),
-        )
+        ))
         .expect("a serializable document");
-        let undocumented = serde_json::to_value(
+        let undocumented = serde_json::to_value(inlined(
             router()
                 .intercept(
                     Cors::new()
@@ -1273,7 +1277,7 @@ mod documented {
                 )
                 .openapi()
                 .expect("a describable router"),
-        )
+        ))
         .expect("a serializable document");
 
         assert_eq!(

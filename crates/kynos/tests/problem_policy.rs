@@ -24,6 +24,12 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "assets")]
+#[path = "support/inline.rs"]
+mod inline;
+
+#[cfg(feature = "assets")]
+use inline::inlined;
 use kynos::openapi::{Severity, Violation};
 use kynos::{
     HeaderParams, PathParams, QueryParams, Router, Schema,
@@ -931,7 +937,7 @@ async fn an_asset_s_416_carries_the_members() {
             .group(Group::new("/static").mount(Fixture::assets()))
             .problems::<AppProblems>()
     };
-    let document = serde_json::to_value(router().openapi().expect("a describable router"))
+    let document = serde_json::to_value(inlined(router().openapi().expect("a describable router")))
         .expect("a document serializes");
     let declared = &document["paths"]["/static/css/app.css"]["get"]["responses"]["416"]["content"]
         ["application/problem+json"]["schema"]["allOf"][1];

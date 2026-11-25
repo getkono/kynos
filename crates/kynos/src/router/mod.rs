@@ -12,6 +12,7 @@
 mod build;
 mod describe;
 mod head;
+mod hoist;
 mod install;
 mod map;
 
@@ -142,6 +143,28 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// container — nothing is registered into it and nothing is looked up — so a
 /// handler asking for something the context does not provide is a compile
 /// error rather than a runtime panic.
+///
+/// # Responses operations share
+///
+/// A response two or more operations declare under the same status key, byte
+/// for byte, is written once under `components/responses` and named by a bare
+/// `$ref` from each, so a description grows with the shapes an API answers
+/// with rather than with its operations, and a generator sees one named
+/// response rather than many anonymous copies. A response declared once stays
+/// inline, and one already given by `$ref` is left as written.
+///
+/// The name is the key's: `Status404`, `Status4XX`, `Default`. Two different
+/// responses at one key are `Status400` and `Status400_2`, in the order of
+/// their serialized bytes, so no name depends on the order operations were
+/// mounted in. A response differing anywhere — a description, a header, a
+/// link — is a different response, so sharing never changes what an
+/// operation says.
+///
+/// It happens after every [`map_openapi`](Router::map_openapi) edit, so an
+/// edit reads every response inline. A response component an edit declares
+/// is never overwritten: a minted name passes over its name, and over any
+/// name a response `$ref` already gives, and a response with exactly its
+/// bytes refers to it instead of minting another.
 ///
 /// # Returning one from a function
 ///
@@ -1067,6 +1090,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// `x-kynos-opaque` marker is a [`MappedOperation`](RouterError::MappedOperation) violation. The
     /// version the document claims is chosen after the edit, from what it
     /// uses, so the `openapi` field an edit writes is not kept.
+    ///
+    /// An edit reads every response inline: the responses operations share
+    /// are [moved](Router#responses-operations-share) under
+    /// `components/responses` only after the last edit, so a response edited
+    /// at one operation stops being shared there rather than changing at the
+    /// others.
     ///
     /// Set on the root router: an edit sees the whole document, so on a
     /// router that is then nested or merged it is a
