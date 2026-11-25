@@ -355,7 +355,8 @@ pub(crate) fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// triggers an action — exactly as they were: it does not run on them, so a
 /// coded body sent to one is ignored with the rest of that body, and they
 /// declare none of its 400, 413 and 415. A router's own `Decompression` leaves
-/// the router's fallbacks alone too.
+/// the router's fallbacks alone too, unless a router interceptor running
+/// beneath it may read the body.
 ///
 /// Where it does run it reads the whole body, so it keeps its own
 /// [`READS_BODY`](Interceptor::READS_BODY) at `true`: an application's own
