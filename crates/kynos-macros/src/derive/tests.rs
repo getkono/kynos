@@ -5137,6 +5137,218 @@ mod api_error {
         )]
     }
 
+    /// The refusals of `slug`, each a `slug` that would otherwise be dropped
+    /// or publish no type URI; apart, so [`ledger`] stays one a reader can
+    /// hold.
+    fn slug_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a `slug` holding a character no URI path admits",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "user removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "a non-empty run of the characters a URI path admits",
+            ),
+            case(
+                "a `slug` opening with the `/` its `base` carries",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "/removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Drop the leading `/`",
+            ),
+            case(
+                "a `slug` ending in `/`",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "removed/")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Drop the trailing `/`",
+            ),
+            case(
+                "a `slug` with an empty segment",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "moderation//removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Write a single `/` between segments",
+            ),
+            case(
+                "a `slug` with a dot segment",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "moderation/../removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "are dot segments",
+            ),
+            case(
+                "a `slug` on the enum, when each variant names its own",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "removed")]
+                    enum ModerationError {
+                        #[problem(status = 410)]
+                        Removed,
+                    }
+                ),
+                "so it belongs on each variant publishing under it",
+            ),
+            case(
+                "a `slug` beside the `type` it would be the tail of",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/")]
+                    enum ModerationError {
+                        #[problem(
+                            status = 409,
+                            slug = "removed",
+                            type = "https://errors.example.com/removed"
+                        )]
+                        RemovedConflict,
+                    }
+                ),
+                "`type` is the whole URI and `slug` its part after `base`",
+            ),
+            case(
+                "a `slug` with no `base` to hang it under",
+                quote::quote!(
+                    enum ModerationError {
+                        #[problem(status = 409, slug = "removed")]
+                        RemovedConflict,
+                    }
+                ),
+                "`RemovedConflict` has no `base` to hang it under",
+            ),
+        ]
+    }
+
+    /// An empty `slug`, or a `%` opening no percent-encoded octet, is refused
+    /// as a character no URI path admits is; one a path does admit is read.
+    #[test]
+    fn a_slug_admits_exactly_the_characters_of_a_uri_path() {
+        for slug in ["", "%", "%2", "%zz", "a b", "é", "a#b", "a?b"] {
+            each_case_is_refused(
+                vec![case(
+                    "a `slug` no URI path spells",
+                    quote::quote!(
+                        #[problem(base = "https://errors.example.com/", slug = #slug)]
+                        #[problem(status = 410)]
+                        struct Removed;
+                    ),
+                    "a non-empty run of the characters a URI path admits",
+                )],
+                expand_inner,
+            );
+        }
+        for slug in [
+            "removed",
+            "moderation/removed",
+            "a%2Fb",
+            "-._~!$&'()*+,;=:@",
+            "v1.2/...",
+            "a%2Eb/%2E%2E%2E",
+        ] {
+            let input = syn::parse2(quote::quote!(
+                #[problem(base = "https://errors.example.com/", slug = #slug)]
+                #[problem(status = 410)]
+                #[error("removed")]
+                struct Removed;
+            ))
+            .expect("the case parses");
+            assert!(expand_inner(&input).is_ok(), "`{slug}` was refused");
+        }
+    }
+
+    /// Beyond the ledger's one row each: a bare `/` is refused as leading, and
+    /// a dot segment wherever it sits, whichever dot is percent-encoded and in
+    /// either case, since RFC 3986 decodes `%2E` before resolving it.
+    #[test]
+    fn a_slug_refuses_a_dot_segment_however_spelled() {
+        for (slug, expects) in [
+            ("/", "Drop the leading `/`"),
+            (".", "are dot segments"),
+            ("..", "are dot segments"),
+            ("moderation/./removed", "are dot segments"),
+            ("%2E", "are dot segments"),
+            ("moderation/%2e%2E", "are dot segments"),
+            (".%2E/removed", "are dot segments"),
+        ] {
+            each_case_is_refused(
+                vec![case(
+                    "a `slug` whose segments name another URI",
+                    quote::quote!(
+                        #[problem(base = "https://errors.example.com/", slug = #slug)]
+                        #[problem(status = 410)]
+                        struct Removed;
+                    ),
+                    expects,
+                )],
+                expand_inner,
+            );
+        }
+    }
+
+    /// A `slug` is part of a type, so every variant answering with another's
+    /// type refuses it, as it refuses `type`.
+    #[test]
+    fn a_variant_answering_as_another_refuses_a_slug() {
+        for (variant, fragment) in [
+            (
+                quote::quote!(
+                    #[problem(transparent, slug = "removed")]
+                    Held(Inner)
+                ),
+                "its status, title and type are that error's",
+            ),
+            (
+                quote::quote!(
+                    #[error(transparent)]
+                    #[problem(slug = "removed")]
+                    Held(Inner)
+                ),
+                "whose title, type and extension members are that error's",
+            ),
+            (
+                quote::quote!(
+                    #[problem(variant_of = Wide::Removed, slug = "removed")]
+                    Removed
+                ),
+                "of its own",
+            ),
+        ] {
+            each_case_is_refused(
+                vec![case(
+                    "a variant answering as another, with a `slug`",
+                    quote::quote!(
+                        #[problem(base = "https://errors.example.com/")]
+                        enum ModerationError {
+                            #variant,
+                        }
+                    ),
+                    fragment,
+                )],
+                expand_inner,
+            );
+        }
+        each_case_is_refused(
+            vec![case(
+                "a subset with a `slug`",
+                quote::quote!(
+                    #[problem(subset_of = Wide, slug = "removed")]
+                    enum ModerationError {
+                        Removed,
+                    }
+                ),
+                "`slug`, `base`",
+            )],
+            expand_inner,
+        );
+    }
+
     /// A field is checked against RFC 9457's members by the name it is
     /// published under, a raw identifier unprefixed; a second witness of the
     /// ledger's row, so outside its count.
@@ -5894,7 +6106,7 @@ mod api_error {
                         NotFound,
                     }
                 ),
-                "takes no `status`, `title`, `type`, `base`, `extension`, `describe`, \
+                "takes no `status`, `title`, `type`, `slug`, `base`, `extension`, `describe`, \
                  `transparent` or `from` of its own",
             ),
             case(
@@ -6032,7 +6244,8 @@ mod api_error {
                         Unavailable,
                     }
                 ),
-                "takes no `status`, `title`, `type`, `transparent` or `extension` of its own",
+                "takes no `status`, `title`, `type`, `slug`, `transparent` or `extension` of its \
+                 own",
             ),
             case(
                 "a `variant_of` variant's field marked as the wider field is",
@@ -6138,6 +6351,7 @@ mod api_error {
         each_case_is_refused(subset_ledger(), expand_inner);
         each_case_is_refused(variant_of_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
+        each_case_is_refused(slug_ledger(), expand_inner);
         each_case_is_refused(retry_after_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
@@ -6381,6 +6595,7 @@ mod api_error {
                 + keys_ledger().len()
                 + constants_ledger().len()
                 + field_names_ledger().len()
+                + slug_ledger().len()
                 + describe_ledger().len()
                 - IN_ATTRIBUTE,
         );

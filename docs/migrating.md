@@ -69,6 +69,7 @@ by task.
 | `cx.headers()["x-request-id"]`, or another read of `cx.method()`, `cx.uri()` or `cx.extensions()`, in what is now `ProblemPolicy::members` | the same through the `Option` each now returns, `None` for an interceptor's refusal and a recovered panic: `cx.headers().and_then(\|headers\| headers.get("x-request-id"))` | #1422 |
 | A `const fn as_str` on an enum matching each variant to the name its `#[serde(rename_all)]` writes, plus a test that it agrees with serde | `#[derive(kynos::ParamValue)]` on the enum, and `status.as_str()` with `schema::UnitEnum` imported, which the prelude leaves out; that `as_str` is not `const` | #1431 |
 | `const ALL: [Self; N]` and `ALL.into_iter().find(\|v\| v.as_str() == s)` | `T::VARIANTS` with `schema::UnitEnum` imported, or `s.parse()` through the `FromStr` the same derive implements | #1431 |
+| `#[problem(type = "<base literal>removed")]` beside a `const` base, and a test that the two agree | `#[problem(base = PROBLEM_BASE, slug = "removed")]` on a struct, or `slug = "removed"` on a variant under its enum's `base` | #1425 |
 
 ## 0.5 to 0.6
 

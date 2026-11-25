@@ -59,6 +59,7 @@ by the release that shipped each, for code written before it.
 | A 403 deleted from the document before asserting coverage | `#[security(forbids = false)]` on a scheme whose credential grants nothing beyond itself |
 | A credential carrying a store failure into every handler | `#[security(unavailable)]` on the scheme, and `error::rejection::AuthRejection::unavailable` from its authenticator, for a 503; for the application's own 500, `type Error` on the `security::Authenticator`, and `?` inside `authenticate` |
 | A `code` field and a constructor on every failure | `#[problem(extension(code = CONST))]` |
+| A `type` literal restating a `const` base, so two failures share one type URI | `#[problem(slug = "...")]` under that `base` |
 | Failure variants copied from one `ApiError` enum into another | `#[problem(transparent, from)]`, `#[problem(subset_of = Wider)]` or `#[problem(variant_of = Wider::Variant)]` |
 | A `Location` joined from a mount prefix with `format!` | `extract::link::Link<E>`, rendered into `Created::at` |
 | Several `routes!` lists, or `routes![op].0.intercept(..)` | one `routes![..]`, with `.intercept(..)` after the member it scopes to |

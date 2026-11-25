@@ -3,7 +3,7 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, quote};
-use syn::{Data, DeriveInput, Fields, GenericParam, Generics, Ident, Type, Variant};
+use syn::{Data, DeriveInput, Fields, GenericParam, Generics, Ident, LitStr, Type, Variant};
 
 use super::{
     Extension, Failure, Outcome, TypeUri,
@@ -25,6 +25,13 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                     status.1,
                     "a status belongs on each variant, because the point of an `ApiError` enum is \
                      that its variants fail differently. Move it to the variants",
+                ));
+            }
+            if let Some((_, span)) = &args.slug {
+                return Err(syn::Error::new(
+                    *span,
+                    "`slug` names one failure's type URI under `base`, so it belongs on each \
+                     variant publishing under it. Move it to the variants",
                 ));
             }
             if let Some(constant) = args.constants.first() {
@@ -85,7 +92,7 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                 headers: header_field(&data.fields, &markers)?,
                 retry_after: retry_after_field(&data.fields, &markers)?,
                 status,
-                type_uri: type_uri(args, base, &input.ident),
+                type_uri: type_uri(args, base, &input.ident)?,
                 title: args.title.clone(),
                 doc: doc_string(&input.attrs),
             })])
@@ -165,7 +172,7 @@ fn variant_outcome(
         headers: header_field(&variant.fields, &markers)?,
         retry_after: retry_after_field(&variant.fields, &markers)?,
         status,
-        type_uri: type_uri(&args, base, &variant.ident),
+        type_uri: type_uri(&args, base, &variant.ident)?,
         title: args.title,
         doc: doc_string(&variant.attrs),
     }))
@@ -213,15 +220,39 @@ fn first_named(tokens: TokenStream2, params: &[String]) -> Option<String> {
 
 /// The URI identifying this failure's *type*, if the declaration gives one.
 ///
-/// An explicit `type` wins, else `base` plus the name as a slug, `base =
-/// default` reading the crate's `kynos::problem_base!`; with neither,
-/// the problem keeps RFC 9457's `about:blank`.
-fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> Option<TypeUri> {
-    if let Some(uri) = &args.type_uri {
-        return Some(TypeUri::Literal(uri.clone()));
+/// An explicit `type` wins, else `base` plus the `slug`, or the name as one,
+/// `base = default` reading the crate's `kynos::problem_base!`; with neither,
+/// the problem keeps RFC 9457's `about:blank`. A `slug` beside `type`, or
+/// with no `base` to hang under, is refused: either would be dropped unread.
+fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> syn::Result<Option<TypeUri>> {
+    match (&args.slug, &args.type_uri, base) {
+        (Some((_, span)), Some(_), _) => {
+            return Err(syn::Error::new(
+                *span,
+                "`type` is the whole URI and `slug` its part after `base`, so they cannot \
+                 both name it; keep `slug` to publish under `base`, or `type` alone",
+            ));
+        }
+        (Some((_, span)), None, None) => {
+            return Err(syn::Error::new(
+                *span,
+                format!(
+                    "`slug` names the type URI's part after `base`, and `{name}` has no `base` \
+                     to hang it under; add `base = ...` to the type, or write the whole URI as \
+                     `type = \"...\"`"
+                ),
+            ));
+        }
+        _ => {}
     }
-    let slug = kebab(&name.to_string());
-    base.map(|base| match base {
+    if let Some(uri) = &args.type_uri {
+        return Ok(Some(TypeUri::Literal(uri.clone())));
+    }
+    let slug = match &args.slug {
+        Some((slug, _)) => spelled(slug)?,
+        None => kebab(&name.to_string()),
+    };
+    Ok(base.map(|base| match base {
         Base::Literal(base) => TypeUri::Literal(format!("{base}{slug}")),
         Base::Const(path) => TypeUri::Joined {
             base: path.clone(),
@@ -233,7 +264,80 @@ fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> Option<Typ
             base: syn::parse_quote_spanned!(*span=> crate::__KYNOS_PROBLEM_BASE),
             slug,
         },
-    })
+    }))
+}
+
+/// What a `slug` names: one or more `/`-separated path segments, each a
+/// non-empty run of RFC 3986 `pchar`s, each `%` opening a percent-encoded
+/// octet, and none a dot segment. It is joined verbatim onto `base`, as the
+/// kebab-cased name is, so it is refused wherever it would publish a URI a
+/// sibling's slug names differently or one resolution would rewrite.
+fn spelled(literal: &LitStr) -> syn::Result<String> {
+    let slug = characters(literal)?;
+    let span = literal.span();
+    if slug.starts_with('/') {
+        return Err(syn::Error::new(
+            span,
+            "`slug` is joined onto `base` verbatim, as the kebab-cased name is, so `base` \
+             carries the separator; a leading `/` under a `base` ending in one publishes an \
+             empty path segment, a type URI other than the one a sibling's `slug` without it \
+             names. Drop the leading `/`",
+        ));
+    }
+    if slug.ends_with('/') {
+        return Err(syn::Error::new(
+            span,
+            "a `slug` ending in `/` publishes a type URI other than the same slug without it, \
+             as a kebab-cased name never ends in one. Drop the trailing `/`",
+        ));
+    }
+    for segment in slug.split('/') {
+        if segment.is_empty() {
+            return Err(syn::Error::new(
+                span,
+                "`//` in a `slug` is an empty path segment, publishing a type URI other than \
+                 the one naming it with a single `/`. Write a single `/` between segments",
+            ));
+        }
+        let decoded = segment.replace("%2E", ".").replace("%2e", ".");
+        if decoded == "." || decoded == ".." {
+            return Err(syn::Error::new(
+                span,
+                "`.` and `..` in a `slug`, percent-encoded as `%2E` or not, are dot segments, \
+                 which RFC 3986 reference resolution removes, so a client resolving the type \
+                 URI reads another one. Name the segment",
+            ));
+        }
+    }
+    Ok(slug)
+}
+
+/// A `slug`'s characters: a non-empty run of the characters RFC 3986 admits
+/// in a path, `pchar` and `/`, each `%` opening a percent-encoded octet.
+fn characters(literal: &LitStr) -> syn::Result<String> {
+    let slug = literal.value();
+    let bytes = slug.as_bytes();
+    let mut index = 0;
+    let mut admitted = !bytes.is_empty();
+    while let (true, Some(&byte)) = (admitted, bytes.get(index)) {
+        let width = if byte == b'%' { 3 } else { 1 };
+        admitted = if byte == b'%' {
+            bytes
+                .get(index + 1..index + 3)
+                .is_some_and(|hex| hex.iter().all(u8::is_ascii_hexdigit))
+        } else {
+            byte.is_ascii_alphanumeric() || b"-._~!$&'()*+,;=:@/".contains(&byte)
+        };
+        index += width;
+    }
+    if !admitted {
+        return Err(syn::Error::new(
+            literal.span(),
+            "`slug` is the part of the type URI after `base`, so it is a non-empty run of the \
+             characters a URI path admits, written percent-encoded as it is sent",
+        ));
+    }
+    Ok(slug)
 }
 
 /// A Rust type or variant name as a URI slug.

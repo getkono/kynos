@@ -27,6 +27,7 @@
 //! member := status = <400..=599>                   required, exactly once
 //!         | title = "<human-readable summary>"
 //!         | type = "<absolute URI>"
+//!         | slug = "<URI path>"                    under `base`, never beside `type`
 //!         | extension( <name> = <value> [, <name> = <value>]* )
 //! value  := <string, number or boolean literal>
 //!         | <path to a `const` whose type is `Serialize`>
@@ -37,8 +38,10 @@
 //!
 //! `status` is read once into `statuses()`, the `ShortCircuit` const and the
 //! `Responses` keys, so the three agree. `base` is the prefix a variant without
-//! its own `type` hangs its slug under; a literal is joined here, a `const`
-//! in the expansion's own `const` items. `detail` comes from `Display`.
+//! its own `type` hangs its slug under, its `slug` or else its kebab-cased
+//! name; a literal is joined here, a `const` in the expansion's own `const`
+//! items. A `slug` with no `base` to hang under is refused rather than dropped:
+//! `base = default` is written out, so its absence is known here. `detail` comes from `Display`.
 //!
 //! `describe` writes a status's description as [`written`] says.
 //!

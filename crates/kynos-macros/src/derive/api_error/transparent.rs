@@ -190,7 +190,12 @@ pub(super) fn read(
     markers: &[Markers],
     generics: &Generics,
 ) -> syn::Result<Transparent> {
-    if args.status.is_some() || args.title.is_some() || args.type_uri.is_some() {
+    // A `slug` is the tail of a type, so it is refused as one.
+    if args.status.is_some()
+        || args.title.is_some()
+        || args.type_uri.is_some()
+        || args.slug.is_some()
+    {
         return Err(syn::Error::new(
             span,
             "a transparent variant answers as the error it holds, so its status, title and type \
@@ -313,7 +318,11 @@ pub(super) fn implied(
     markers: &[Markers],
     generics: &Generics,
 ) -> syn::Result<Transparent> {
-    if args.title.is_some() || args.type_uri.is_some() || !args.constants.is_empty() {
+    if args.title.is_some()
+        || args.type_uri.is_some()
+        || args.slug.is_some()
+        || !args.constants.is_empty()
+    {
         return Err(syn::Error::new(
             span,
             format!(

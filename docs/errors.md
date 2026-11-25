@@ -130,7 +130,7 @@ enum StoreError {
 
 | Position | Key | Meaning |
 | --- | --- | --- |
-| type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
+| type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the `slug`, or the kebab-cased variant name |
 | type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
 | type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it; or a parenthesized list of them, converting into each and answering as the first |
 | type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds and `Error` with its source; no `#[error(...)]` beside it |
@@ -138,6 +138,7 @@ enum StoreError {
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
+| variant | `slug` | the type URI's part after `base`, in place of the kebab-cased name, joined verbatim as that name is: `/`-separated segments in URI path characters, none empty or a dot segment, so no leading, trailing or doubled `/`; on a struct too, never on an enum, never beside `type`, and only under a `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`, or as `AuthRejection`, which an authenticator's own error holds ([`security.md`](security.md#an-authenticator-may-fail-with-the-applications-own-error)); implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
 | variant | `from` | on a transparent variant, generate `From` the error it holds, as `thiserror`'s `#[from]` would; never beside that `#[from]`, and one variant per held type |
 | variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
@@ -272,6 +273,14 @@ as `#[problem(base = crate::PROBLEM_BASE)]` rather than repeating the literal,
 so the compiler holds them to one value. The prefix and each slug are joined
 in `const` items, so the type URI is still a `&'static str` and no response
 allocates for it.
+
+**Two failures sharing one type name its slug, not its URI.** A 409 that is the
+same problem type as a 410 says `slug = "removed"` beside the 410's own name,
+under the same `base`, rather than restating the prefix in a `type` literal
+that nothing holds to the `const`. A `slug` with no `base` to hang under is a
+compile error rather than a URI silently left at `about:blank`; `base =
+default` is written on the type, so the derive always knows whether one
+applies.
 
 A crate with one namespace says it once:
 `kynos::problem_base!("https://errors.example.com/")` at the crate root, and
@@ -411,7 +420,10 @@ problem.
 
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,
-a `base` on a variant, an `extension` on a field with
+a `base` on a variant, a `slug` outside URI path characters, with an empty
+or dot segment, on an enum,
+beside `type`, with no `base`, or on a variant answering as another, an
+`extension` on a field with
 no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an
 `#[error(transparent)]` variant with a `title`, `type` or `extension(...)` and
 no `status`, over

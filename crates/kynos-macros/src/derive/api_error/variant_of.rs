@@ -35,13 +35,14 @@ pub(super) fn variant_of(
     if args.status.is_some()
         || args.title.is_some()
         || args.type_uri.is_some()
+        || args.slug.is_some()
         || args.transparent.is_some()
         || !args.constants.is_empty()
     {
         return Err(syn::Error::new(
             span,
             "a variant `variant_of` names answers with the wider variant's declarations, so it \
-             takes no `status`, `title`, `type`, `transparent` or `extension` of its own",
+             takes no `status`, `title`, `type`, `slug`, `transparent` or `extension` of its own",
         ));
     }
 
