@@ -81,6 +81,7 @@ by task.
 | `assert!(resp.header("content-type").unwrap().starts_with("text/plain"))`, which `text/plainer` also passes | `resp.assert_content_type("text/plain")`, which compares the media type's essence in any case, its parameters aside | #1438 |
 | `let body: Value = resp.json(); body["token"].as_str().expect("token")` | `resp.json_at::<String>("/token")`, an RFC 6901 pointer; behind `json` | #1438 |
 | `to_json()` through a `serde_json::Value` and `to_string_pretty` plus `'\n'`, compared with a committed file and rewritten under an environment variable | `test::document::assert_file_matches(path, &document)`, over `Document::to_canonical_json`; `KYNOS_UPDATE_DOCUMENTS=1` rewrites the file and fails the run | #1441 |
+| A hand `impl Schema` building a string `openapi::SchemaObject` for a type `FromStr` and `Display` carry as text, restating its doc comment and component name, and an empty `impl schema::ParamValue` beside it | `#[derive(Schema, ParamValue)]` with `#[schema(string, min_length = .., examples(".."))]` on the type; serde converting through `#[serde(into = "String", try_from = "String")]`, or written by hand through `collect_str` and `FromStr` | #1410 |
 
 ## 0.5 to 0.6
 
