@@ -3,7 +3,9 @@
 //! character no URI path admits, with a leading, trailing or doubled `/` or a
 //! dot segment, plain or percent-encoded, that would publish another type URI
 //! than its siblings', on the enum rather than a variant, beside the
-//! `type` it would be the tail of, and with no `base` to hang it under.
+//! `type` it would be the tail of, and with no `base` to hang it under. A
+//! name naming no `slug` is held to the same rule, so a non-ASCII one is
+//! refused at the name, pointing at `slug`.
 //!
 //! The control is `pass/api_error_slug_under_base.rs`.
 
@@ -60,6 +62,14 @@ enum BaselessError {
     #[error("this post was removed")]
     #[problem(status = 409, slug = "removed")]
     RemovedConflict,
+}
+
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum MenuError {
+    #[error("the café is closed")]
+    #[problem(status = 410)]
+    Café,
 }
 
 fn main() {}

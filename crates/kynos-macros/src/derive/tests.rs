@@ -5352,7 +5352,81 @@ mod api_error {
                 ),
                 "`RemovedConflict` has no `base` to hang it under",
             ),
+            case(
+                "a name whose kebab case no URI path admits, under a `base`",
+                quote::quote!(
+                    #[error("sold out")]
+                    #[problem(base = "https://errors.example.com/", status = 410)]
+                    struct Café;
+                ),
+                "name its type URI with `#[problem(slug = \"...\")]`",
+            ),
         ]
+    }
+
+    /// A raw identifier publishes the name it spells, not its `r#` prefix,
+    /// whose `#` would open a fragment; and a non-ASCII name publishes nothing
+    /// until a `slug` names it, on a variant as on a struct, while with no
+    /// `base` it publishes nothing and so compiles.
+    #[test]
+    fn a_kebab_cased_name_is_held_to_the_slug_rule() {
+        let raw: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[problem(base = "https://errors.example.com/")]
+            enum Keyword {
+                #[error("reserved")]
+                #[problem(status = 400)]
+                r#type,
+            }
+        ))
+        .expect("the case parses");
+        let expanded = expand_inner(&raw)
+            .expect("a raw identifier is read")
+            .to_string();
+        assert!(
+            expanded.contains("\"https://errors.example.com/type\""),
+            "{expanded}"
+        );
+        assert!(!expanded.contains("example.com/r#"), "{expanded}");
+
+        each_case_is_refused(
+            vec![case(
+                "a variant whose kebab case no URI path admits",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/")]
+                    enum Menu {
+                        #[error("sold out")]
+                        #[problem(status = 410)]
+                        Café,
+                    }
+                ),
+                "name its type URI with `#[problem(slug = \"...\")]`",
+            )],
+            expand_inner,
+        );
+
+        let slugged: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[problem(base = "https://errors.example.com/")]
+            enum Menu {
+                #[error("sold out")]
+                #[problem(status = 410, slug = "cafe")]
+                Café,
+            }
+        ))
+        .expect("the case parses");
+        assert!(expand_inner(&slugged).is_ok(), "a `slug` names it");
+
+        let baseless: syn::DeriveInput = syn::parse2(quote::quote!(
+            enum Menu {
+                #[error("sold out")]
+                #[problem(status = 410)]
+                Café,
+            }
+        ))
+        .expect("the case parses");
+        assert!(
+            expand_inner(&baseless).is_ok(),
+            "with no `base` the name publishes nothing, so nothing refuses it"
+        );
     }
 
     /// An empty `slug`, or a `%` opening no percent-encoded octet, is refused
