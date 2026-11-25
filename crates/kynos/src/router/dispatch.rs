@@ -14,7 +14,7 @@ use crate::{
         members::{Head, Installed, Policy, ProblemOrigin, Rendered, render},
         problem::Problem,
     },
-    extract::params::path::PathCaptures,
+    extract::params::path::captures::PathCaptures,
     http::{
         HeaderValue, Request, Response, StatusCode,
         body::{Body, Delivery, bodiless},

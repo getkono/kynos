@@ -345,7 +345,7 @@ derived from the handler's own extractors:
 | Handler has | `relative_uri` signature |
 | --- | --- |
 | neither | `relative_uri() -> Uri` |
-| `Path<P>` | `relative_uri(path: P) -> Uri` |
+| `Path<P>`, `P` a group or one value | `relative_uri(path: P) -> Uri` |
 | `Query<Q>` | `relative_uri(query: Q) -> Uri` |
 | both | `relative_uri(path: P, query: Q) -> Uri` |
 
@@ -363,11 +363,33 @@ reason a `PathParams` field cannot be an `Option`: the derive refuses it.
 
 Three mismatches are compile errors rather than runtime 404s: a handler with
 `Path<T>` on a route with no variables, a route with variables and no `Path<T>`,
-and a `PathParams` field set that does not match the template's variables in
-declaration order — the last through a `const` assertion the attribute emits
-against `PathParams::NAMES`. Extracting `Path<T>` or `Query<T>` twice in one
-handler is also rejected, since neither the URI nor the description could say
-which one won.
+and a `Path<T>` that does not bind the template's variables — the last through
+a `const` assertion the attribute emits against `PathBinding::NAMES`.
+Extracting `Path<T>` or `Query<T>` twice in one handler is also rejected, since
+neither the URI nor the description could say which one won.
+
+### One value or a group
+
+`Path<T>` takes a [`PathInput`](../crates/kynos/src/extract/params/path.rs):
+a `PathParams` group, whose field names must match the template's variables in
+declaration order, or one `ParamValue`, which reads a template of exactly one
+variable whatever it is called. `Path(id): Path<Uuid>` on `/sessions/{id}`
+needs no one-field group, and the parameter is described under `id`, with
+`Uuid`'s schema and no description of its own; a group's field doc comment is
+where a parameter is described. A value carries no name, so a template of two
+variables is refused rather than read by position: a group names each one.
+
+The two bind through one trait because coherence allows one blanket
+implementation of it: every `ParamValue` gets `PathInput` through it, so a
+group is the one implemented directly, which `#[derive(PathParams)]` does. A
+type cannot be both a group and one value.
+
+The value's variable comes from where its template is known. The route
+attribute checks the count at compile time. The description reads the
+operation's own template, before any prefix, so a router refuses an operation
+an `EndpointBuilder` mounted at a template of other than one variable with
+`RouterError::LonePathValue`. A request reads the last variable the match
+captured, which is the operation's own because every prefix's come first.
 
 ### Links to where a route is mounted
 

@@ -1,8 +1,9 @@
 //! The extraction group's handlers: each answers what its base answers, read
 //! through one more extractor, or one extractor read another way.
 //!
-//! The GET rows return `plaintext`'s `Hello, World!` and the body rows
-//! `echo-post`'s document, so the response written is the base's.
+//! The GET rows return `plaintext`'s `Hello, World!`, `path-value` the empty
+//! `204` of `calibration-capture`, and the body rows `echo-post`'s document,
+//! so the response written is the base's.
 
 use kynos::{
     error::rejection::AuthRejection,
@@ -182,6 +183,14 @@ async fn bounded(Path(item): Path<Bounded>, Query(page): Query<Page>) -> Json<u6
     Json(item.a + item.b + item.c + page.after.unwrap_or(0) + u64::from(page.per))
 }
 
+/// `calibration-capture`'s one capture, read as a lone value rather than a
+/// group of one field.
+#[kynos::get("/value/{id}")]
+async fn path_value(Path(id): Path<u64>) -> NoContent {
+    let _ = id;
+    NoContent
+}
+
 /// `path-params`' query parameters, as the one JSON document OpenAPI 3.2's
 /// `in: querystring` describes.
 #[derive(Schema, Deserialize)]
@@ -223,6 +232,7 @@ pub(crate) fn mount(router: Router<App>) -> Router<App> {
         auth_api_key,
         cookies,
         bounded,
+        path_value,
         querystring,
         one_of,
         text_body

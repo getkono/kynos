@@ -32,7 +32,8 @@
 //!   repeated pairs by default, or one comma-separated pair under
 //!   `#[param(explode = false)]`. `#[param(default = ...)]` gives an absent
 //!   parameter its value, and `#[param(flatten)]` shares a group, such as
-//!   `Paging`, between the groups that page.
+//!   `Paging`, between the groups that page. A route of one variable takes
+//!   its `ParamValue` alone, as `delete_user`'s `Path<UserId>` does.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
 //!   implements the same two traits the derives implement. Nothing about the
 //!   derived path is privileged, which is what makes the rule "every argument
@@ -288,9 +289,20 @@ async fn get_user(
     })
 }
 
+/// Removes one user.
+///
+/// A route of one variable takes the value alone: `Path<UserId>` reads `{id}`
+/// with no one-field group, and the description names the parameter after the
+/// variable. A template of two variables beside it is a compile error.
+#[kynos::delete("/users/{id}")]
+async fn delete_user(Path(id): Path<UserId>) -> NoContent {
+    println!("removed {}", id.0);
+    NoContent
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new().mount(kynos::routes![get_user]);
+    let router = Router::<()>::new().mount(kynos::routes![get_user, delete_user]);
 
     let document = router.openapi()?;
     println!("{}", document.to_json()?);

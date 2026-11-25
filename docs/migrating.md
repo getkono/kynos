@@ -84,6 +84,7 @@ by task.
 | A hand `impl Schema` building a string `openapi::SchemaObject` for a type `FromStr` and `Display` carry as text, restating its doc comment and component name, and an empty `impl schema::ParamValue` beside it | `#[derive(Schema, ParamValue)]` with `#[schema(string, min_length = .., examples(".."))]` on the type; serde converting through `#[serde(into = "String", try_from = "String")]`, or written by hand through `collect_str` and `FromStr` | #1410 |
 | A `QueryParams` field `deleted: Option<bool>`, `.unwrap_or(false)` in each handler, and "(default false)" in its doc | `#[param(default = false)] deleted: bool`, or `#[param(default = DEFAULT_LIMIT)]` naming a `const`: the absent parameter binds it, and the description states it as the schema's `default` | #1412 |
 | The same paging fields, bounds and docs copied into every query group, and `PageParams { cursor: p.cursor, limit: p.limit }` rebuilt in each handler | `#[param(flatten)] page: PageParams` in each group, then `p.page` | #1412 |
+| `#[derive(Schema, PathParams)] struct SessionPath { id: Uuid }` and `Path(SessionPath { id }): Path<SessionPath>`, for a route of one variable | `Path(id): Path<Uuid>`, any `ParamValue`; a group's field doc comment is still where the parameter is described | #1413 |
 
 ## 0.5 to 0.6
 

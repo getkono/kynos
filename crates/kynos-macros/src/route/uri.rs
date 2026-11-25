@@ -29,16 +29,18 @@ pub(crate) fn endpoint_uri_impl(
         ));
     }
 
-    // Checked against `EndpointMeta::PATH_VARIABLES`, the description's source.
+    // Checked against `EndpointMeta::PATH_VARIABLES`, the description's source:
+    // a group name for name, one value against a template of one variable.
     // A const panic renders one `&str`, so the comparison composes the message.
     let path_assertion = path_type.as_ref().map(|path_type| {
-        let group = compact(path_type);
+        let input = compact(path_type);
         quote! {
             const _: () = if let ::core::option::Option::Some(message) =
-                ::kynos::__private::path::path_parameter_mismatch(
-                    #group,
+                ::kynos::__private::path::path_binding_mismatch(
+                    #input,
                     #path,
-                    <#path_type as ::kynos::extract::params::path::PathParams>::NAMES,
+                    <<#path_type as ::kynos::extract::params::path::PathInput>::Binding
+                        as ::kynos::extract::params::path::PathBinding<#path_type>>::NAMES,
                     <#endpoint as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES,
                 )
             {
@@ -102,7 +104,9 @@ fn shape(
         (Some(path_type), None) => (
             quote!(#path_type),
             quote!(::kynos::__private::uri::endpoint_uri_with_path(
-                template, &params
+                template,
+                <Self as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES,
+                &params,
             )),
             quote! {
                 ///
@@ -136,7 +140,12 @@ fn shape(
             quote!((#path_type, #query_type)),
             quote! {
                 let (path, query) = params;
-                ::kynos::__private::uri::endpoint_uri_with_path_and_query(template, &path, &query)
+                ::kynos::__private::uri::endpoint_uri_with_path_and_query(
+                    template,
+                    <Self as ::kynos::router::endpoint::meta::EndpointMeta>::PATH_VARIABLES,
+                    &path,
+                    &query,
+                )
             },
             quote! {
                 ///

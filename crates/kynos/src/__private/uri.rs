@@ -2,7 +2,10 @@
 //! emits, and the percent-encoding the rest of the crate reaches through it.
 
 use crate::{
-    extract::params::{path::EncodePath, query::EncodeQuery},
+    extract::params::{
+        path::{EncodeBinding, PathInput},
+        query::EncodeQuery,
+    },
     http::Uri,
 };
 
@@ -221,8 +224,15 @@ pub fn endpoint_uri(template: &str) -> Uri {
 /// variable captures, or one that renders its segment, with any literal text
 /// sharing it, as `.` or `..`, which URI resolution removes (RFC 3986 §5.2.4)
 /// even when written `%2E`.
-pub fn endpoint_uri_with_path<P: EncodePath>(template: &str, path: &P) -> Uri {
-    render_endpoint_path(template, path)
+///
+/// `variables` are the ones `template` declares, which a lone value is
+/// named after.
+pub fn endpoint_uri_with_path<P: PathInput<Binding: EncodeBinding<P>>>(
+    template: &str,
+    variables: &[&'static str],
+    path: &P,
+) -> Uri {
+    render_endpoint_path(template, variables, path)
         .parse()
         .expect("derived path parameters produce a valid URI")
 }
@@ -241,13 +251,14 @@ pub fn endpoint_uri_with_query<Q: EncodeQuery>(template: &str, query: &Q) -> Uri
 /// # Panics
 ///
 /// As [`endpoint_uri_with_path`].
-pub fn endpoint_uri_with_path_and_query<P: EncodePath, Q: EncodeQuery>(
+pub fn endpoint_uri_with_path_and_query<P: PathInput<Binding: EncodeBinding<P>>, Q: EncodeQuery>(
     template: &str,
+    variables: &[&'static str],
     path: &P,
     query: &Q,
 ) -> Uri {
     with_query(
-        render_endpoint_path(template, path),
+        render_endpoint_path(template, variables, path),
         query,
         "derived endpoint parameters produce a valid URI",
     )
@@ -264,19 +275,23 @@ fn with_query<Q: EncodeQuery>(mut path: String, query: &Q, expectation: &str) ->
     path.parse().expect(expectation)
 }
 
-fn render_endpoint_path<P: EncodePath>(template: &str, path: &P) -> String {
-    let values = path.encode();
+fn render_endpoint_path<P: PathInput<Binding: EncodeBinding<P>>>(
+    template: &str,
+    variables: &[&'static str],
+    path: &P,
+) -> String {
+    let values = P::Binding::encode(path, variables);
     assert_eq!(
         values.len(),
-        P::NAMES.len(),
-        "PathParams::encode must return one value per declared name"
+        variables.len(),
+        "a path value must fill each variable of `{template}` once"
     );
 
     let mut rendered = template.to_owned();
     for (name, value) in &values {
         assert!(
-            P::NAMES.contains(name),
-            "PathParams::encode returned undeclared name `{name}`"
+            variables.contains(name),
+            "a path value filled `{name}`, which `{template}` does not declare"
         );
         assert!(
             !value.is_empty(),

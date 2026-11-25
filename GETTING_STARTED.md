@@ -78,6 +78,7 @@ by the release that shipped each, for code written before it.
 | A query parameter split on `,` by hand | a `Vec<T>` field in `#[derive(QueryParams)]`, with `#[param(explode = false)]` for one comma-separated pair |
 | An `Option` query parameter and `.unwrap_or(DEFAULT)` in the handler | `#[param(default = DEFAULT)]` on the plain field, which the description states |
 | The same paging fields copied into every query group | one `QueryParams` group, and `#[param(flatten)]` on a field holding it in each |
+| A one-field `PathParams` group for a route of one variable | `Path<T>` over the `ParamValue` itself, such as `Path<Uuid>` |
 | An enum's wire names restated in an `as_str` or an `ALL` list | `#[derive(kynos::ParamValue)]`, then `schema::UnitEnum::as_str` (not `const`) and `T::VARIANTS` with the trait imported, or `s.parse()` |
 
 ## Getting data from middleware to a handler
@@ -134,7 +135,7 @@ The shapes are close; what moves is that each one must describe itself.
 | axum | Kynos |
 | --- | --- |
 | `Router::new().route("/users/{id}", get(h))` | `#[kynos::get("/users/{id}")]` on `h`, then `Router::<App>::new().mount(kynos::routes![h])` |
-| `Path<(u64,)>`, `Query<T>` | `Path<T>` over `#[derive(PathParams)]`, `Query<T>` over `#[derive(QueryParams)]`; the path's fields are checked against the template at compile time |
+| `Path<u64>`, `Path<(u64, u64)>`, `Query<T>` | `Path<u64>` on a route of one variable; `Path<T>` over `#[derive(PathParams)]` for several, `Query<T>` over `#[derive(QueryParams)]`; the path's variables are checked against the template at compile time |
 | `HeaderMap`, `TypedHeader<T>` | `Headers<T>` over `#[derive(HeaderParams)]` |
 | `Json<serde_json::Value>` | a `#[derive(Schema)]` type, or `Unchecked<Value>` where it really is arbitrary |
 | `State<T>`, `Extension<T>` | `Inject<T>` from a `#[derive(Provider)]` context, passed to `Router::build` |

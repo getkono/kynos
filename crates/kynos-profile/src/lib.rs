@@ -540,6 +540,15 @@ pub(crate) const EXTRACT: &[Scenario] = &[
         Poll,
         Some("path-params")
     ),
+    // The base's one capture as `Path<u64>` rather than a one-field group.
+    row!(
+        "path-value",
+        service,
+        || get("/value/7"),
+        NO_CONTENT,
+        Poll,
+        Some("calibration-capture")
+    ),
     // Eight pairs no field declares, after the two `Page` reads (#237).
     row!(
         "query-unused-8",

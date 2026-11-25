@@ -2113,7 +2113,7 @@ impl<T: kynos::extract::params::cookie::CookieParams> kynos::extract::describe::
 pub fn kynos::extract::params::cookie::Cookies<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::extract::params::header::HeaderParams> kynos::extract::describe::Describe for kynos::extract::params::header::Headers<T>
 pub fn kynos::extract::params::header::Headers<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
-impl<T: kynos::extract::params::path::PathParams> kynos::extract::describe::Describe for kynos::extract::params::path::Path<T>
+impl<T: kynos::extract::params::path::PathInput<Bindingkynos::extract::params::path::PathBinding<T>>> kynos::extract::describe::Describe for kynos::extract::params::path::Path<T>
 pub fn kynos::extract::params::path::Path<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T: kynos::extract::params::query::QueryParams> kynos::extract::describe::Describe for kynos::extract::params::query::Query<T>
 pub fn kynos::extract::params::query::Query<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
@@ -2508,8 +2508,42 @@ pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::constraint_problems() -> 
 pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::parameters(&mut kynos::schema::registry::Registry) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
 pub fn kynos::middleware::cache::CacheHeaders<TAGGED>::response_headers(&mut kynos::schema::registry::Registry) -> kynos_openapi::Map<kynos_openapi::model::reference::RefOr<kynos_openapi::model::parameter::header::Header>>
 pub mod kynos::extract::params::path
+pub struct kynos::extract::params::path::Lone<T>(_)
+impl<T: core::fmt::Debug> core::fmt::Debug for kynos::extract::params::path::Lone<T>
+pub fn kynos::extract::params::path::Lone<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: kynos::schema::ParamValue> kynos::extract::params::path::EncodeBinding<T> for kynos::extract::params::path::Lone<T>
+pub fn kynos::extract::params::path::Lone<T>::encode(&T, &[&'static str]) -> alloc::vec::Vec<(&'static str, alloc::string::String)>
+impl<T: kynos::schema::ParamValue> kynos::extract::params::path::PathBinding<T> for kynos::extract::params::path::Lone<T>
+pub const kynos::extract::params::path::Lone<T>::NAMES: core::option::Option<&'static [&'static str]>
+pub fn kynos::extract::params::path::Lone<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::extract::params::path::Lone<T>::decode(&kynos::http::Parts) -> core::result::Result<T, kynos::error::rejection::PathRejection>
+pub fn kynos::extract::params::path::Lone<T>::parameters(&mut kynos::schema::registry::Registry, &[alloc::string::String]) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+impl<T> core::marker::Freeze for kynos::extract::params::path::Lone<T>
+impl<T> core::marker::Send for kynos::extract::params::path::Lone<T>
+impl<T> core::marker::Sync for kynos::extract::params::path::Lone<T>
+impl<T> core::marker::Unpin for kynos::extract::params::path::Lone<T>
+impl<T> core::marker::UnsafeUnpin for kynos::extract::params::path::Lone<T>
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::extract::params::path::Lone<T>
+impl<T> core::panic::unwind_safe::UnwindSafe for kynos::extract::params::path::Lone<T>
+pub struct kynos::extract::params::path::Named<T>(_)
+impl<T: core::fmt::Debug> core::fmt::Debug for kynos::extract::params::path::Named<T>
+pub fn kynos::extract::params::path::Named<T>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<T: kynos::extract::params::path::DecodePath> kynos::extract::params::path::PathBinding<T> for kynos::extract::params::path::Named<T>
+pub const kynos::extract::params::path::Named<T>::NAMES: core::option::Option<&'static [&'static str]>
+pub fn kynos::extract::params::path::Named<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::extract::params::path::Named<T>::decode(&kynos::http::Parts) -> core::result::Result<T, kynos::error::rejection::PathRejection>
+pub fn kynos::extract::params::path::Named<T>::parameters(&mut kynos::schema::registry::Registry, &[alloc::string::String]) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+impl<T: kynos::extract::params::path::EncodePath> kynos::extract::params::path::EncodeBinding<T> for kynos::extract::params::path::Named<T>
+pub fn kynos::extract::params::path::Named<T>::encode(&T, &[&'static str]) -> alloc::vec::Vec<(&'static str, alloc::string::String)>
+impl<T> core::marker::Freeze for kynos::extract::params::path::Named<T>
+impl<T> core::marker::Send for kynos::extract::params::path::Named<T>
+impl<T> core::marker::Sync for kynos::extract::params::path::Named<T>
+impl<T> core::marker::Unpin for kynos::extract::params::path::Named<T>
+impl<T> core::marker::UnsafeUnpin for kynos::extract::params::path::Named<T>
+impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::extract::params::path::Named<T>
+impl<T> core::panic::unwind_safe::UnwindSafe for kynos::extract::params::path::Named<T>
 pub struct kynos::extract::params::path::Path<T>(pub T)
-impl<C: core::marker::Sync, T: kynos::extract::params::path::DecodePath + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::path::Path<T>
+impl<C: core::marker::Sync, T: kynos::extract::params::path::PathInput<Bindingkynos::extract::params::path::PathBinding<T>> + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::path::Path<T>
 pub type kynos::extract::params::path::Path<T>::Rejection = kynos::error::rejection::PathRejection
 pub async fn kynos::extract::params::path::Path<T>::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 impl<T: core::clone::Clone> core::clone::Clone for kynos::extract::params::path::Path<T>
@@ -2528,7 +2562,7 @@ pub fn kynos::extract::params::path::Path<T>::fmt(&self, &mut core::fmt::Formatt
 impl<T: core::hash::Hash> core::hash::Hash for kynos::extract::params::path::Path<T>
 pub fn kynos::extract::params::path::Path<T>::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl<T: core::marker::Copy> core::marker::Copy for kynos::extract::params::path::Path<T>
-impl<T: kynos::extract::params::path::PathParams> kynos::extract::describe::Describe for kynos::extract::params::path::Path<T>
+impl<T: kynos::extract::params::path::PathInput<Bindingkynos::extract::params::path::PathBinding<T>>> kynos::extract::describe::Describe for kynos::extract::params::path::Path<T>
 pub fn kynos::extract::params::path::Path<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T> core::marker::StructuralPartialEq for kynos::extract::params::path::Path<T>
 impl<T> core::marker::Freeze for kynos::extract::params::path::Path<T> where T: core::marker::Freeze
@@ -2540,8 +2574,33 @@ impl<T> core::panic::unwind_safe::RefUnwindSafe for kynos::extract::params::path
 impl<T> core::panic::unwind_safe::UnwindSafe for kynos::extract::params::path::Path<T> where T: core::panic::unwind_safe::UnwindSafe
 pub trait kynos::extract::params::path::DecodePath: kynos::extract::params::path::PathParams
 pub fn kynos::extract::params::path::DecodePath::decode(&[(&str, &str)]) -> core::result::Result<Self, kynos::error::rejection::PathRejection>
+pub trait kynos::extract::params::path::EncodeBinding<T>: kynos::extract::params::path::private::Sealed
+pub fn kynos::extract::params::path::EncodeBinding::encode(&T, &[&'static str]) -> alloc::vec::Vec<(&'static str, alloc::string::String)>
+impl<T: kynos::extract::params::path::EncodePath> kynos::extract::params::path::EncodeBinding<T> for kynos::extract::params::path::Named<T>
+pub fn kynos::extract::params::path::Named<T>::encode(&T, &[&'static str]) -> alloc::vec::Vec<(&'static str, alloc::string::String)>
+impl<T: kynos::schema::ParamValue> kynos::extract::params::path::EncodeBinding<T> for kynos::extract::params::path::Lone<T>
+pub fn kynos::extract::params::path::Lone<T>::encode(&T, &[&'static str]) -> alloc::vec::Vec<(&'static str, alloc::string::String)>
 pub trait kynos::extract::params::path::EncodePath: kynos::extract::params::path::PathParams
 pub fn kynos::extract::params::path::EncodePath::encode(&self) -> alloc::vec::Vec<(&'static str, alloc::string::String)>
+pub trait kynos::extract::params::path::PathBinding<T>: kynos::extract::params::path::private::Sealed
+pub const kynos::extract::params::path::PathBinding::NAMES: core::option::Option<&'static [&'static str]>
+pub fn kynos::extract::params::path::PathBinding::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::extract::params::path::PathBinding::decode(&kynos::http::Parts) -> core::result::Result<T, kynos::error::rejection::PathRejection>
+pub fn kynos::extract::params::path::PathBinding::parameters(&mut kynos::schema::registry::Registry, &[alloc::string::String]) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+impl<T: kynos::extract::params::path::DecodePath> kynos::extract::params::path::PathBinding<T> for kynos::extract::params::path::Named<T>
+pub const kynos::extract::params::path::Named<T>::NAMES: core::option::Option<&'static [&'static str]>
+pub fn kynos::extract::params::path::Named<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::extract::params::path::Named<T>::decode(&kynos::http::Parts) -> core::result::Result<T, kynos::error::rejection::PathRejection>
+pub fn kynos::extract::params::path::Named<T>::parameters(&mut kynos::schema::registry::Registry, &[alloc::string::String]) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+impl<T: kynos::schema::ParamValue> kynos::extract::params::path::PathBinding<T> for kynos::extract::params::path::Lone<T>
+pub const kynos::extract::params::path::Lone<T>::NAMES: core::option::Option<&'static [&'static str]>
+pub fn kynos::extract::params::path::Lone<T>::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
+pub fn kynos::extract::params::path::Lone<T>::decode(&kynos::http::Parts) -> core::result::Result<T, kynos::error::rejection::PathRejection>
+pub fn kynos::extract::params::path::Lone<T>::parameters(&mut kynos::schema::registry::Registry, &[alloc::string::String]) -> alloc::vec::Vec<kynos_openapi::model::parameter::Parameter>
+pub trait kynos::extract::params::path::PathInput: core::marker::Sized
+pub type kynos::extract::params::path::PathInput::Binding
+impl<T: kynos::schema::ParamValue> kynos::extract::params::path::PathInput for T
+pub type T::Binding = kynos::extract::params::path::Lone<T>
 pub trait kynos::extract::params::path::PathParams: core::marker::Sized
 pub const kynos::extract::params::path::PathParams::NAMES: &'static [&'static str]
 pub fn kynos::extract::params::path::PathParams::constraint_problems() -> alloc::vec::Vec<kynos::schema::constraints::ConstraintProblem>
@@ -2713,7 +2772,7 @@ pub async fn kynos::extract::params::cookie::Cookies<T>::from_request_parts(&mut
 impl<C: core::marker::Sync, T: kynos::extract::params::header::DecodeHeaders + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::header::Headers<T>
 pub type kynos::extract::params::header::Headers<T>::Rejection = kynos::error::rejection::HeaderRejection
 pub async fn kynos::extract::params::header::Headers<T>::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
-impl<C: core::marker::Sync, T: kynos::extract::params::path::DecodePath + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::path::Path<T>
+impl<C: core::marker::Sync, T: kynos::extract::params::path::PathInput<Bindingkynos::extract::params::path::PathBinding<T>> + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::path::Path<T>
 pub type kynos::extract::params::path::Path<T>::Rejection = kynos::error::rejection::PathRejection
 pub async fn kynos::extract::params::path::Path<T>::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 impl<C: core::marker::Sync, T: kynos::extract::params::query::DecodeQuery + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::query::Query<T>
@@ -6504,7 +6563,7 @@ impl core::marker::UnsafeUnpin for kynos::response::status::NoContent
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::response::status::NoContent
 impl core::panic::unwind_safe::UnwindSafe for kynos::response::status::NoContent
 pub struct kynos::prelude::Path<T>(pub T)
-impl<C: core::marker::Sync, T: kynos::extract::params::path::DecodePath + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::path::Path<T>
+impl<C: core::marker::Sync, T: kynos::extract::params::path::PathInput<Bindingkynos::extract::params::path::PathBinding<T>> + core::marker::Send> kynos::extract::FromRequestParts<C> for kynos::extract::params::path::Path<T>
 pub type kynos::extract::params::path::Path<T>::Rejection = kynos::error::rejection::PathRejection
 pub async fn kynos::extract::params::path::Path<T>::from_request_parts(&mut kynos::http::Parts, &C) -> core::result::Result<Self, Self::Rejection>
 impl<T: core::clone::Clone> core::clone::Clone for kynos::extract::params::path::Path<T>
@@ -6523,7 +6582,7 @@ pub fn kynos::extract::params::path::Path<T>::fmt(&self, &mut core::fmt::Formatt
 impl<T: core::hash::Hash> core::hash::Hash for kynos::extract::params::path::Path<T>
 pub fn kynos::extract::params::path::Path<T>::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl<T: core::marker::Copy> core::marker::Copy for kynos::extract::params::path::Path<T>
-impl<T: kynos::extract::params::path::PathParams> kynos::extract::describe::Describe for kynos::extract::params::path::Path<T>
+impl<T: kynos::extract::params::path::PathInput<Bindingkynos::extract::params::path::PathBinding<T>>> kynos::extract::describe::Describe for kynos::extract::params::path::Path<T>
 pub fn kynos::extract::params::path::Path<T>::describe(&mut kynos::router::operation::OperationCx<'_>)
 impl<T> core::marker::StructuralPartialEq for kynos::extract::params::path::Path<T>
 impl<T> core::marker::Freeze for kynos::extract::params::path::Path<T> where T: core::marker::Freeze
@@ -8930,6 +8989,9 @@ pub kynos::router::error::RouterError::HeadWithoutGet::method: kynos_openapi::mo
 pub kynos::router::error::RouterError::HeadWithoutGet::path: alloc::string::String
 pub kynos::router::error::RouterError::InvalidRoutePattern
 pub kynos::router::error::RouterError::InvalidRoutePattern::pattern: alloc::string::String
+pub kynos::router::error::RouterError::LonePathValue
+pub kynos::router::error::RouterError::LonePathValue::value: &'static str
+pub kynos::router::error::RouterError::LonePathValue::variables: alloc::vec::Vec<alloc::string::String>
 pub kynos::router::error::RouterError::MappedOperation
 pub kynos::router::error::RouterError::MappedOperation::method: kynos_openapi::model::paths::method::Method
 pub kynos::router::error::RouterError::MappedOperation::path: alloc::string::String

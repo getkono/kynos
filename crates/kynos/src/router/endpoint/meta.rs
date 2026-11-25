@@ -29,9 +29,11 @@ pub trait EndpointMeta {
 
     /// The variable names appearing in [`PATH`](EndpointMeta::PATH).
     ///
-    /// Compared against `PathParams::NAMES` by a const assertion in the
-    /// expansion, so a handler whose parameters do not match its path is a
-    /// compile error rather than a runtime 500.
+    /// Compared against what the handler's `Path<T>` binds, its
+    /// [`PathBinding::NAMES`](crate::extract::params::path::PathBinding::NAMES),
+    /// by a const assertion in the expansion, so a handler whose parameters do
+    /// not match its path is a compile error rather than a runtime 500. One
+    /// path value is named after the one variable listed here.
     const PATH_VARIABLES: &'static [&'static str];
 
     /// The operation identifier, as the attribute emitted it.
@@ -106,8 +108,8 @@ pub trait EndpointMeta {
 /// extracts, so a [`Link`](crate::extract::link::Link) to the operation takes
 /// the same arguments its `relative_uri` does.
 pub trait EndpointUri: EndpointMeta {
-    /// What the URI is built from: `()`, the handler's `Path<P>` group, its
-    /// `Query<Q>` group, or `(P, Q)` when it extracts both.
+    /// What the URI is built from: `()`, the handler's `Path<P>` group or one
+    /// value, its `Query<Q>` group, or `(P, Q)` when it extracts both.
     type Params;
 
     /// Renders `params` into `template`, a path template with exactly

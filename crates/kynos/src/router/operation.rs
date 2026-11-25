@@ -81,6 +81,9 @@ pub struct OperationCx<'a> {
     /// How [`set_derived_operation_id`](Self::set_derived_operation_id)
     /// spells what it is given: the describing router's.
     operation_id_case: OperationIdCase,
+    /// The variables of the template the operation is declared at, before
+    /// any prefix, which a lone path value is named after.
+    path_variables: &'a [String],
 }
 
 impl<'a> OperationCx<'a> {
@@ -96,13 +99,32 @@ impl<'a> OperationCx<'a> {
             #[cfg(feature = "server")]
             reads_body: false,
             operation_id_case: OperationIdCase::AsWritten,
+            path_variables: &[],
         }
     }
 
-    /// Spells every derived `operationId` this describes in `case`.
-    pub(crate) fn with_operation_id_case(mut self, case: OperationIdCase) -> Self {
-        self.operation_id_case = case;
-        self
+    /// Begins describing the operation a router mounts: declared at
+    /// `template`, its own before any prefix, whose variables
+    /// [`path_variables`](Self::path_variables) reads, and spelling every
+    /// derived `operationId` in `case`.
+    pub(crate) fn at(
+        registry: &'a mut Registry,
+        template: &'a kynos_openapi::PathTemplate,
+        case: OperationIdCase,
+    ) -> Self {
+        Self {
+            operation_id_case: case,
+            path_variables: template.variables(),
+            ..Self::new(registry)
+        }
+    }
+
+    /// The variables the operation's own template declares, before any
+    /// prefix: none for one described outside a router, which is how a
+    /// [`Lone`](crate::extract::params::path::Lone) path value comes to refuse
+    /// it.
+    pub(crate) fn path_variables(&self) -> &'a [String] {
+        self.path_variables
     }
 
     /// Finishes the operation being described.

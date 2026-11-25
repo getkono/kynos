@@ -270,6 +270,7 @@ fn scoped(prepared: Prepared) -> Answered {
 #[bench::auth_401("auth-401")]
 #[bench::cookies("cookies")]
 #[bench::bounds("bounds")]
+#[bench::path_value("path-value")]
 #[bench::query_unused_8("query-unused-8")]
 #[bench::querystring("querystring")]
 #[bench::one_of("one-of")]
