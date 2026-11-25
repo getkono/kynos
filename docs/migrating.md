@@ -65,6 +65,8 @@ by task.
 | An `ApiError` re-implementing a Kynos rejection only to give it the application's `type` and title | `ProblemPolicy::identity`, naming them by `ProblemOrigin` and status for every problem Kynos would send as `about:blank` | #1422 |
 | `.problem_type::<T>()` on every Kynos interceptor, and an application interceptor wrapping one to add its members, only so its refusal matches the rest | one `Router::problems::<P>()`, whose identity for `ProblemOrigin::Refusal` and members reach every refusal an interceptor Kynos ships answers with; `problem_type` stays the per-interceptor override | #1422 |
 | `cx.headers()["x-request-id"]`, or another read of `cx.method()`, `cx.uri()` or `cx.extensions()`, in what is now `ProblemPolicy::members` | the same through the `Option` each now returns, `None` for an interceptor's refusal and a recovered panic: `cx.headers().and_then(\|headers\| headers.get("x-request-id"))` | #1422 |
+| A `const fn as_str` on an enum matching each variant to the name its `#[serde(rename_all)]` writes, plus a test that it agrees with serde | `#[derive(kynos::ParamValue)]` on the enum, and `status.as_str()` with `schema::UnitEnum` imported, which the prelude leaves out; that `as_str` is not `const` | #1431 |
+| `const ALL: [Self; N]` and `ALL.into_iter().find(\|v\| v.as_str() == s)` | `T::VARIANTS` with `schema::UnitEnum` imported, or `s.parse()` through the `FromStr` the same derive implements | #1431 |
 
 ## 0.5 to 0.6
 
