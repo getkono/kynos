@@ -23,7 +23,7 @@ use kynos::{
     extract::{
         link::{Link, UnresolvedLink},
         params::{
-            path::{DecodePath, EncodePath, Path, PathParams},
+            path::{DecodePath, EncodePath, Named, Path, PathInput, PathParams},
             query::{DecodeQuery, EncodeQuery, Query, QueryParams},
         },
     },
@@ -49,6 +49,10 @@ impl Schema for ReportPath {
 
 impl PathParams for ReportPath {
     const NAMES: &'static [&'static str] = &["name"];
+}
+
+impl PathInput for ReportPath {
+    type Binding = Named<Self>;
 }
 
 impl EncodePath for ReportPath {
@@ -255,6 +259,57 @@ async fn a_relative_uri_routes_back_to_the_value_it_was_rendered_from() {
         .expect("a readable body")
         .to_bytes();
     assert_eq!(String::from_utf8_lossy(&body), value);
+}
+
+/// Answers with the one value its path carried, decoded, with no group.
+#[kynos::get("/titles/{title}")]
+async fn title(Path(title): Path<String>) -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text(title)
+}
+
+/// Points at `title`, wherever the router mounted it.
+#[kynos::post("/titled")]
+async fn file_title(title: Link<title>) -> Redirect<303> {
+    Redirect::to(title.uri("a/b".to_owned()))
+}
+
+/// One path value is the whole of `relative_uri`'s and `Link::uri`'s path
+/// argument, rendered into the template's one variable, percent-encoded, and
+/// routed back through `Path<String>` as the value it was rendered from.
+#[tokio::test]
+async fn one_path_value_renders_into_its_routes_variable() {
+    use http_body_util::BodyExt as _;
+
+    let value = "a/b c%25?#&+=\u{e9}";
+    let uri = title::relative_uri(value.to_owned());
+    assert_eq!(uri.path(), "/titles/a%2Fb%20c%2525%3F%23&+=%C3%A9");
+
+    let service = Router::<()>::new()
+        .group(Group::new("/v1").mount(kynos::routes![title]))
+        .mount(kynos::routes![file_title])
+        .build(())
+        .expect("a buildable router");
+
+    let mut request = Request::new(Body::empty());
+    *request.uri_mut() = format!("/v1{uri}")
+        .parse()
+        .expect("a usable request target");
+    let response = service.call(request).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    assert_eq!(String::from_utf8_lossy(&body), value);
+
+    let mut request = Request::new(Body::empty());
+    *request.method_mut() = Method::POST;
+    *request.uri_mut() = "/titled".parse().expect("a usable request target");
+    let response = service.call(request).await;
+    assert_eq!(response.status(), StatusCode::SEE_OTHER);
+    assert_eq!(response.headers()[header::LOCATION], "/v1/titles/a%2Fb");
 }
 
 /// The fixture describes, so `ReportQuery::parameters` is a body something

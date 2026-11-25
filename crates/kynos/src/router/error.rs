@@ -252,6 +252,24 @@ pub enum RouterError {
         /// The parameter's wire name.
         parameter: String,
     },
+
+    /// A `Path<T>` over one value, which reads the one variable its
+    /// operation's template declares, on an operation declaring other than
+    /// one.
+    ///
+    /// A route attribute refuses this at compile time, so only an operation
+    /// an `EndpointBuilder` assembled reaches it. Found while the operation
+    /// is described, against its own template before any prefix.
+    #[error(
+        "`Path<{value}>` reads the one variable its operation's template declares, and that \
+         template declares {variables:?}; extract a `PathParams` group naming each variable"
+    )]
+    LonePathValue {
+        /// The value's type, as `std::any::type_name` spells it.
+        value: &'static str,
+        /// The variables the operation's own template declares.
+        variables: Vec<String>,
+    },
 }
 
 /// Why a `#[schema(string)]` type does not carry an example it lists, as a

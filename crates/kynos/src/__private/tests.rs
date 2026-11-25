@@ -1,13 +1,13 @@
 use crate::{
     __private::{
-        path::path_parameter_mismatch,
+        path::{path_binding_mismatch, path_parameter_mismatch},
         problem::{names_retry_after, union, union_len},
         uri::{
             decode_path_value, decode_query_component, encode_ext_value, encode_query_component,
             endpoint_uri_with_path, query_pairs,
         },
     },
-    extract::params::path::{EncodePath, PathParams},
+    extract::params::path::{EncodePath, Named, PathInput, PathParams},
 };
 
 /// A status repeated within one part, as a hand-written `ShortCircuit` may
@@ -42,6 +42,10 @@ impl PathParams for Params {
     const NAMES: &'static [&'static str] = &["name"];
 }
 
+impl PathInput for Params {
+    type Binding = Named<Self>;
+}
+
 impl EncodePath for Params {
     fn encode(&self) -> Vec<(&'static str, String)> {
         vec![("name", "sales/2026 report".to_owned())]
@@ -50,8 +54,25 @@ impl EncodePath for Params {
 
 #[test]
 fn typed_endpoint_paths_percent_encode_each_segment() {
-    let uri = endpoint_uri_with_path("/reports/{name}", &Params);
+    let uri = endpoint_uri_with_path("/reports/{name}", &["name"], &Params);
     assert_eq!(uri, "/reports/sales%2F2026%20report");
+}
+
+/// One value fills the template's one variable, whatever it is called, and
+/// is percent-encoded as a group's field is.
+#[test]
+fn one_path_value_fills_the_template_variable() {
+    let uri = endpoint_uri_with_path("/reports/{title}", &["title"], &"sales/2026".to_owned());
+    assert_eq!(uri, "/reports/sales%2F2026");
+}
+
+/// One value has no variable to fill in a template declaring two, which a
+/// route attribute refuses at compile time; a hand-written call panics
+/// rather than guessing which one it meant.
+#[test]
+#[should_panic(expected = "one path value fills a template's one variable")]
+fn one_path_value_refuses_a_template_of_two_variables() {
+    let _ = endpoint_uri_with_path("/a/{x}/{y}", &["x", "y"], &7_u32);
 }
 
 const PATH: &str = "/tenants/{tenant}/members/{id}";
@@ -95,6 +116,47 @@ fn a_missing_path_parameter_names_the_variable() {
              variables one for one, in order"
         )
     );
+}
+
+/// One value takes a template of exactly one variable, whatever it is
+/// called, and is refused beside any other count, in const context where the
+/// route attribute's assertion runs it.
+#[test]
+fn one_path_value_takes_a_template_of_exactly_one_variable() {
+    const ONE: bool = path_binding_mismatch("Uuid", "/s/{id}", None, &["id"]).is_none();
+    const TWO: bool = path_binding_mismatch("Uuid", PATH, None, VARIABLES).is_some();
+    const NONE: bool = path_binding_mismatch("Uuid", "/s", None, &[]).is_some();
+    assert!(std::hint::black_box(ONE));
+    assert!(std::hint::black_box(TWO));
+    assert!(std::hint::black_box(NONE));
+
+    assert_eq!(
+        path_binding_mismatch("Uuid", PATH, None, VARIABLES)
+            .map(|message| message.as_str().to_owned())
+            .as_deref(),
+        Some(
+            "`Uuid` is one path value, which reads a template's one variable, and the route \
+             `/tenants/{tenant}/members/{id}` does not declare exactly one; extract a \
+             `PathParams` group naming each variable"
+        )
+    );
+}
+
+/// A group's binding is compared name for name, as before one value could be
+/// extracted.
+#[test]
+fn a_group_binding_compares_its_names() {
+    assert_eq!(
+        path_binding_mismatch(
+            "MemberPath",
+            PATH,
+            Some(&["tenant", "member_id"]),
+            VARIABLES
+        )
+        .map(|message| message.as_str().to_owned()),
+        mismatch(&["tenant", "member_id"])
+    );
+    assert!(path_binding_mismatch("G", PATH, Some(VARIABLES), VARIABLES).is_none());
 }
 
 #[test]
@@ -230,6 +292,10 @@ impl PathParams for Value {
     const NAMES: &'static [&'static str] = &["value"];
 }
 
+impl PathInput for Value {
+    type Binding = Named<Self>;
+}
+
 impl EncodePath for Value {
     fn encode(&self) -> Vec<(&'static str, String)> {
         vec![("value", self.0.clone())]
@@ -247,7 +313,7 @@ impl EncodePath for Value {
 fn every_ascii_character_in_a_path_value_decodes_back_to_itself() {
     for byte in 0u8..=0x7f {
         let value = format!("a{}b", char::from(byte));
-        let uri = endpoint_uri_with_path("/v/{value}", &Value(value.clone()));
+        let uri = endpoint_uri_with_path("/v/{value}", &["value"], &Value(value.clone()));
         let segment = uri
             .path()
             .strip_prefix("/v/")

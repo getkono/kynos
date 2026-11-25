@@ -7,6 +7,35 @@
 /// The rule every mismatch message ends with.
 const RULE: &str = "PathParams names must match the route's variables one for one, in order";
 
+/// Describes how what `Path<T>` binds disagrees with its route's
+/// `variables`, in const code: `names` is the binding's
+/// [`NAMES`](crate::extract::params::path::PathBinding::NAMES), so a group is
+/// compared name for name, as [`path_parameter_mismatch`] does, and one value,
+/// `None`, takes a template declaring exactly one variable.
+#[must_use]
+pub const fn path_binding_mismatch(
+    input: &str,
+    path: &str,
+    names: Option<&[&str]>,
+    variables: &[&str],
+) -> Option<Message> {
+    let Some(names) = names else {
+        if variables.len() == 1 {
+            return None;
+        }
+        let mut message = Message::new();
+        message.push("`");
+        message.push(input);
+        message.push("` is one path value, which reads a template's one variable, and the route `");
+        message.push(path);
+        message.push(
+            "` does not declare exactly one; extract a `PathParams` group naming each variable",
+        );
+        return Some(message);
+    };
+    path_parameter_mismatch(input, path, names, variables)
+}
+
 /// Describes the first disagreement between the parameter `names` a
 /// `PathParams` group declares and its route's `variables`, in const code.
 ///

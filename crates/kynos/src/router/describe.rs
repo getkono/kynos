@@ -248,7 +248,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let location = path_location(&key);
             let method = mounted.endpoint.method();
 
-            let mut cx = OperationCx::new(&mut registry).with_operation_id_case(self.id_case());
+            let mut cx = OperationCx::at(&mut registry, mounted.endpoint.path(), self.id_case());
             mounted.endpoint.describe(&mut cx);
 
             links.record(cx.operation_id(), method, &mounted.path, cx.links());

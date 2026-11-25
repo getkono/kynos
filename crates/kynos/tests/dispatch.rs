@@ -1238,6 +1238,90 @@ async fn a_variable_never_spans_a_slash() {
     );
 }
 
+// --- One path value, without a group --------------------------------------
+
+/// One value, read from the template's one variable whatever it is called.
+#[kynos::get("/sessions/{session_id}")]
+async fn session(Path(id): Path<u64>) -> Text {
+    Text(format!("session {id}"))
+}
+
+/// `Path<u64>` reads the operation's one variable beneath a group's prefix,
+/// refuses text `u64` does not read with the 400 a group's field would, and
+/// the description names the parameter after the variable.
+#[tokio::test]
+async fn one_path_value_reads_and_describes_its_routes_variable() {
+    let router = Router::<()>::new().group(Group::new("/v1").mount(kynos::routes![session]));
+    let document = router.openapi().expect("a describable router");
+    let service = Router::<()>::new()
+        .group(Group::new("/v1").mount(kynos::routes![session]))
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        get(&service, "/v1/sessions/42").call().await.text(),
+        "session 42"
+    );
+    assert_eq!(
+        get(&service, "/v1/sessions/forty-two").call().await.status,
+        StatusCode::BAD_REQUEST
+    );
+
+    let operation = document.paths.items["/v1/sessions/{session_id}"]
+        .get
+        .as_ref()
+        .expect("the GET is described");
+    let names: Vec<_> = operation
+        .parameters
+        .iter()
+        .map(|parameter| match parameter {
+            openapi::RefOr::Item(parameter) => (parameter.name.as_str(), parameter.location),
+            openapi::RefOr::Ref(_) => panic!("a path parameter is described inline"),
+        })
+        .collect();
+    assert_eq!(names, [("session_id", openapi::ParameterIn::Path)]);
+}
+
+/// The handler an `EndpointBuilder` mounts at a template of two variables,
+/// which no route attribute would accept beside `Path<u64>`.
+async fn ambiguous(Path(id): Path<u64>) -> Text {
+    Text(id.to_string())
+}
+
+/// An operation a builder assembled is not checked at compile time, so the
+/// router refuses one value under a template of two variables rather than
+/// guess which it reads.
+#[test]
+fn a_router_refuses_one_path_value_under_two_variables() {
+    let endpoint = EndpointBuilder::new(
+        openapi::Method::Get,
+        openapi::PathTemplate::parse("/teams/{team}/members/{member}").expect("a valid path"),
+        ambiguous,
+    );
+    let Err(kynos::Error::Invalid { violations }) = Router::<()>::new().mount(endpoint).openapi()
+    else {
+        panic!("a router reading one value under two variables was described");
+    };
+
+    let refused: Vec<_> = violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            kynos::router::error::RouterError::LonePathValue { value, variables } => {
+                Some((violation.location, value, variables))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [(
+            "#/paths/~1teams~1{team}~1members~1{member}/get".to_owned(),
+            "u64",
+            vec!["team".to_owned(), "member".to_owned()],
+        )]
+    );
+}
+
 // --- `Forwarded` as an argument -------------------------------------------
 
 /// The client the router resolved, or `none` when it resolved none.

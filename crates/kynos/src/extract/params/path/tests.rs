@@ -1,9 +1,29 @@
-use super::{DecodePath, INLINE, Path, PathCaptures, PathParams, Spans, narrow};
+use super::{DecodePath, Path, PathBinding, PathInput, PathParams, captures::tests::recorded};
 use crate::{
     error::rejection::PathRejection,
     extract::{FromRequestParts, describe::Describe},
     http::{Request, body::Body},
+    router::{
+        error::RouterError,
+        operation::{OperationCx, OperationIdCase},
+    },
+    schema::{
+        ParamValue, Schema,
+        constraints::{Pointer, Violations},
+        registry::Registry,
+    },
 };
+
+/// Binds each hand-written group below by name, as the derive does.
+macro_rules! named {
+    ($($group:ty),*) => {
+        $(impl PathInput for $group {
+            type Binding = super::Named<Self>;
+        })*
+    };
+}
+
+named!(Named, Absent, Five);
 
 /// One variable, decoded by hand.
 ///
@@ -91,7 +111,9 @@ fn matched(path: &'static str, captures: &[(&'static str, &'static str)]) -> Req
     request
 }
 
-async fn extract<T: DecodePath + Send>(request: Request) -> Result<T, PathRejection> {
+async fn extract<T: PathInput<Binding: PathBinding<T>> + Send>(
+    request: Request,
+) -> Result<T, PathRejection> {
     let (mut parts, _) = request.into_parts();
     Path::<T>::from_request_parts(&mut parts, &())
         .await
@@ -144,104 +166,6 @@ async fn a_group_past_the_inline_captures_keeps_every_value_in_order() {
     );
 }
 
-/// What a match on `path` records for `names`, each value `captured` gives
-/// re-borrowed out of `path` itself, which is what the router yields and what
-/// `PathCaptures::new` asserts.
-fn recorded(
-    path: &'static str,
-    names: &'static [&'static str],
-    captured: impl Fn(&str) -> Option<&'static str>,
-) -> PathCaptures {
-    PathCaptures::new(path, names, |name| {
-        let value = captured(name)?;
-        let start = path.find(value).expect("a capture inside the path");
-        Some(&path[start..start + value.len()])
-    })
-}
-
-/// The segment after `/v/` that `name`, a single lowercase letter, stands at:
-/// `a` the first.
-fn segment(path: &'static str, name: &str) -> Option<&'static str> {
-    let index = usize::from(name.as_bytes()[0] - b'a');
-    path.split('/').nth(index + 2)
-}
-
-/// Past [`INLINE`] variables, the record holds every span on the heap, and
-/// each is still read back by its own name.
-#[test]
-fn captures_past_the_inline_count_keep_every_value() {
-    let path = "/v/1/2/3/4/5";
-    let recorded = recorded(path, &["a", "b", "c", "d", "e"], |name| segment(path, name));
-
-    assert!(matches!(recorded.spans, Spans::Long(_)), "{recorded:?}");
-    for (name, value) in [("a", "1"), ("b", "2"), ("c", "3"), ("d", "4"), ("e", "5")] {
-        assert_eq!(recorded.get(path, name), Some(value), "{name}");
-    }
-}
-
-/// Up to [`INLINE`] variables, the record holds its spans in place.
-#[test]
-fn captures_within_the_inline_count_stay_in_place() {
-    const NAMES: [&str; INLINE] = ["a", "b", "c", "d"];
-    let path = "/v/1/2/3/4";
-    let recorded = recorded(path, &NAMES, |name| segment(path, name));
-
-    assert!(matches!(recorded.spans, Spans::Short(_)), "{recorded:?}");
-    for (name, value) in NAMES.into_iter().zip(["1", "2", "3", "4"]) {
-        assert_eq!(recorded.get(path, name), Some(value), "{name}");
-    }
-}
-
-/// A path whose offsets do not fit sixteen bits takes the wide spans rather
-/// than truncating one, so a value at its end is still read back whole.
-#[test]
-fn a_path_past_sixteen_bit_offsets_is_read_back_whole() {
-    let path: &'static str = format!("/v/{}/tail", "x".repeat(usize::from(u16::MAX))).leak();
-    let recorded = recorded(path, &["tail"], |_| Some("tail"));
-
-    assert!(matches!(recorded.spans, Spans::Long(_)), "{recorded:?}");
-    assert_eq!(recorded.get(path, "tail"), Some("tail"));
-}
-
-/// A span ending past `u32::MAX` does not narrow to the wide width, and the
-/// record it falls back to reads as absent rather than as a truncated value.
-#[test]
-fn a_span_past_thirty_two_bit_offsets_reads_as_absent() {
-    let past = u64::from(u32::MAX) + 1;
-    assert_eq!(narrow::<u64, u32>([0, past]), None);
-    assert_eq!(narrow::<u64, u32>([past, past]), None);
-    assert_eq!(
-        narrow::<u64, u32>([0, u64::from(u32::MAX)]),
-        Some([0, u32::MAX])
-    );
-
-    let path = "/v/1";
-    let fallback = PathCaptures {
-        names: &["a"],
-        spans: Spans::Long(Box::new([[u32::MAX, 0]])),
-    };
-    assert_eq!(fallback.get(path, "a"), None);
-}
-
-/// A variable the template declares but the match did not capture reads as
-/// absent, in either width, without disturbing its neighbours.
-#[test]
-fn an_uncaptured_variable_reads_as_absent() {
-    let path = "/v/1/2";
-    let short = recorded(path, &["a", "b"], |name| {
-        (name == "b").then(|| segment(path, name)).flatten()
-    });
-    assert_eq!(short.get(path, "a"), None);
-    assert_eq!(short.get(path, "b"), Some("2"));
-
-    let long = recorded(path, &["a", "b", "c", "d", "e"], |name| {
-        (name == "b").then(|| segment(path, name)).flatten()
-    });
-    assert!(matches!(long.spans, Spans::Long(_)), "{long:?}");
-    assert_eq!(long.get(path, "a"), None);
-    assert_eq!(long.get(path, "b"), Some("2"));
-}
-
 /// A capture the route never made is a rejection naming the variable, not a
 /// panic and not an empty string.
 #[tokio::test]
@@ -292,4 +216,155 @@ fn a_capture_needing_no_decoding_is_not_copied() {
         crate::__private::uri::decode_path_value("plain"),
         Ok(std::borrow::Cow::Borrowed("plain"))
     ));
+}
+
+/// A count of at most ten, its bound checked by hand where a derive would
+/// check it, so a lone value's constraint check is reached without one.
+#[derive(Debug, PartialEq)]
+struct Small(u8);
+
+impl Schema for Small {
+    fn schema(registry: &mut Registry) -> kynos_openapi::Schema {
+        <u8 as Schema>::schema(registry)
+    }
+
+    fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {
+        if self.0 > 10 {
+            violations.report(at, "must be at most 10");
+        }
+    }
+}
+
+impl std::str::FromStr for Small {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.parse().map(Self)
+    }
+}
+
+impl std::fmt::Display for Small {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl ParamValue for Small {}
+
+/// One value reads the operation's own variable, which follows every
+/// variable a prefix declared, so a mount prefix's capture is not read in
+/// its place.
+#[tokio::test]
+async fn a_lone_value_reads_the_variable_after_every_prefix_variable() {
+    let decoded: u32 = extract(matched("/orgs/7/users/42", &[("org", "7"), ("id", "42")]))
+        .await
+        .expect("a decodable capture");
+
+    assert_eq!(decoded, 42);
+}
+
+/// A lone value is percent-decoded before it is parsed, as a group's field
+/// is.
+#[tokio::test]
+async fn a_lone_value_arrives_percent_decoded() {
+    let decoded: String = extract(matched(
+        "/reports/annual%2F2026",
+        &[("title", "annual%2F2026")],
+    ))
+    .await
+    .expect("a decodable capture");
+
+    assert_eq!(decoded, "annual/2026");
+}
+
+/// Text the value does not read is refused naming the template's variable,
+/// with the parser's own reason.
+#[tokio::test]
+async fn a_lone_value_that_does_not_parse_is_rejected_by_its_variable() {
+    let rejection = extract::<u32>(matched("/users/ada", &[("id", "ada")]))
+        .await
+        .expect_err("a rejection");
+
+    assert!(
+        matches!(
+            &rejection,
+            PathRejection::Invalid { name, detail }
+                if name == "id" && detail == "invalid digit found in string"
+        ),
+        "{rejection:?}"
+    );
+}
+
+/// A value its type's own bounds refuse is a schema rejection at the
+/// variable, carrying the type's problem, as a group's field is.
+#[tokio::test]
+async fn a_lone_value_breaking_its_bound_is_a_schema_rejection() {
+    assert_eq!(
+        extract::<Small>(matched("/pages/3", &[("page", "3")]))
+            .await
+            .ok(),
+        Some(Small(3))
+    );
+
+    let rejection = extract::<Small>(matched("/pages/11", &[("page", "11")]))
+        .await
+        .expect_err("a rejection");
+
+    assert!(
+        matches!(
+            &rejection,
+            PathRejection::Schema { name, failures, problem: None }
+                if name == "page"
+                    && failures.values().any(|failure| failure.contains("at most 10"))
+        ),
+        "{rejection:?}"
+    );
+}
+
+/// The parameters `Path<T>` describes at an operation declared at `template`,
+/// and the refusals it recorded there.
+fn described<T: PathInput<Binding: PathBinding<T>>>(
+    template: &str,
+) -> (
+    Vec<kynos_openapi::RefOr<kynos_openapi::Parameter>>,
+    Vec<RouterError>,
+) {
+    let template = kynos_openapi::PathTemplate::parse(template).expect("a valid template");
+    let mut registry = Registry::new();
+    let mut operation = OperationCx::at(&mut registry, &template, OperationIdCase::AsWritten);
+    Path::<T>::describe(&mut operation);
+    let parameters = operation.finish().parameters;
+    (parameters, registry.take_parameter_refusals())
+}
+
+/// One value is described as a required path parameter named after its
+/// operation's one variable, with its type's schema.
+#[test]
+fn a_lone_value_is_described_under_its_operation_variable() {
+    let (parameters, refusals) = described::<u32>("/users/{user_id}");
+
+    let expected = kynos_openapi::Parameter::path("user_id", Registry::new().resolve::<u32>());
+    assert_eq!(parameters, [kynos_openapi::RefOr::Item(expected)]);
+    assert_eq!(refusals, []);
+}
+
+/// An operation whose own template declares other than one variable cannot
+/// name one value's parameter, which only an operation a builder assembled
+/// reaches: the router is told why rather than handed an undescribed
+/// variable or a parameter named after nothing.
+#[test]
+fn a_lone_value_refuses_a_template_without_exactly_one_variable() {
+    for (template, variables) in [("/a/{x}/{y}", vec!["x", "y"]), ("/a", vec![])] {
+        let (parameters, refusals) = described::<u32>(template);
+
+        assert_eq!(parameters, [], "{template}");
+        assert_eq!(
+            refusals,
+            [RouterError::LonePathValue {
+                value: "u32",
+                variables: variables.into_iter().map(str::to_owned).collect(),
+            }],
+            "{template}"
+        );
+    }
 }

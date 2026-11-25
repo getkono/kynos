@@ -963,7 +963,7 @@ failure at each.
 | `JsonLines<Records<T>>`, `JsonSeq<Records<T>>` | 422 per record, reading on | the record, under `/{index}` |
 | `QueryString<T, Json>` | 400, `QueryRejection::Schema` | the decoded query string |
 | `Query<T>`, `T` deriving `QueryParams` | 400, `QueryRejection::Schema`, the first parameter breaking one | the parameter's value |
-| `Path<T>`, `T` deriving `PathParams` | 400, `PathRejection::Schema`, the first parameter breaking one | the parameter's value |
+| `Path<T>`, `T` deriving `PathParams` or one `ParamValue` | 400, `PathRejection::Schema`, the first parameter breaking one | the parameter's value |
 | `Headers<T>`, `T` deriving `HeaderParams` | 400, `HeaderRejection::Schema`, the first header breaking one | the header's value |
 | `Cookies<T>`, `T` deriving `CookieParams` | 400, `CookieRejection::Schema`, the first cookie breaking one | the cookie's value |
 

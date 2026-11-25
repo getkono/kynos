@@ -1,21 +1,41 @@
 //! Variables captured from the path template.
 
-use std::borrow::Cow;
+mod binding;
+pub(crate) mod captures;
+
+use std::marker::PhantomData;
 
 use crate::{
     error::rejection::PathRejection,
     extract::{FromRequestParts, describe::Describe},
     http::Parts,
     router::operation::OperationCx,
-    schema::registry::Registry,
+    schema::{ParamValue, registry::Registry},
 };
 
 /// Variables captured from the path template.
 ///
-/// `T` derives `PathParams`, and its wire names, each a field's `rename` or
-/// else its name under any `rename_all` as the `Schema` derive applies it,
-/// are checked in order against the route template's variables at compile
-/// time — a mismatch is a compile error, not a runtime 500.
+/// `T` is a [`PathInput`]: a group deriving `PathParams`, or one
+/// [`ParamValue`] for a route whose template declares one variable.
+///
+/// A group's wire names, each a field's `rename` or else its name under any
+/// `rename_all` as the `Schema` derive applies it, are checked in order
+/// against the route template's variables at compile time — a mismatch is a
+/// compile error, not a runtime 500. One value takes the template's lone
+/// variable, whatever it is called, and a template declaring any other number
+/// is the same compile error:
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::extract::params::path::Path;
+///
+/// #[kynos::delete("/sessions/{id}")]
+/// async fn delete_session(Path(id): Path<u64>) {
+///     let _ = id;
+/// }
+/// # }
+/// ```
 ///
 /// # Where the values come from
 ///
@@ -23,100 +43,6 @@ use crate::{
 /// [`DecodePath::decode`], so a variable holding `%2F` arrives as `/`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Path<T>(pub T);
-
-/// Where in the request path a matched route found each of its variables.
-///
-/// Read by [`Path`] and [`captured`](crate::unchecked::captured). One span into
-/// the request path per variable the template declares, in its order, so a
-/// match copies no value. A route of up to [`INLINE`] variables on a path of
-/// at most `u16::MAX` octets holds its spans in place and allocates nothing;
-/// any other allocates once, for all of them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct PathCaptures {
-    names: &'static [&'static str],
-    spans: Spans,
-}
-
-/// Each variable's `[start, end)` octet offsets into the request path, narrow
-/// so that a record stays small enough to move without a copy loop.
-///
-/// A variable the match did not capture holds a start past its end, which no
-/// path slices.
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum Spans {
-    Short([[u16; 2]; INLINE]),
-    Long(Box<[[u32; 2]]>),
-}
-
-impl PathCaptures {
-    /// Records what a match captured out of `path` for each of `names`, which
-    /// `captured` looks up.
-    ///
-    /// # Panics
-    ///
-    /// Panics if a value is not a subslice of `path`.
-    pub(crate) fn new<'a>(
-        path: &str,
-        names: &'static [&'static str],
-        mut captured: impl FnMut(&str) -> Option<&'a str>,
-    ) -> Self {
-        let base = path.as_ptr() as usize;
-        let mut span = |name: &str| {
-            let value = captured(name)?;
-            let start = value.as_ptr() as usize;
-            assert!(
-                start >= base && start + value.len() <= base + path.len(),
-                "a path capture must borrow the path it was matched against"
-            );
-            let start = start - base;
-            Some([start, start + value.len()])
-        };
-
-        let spans = if names.len() <= INLINE && u16::try_from(path.len()).is_ok() {
-            let mut spans = [[u16::MAX, 0]; INLINE];
-            for (slot, name) in spans.iter_mut().zip(names) {
-                if let Some(narrowed) = span(name).and_then(narrow) {
-                    *slot = narrowed;
-                }
-            }
-            Spans::Short(spans)
-        } else {
-            // A path past `u32::MAX` octets captures nothing readable.
-            Spans::Long(
-                names
-                    .iter()
-                    .map(|name| span(name).and_then(narrow).unwrap_or([u32::MAX, 0]))
-                    .collect(),
-            )
-        };
-        Self { names, spans }
-    }
-
-    /// The value captured for `name`, borrowed back out of `path`.
-    ///
-    /// `None` when the span does not fit, as for a path rewritten after
-    /// matching.
-    pub(crate) fn get<'p>(&self, path: &'p str, name: &str) -> Option<&'p str> {
-        let index = self.names.iter().position(|captured| *captured == name)?;
-        let [start, end] = match &self.spans {
-            Spans::Short(spans) => spans.get(index)?.map(usize::from),
-            Spans::Long(spans) => narrow(*spans.get(index)?)?,
-        };
-        path.get(start..end)
-    }
-}
-
-/// `span` in another integer width, or `None` where either end does not fit.
-fn narrow<F, N: TryFrom<F>>([start, end]: [F; 2]) -> Option<[N; 2]> {
-    Some([N::try_from(start).ok()?, N::try_from(end).ok()?])
-}
-
-/// How many variables a match records in place, and a group decodes on the
-/// stack, before either takes the heap.
-///
-/// One past `matchit`'s own inline capacity of three, so the shortest route
-/// that spills here already paid one allocation for its variables there.
-const INLINE: usize = 4;
 
 /// A group of path parameters, as the description sees it.
 ///
@@ -156,18 +82,22 @@ pub trait PathParams: Sized {
 
 /// Reading a path parameter group from a matched route.
 ///
-/// `#[derive(PathParams)]` writes this. Implement it by hand only for a group
-/// that is extracted; one that only ever appears in a typed URI implements
-/// [`EncodePath`] instead.
+/// `#[derive(PathParams)]` writes this, and the group's [`PathInput`]. Implement
+/// it by hand only for a group that is extracted; one that only ever appears in
+/// a typed URI implements [`EncodePath`] instead.
 ///
 /// A group that encodes but does not decode cannot be extracted:
 ///
 /// ```compile_fail
-/// # use kynos::extract::params::path::{EncodePath, Path, PathParams};
+/// # use kynos::extract::params::path::{EncodePath, Named, Path, PathInput, PathParams};
 /// struct Report;
 ///
 /// impl PathParams for Report {
 ///     const NAMES: &'static [&'static str] = &["name"];
+/// }
+///
+/// impl PathInput for Report {
+///     type Binding = Named<Self>;
 /// }
 ///
 /// impl EncodePath for Report {
@@ -185,12 +115,16 @@ pub trait PathParams: Sized {
 /// ```
 /// # use kynos::{
 /// #     error::rejection::PathRejection,
-/// #     extract::params::path::{DecodePath, Path, PathParams},
+/// #     extract::params::path::{DecodePath, Named, Path, PathInput, PathParams},
 /// # };
 /// struct Report;
 ///
 /// impl PathParams for Report {
 ///     const NAMES: &'static [&'static str] = &["name"];
+/// }
+///
+/// impl PathInput for Report {
+///     type Binding = Named<Self>;
 /// }
 ///
 /// impl DecodePath for Report {
@@ -215,68 +149,128 @@ pub trait EncodePath: PathParams {
     fn encode(&self) -> Vec<(&'static str, String)>;
 }
 
-impl<C: Sync, T: DecodePath + Send> FromRequestParts<C> for Path<T> {
+/// What a [`Path`] extracts: a group of named variables, or one value.
+///
+/// `#[derive(PathParams)]` implements it for a group, binding it [`Named`],
+/// and every [`ParamValue`] implements it, bound [`Lone`]: `Path<Uuid>` reads
+/// the one variable its route's template declares, whatever that variable is
+/// called, and the description names the parameter after it. A route
+/// attribute refuses a template declaring any other number of variables at
+/// compile time, and a router refuses an operation it was handed by
+/// [`EndpointBuilder`](crate::router::endpoint::builder::EndpointBuilder)
+/// that declares one.
+///
+/// A group implemented by hand writes what the derive does:
+///
+/// ```
+/// # use kynos::{
+/// #     error::rejection::PathRejection,
+/// #     extract::params::path::{DecodePath, Named, PathInput, PathParams},
+/// # };
+/// struct Report;
+/// # impl PathParams for Report {
+/// #     const NAMES: &'static [&'static str] = &["name"];
+/// # }
+/// # impl DecodePath for Report {
+/// #     fn decode(_: &[(&str, &str)]) -> Result<Self, PathRejection> {
+/// #         Ok(Self)
+/// #     }
+/// # }
+///
+/// impl PathInput for Report {
+///     type Binding = Named<Self>;
+/// }
+/// ```
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is neither a path parameter group nor one path value",
+    label = "not extractable from the path",
+    note = "`Path<T>` takes a group deriving `kynos::PathParams`, whose fields name the \
+            template's variables, or one `kynos::schema::ParamValue`, which reads a template's \
+            lone variable"
+)]
+pub trait PathInput: Sized {
+    /// How the value binds its route's variables: [`Named<Self>`] for a
+    /// group, [`Lone<Self>`] for one value.
+    type Binding;
+}
+
+/// The binding of a group, each of whose [`PathParams::NAMES`] reads the
+/// variable of that name.
+#[derive(Debug)]
+pub struct Named<T>(PhantomData<fn() -> T>);
+
+/// The binding of one [`ParamValue`], which reads the one variable its
+/// operation's template declares.
+///
+/// The parameter is described under that variable's name, required as every
+/// path parameter is, with `T`'s schema and no description of its own: a
+/// doc comment on `T` describes the schema, and a group's field documents
+/// the parameter itself.
+#[derive(Debug)]
+pub struct Lone<T>(PhantomData<fn() -> T>);
+
+impl<T: ParamValue> PathInput for T {
+    type Binding = Lone<T>;
+}
+
+mod private {
+    pub trait Sealed {}
+}
+
+impl<T> private::Sealed for Named<T> {}
+impl<T> private::Sealed for Lone<T> {}
+
+/// What a [`PathInput`]'s binding does to read and describe `T`: implemented
+/// by [`Named`] over a [`DecodePath`] group and by [`Lone`], and by nothing
+/// else.
+pub trait PathBinding<T>: private::Sealed {
+    /// The variables `T` names, in order, which the route attribute checks
+    /// against its template; `None` for the template's one variable, whatever
+    /// it is called.
+    const NAMES: Option<&'static [&'static str]>;
+
+    /// Describes each parameter `T` reads, `variables` being the operation's
+    /// own template's, before any prefix.
+    fn parameters(registry: &mut Registry, variables: &[String]) -> Vec<kynos_openapi::Parameter>;
+
+    /// The problems a value breaking a bound answers with, beside
+    /// `about:blank`.
+    fn constraint_problems() -> Vec<crate::schema::constraints::ConstraintProblem>;
+
+    /// Reads `T` from what the matched route captured.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a variable the match did not capture, one that does not
+    /// percent-decode to UTF-8, and a value `T` does not read or whose bounds
+    /// it breaks.
+    fn decode(parts: &Parts) -> Result<T, PathRejection>;
+}
+
+/// What a [`PathInput`]'s binding does to write `T` into a typed URI:
+/// implemented by [`Named`] over an [`EncodePath`] group and by [`Lone`].
+pub trait EncodeBinding<T>: private::Sealed {
+    /// Each variable of a template declaring `variables` paired with the text
+    /// `value` fills it with, not yet percent-encoded.
+    fn encode(value: &T, variables: &[&'static str]) -> Vec<(&'static str, String)>;
+}
+
+impl<C: Sync, T: PathInput<Binding: PathBinding<T>> + Send> FromRequestParts<C> for Path<T> {
     type Rejection = PathRejection;
 
     async fn from_request_parts(parts: &mut Parts, _context: &C) -> Result<Self, Self::Rejection> {
-        let path = parts.uri.path();
-        let captures = parts
-            .extensions
-            .get::<crate::router::dispatch::Routed>()
-            .and_then(|routed| routed.captures.as_ref());
-
-        let names = T::NAMES;
-        if names.len() <= INLINE {
-            let mut decoded: [Cow<'_, str>; INLINE] = Default::default();
-            let mut values = [("", ""); INLINE];
-            let values = decode_captures(names, captures, path, &mut decoded, &mut values)?;
-            T::decode(values).map(Path)
-        } else {
-            let mut decoded = vec![Cow::Borrowed(""); names.len()];
-            let mut values = vec![("", ""); names.len()];
-            let values = decode_captures(names, captures, path, &mut decoded, &mut values)?;
-            T::decode(values).map(Path)
-        }
+        T::Binding::decode(parts).map(Path)
     }
 }
 
-/// Decodes the value `captures` holds for each of `names` into `decoded`,
-/// then pairs each name with its value in `values`, which it returns.
-///
-/// The caller provides both, so a group of up to [`INLINE`] variables keeps
-/// them on its stack.
-fn decode_captures<'v, 'p: 'v>(
-    names: &'static [&'static str],
-    captures: Option<&PathCaptures>,
-    path: &'p str,
-    decoded: &'v mut [Cow<'p, str>],
-    values: &'v mut [(&'v str, &'v str)],
-) -> Result<&'v [(&'v str, &'v str)], PathRejection> {
-    for (name, slot) in names.iter().zip(decoded.iter_mut()) {
-        let raw = captures
-            .and_then(|captures| captures.get(path, name))
-            .ok_or_else(|| PathRejection::Invalid {
-                name: (*name).to_owned(),
-                detail: "the matched route captured no value for this variable".to_owned(),
-            })?;
-        *slot = crate::__private::uri::decode_path_value(raw).map_err(|error| {
-            PathRejection::Invalid {
-                name: (*name).to_owned(),
-                detail: format!("the percent-decoded value is not valid UTF-8: {error}"),
-            }
-        })?;
-    }
-
-    let decoded = &*decoded;
-    for (pair, (name, value)) in values.iter_mut().zip(names.iter().zip(decoded)) {
-        *pair = (name, value.as_ref());
-    }
-    Ok(&values[..names.len()])
-}
-
-impl<T: PathParams> Describe for Path<T> {
+impl<T: PathInput<Binding: PathBinding<T>>> Describe for Path<T> {
     fn describe(operation: &mut OperationCx<'_>) {
-        super::describe_parameters(operation, T::parameters, &T::constraint_problems());
+        let variables = operation.path_variables();
+        let parameters = T::Binding::parameters(operation.registry(), variables);
+        for parameter in parameters {
+            operation.add_parameter(parameter);
+        }
+        super::describe_constraints(operation, &T::Binding::constraint_problems());
     }
 }
 

@@ -1058,6 +1058,7 @@ mod router_errors {
             RouterError::StringExample { .. } => "StringExample",
             RouterError::ParameterDefault { .. } => "ParameterDefault",
             RouterError::DuplicateQueryParameter { .. } => "DuplicateQueryParameter",
+            RouterError::LonePathValue { .. } => "LonePathValue",
         }
     }
 
@@ -1184,6 +1185,15 @@ mod router_errors {
                 "`app::Search` names the query parameter `limit` twice, through a flattened \
                  group; rename one of them",
             ),
+            (
+                RouterError::LonePathValue {
+                    value: "uuid::Uuid",
+                    variables: vec!["org".to_owned(), "id".to_owned()],
+                },
+                "`Path<uuid::Uuid>` reads the one variable its operation's template declares, \
+                 and that template declares [\"org\", \"id\"]; extract a `PathParams` group \
+                 naming each variable",
+            ),
         ]
     }
 
@@ -1247,6 +1257,7 @@ mod router_errors {
             "StringExample",
             "ParameterDefault",
             "DuplicateQueryParameter",
+            "LonePathValue",
         ]
         .into_iter()
         .collect();

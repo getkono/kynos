@@ -439,7 +439,8 @@ parameter_rejection! {
         /// [`unprocessable`](ConstraintProblem::unprocessable).
         ///
         /// Raised by a derived `PathParams` for a field's `#[schema(...)]` bound or
-        /// its type's. 400 rather than 422 by default, as for a query parameter: a
+        /// its type's, and by one path value for its type's. 400 rather than 422
+        /// by default, as for a query parameter: a
         /// path is part of the request's target, not its content.
         #[error("path parameter `{name}` does not satisfy its schema")]
         Schema,
