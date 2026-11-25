@@ -330,7 +330,9 @@ default number path untested. [`mise run test:preserve-order`](../mise.toml)
 does the same for `serde_json/preserve_order`, under which a `serde_json::Value`
 keeps insertion order rather than sorting: only there does
 `to_canonical_json`'s own sort decide its output, so only there can its
-exact-bytes test fail.
+exact-bytes test fail. It also runs `kynos`'s `router::hoist` tests, whose
+key-order cases share responses by the same sort and likewise only fail
+there.
 
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the
