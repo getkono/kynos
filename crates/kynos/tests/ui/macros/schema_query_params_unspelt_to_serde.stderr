@@ -6,6 +6,7 @@ error[E0277]: serde requires this field, which `#[param(default = ...)]` fills, 
   |
   = help: the trait `kynos::__private::query::DefaultAgrees` is not implemented for `kynos::__private::query::ReadBySerde`
   = note: add `#[serde(default = "...")]` naming a function returning the same value, or `#[serde(default)]` where the type's `Default` is that value
+  = note: `Schema` checks the keys `#[derive(Deserialize)]` reads, which a hand-written `Deserialize` cannot be told: derive it instead, or drop `Schema`
 help: the trait `kynos::__private::query::DefaultAgrees` is implemented for `kynos::__private::query::UnreadBySerde`
  --> src/__private/query.rs
   |
@@ -25,6 +26,7 @@ error[E0277]: serde reads this field as one nested member, which `#[param(flatte
    |
    = help: the trait `kynos::__private::query::FlattenAgrees` is not implemented for `kynos::__private::query::ReadBySerde`
    = note: add `#[serde(flatten)]` beside `#[param(flatten)]`, so both read the flattened group's members in its place
+   = note: `Schema` checks the keys `#[derive(Deserialize)]` reads, which a hand-written `Deserialize` cannot be told: derive it instead, or drop `Schema`
 help: the trait `kynos::__private::query::FlattenAgrees` is implemented for `kynos::__private::query::UnreadBySerde`
   --> src/__private/query.rs
    |
