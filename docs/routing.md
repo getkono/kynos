@@ -223,11 +223,17 @@ an absorbed router, an operation without the guard the rest of its group takes
 The three readers borrow and `build` consumes, so a context that needs the
 document — to serve a post-processed copy of it, say — is built between
 `openapi` and `build` on the same value. A function returning that value
-leaves the type parameters `intercept` keeps changing opaque:
-`-> Router<C, impl PanicPolicy, impl Sized, impl Sized>`. No type-erased router
-and no describe-then-finish split ships, because the language already expresses
-this; an opaque stack cannot be checked against another interceptor, so a
-router returned that way is finished, which is what such a function means.
+returns it `seal()`ed, as a `kynos::router::sealed::Sealed<C>`: the same four
+terminal methods, and a type naming only the context. Opaque parameters,
+`-> Router<C, impl PanicPolicy, impl Sized, impl Sized>`, were the earlier
+answer, and they fail once the function takes a reference: under edition 2024
+each `impl Sized` captures its lifetime, so the router borrows an argument it
+holds nothing of, and a call on a temporary is E0716 until both say `+ use<>`.
+`Sealed` erases `I` and `S` rather than hiding them, which costs nothing, since
+they are compile-time records only, and keeps the panic policy as the one fact
+`build` reads from `P`. Nothing can be added to a `Sealed`, since no stack it
+erased could be checked against another interceptor, so a sealed router is
+finished, which is what such a function means.
 
 ### Editing the description
 

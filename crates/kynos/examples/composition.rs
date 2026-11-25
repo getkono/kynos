@@ -42,10 +42,10 @@
 //!   more seconds. A load balancer probing `/ready` stops routing here before
 //!   any connection is refused; only then does the drain begin.
 //!
-//! `api` returns the finished router with its type parameters left opaque.
-//! Every `intercept` changes them, so they are not worth spelling out; `impl`
-//! keeps what `validate`, `openapi` and `build` need, and `main` describes and
-//! builds the one value.
+//! `api` returns the finished router sealed. Every `intercept` changes the
+//! router's type parameters, so they are not worth spelling out; `Sealed<()>`
+//! names only the context, keeps what `validate`, `openapi` and `build` need,
+//! and `main` describes and builds the one value.
 //!
 //! `EndpointBuilder` is the escape hatch for a route set that is not known at
 //! compile time. It is deliberately weaker: it cannot check that a handler's
@@ -56,12 +56,13 @@ use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
     extract::link::Link,
-    middleware::{catch_panic::PanicPolicy, limits::timeout::Timeout},
+    middleware::limits::timeout::Timeout,
     openapi::{Method, PathTemplate},
     prelude::*,
     router::{
         endpoint::{builder::EndpointBuilder, set::Endpoints},
         policy::{FallbackPolicy, TrailingSlashPolicy},
+        sealed::Sealed,
     },
     server::Server,
     server::{lifecycle::Readiness, shutdown::Shutdown},
@@ -191,7 +192,7 @@ fn user_routes() -> Endpoints<(), kynos::stack![Timeout]> {
 }
 
 /// The whole API, as one value both the document and the service come from.
-fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
+fn api() -> Sealed<()> {
     Router::<()>::new()
         // The first tag scope: everything in this router, whatever else it
         // also carries.
@@ -209,6 +210,7 @@ fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
         .method_not_allowed(FallbackPolicy::Problem)
         // 308 rather than 301, so the method and body survive the replay.
         .trailing_slashes(TrailingSlashPolicy::Redirect)
+        .seal()
 }
 
 #[tokio::main]

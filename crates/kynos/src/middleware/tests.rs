@@ -314,7 +314,10 @@ mod security_headers {
         },
         middleware::{
             Continued,
-            security_headers::{SecurityFields, StrictTransportSecurity, conveyed_securely},
+            security_headers::{
+                DenyFraming, FramingSetting, Hsts, HstsSetting, NoDenyFraming, NoHsts,
+                SecurityFields, SecurityHeaders, StrictTransportSecurity, conveyed_securely,
+            },
         },
         schema::registry::Registry,
     };
@@ -360,17 +363,15 @@ mod security_headers {
         Forwarded::resolve(&headers, Some(peer), &trusted)
     }
 
-    fn group<const H: bool, const F: bool>(
+    fn group<H: HstsSetting, F: FramingSetting>(
         transport: Option<&'static str>,
     ) -> SecurityFields<H, F> {
-        SecurityFields {
-            transport: transport.map(HeaderValue::from_static),
-        }
+        SecurityFields::new(transport.map(HeaderValue::from_static))
     }
 
     /// The fields a group leaves on a response that already said
     /// `Cache-Control: max-age=60`.
-    fn written<const H: bool, const F: bool>(group: SecurityFields<H, F>) -> HeaderMap {
+    fn written<H: HstsSetting, F: FramingSetting>(group: SecurityFields<H, F>) -> HeaderMap {
         let mut response = Response::new(crate::http::body::Body::empty());
         response.headers_mut().insert(
             header::CACHE_CONTROL,
@@ -389,7 +390,7 @@ mod security_headers {
     /// `no-store` would be a description the wire contradicts.
     #[test]
     fn the_baseline_replaces_what_the_chain_set_and_opts_into_nothing() {
-        let sent = written(group::<false, false>(None));
+        let sent = written(group::<NoHsts, NoDenyFraming>(None));
 
         assert_eq!(
             sent.get_all(header::CACHE_CONTROL)
@@ -427,20 +428,20 @@ mod security_headers {
         let hsts = Some("max-age=1");
 
         assert_eq!(
-            written(&group::<false, false>(None)),
-            declared::<SecurityFields<false, false>>()
+            written(&group::<NoHsts, NoDenyFraming>(None)),
+            declared::<SecurityFields<NoHsts, NoDenyFraming>>()
         );
         assert_eq!(
-            written(&group::<true, false>(hsts)),
-            declared::<SecurityFields<true, false>>()
+            written(&group::<Hsts, NoDenyFraming>(hsts)),
+            declared::<SecurityFields<Hsts, NoDenyFraming>>()
         );
         assert_eq!(
-            written(&group::<false, true>(None)),
-            declared::<SecurityFields<false, true>>()
+            written(&group::<NoHsts, DenyFraming>(None)),
+            declared::<SecurityFields<NoHsts, DenyFraming>>()
         );
         assert_eq!(
-            written(&group::<true, true>(hsts)),
-            declared::<SecurityFields<true, true>>()
+            written(&group::<Hsts, DenyFraming>(hsts)),
+            declared::<SecurityFields<Hsts, DenyFraming>>()
         );
     }
 
@@ -448,7 +449,7 @@ mod security_headers {
     /// transport was not secure, a subset of what is declared.
     #[test]
     fn hsts_is_left_off_where_the_transport_was_not_secure() {
-        let sent = written(group::<true, true>(None));
+        let sent = written(group::<Hsts, DenyFraming>(None));
 
         assert!(!sent.contains_key(header::STRICT_TRANSPORT_SECURITY));
         assert_eq!(sent[header::X_FRAME_OPTIONS], "DENY");
@@ -573,7 +574,7 @@ mod security_headers {
     /// always present; HSTS, withheld over plain transport, is not required.
     #[test]
     fn each_fixed_field_is_described_as_its_constant() {
-        let headers = SecurityFields::<true, true>::response_headers(&mut Registry::new());
+        let headers = SecurityFields::<Hsts, DenyFraming>::response_headers(&mut Registry::new());
 
         let described = |name: &str| match headers.get(name) {
             Some(RefOr::Item(header)) => serde_json::to_value(header).unwrap(),
@@ -599,9 +600,37 @@ mod security_headers {
         assert_eq!(headers.len(), 5);
     }
 
+    /// Clones and prints an interceptor named only by its setting traits.
+    fn cloned_and_printed<H: HstsSetting, F: FramingSetting>(
+        headers: &SecurityHeaders<H, F>,
+    ) -> String {
+        format!("{:?}", headers.clone())
+    }
+
+    /// Code generic over the settings clones and prints as code naming them
+    /// does, and the print still says what was opted into.
+    #[test]
+    fn a_generic_interceptor_clones_and_prints() {
+        let baseline = cloned_and_printed(&SecurityHeaders::new());
+        let both = cloned_and_printed(
+            &SecurityHeaders::new()
+                .strict_transport_security(StrictTransportSecurity::max_age(Duration::from_secs(
+                    60,
+                )))
+                .deny_framing(),
+        );
+
+        assert!(baseline.starts_with("SecurityHeaders"), "{baseline}");
+        assert!(baseline.contains("transport: None"), "{baseline}");
+        assert!(both.contains("max-age=60"), "{both}");
+        assert!(both.contains("::Hsts, "), "{both}");
+        assert!(both.contains("::DenyFraming)"), "{both}");
+    }
+
     #[test]
     fn the_baseline_describes_no_opt_in() {
-        let headers = SecurityFields::<false, false>::response_headers(&mut Registry::new());
+        let headers =
+            SecurityFields::<NoHsts, NoDenyFraming>::response_headers(&mut Registry::new());
 
         let mut names: Vec<_> = headers.keys().map(String::as_str).collect();
         names.sort_unstable();

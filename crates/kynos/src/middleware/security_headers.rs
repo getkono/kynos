@@ -8,7 +8,7 @@
 //! `X-Frame-Options: DENY` (RFC 7034 section 2.1) are opt-in, and each changes
 //! the declared group.
 
-use std::{convert::Infallible, time::Duration};
+use std::{convert::Infallible, marker::PhantomData, time::Duration};
 
 use kynos_openapi::{
     Header, Map, MediaType, RefOr, Schema, SchemaObject,
@@ -42,26 +42,104 @@ const DENY: &str = "DENY";
 ///
 /// The two type parameters record the opt-ins, since each adds a declared
 /// field: mounting it beside anything else setting one of them is a compile
-/// error.
+/// error. Each is a marker named for what it records, [`Hsts`] or [`NoHsts`]
+/// first and [`DenyFraming`] or [`NoDenyFraming`] second, so a function
+/// returning one names it as it reads:
 ///
 /// ```
 /// use std::time::Duration;
 ///
-/// use kynos::middleware::security_headers::{SecurityHeaders, StrictTransportSecurity};
+/// use kynos::middleware::security_headers::{
+///     DenyFraming, Hsts, SecurityHeaders, StrictTransportSecurity,
+/// };
 ///
-/// let headers = SecurityHeaders::new()
-///     .strict_transport_security(
-///         StrictTransportSecurity::max_age(Duration::from_secs(31_536_000)).include_subdomains(),
-///     )
-///     .deny_framing();
-/// # let _ = headers;
+/// fn headers() -> SecurityHeaders<Hsts, DenyFraming> {
+///     SecurityHeaders::new()
+///         .strict_transport_security(
+///             StrictTransportSecurity::max_age(Duration::from_secs(31_536_000))
+///                 .include_subdomains(),
+///         )
+///         .deny_framing()
+/// }
+/// # let _ = headers();
+/// ```
+///
+/// The two positions take different traits, so the markers cannot be swapped:
+///
+/// ```compile_fail
+/// use kynos::middleware::security_headers::{DenyFraming, NoHsts, SecurityHeaders};
+///
+/// fn mount(headers: SecurityHeaders<DenyFraming, NoHsts>) {}
 /// ```
 #[derive(Clone, Debug)]
-pub struct SecurityHeaders<const HSTS: bool = false, const DENY_FRAMING: bool = false> {
+pub struct SecurityHeaders<H: HstsSetting = NoHsts, F: FramingSetting = NoDenyFraming> {
     /// The rendered `Strict-Transport-Security` value; `Some` exactly when
-    /// `HSTS`.
+    /// `H` is [`Hsts`].
     transport: Option<HeaderValue>,
+    _settings: PhantomData<fn() -> (H, F)>,
 }
+
+mod private {
+    /// What a setting marker records, readable in a `const`.
+    pub trait Setting {
+        /// Whether the field the marker's position governs is sent.
+        const SENT: bool;
+    }
+}
+
+/// Whether a [`SecurityHeaders`] sends `Strict-Transport-Security`: [`Hsts`]
+/// or [`NoHsts`].
+///
+/// This trait is sealed; the two markers are its only implementations. It
+/// implies `Copy` and `Debug`, so code generic over it can clone and print a
+/// [`SecurityHeaders`] as code naming a marker can.
+pub trait HstsSetting: private::Setting + Copy + std::fmt::Debug + Send + Sync + 'static {}
+
+/// Whether a [`SecurityHeaders`] sends `X-Frame-Options: DENY`:
+/// [`DenyFraming`] or [`NoDenyFraming`].
+///
+/// This trait is sealed; the two markers are its only implementations. It
+/// implies `Copy` and `Debug`, as [`HstsSetting`] does.
+pub trait FramingSetting:
+    private::Setting + Copy + std::fmt::Debug + Send + Sync + 'static
+{
+}
+
+/// Sends `Strict-Transport-Security`, as
+/// [`strict_transport_security`](SecurityHeaders::strict_transport_security)
+/// asked.
+#[derive(Clone, Copy, Debug)]
+pub enum Hsts {}
+
+/// Sends no `Strict-Transport-Security`, the default.
+#[derive(Clone, Copy, Debug)]
+pub enum NoHsts {}
+
+/// Sends `X-Frame-Options: DENY`, as
+/// [`deny_framing`](SecurityHeaders::deny_framing) asked.
+#[derive(Clone, Copy, Debug)]
+pub enum DenyFraming {}
+
+/// Sends no `X-Frame-Options`, the default.
+#[derive(Clone, Copy, Debug)]
+pub enum NoDenyFraming {}
+
+impl private::Setting for Hsts {
+    const SENT: bool = true;
+}
+impl private::Setting for NoHsts {
+    const SENT: bool = false;
+}
+impl private::Setting for DenyFraming {
+    const SENT: bool = true;
+}
+impl private::Setting for NoDenyFraming {
+    const SENT: bool = false;
+}
+impl HstsSetting for Hsts {}
+impl HstsSetting for NoHsts {}
+impl FramingSetting for DenyFraming {}
+impl FramingSetting for NoDenyFraming {}
 
 impl Default for SecurityHeaders {
     fn default() -> Self {
@@ -74,11 +152,19 @@ impl SecurityHeaders {
     /// nothing opted into.
     #[must_use]
     pub fn new() -> Self {
-        Self { transport: None }
+        Self::with(None)
     }
 }
 
-impl<const HSTS: bool, const DENY_FRAMING: bool> SecurityHeaders<HSTS, DENY_FRAMING> {
+impl<H: HstsSetting, F: FramingSetting> SecurityHeaders<H, F> {
+    /// The interceptor at any settings, sending `transport` as its HSTS value.
+    fn with(transport: Option<HeaderValue>) -> Self {
+        Self {
+            transport,
+            _settings: PhantomData,
+        }
+    }
+
     /// Also sends `Strict-Transport-Security`, replacing any policy set before.
     ///
     /// Sent only on a response to a request conveyed over a secure transport,
@@ -92,19 +178,15 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> SecurityHeaders<HSTS, DENY_FRAM
     pub fn strict_transport_security(
         self,
         policy: StrictTransportSecurity,
-    ) -> SecurityHeaders<true, DENY_FRAMING> {
-        SecurityHeaders {
-            transport: Some(policy.value()),
-        }
+    ) -> SecurityHeaders<Hsts, F> {
+        SecurityHeaders::with(Some(policy.value()))
     }
 
     /// Also sends `X-Frame-Options: DENY`, refusing every framing of the
     /// response.
     #[must_use]
-    pub fn deny_framing(self) -> SecurityHeaders<HSTS, true> {
-        SecurityHeaders {
-            transport: self.transport,
-        }
+    pub fn deny_framing(self) -> SecurityHeaders<H, DenyFraming> {
+        SecurityHeaders::with(self.transport)
     }
 }
 
@@ -151,15 +233,24 @@ impl StrictTransportSecurity {
 ///
 /// Built only by the interceptor; the parameters mirror its own.
 #[derive(Clone, Debug)]
-pub struct SecurityFields<const HSTS: bool, const DENY_FRAMING: bool> {
+pub struct SecurityFields<H: HstsSetting, F: FramingSetting> {
     /// `Strict-Transport-Security`, where this response may carry it.
-    pub(crate) transport: Option<HeaderValue>,
+    transport: Option<HeaderValue>,
+    _settings: PhantomData<fn() -> (H, F)>,
 }
 
-impl<const HSTS: bool, const DENY_FRAMING: bool> HeaderParams
-    for SecurityFields<HSTS, DENY_FRAMING>
-{
-    const NAMES: &'static [&'static str] = match (HSTS, DENY_FRAMING) {
+impl<H: HstsSetting, F: FramingSetting> SecurityFields<H, F> {
+    /// The group carrying `transport` as its HSTS value.
+    pub(crate) fn new(transport: Option<HeaderValue>) -> Self {
+        Self {
+            transport,
+            _settings: PhantomData,
+        }
+    }
+}
+
+impl<H: HstsSetting, F: FramingSetting> HeaderParams for SecurityFields<H, F> {
+    const NAMES: &'static [&'static str] = match (H::SENT, F::SENT) {
         (false, false) => &["cache-control", "referrer-policy", "x-content-type-options"],
         (true, false) => &[
             "cache-control",
@@ -213,7 +304,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> HeaderParams
             "The response is not to be read as any type but its `Content-Type`",
         );
 
-        if DENY_FRAMING {
+        if F::SENT {
             fixed(
                 "X-Frame-Options",
                 DENY,
@@ -221,7 +312,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> HeaderParams
             );
         }
 
-        if HSTS {
+        if H::SENT {
             headers.insert(
                 "Strict-Transport-Security".to_owned(),
                 RefOr::Item(text(Schema::of_type(SchemaType::String)).with_description(
@@ -235,9 +326,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> HeaderParams
     }
 }
 
-impl<const HSTS: bool, const DENY_FRAMING: bool> EncodeHeaders
-    for SecurityFields<HSTS, DENY_FRAMING>
-{
+impl<H: HstsSetting, F: FramingSetting> EncodeHeaders for SecurityFields<H, F> {
     fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
         let mut fields = vec![
             (header::CACHE_CONTROL, HeaderValue::from_static(NO_STORE)),
@@ -255,7 +344,7 @@ impl<const HSTS: bool, const DENY_FRAMING: bool> EncodeHeaders
             fields.push((header::STRICT_TRANSPORT_SECURITY, transport.clone()));
         }
 
-        if DENY_FRAMING {
+        if F::SENT {
             fields.push((header::X_FRAME_OPTIONS, HeaderValue::from_static(DENY)));
         }
 
@@ -303,13 +392,12 @@ pub(crate) fn conveyed_securely(
     })
 }
 
-impl<C, const HSTS: bool, const DENY_FRAMING: bool> Interceptor<C>
-    for SecurityHeaders<HSTS, DENY_FRAMING>
+impl<C, H: HstsSetting, F: FramingSetting> Interceptor<C> for SecurityHeaders<H, F>
 where
     C: Sync + 'static,
 {
     type Reads = ();
-    type Adds = SecurityFields<HSTS, DENY_FRAMING>;
+    type Adds = SecurityFields<H, F>;
 
     /// Always continues: the fields go on whatever the chain returns.
     type Short = Infallible;
@@ -334,11 +422,11 @@ where
             )
         });
 
-        let withheld = HSTS && transport.is_none();
+        let withheld = H::SENT && transport.is_none();
         let run = next.run(request);
 
         async move {
-            let mut continued = run.await.with_headers(SecurityFields { transport });
+            let mut continued = run.await.with_headers(SecurityFields::new(transport));
 
             // A policy the chain set is replaced like every other field, and
             // where none may be sent, replaced by nothing.

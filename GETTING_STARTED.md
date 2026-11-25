@@ -63,6 +63,7 @@ by the release that shipped each, for code written before it.
 | A `type` literal restating a `const` base, so two failures share one type URI | `#[problem(slug = "...")]` under that `base` |
 | Failure variants copied from one `ApiError` enum into another | `#[problem(transparent, from)]`, `#[problem(subset_of = Wider)]` or `#[problem(variant_of = Wider::Variant)]` |
 | A `Location` joined from a mount prefix with `format!` | `extract::link::Link<E>`, rendered into `Created::at` |
+| A function returning `Router<App, impl PanicPolicy, impl Sized + use<>, impl Sized + use<>>` | `-> router::sealed::Sealed<App>`, from `Router::seal` |
 | Several `routes!` lists, or `routes![op].0.intercept(..)` | one `routes![..]`, with `.intercept(..)` after the member it scopes to |
 | `#[tracing::instrument]` spans that carry no request id | `middleware::trace::Trace::span` |
 | An interceptor that only counts requests in flight | `middleware::Observer`'s `on_request`, then `on_response` or `on_abandoned` |

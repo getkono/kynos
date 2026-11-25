@@ -3,8 +3,9 @@
 //! [`Router`] is the root and lives here. [`endpoint`] holds one declared
 //! operation and the builder a route attribute expands into, [`group`] a set of
 //! operations sharing a prefix, [`operation`] the description being assembled,
-//! [`policy`] the application-wide fallbacks, [`service`] the built result,
-//! [`error`] what a router reports wrong with itself, and, behind features of
+//! [`policy`] the application-wide fallbacks, [`sealed`] a finished router a
+//! function can name, [`service`] the built result, [`error`] what a router
+//! reports wrong with itself, and, behind features of
 //! the same names, `assets` the files a router serves and `docs` the API
 //! reference page it publishes.
 
@@ -26,6 +27,7 @@ pub mod error;
 pub mod group;
 pub mod operation;
 pub mod policy;
+pub mod sealed;
 pub mod service;
 
 // The runtime match table and what one request does to it; nothing in it is
@@ -144,20 +146,19 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// # Returning one from a function
 ///
 /// `P`, `I` and `S` change with every `catch_panics`, `intercept`, `group`,
-/// `nest` and `merge`, so a function returning a finished router leaves them
-/// opaque. [`validate`](Router::validate), [`openapi`](Router::openapi) and
-/// [`build`](Router::build) need only `P: PanicPolicy`, so the caller
-/// describes and builds the one value:
+/// `nest` and `merge`, so a function returning a finished router returns it
+/// [`seal`](Router::seal)ed, as a [`Sealed`](sealed::Sealed) whose type names
+/// only the context:
 ///
 /// ```no_run
-/// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
+/// use kynos::{Router, middleware::limits::body_size::BodySize, router::sealed::Sealed};
 ///
-/// fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
-///     Router::<()>::new().catch_panics().intercept(BodySize::new(64 * 1024))
+/// fn api(body_limit: &u64) -> Sealed<()> {
+///     Router::<()>::new().catch_panics().intercept(BodySize::new(*body_limit)).seal()
 /// }
 ///
 /// # fn main() -> kynos::Result<()> {
-/// let router = api();
+/// let router = api(&(64 * 1024));
 /// let document = router.openapi()?;
 /// let service = router.build(())?;
 /// # let _ = (document, service);
@@ -165,11 +166,28 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// # }
 /// ```
 ///
-/// An opaque `I` or `S` cannot be checked against another interceptor, so
-/// neither `intercept` on such a router nor `nest` or `merge` of it into
-/// another compiles. Return a router that is still being composed with all four
-/// parameters named; [`stack!`](crate::stack!) writes `I` in the order its
-/// interceptors were mounted.
+/// Writing `-> Router<(), impl PanicPolicy, impl Sized, impl Sized>` instead
+/// compiles, but under edition 2024 each `impl Sized` captures the lifetime of
+/// every reference argument, so the router returned borrows `body_limit` and a
+/// call on a temporary fails with E0716. `impl Sized + use<>` opts out; a
+/// `Sealed` has nothing to capture.
+///
+/// ```compile_fail,E0716
+/// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
+///
+/// fn api(body_limit: &u64) -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
+///     Router::<()>::new().catch_panics().intercept(BodySize::new(*body_limit))
+/// }
+///
+/// let router = api(&u64::from(std::process::id()));
+/// let _ = router.openapi();
+/// ```
+///
+/// Return a router that is still being composed with all four parameters
+/// named; [`stack!`](crate::stack!) writes `I` in the order its interceptors
+/// were mounted. Neither a `Sealed` nor a router whose `I` or `S` is opaque can
+/// be checked against another interceptor, so neither `intercept` on one nor
+/// `nest` or `merge` of it into another compiles.
 ///
 /// ```compile_fail
 /// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
