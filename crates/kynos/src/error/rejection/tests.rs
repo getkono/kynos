@@ -804,10 +804,28 @@ fn a_named_403_survives_the_challenge_pass_and_still_sends_none() {
 fn a_guard_writes_the_challenge_its_status_owes() {
     use std::time::Duration;
 
-    use crate::{error::rejection::GuardRejection, http::header, response::IntoResponse};
+    use crate::{
+        error::rejection::GuardRejection,
+        http::{HeaderValue, Response, body::Body, header},
+        response::IntoResponse,
+    };
 
     const BANNED: &str = "https://example.test/problems/account-banned";
     const INSUFFICIENT: &str = "Bearer error=\"insufficient_scope\"";
+
+    /// An error that appends two challenges to its 401.
+    struct TwoChallenges;
+
+    impl IntoResponse for TwoChallenges {
+        fn into_response(self) -> Response {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::UNAUTHORIZED;
+            let headers = response.headers_mut();
+            headers.append(header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic"));
+            headers.append(header::WWW_AUTHENTICATE, HeaderValue::from_static("Digest"));
+            response
+        }
+    }
 
     let sent = |rejection: GuardRejection| {
         let response = rejection.into_response();
@@ -862,6 +880,17 @@ fn a_guard_writes_the_challenge_its_status_owes() {
         sent(replaced),
         (StatusCode::UNAUTHORIZED, Some("Bearer".to_owned()))
     );
+
+    // Every value the error appended is replaced, not only the first.
+    let response = GuardRejection::new(TwoChallenges)
+        .with_challenge(Some("Bearer"))
+        .into_response();
+    let challenges: Vec<_> = response
+        .headers()
+        .get_all(header::WWW_AUTHENTICATE)
+        .iter()
+        .collect();
+    assert_eq!(challenges, [HeaderValue::from_static("Bearer")]);
 }
 
 /// An unreachable store's 503 is the `about:blank` problem with the reason
