@@ -25,7 +25,9 @@
 //!   `FromStr`, written with `Display`, and described by a schema that is not
 //!   an object or an array. `UserId` below derives `FromStr` and `Display`
 //!   through the integer it wraps, and `Order` derives them from the names its
-//!   schema lists, which its `UnitEnum` exposes as `as_str` and `VARIANTS`. A
+//!   schema lists, which its `UnitEnum` exposes as `as_str` and `VARIANTS`.
+//!   `Release` is two numbers travelling as one string, described as that
+//!   string by `#[schema(string)]` and carried by its own `FromStr`. A
 //!   query `Vec<T>` is the one list, of `ParamValue` items:
 //!   repeated pairs by default, or one comma-separated pair under
 //!   `#[param(explode = false)]`.
@@ -98,6 +100,40 @@ enum Order {
     Desc,
 }
 
+/// A release, `<major>.<minor>`, as a query carries it.
+///
+/// Two numbers that travel as one string, so its schema is that string:
+/// `#[schema(string)]` describes the text `Display` writes and `FromStr` reads,
+/// bounded and illustrated on the type, and `ParamValue` keeps both impls.
+#[derive(Schema, kynos::ParamValue)]
+#[schema(string, max_length = 11, examples("1.2"))]
+struct Release {
+    major: u32,
+    minor: u32,
+}
+
+impl std::fmt::Display for Release {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+impl std::str::FromStr for Release {
+    type Err = &'static str;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (major, minor) = text.split_once('.').ok_or("no `.` between two numbers")?;
+        Ok(Self {
+            major: major
+                .parse()
+                .map_err(|_| "the major version is no number")?,
+            minor: minor
+                .parse()
+                .map_err(|_| "the minor version is no number")?,
+        })
+    }
+}
+
 /// How a list is paged.
 #[allow(dead_code)]
 #[derive(QueryParams)]
@@ -120,6 +156,9 @@ struct Page {
     /// One pair of comma-separated orders, `?sort=asc,desc`.
     #[param(explode = false)]
     sort: Vec<Order>,
+
+    /// Users seen since a release, `?since=1.2`.
+    since: Option<Release>,
 }
 
 /// Conditional-request headers.
@@ -202,8 +241,8 @@ impl Describe for ApiVersion {
 
 /// Fetches one user.
 ///
-/// Seven arguments, and the description lists exactly the ten things a
-/// consumer can observe: one path variable, five query parameters, two
+/// Seven arguments, and the description lists exactly the eleven things a
+/// consumer can observe: one path variable, six query parameters, two
 /// conditional headers, one cookie and one custom header. `MatchedPath` and `ConnectInfo`
 /// contribute nothing, by saying so.
 #[kynos::get("/users/{id}")]

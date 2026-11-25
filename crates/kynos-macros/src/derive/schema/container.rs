@@ -316,6 +316,22 @@ fn reject_string_declaration(input: &DeriveInput) -> syn::Result<()> {
     Ok(())
 }
 
+/// Whether the type's own `#[schema(...)]` names `string`, read leniently for
+/// a derive beside `Schema`, which refuses what is malformed.
+pub(crate) fn declares_string(input: &DeriveInput) -> bool {
+    let mut found = false;
+    for attr in &input.attrs {
+        if !attr.path().is_ident("schema") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            found |= meta.path.is_ident("string");
+            skip_value(&meta)
+        });
+    }
+    found
+}
+
 /// The `= "..."` of a nested-meta item, when it has one.
 pub(super) fn string_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Option<String>> {
     if !meta.input.peek(syn::Token![=]) {

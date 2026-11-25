@@ -1390,7 +1390,7 @@ struct MediaId {
 }
 
 /// A title reference, `<provider>:<id>`.
-#[derive(Debug, Clone, PartialEq, Schema, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize)]
 #[schema(string, min_length = 3, max_length = 24)]
 #[schema(examples("tmdb:550", "anilist:21"))]
 #[serde(into = "String", try_from = "String")]
@@ -1504,6 +1504,26 @@ fn a_string_type_checks_its_bounds_on_its_text() {
         .expect("a reference parses");
     let failures = Violations::of(&long, Pointer::root()).expect_err("30 characters break 24");
     assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+}
+
+/// What `/titles/{title}` captures: a string type as a path parameter.
+#[derive(PathParams)]
+struct ByTitle {
+    title: TitleRef,
+}
+
+/// A derived `ParamValue` on a `#[schema(string)]` type keeps the type's own
+/// `FromStr` and `Display`, so the type is a path parameter.
+#[test]
+fn a_string_type_is_a_parameter_through_its_own_text() {
+    implements_param_value::<TitleRef>();
+    implements_path_params::<ByTitle>();
+    assert_eq!(
+        "tmdb:550"
+            .parse::<TitleRef>()
+            .map(|title| title.to_string()),
+        Ok("tmdb:550".to_owned())
+    );
 }
 
 /// An example the type's own `FromStr` refuses stops the document.

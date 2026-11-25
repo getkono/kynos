@@ -12,6 +12,9 @@
 //! struct, or a one-field struct under `#[serde(transparent)]`. Both impls
 //! delegate to the field, whose type is bounded by `ParamValue`, so the
 //! wrapper carries one value only where what it wraps does.
+//!
+//! A `#[schema(string)]` type's text form is its own: it carries `FromStr`
+//! and `Display` already, so only the `ParamValue` impl is emitted.
 
 use quote::quote;
 use syn::{
@@ -19,9 +22,14 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::derive::schema::{attributes::serde_key_span, members::variant_wire_names};
+use crate::derive::schema::{
+    attributes::serde_key_span, container::declares_string, members::variant_wire_names,
+};
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    if declares_string(input) {
+        return Ok(string(input));
+    }
     let data = match &input.data {
         Data::Enum(data) => data,
         Data::Struct(data) => return newtype(input, data),
@@ -135,6 +143,20 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         #[allow(deprecated)]
         impl #impl_generics ::kynos::schema::ParamValue for #name #ty_generics #where_clause {}
     })
+}
+
+/// The impl for a `#[schema(string)]` type, which is the promise alone: the
+/// type's own `FromStr` and `Display` already carry the string its schema
+/// describes, and the `Schema` derive requires both of them, so none is
+/// emitted here, nor any rule on what it declares.
+fn string(input: &DeriveInput) -> proc_macro2::TokenStream {
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    quote! {
+        // As for an enum: the impl names the type, which may be deprecated.
+        #[allow(deprecated)]
+        impl #impl_generics ::kynos::schema::ParamValue for #name #ty_generics #where_clause {}
+    }
 }
 
 /// The impls for a newtype, each delegating to its one field: a tuple

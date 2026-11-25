@@ -476,7 +476,7 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///
 /// ```ignore
 /// /// A title reference, `<provider>:<id>`.
-/// #[derive(kynos::Schema, serde::Serialize, serde::Deserialize)]
+/// #[derive(kynos::Schema, kynos::ParamValue, serde::Serialize, serde::Deserialize)]
 /// #[schema(string, min_length = 3, examples("tmdb:550"))]
 /// #[serde(into = "String", try_from = "String")]
 /// struct TitleRef(MediaId); // with `FromStr`, `Display` and both conversions
@@ -1117,6 +1117,11 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// #[derive(Clone, Copy, Schema, ParamValue)]
 /// struct PageLimit(#[schema(maximum = 1000)] u32);
 /// ```
+///
+/// A type carrying `#[schema(string)]` keeps the `FromStr` and `Display` it
+/// already implements, which its `Schema` derive requires, so only the
+/// `ParamValue` impl is emitted, whatever it declares, and none of the
+/// refusals below applies: its text is its own.
 ///
 /// # Rejected, because a parameter is one value
 ///
