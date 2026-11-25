@@ -135,9 +135,14 @@ async fn guard_ahead<C: Sync, H: Handler<C, A>, A>(
     let (mut parts, body) = request.into_parts();
 
     let refused = if catches {
+        // The head is back once recovery ends, so the policy is read only
+        // where a panic needs it.
         recovery::recover(H::__guard_ahead(&mut parts, context))
             .await
-            .unwrap_or_else(|payload| Some(recovery::recovered_response(payload)))
+            .unwrap_or_else(|payload| {
+                let problems = crate::error::members::Installed::on(&parts.extensions);
+                Some(recovery::recovered_response(payload, problems))
+            })
     } else {
         H::__guard_ahead(&mut parts, context).await
     };

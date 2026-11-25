@@ -9,6 +9,8 @@
 //!
 //! `fuzz` is the one module no expansion names: the `fuzz/` crate's way into
 //! parsers that have no public path, present only in a `cargo fuzz` build.
+//! [`Refusing`] is the one item no expansion names: the argument of a hidden
+//! `ShortCircuit` method, which a public trait's signature must name.
 
 pub mod constraints;
 pub mod endpoint;
@@ -24,6 +26,13 @@ pub mod uri;
 /// The body type `#[derive(ProtobufMessage)]`'s `decode` is handed, named so
 /// the expansion needs no `bytes` dependency of the application's.
 pub use bytes::Bytes;
+
+/// The problem policy an interceptor's refusal is rendered under: what
+/// [`Router::problems`](crate::router::Router::problems) installed, or
+/// nothing, handed to
+/// [`ShortCircuit::__refused`](crate::response::ShortCircuit::__refused).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Refusing(pub(crate) Option<crate::error::members::Policy>);
 
 #[cfg(test)]
 mod tests;

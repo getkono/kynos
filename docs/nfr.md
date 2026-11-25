@@ -308,7 +308,7 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
 | 16 B, 48 B → 88 B → 120 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way. The record's one block is **kept** |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
-| 1928 B → 1904 B → 432 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
+| 1928 B → 1904 B → 432 B → 440 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
 | 920 B → 912 B → 536 B → 320 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
 
 **Five remain, and none is the router's to remove.** They are
@@ -375,15 +375,31 @@ layer's continuation and panic recovery are started on the call, and recovery
 boxes what it guards then, so a future that awaits it reserves a pointer. The
 closure returns `serve`'s future rather than awaiting it, and `Service::call`
 returns the box itself, so the request is routed, and every observer told,
-when it is called rather than when it is first polled. The box holds 432
+when it is called rather than when it is first polled. The box holds 440
 bytes, from 2208 in a Linux test build at rustc 1.97.1 at both feature sets,
 and the future a caller holds is the box's 16-byte pointer. The request's
 method, which an observer is handed on the response or the abandonment after
 the chain consumed the request, widens it by nothing: one a description can
 declare sits in a byte of the routing tag's padding, where the `HEAD` flag
-was, and any other token, always refused 501, behind a pointer.
+was, and any other token, always refused 501, behind a pointer. The problem
+policy an interceptor's refusal is rendered under widens it by 8, from 432,
+since the refusal is rendered where its interceptor's future settles and
+nowhere is the policy closer
+([`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders)). The
+chain's own future holds the pointer in its interceptor arm and stays 24
+bytes, the terminal arm's tag fitting in the pointer's niche; the 8 is the
+tag the choice between a recovered and an unguarded chain needs once that
+niche is spent. The pointer also rides down the chain in each `Next`, which
+every interceptor's future holds until it runs it, so each interceptor's box
+is 8 bytes wider too: `scenarios.layers_4` and `layers_8` measured 40 and 72
+heap bytes more than before the policy, on one host, and every request 18
+program instructions more, plus about 7 per interceptor. Holding the pointer
+once in each interceptor's box, beside the future it settles, would need pin
+projection, so `unsafe` or a new dependency; reading it from the request's
+extensions at each level would trade those bytes for a lookup per
+interceptor.
 [`router/dispatch/tests.rs`](../crates/kynos/src/router/dispatch/tests.rs)
-holds the box to under two requests everywhere and to its 432 on Linux, where
+holds the box to under two requests everywhere and to its 440 on Linux, where
 only the crate can name it.
 
 **The endpoint's future holds one.** An endpoint splits the request before
@@ -397,8 +413,8 @@ for it. A handler taking nothing boxes 320 bytes, from 536 when
 `Endpoint::call` and the handler each kept a request of their own, and 808
 before that; one taking a JSON body boxes 584, from 576 before the handler
 kept the head it lent the body extractor, to render that extractor's
-rejection with the members `Router::problem_members` installs
-([`errors.md`](errors.md#members-on-the-problems-kynos-renders)), and from
+rejection under the policy `Router::problems` installs
+([`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders)), and from
 632, 1528 and 1800 before that. What it holds past the head is the codec's
 read: the body, its first frame, and the buffer later frames are joined into.
 [`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds the first to under
@@ -471,7 +487,7 @@ rewrite.
 | security | Per-IP connection caps | — | `absent`, and recorded below and in [`middleware.md`](middleware.md#what-bounds-a-request-before-an-interceptor-runs): a connection is counted before any header is read, and `Router::trusted_proxies` applies only after routing. A per-IP request rate, `RateLimit` keyed `ByClientAddress`, is the supported bound |
 | correctness | Every Rust type expressible as a handler input has a valid JSON Schema projection | Property test over a macro fixture set, validated against 3.1 and 3.2 validators | `planned` |
 | dx | Every rejection produces an error naming the field and the fix | `trybuild` UI tests, plus [`error/rejection/tests.rs`](../crates/kynos/src/error/rejection/tests.rs) counting every variant and asserting each renders a sentence rather than a debug dump | `enforced` for the counting; `planned` for the snapshots |
-| correctness | A member `Router::problem_members` installs is sent on every problem whose response declares it, and declared on every response whose problem sends it | [`tests/problem_members.rs`](../crates/kynos/tests/problem_members.rs) validating each refusal's body with `assert_conformance` against the schema requiring the members; a hidden `IntoResponse` and `Responses` pair that a type overrides both halves of or neither | `enforced` for extractor and guard rejections, an interceptor's `Reads` 400, an asset endpoint's 416, the router's fallbacks and a CORS preflight's 405 and 501; `absent` for a returned rejection, a ranged `Delivery`'s 416, an interceptor's own refusal and a recovered panic's 500, which carry none and declare none, each for the reason [`errors.md`](errors.md#members-on-the-problems-kynos-renders) records |
+| correctness | The type, title and members the policy `Router::problems` installs are sent on every problem whose response declares them, and declared on every response whose problem sends them | [`tests/problem_policy.rs`](../crates/kynos/tests/problem_policy.rs) validating each refusal's body with `assert_conformance` against the schema narrowing its `type` and requiring the members; an identity read from the origin and status alone, which is all the description knows; a hidden `IntoResponse` and `Responses` pair, and a hidden `ShortCircuit` pair, that a type overrides both halves of or neither | `enforced` for extractor and guard rejections, an interceptor's `Reads` 400, an asset endpoint's 416, the router's fallbacks, a CORS preflight's 405 and 501, every refusal an interceptor Kynos ships answers with, and a recovered panic's 500; `absent` for a returned rejection, a ranged `Delivery`'s 416 and an application's own `Short`, which are sent and declared as without a policy, each for the reason [`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders) records |
 | security | A credential is read from the field its scheme declared, and from no other | `Carries` is emitted by the same derive as `describe`, so the two are one text; [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) drives a derived API-key carrier to 200, 401 and 403 over a live service | `enforced` |
 | security | An authenticator receives its credential from the carrier its scheme's description was written from, and a malformed one is never treated as absence | Structural: `Authenticator::authenticate` receives `Presented<S::Presented>`, which `Carries::present` alone builds; [`carrier/tests.rs`](../crates/kynos/src/security/carrier/tests.rs) classifies every malformed field by its reason, and [`security/auth/tests.rs`](../crates/kynos/src/security/auth/tests.rs) hands a malformed credential to the authenticator under `Auth` and `MaybeAuth` alike and absence only from an optional carrier | `enforced` for the credential; `absent` for the rest of the request head, which `Head` hands the authenticator by design, as [`security.md`](security.md#why-the-authenticator-sees-the-head) records |
 | security | A header a carrier reads beside its credential is declared on every operation a guard naming the scheme covers, required only where every admitted request presents that credential | A derived `reads = T` writes `SecurityScheme::reads` and the carrier from one `T`; [`tests/derives.rs`](../crates/kynos/tests/derives.rs) reads the group only beside a presented credential and declares it, and [`security/auth/tests.rs`](../crates/kynos/src/security/auth/tests.rs) declares it required under `Auth`, `Scoped` and `AllOf` and optional under `MaybeAuth` and `AnyOf`. A hand-written `Carries` reading more than its credential is held to its own override | `enforced` for a derived carrier; `absent` for a hand-written one, which the type system cannot tie to its declaration |
@@ -902,7 +918,7 @@ The budget is the honest record of what stayed. A path leaves it when its module
 is split, and one joins it only with the argument for why that module needs the
 room, in the same commit.
 
-Sixteen of them crossed the line after v0.1.0, and each was argued for as it did.
+Seventeen of them crossed the line after v0.1.0, and each was argued for as it did.
 `response/status.rs` is the shape above rather than a new argument. It declares
 eight public types — `Location`, `InvalidLocation`, `NoContent`, `Created`,
 `Accepted`, `AcceptedLocation`, `Redirect` and `ValidRedirectCode` — so
@@ -1132,6 +1148,15 @@ application mounts, into a longer path. What pushed it over was issue #1374's
 set by `intercept` from the same value the group's fields carry and nowhere
 else, so the two are one concern: which identifier a request is correlated by.
 
+`error/members.rs` is `status.rs`'s shape. It declares `ProblemPolicy`,
+`ProblemIdentity`, `ProblemCx` and `ProblemOrigin`, so a split would turn
+`members::ProblemPolicy`, the trait an application implements, into a longer
+path. What pushed it over was issue #1422's identity, which made the policy
+name a problem's type and title beside its members. Rendering a problem under
+the policy and declaring what it renders read the same two function pointers,
+and a file separating them would put the half that keeps the wire and the
+description agreeing one file away from the other. One concern, so one file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1144,6 +1169,7 @@ The budget, which may only shrink:
 - `crates/kynos-openapi/src/validate/violation.rs`
 - `crates/kynos-profile/src/lib.rs`
 - `crates/kynos/src/__private/fuzz.rs`
+- `crates/kynos/src/error/members.rs`
 - `crates/kynos/src/error/problem.rs`
 - `crates/kynos/src/error/rejection.rs`
 - `crates/kynos/src/extract/body/multipart.rs`

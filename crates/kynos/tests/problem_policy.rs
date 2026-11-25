@@ -1,5 +1,5 @@
-//! The members `Router::problem_members` installs, on the wire and in the
-//! description, held to each other.
+//! The identity and members the policy `Router::problems` installs, on the
+//! wire and in the description, held to each other.
 //!
 //! One reason: the property is that the two agree. The unit tests beside
 //! `error::members` see a problem rendered with members and a schema read for
@@ -21,22 +21,27 @@ use std::{
         Arc,
         atomic::{AtomicBool, Ordering},
     },
+    time::Duration,
 };
 
 use kynos::openapi::{Severity, Violation};
 use kynos::{
     HeaderParams, PathParams, QueryParams, Router, Schema,
+    error::problem::ProblemType,
     error::{
-        members::{ProblemCx, ProblemMembers},
+        members::{ProblemCx, ProblemIdentity, ProblemOrigin, ProblemPolicy},
         rejection::AuthRejection,
     },
     extract::{
         body::json::Json,
         params::{path::Path, query::Query},
     },
-    http::{Request, header},
-    middleware::{Continued, Interceptor, Next},
-    response::status::NoContent,
+    http::{Request, StatusCode, header},
+    middleware::{
+        Continued, Interceptor, Next, limits::body_size::BodySizeExceeded,
+        rate_limit::refusal::RateLimited,
+    },
+    response::{ShortCircuit, status::NoContent},
     router::{error::RouterError, group::Group, service::Service},
     schema::constraints::{ConstraintDetail, ConstraintProblem},
     security::{
@@ -58,13 +63,46 @@ struct Coded {
     request_id: String,
 }
 
-impl ProblemMembers for Coded {
-    fn for_problem(cx: &ProblemCx<'_>) -> Self {
-        Self {
+/// The policy every test here installs: [`Coded`] on every problem, and a
+/// type of the application's own on a missing credential, an unsupported
+/// media type, a body an interceptor finds too large and a recovered panic.
+struct AppProblems;
+
+/// What [`AppProblems`] names a missing credential.
+const UNAUTHENTICATED: ProblemIdentity =
+    ProblemIdentity::new("urn:test:problem:unauthenticated", "Sign in first");
+
+/// What [`AppProblems`] names an unsupported media type.
+const UNSUPPORTED: ProblemIdentity =
+    ProblemIdentity::new("urn:test:problem:unsupported", "Send JSON");
+
+/// What [`AppProblems`] names a body an interceptor refuses as too large.
+const OVERSIZED: ProblemIdentity = ProblemIdentity::new("urn:test:problem:oversized", "Send less");
+
+/// What [`AppProblems`] names a recovered panic.
+const CRASHED: ProblemIdentity = ProblemIdentity::new("urn:test:problem:crashed", "Try again");
+
+impl ProblemPolicy for AppProblems {
+    type Members = Coded;
+
+    fn identity(origin: ProblemOrigin, status: StatusCode) -> Option<ProblemIdentity> {
+        match (origin, status) {
+            (ProblemOrigin::Authentication, StatusCode::UNAUTHORIZED) => Some(UNAUTHENTICATED),
+            (ProblemOrigin::Content, StatusCode::UNSUPPORTED_MEDIA_TYPE) => Some(UNSUPPORTED),
+            (ProblemOrigin::Refusal, StatusCode::PAYLOAD_TOO_LARGE) => Some(OVERSIZED),
+            (ProblemOrigin::Panic, _) => Some(CRASHED),
+            _ => None,
+        }
+    }
+
+    fn members(cx: &ProblemCx<'_>) -> Coded {
+        Coded {
             code: format!("{:?}-{}", cx.origin(), cx.status().as_u16()),
+            // An interceptor's refusal and a panic answer a request already
+            // given away, so they read none.
             request_id: cx
                 .headers()
-                .get("x-request-id")
+                .and_then(|headers| headers.get("x-request-id"))
                 .and_then(|value| value.to_str().ok())
                 .unwrap_or("-")
                 .to_owned(),
@@ -126,6 +164,7 @@ impl<C: Sync> Authenticator<Bearer, C> for Tokens {
         match token.as_str() {
             "tok_ok" => Ok(token.into_inner()),
             "tok_banned" => Err(AuthRejection::forbidden()),
+            "tok_panic" => panic!("the authenticator failed"),
             _ => Err(AuthRejection::unauthenticated()),
         }
     }
@@ -147,7 +186,7 @@ fn router() -> Router<App> {
 
 fn service() -> Service<App> {
     router()
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router")
 }
@@ -226,6 +265,20 @@ async fn every_refusal_carries_the_members_its_description_requires() {
         let problem: Value = response.json();
         assert_eq!(problem["code"], *code, "{problem}");
         assert_eq!(problem["request_id"], "-", "{problem}");
+
+        // The policy names these two; every other stays `about:blank`.
+        let identity = match *code {
+            "Authentication-401" => Some(UNAUTHENTICATED),
+            "Content-415" => Some(UNSUPPORTED),
+            _ => None,
+        };
+        match identity {
+            Some(identity) => {
+                assert_eq!(problem["type"], identity.type_uri(), "{problem}");
+                assert_eq!(problem["title"], identity.title(), "{problem}");
+            }
+            None => assert_eq!(problem["type"], "about:blank", "{problem}"),
+        }
     }
     // A field the refusal writes beside its problem is still written.
     assert!(
@@ -273,7 +326,7 @@ async fn a_fallback_carries_the_members() {
 #[test]
 fn a_rejection_s_response_declares_the_members() {
     let document = router()
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .openapi()
         .expect("a describable router");
     let document = serde_json::to_value(document).expect("a document serializes");
@@ -292,7 +345,43 @@ fn a_rejection_s_response_declares_the_members() {
     );
 }
 
-/// Without `problem_members`, nothing changes on either side.
+/// The 401 a guard declares narrows to the type the policy names, titled as
+/// it titles it; the 400 it names nothing for stays `about:blank`.
+#[test]
+fn a_rejection_s_response_declares_the_identity_the_policy_names() {
+    let document = router()
+        .problems::<AppProblems>()
+        .openapi()
+        .expect("a describable router");
+    let document = serde_json::to_value(document).expect("a document serializes");
+
+    let response =
+        |path: &str, status: &str| document["paths"][path]["get"]["responses"][status].clone();
+    let schema =
+        |response: &Value| response["content"]["application/problem+json"]["schema"].clone();
+
+    // A lone branch's summary is the response's description, as every
+    // problem type's is.
+    let unauthenticated = response("/me", "401");
+    assert_eq!(
+        schema(&unauthenticated)["allOf"][1]["properties"]["type"]["const"],
+        UNAUTHENTICATED.type_uri(),
+        "{unauthenticated}"
+    );
+    assert_eq!(
+        unauthenticated["description"],
+        UNAUTHENTICATED.title(),
+        "{unauthenticated}"
+    );
+
+    let malformed = schema(&response("/items/{id}", "400"));
+    assert_eq!(
+        malformed["allOf"][1]["properties"]["type"]["const"], "about:blank",
+        "{malformed}"
+    );
+}
+
+/// Without `problems`, nothing changes on either side.
 #[tokio::test]
 async fn no_members_are_added_unless_installed() {
     let client = TestClient::new(router().build(App).expect("a describable router"));
@@ -313,8 +402,10 @@ struct Shadowing {
     status: String,
 }
 
-impl ProblemMembers for Shadowing {
-    fn for_problem(_: &ProblemCx<'_>) -> Self {
+impl ProblemPolicy for Shadowing {
+    type Members = Self;
+
+    fn members(_: &ProblemCx<'_>) -> Self {
         Self {
             status: String::new(),
         }
@@ -326,7 +417,7 @@ impl ProblemMembers for Shadowing {
 #[test]
 fn a_member_a_problem_already_sends_is_refused() {
     let violations = router()
-        .problem_members::<Shadowing>()
+        .problems::<Shadowing>()
         .validate()
         .expect("a describable router");
 
@@ -344,7 +435,7 @@ fn a_member_a_problem_already_sends_is_refused() {
 #[test]
 fn an_absorbed_router_s_members_are_a_violation() {
     let violations = Router::<App>::new()
-        .nest("/v1", router().problem_members::<Coded>())
+        .nest("/v1", router().problems::<AppProblems>())
         .validate()
         .expect("a describable router");
 
@@ -352,9 +443,7 @@ fn an_absorbed_router_s_members_are_a_violation() {
         violations.contains(&Violation {
             location: "#".to_owned(),
             severity: Severity::Error,
-            error: RouterError::NestedRouterPolicy {
-                policy: "problem_members",
-            },
+            error: RouterError::NestedRouterPolicy { policy: "problems" },
         }),
         "{violations:?}"
     );
@@ -390,7 +479,7 @@ async fn a_guard_run_ahead_of_its_interceptors_carries_the_members() {
         .guard_first()
         .intercept(Reached(Arc::clone(&reached)))
         .mount(kynos::routes![me])
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router");
     let client = TestClient::new(service);
@@ -438,7 +527,7 @@ async fn search(Json(item): Json<Item>) -> Json<Item> {
 async fn an_untyped_query_s_400_carries_the_members() {
     let service = Router::<App>::new()
         .mount(kynos::routes![search])
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router");
     let client = TestClient::new(service);
@@ -558,7 +647,7 @@ async fn a_named_constraint_problem_requires_the_members_where_they_are_sent() {
                     .intercept(Labels)
                     .mount(kynos::routes![open]),
             )
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
     };
     let document = serde_json::to_value(router().openapi().expect("a describable router"))
         .expect("a document serializes");
@@ -655,7 +744,7 @@ async fn a_whole_constraint_problem_answers_a_parameter_as_a_body() {
     let client = TestClient::new(
         Router::<App>::new()
             .mount(kynos::routes![note])
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
             .build(App)
             .expect("a describable router"),
     );
@@ -702,7 +791,7 @@ async fn an_interceptor_s_reads_refusal_carries_the_members() {
                     .intercept(Numbers)
                     .mount(kynos::routes![open]),
             )
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
     };
     let document = serde_json::to_value(router().openapi().expect("a describable router"))
         .expect("a document serializes");
@@ -734,7 +823,7 @@ async fn an_interceptor_s_reads_refusal_in_front_of_a_fallback_carries_the_membe
     let service = Router::<App>::new()
         .mount(kynos::routes![open])
         .intercept(Numbers)
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a describable router");
     let client = TestClient::new(service);
@@ -801,7 +890,7 @@ async fn a_cors_preflight_s_refusal_carries_the_members() {
             .intercept(
                 kynos::middleware::cors::Cors::new().allow_origins(["https://a.example.com"]),
             )
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
             .build(App)
             .expect("a describable router")
     };
@@ -840,7 +929,7 @@ async fn an_asset_s_416_carries_the_members() {
     let router = || {
         Router::<App>::new()
             .group(Group::new("/static").mount(Fixture::assets()))
-            .problem_members::<Coded>()
+            .problems::<AppProblems>()
     };
     let document = serde_json::to_value(router().openapi().expect("a describable router"))
         .expect("a document serializes");
@@ -879,7 +968,7 @@ async fn a_directory_s_416_carries_the_members() {
             "/files",
             kynos::router::assets::fs::Directory::new("tests/assets"),
         )
-        .problem_members::<Coded>()
+        .problems::<AppProblems>()
         .build(App)
         .expect("a buildable router");
     let client = TestClient::new(service);
@@ -896,4 +985,396 @@ async fn a_directory_s_416_carries_the_members() {
     assert_eq!(problem["code"], "ByteRange-416", "{problem}");
     assert_eq!(problem["request_id"], "req-a", "{problem}");
     assert_eq!(refused.header("content-range"), Some("bytes */19"));
+}
+
+/// Refuses every request with the refusal its function builds.
+struct Refuses<S>(fn() -> S);
+
+impl<S: ShortCircuit + Send + 'static> Interceptor<App> for Refuses<S> {
+    type Reads = ();
+    type Adds = ();
+    type Short = S;
+
+    async fn intercept(
+        &self,
+        _: Request,
+        (): (),
+        _: &App,
+        _: Next<'_, App>,
+    ) -> Result<Continued, S> {
+        Err((self.0)())
+    }
+}
+
+/// A type a limiter's refusal names itself, which the policy leaves alone.
+struct Throttled;
+
+impl ProblemType for Throttled {
+    const TYPE_URI: Option<&'static str> = Some("urn:test:problem:throttled");
+}
+
+/// A client for `service`, and the document it serves.
+fn serving(service: Service<App>) -> (TestClient<App>, Value) {
+    let document = serde_json::to_value(service.openapi()).expect("a document serializes");
+    (TestClient::new(service), document)
+}
+
+/// `/open`, behind an interceptor refusing it as `refuses` builds.
+fn refusing<S: ShortCircuit + Send + 'static>(refuses: fn() -> S) -> (TestClient<App>, Value) {
+    serving(
+        Router::<App>::new()
+            .mount(kynos::routes![open])
+            .intercept(Refuses(refuses))
+            .problems::<AppProblems>()
+            .build(App)
+            .expect("a buildable router"),
+    )
+}
+
+/// The schema `document` declares the problem `path` answers `status` with by.
+fn declared_problem(document: &Value, path: &str, status: &str) -> Value {
+    document["paths"][path]["get"]["responses"][status]["content"]["application/problem+json"]
+        ["schema"]
+        .clone()
+}
+
+/// An interceptor's refusal takes the identity the policy names for it and
+/// carries the members, though no request head is left to read, and its
+/// operation declares both.
+#[tokio::test]
+async fn an_interceptor_s_refusal_is_rendered_under_the_policy() {
+    let (client, document) = refusing(|| BodySizeExceeded::<()>::new(64));
+
+    let refused = client
+        .get("/open")
+        .header("x-request-id", "req-1")
+        .send()
+        .await;
+
+    refused.assert_status(413);
+    let problem: Value = refused.json();
+    assert_eq!(problem["type"], OVERSIZED.type_uri(), "{problem}");
+    assert_eq!(problem["title"], OVERSIZED.title(), "{problem}");
+    assert_eq!(problem["detail"], "the request body exceeds 64 bytes");
+    assert_eq!(problem["code"], "Refusal-413", "{problem}");
+    assert_eq!(problem["request_id"], "-", "{problem}");
+
+    let declared = declared_problem(&document, "/open", "413");
+    assert_eq!(
+        declared["allOf"][1]["properties"]["type"]["const"],
+        OVERSIZED.type_uri(),
+        "{declared}"
+    );
+    assert_eq!(declared["title"], OVERSIZED.title(), "{declared}");
+    assert_eq!(
+        declared["allOf"][1]["required"],
+        json!(["code", "request_id"]),
+        "{declared}"
+    );
+
+    client.assert_conformance();
+}
+
+/// A refusal is rendered under the policy at every scope its interceptor is
+/// mounted at: a group's joins the chain the router runs for each operation
+/// it covers, and an endpoint's own runs in a chain the endpoint starts, which
+/// reads the policy from the routed request.
+#[tokio::test]
+async fn a_scoped_interceptor_s_refusal_is_rendered_under_the_policy() {
+    use kynos::{
+        openapi::{Method, PathTemplate},
+        router::endpoint::builder::EndpointBuilder,
+    };
+
+    let oversized = || BodySizeExceeded::<()>::new(64);
+    let group_scope = Router::<App>::new().group(
+        Group::new("/grouped")
+            .intercept(Refuses(oversized))
+            .mount(kynos::routes![open]),
+    );
+    let endpoint_scope = Router::<App>::new().mount(
+        EndpointBuilder::new(
+            Method::Get,
+            PathTemplate::parse("/alone").expect("a valid path"),
+            open,
+        )
+        .intercept(Refuses(oversized)),
+    );
+
+    for (router, path) in [(group_scope, "/grouped/open"), (endpoint_scope, "/alone")] {
+        let (client, document) = serving(
+            router
+                .problems::<AppProblems>()
+                .build(App)
+                .expect("a buildable router"),
+        );
+
+        let refused = client.get(path).send().await;
+
+        refused.assert_status(413);
+        let problem: Value = refused.json();
+        assert_eq!(problem["type"], OVERSIZED.type_uri(), "{path}: {problem}");
+        assert_eq!(problem["code"], "Refusal-413", "{path}: {problem}");
+
+        let declared = declared_problem(&document, path, "413");
+        assert_eq!(
+            declared["allOf"][1]["properties"]["type"]["const"],
+            OVERSIZED.type_uri(),
+            "{path}: {declared}"
+        );
+
+        client.assert_conformance();
+    }
+}
+
+/// A refusal naming its own type keeps it, and still carries the members
+/// beside the fields it writes.
+#[tokio::test]
+async fn a_refusal_naming_its_own_type_keeps_it_under_the_policy() {
+    let (client, document) = refusing(|| RateLimited::<Throttled>::new(Duration::from_secs(3), 10));
+
+    let refused = client.get("/open").send().await;
+
+    refused.assert_status(429);
+    let problem: Value = refused.json();
+    assert_eq!(problem["type"], "urn:test:problem:throttled", "{problem}");
+    assert_eq!(problem["title"], "Too Many Requests", "{problem}");
+    assert_eq!(problem["code"], "Refusal-429", "{problem}");
+    assert_eq!(refused.header("retry-after"), Some("3"));
+
+    let declared = declared_problem(&document, "/open", "429");
+    assert_eq!(
+        declared["allOf"][1]["properties"]["type"]["const"], "urn:test:problem:throttled",
+        "{declared}"
+    );
+
+    client.assert_conformance();
+}
+
+/// Sends `/open` through an interceptor refusing it as `refuses` builds, and
+/// returns the `code` member the refusal carried, having held it to the
+/// operation's declaration.
+async fn refused_code<S: ShortCircuit + Send + 'static>(refuses: fn() -> S) -> Value {
+    let (client, _) = refusing(refuses);
+    let problem: Value = client.get("/open").send().await.json();
+    client.assert_conformance();
+    problem["code"].clone()
+}
+
+/// Every refusal an interceptor Kynos ships answers with is rendered under
+/// the policy, which no source scan could tell from one that is not.
+#[tokio::test]
+async fn every_refusal_kynos_ships_carries_the_members() {
+    use kynos::middleware::{
+        csrf::CrossSite,
+        limits::{
+            body_size::{BodyRefused, BodyTooSlow},
+            concurrency::AtCapacity,
+            timeout::TimedOut,
+        },
+        rate_limit::refusal::RateLimitedFields,
+        trusted_hosts::UntrustedHost,
+    };
+
+    let mut codes = vec![
+        refused_code(|| BodySizeExceeded::<()>::new(64)).await,
+        refused_code(|| BodyRefused::<(), ()>::TooSlow(BodyTooSlow::new(Duration::from_secs(1))))
+            .await,
+        refused_code(|| TimedOut::<()>::new(Duration::from_secs(1))).await,
+        refused_code(|| AtCapacity::<()>::new(None)).await,
+        refused_code(|| RateLimited::<()>::new(Duration::from_secs(1), 10)).await,
+        refused_code(|| {
+            RateLimitedFields::<()>::new(Duration::from_secs(1), Vec::new(), Vec::new())
+        })
+        .await,
+        refused_code(CrossSite::<()>::new).await,
+        refused_code(UntrustedHost::<()>::new).await,
+    ];
+    let mut expected = vec![
+        "Refusal-413",
+        "Refusal-408",
+        "Refusal-408",
+        "Refusal-503",
+        "Refusal-429",
+        "Refusal-429",
+        "Refusal-403",
+        "Refusal-421",
+    ];
+
+    #[cfg(feature = "compression")]
+    {
+        use kynos::middleware::{compression::NotAcceptable, decompression::Undecodable};
+
+        codes.push(refused_code(NotAcceptable::<()>::new).await);
+        codes.push(refused_code(Undecodable::<(), (), ()>::unsupported_coding).await);
+        expected.extend(["Refusal-406", "Refusal-415"]);
+    }
+
+    assert_eq!(codes, expected);
+}
+
+#[kynos::get("/boom")]
+async fn boom() -> NoContent {
+    panic!("the handler failed");
+}
+
+#[kynos::get("/boom-alone", catch_panics)]
+async fn boom_alone() -> NoContent {
+    panic!("the handler failed");
+}
+
+/// A recovered panic's 500 takes the identity the policy names for it and
+/// carries the members, whether the router or the endpoint recovered it, and
+/// the operation declares both.
+#[tokio::test]
+async fn a_recovered_panic_s_500_is_rendered_under_the_policy() {
+    let router_scope = Router::<App>::new()
+        .mount(kynos::routes![boom])
+        .catch_panics()
+        .problems::<AppProblems>()
+        .build(App);
+    let endpoint_scope = Router::<App>::new()
+        .mount(kynos::routes![boom_alone])
+        .problems::<AppProblems>()
+        .build(App);
+
+    for (service, path) in [(router_scope, "/boom"), (endpoint_scope, "/boom-alone")] {
+        let (client, document) = serving(service.expect("a buildable router"));
+
+        let crashed = client.get(path).send().await;
+
+        crashed.assert_status(500);
+        let problem: Value = crashed.json();
+        assert_eq!(problem["type"], CRASHED.type_uri(), "{problem}");
+        assert_eq!(problem["title"], CRASHED.title(), "{problem}");
+        assert_eq!(problem["code"], "Panic-500", "{problem}");
+
+        let declared = declared_problem(&document, path, "500");
+        assert_eq!(
+            declared["allOf"][1]["properties"]["type"]["const"],
+            CRASHED.type_uri(),
+            "{declared}"
+        );
+
+        client.assert_conformance();
+    }
+}
+
+#[kynos::get("/vault", catch_panics)]
+async fn vault(Auth(_): Auth<Bearer>) -> NoContent {
+    NoContent
+}
+
+/// A guard a scope runs ahead of its interceptors is recovered there by its
+/// operation's own recovery, and the panic it raises is rendered under the
+/// policy as a handler's is.
+#[tokio::test]
+async fn a_panic_in_a_guard_run_ahead_is_rendered_under_the_policy() {
+    let reached = Arc::new(AtomicBool::new(false));
+    let (client, _) = serving(
+        Router::<App>::new()
+            .guard_first()
+            .intercept(Reached(Arc::clone(&reached)))
+            .mount(kynos::routes![vault])
+            .problems::<AppProblems>()
+            .build(App)
+            .expect("a buildable router"),
+    );
+
+    let crashed = client.get("/vault").bearer("tok_panic").send().await;
+
+    assert!(
+        !reached.load(Ordering::SeqCst),
+        "the guard ran behind the interceptor"
+    );
+    crashed.assert_status(500);
+    let problem: Value = crashed.json();
+    assert_eq!(problem["type"], CRASHED.type_uri(), "{problem}");
+    assert_eq!(problem["title"], CRASHED.title(), "{problem}");
+    assert_eq!(problem["code"], "Panic-500", "{problem}");
+
+    client.assert_conformance();
+}
+
+/// An authenticator's own error: a credential refused as Kynos refuses one,
+/// carried in by `?`, beside a 401 of the application's own.
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+#[problem(base = "https://errors.example.test/")]
+enum AccountError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+
+    #[error("no account holds this token")]
+    #[problem(status = 401)]
+    UnknownToken,
+}
+
+/// A context whose authenticator fails with [`AccountError`].
+struct Accounts;
+
+impl Authenticator<Bearer, Accounts> for Accounts {
+    type Error = AccountError;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Self,
+    ) -> Result<String, AccountError> {
+        match presented.require()?.as_str() {
+            "unknown" => Err(AccountError::UnknownToken),
+            token => Ok(token.to_owned()),
+        }
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+#[kynos::get("/account")]
+async fn account(caller: Auth<Bearer>) -> NoContent {
+    let _ = caller;
+    NoContent
+}
+
+/// A guard whose authenticator fails with the application's own error
+/// renders every refusal through it, its own 401 for an absent credential
+/// included, so the policy reaches none of them; and the operation declares
+/// none of the policy there, so what it declares is what is sent.
+#[tokio::test]
+async fn a_guard_s_own_error_is_neither_sent_nor_declared_under_the_policy() {
+    let service = Router::<Accounts>::new()
+        .mount(kynos::routes![account])
+        .problems::<AppProblems>()
+        .build(Accounts)
+        .expect("a buildable router");
+    let document = serde_json::to_value(service.openapi()).expect("a document serializes");
+    let client = TestClient::new(service);
+
+    let absent = client.get("/account").send().await;
+    absent.assert_status(401);
+    let problem: Value = absent.json();
+    assert_eq!(problem["type"], "about:blank", "{problem}");
+    assert!(problem.get("code").is_none(), "{problem}");
+
+    let unknown = client.get("/account").bearer("unknown").send().await;
+    unknown.assert_status(401);
+    let problem: Value = unknown.json();
+    assert_eq!(
+        problem["type"], "https://errors.example.test/unknown-token",
+        "{problem}"
+    );
+
+    let declared = document["paths"]["/account"]["get"]["responses"]["401"].to_string();
+    assert!(
+        !declared.contains(UNAUTHENTICATED.type_uri()) && !declared.contains("request_id"),
+        "{declared}"
+    );
+
+    client.assert_conformance();
 }

@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use http_body_util::BodyExt;
 
 use crate::{
+    __private::Refusing,
     error::problem::ProblemType,
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http,
@@ -86,8 +87,9 @@ fn strongly_tagged(headers: &http::HeaderMap) -> bool {
 /// unacceptable, or when a handler requires an encoding
 /// ([`policy::Encoding::Required`]) and none can be applied.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`Compression::problem_type`].
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one. Set it with [`Compression::problem_type`].
 pub struct NotAcceptable<T = ()> {
     /// `fn() -> T`, so the refusal is `Send` and `Sync` whatever the marker is.
     problem_type: PhantomData<fn() -> T>,
@@ -106,24 +108,45 @@ impl<T: ProblemType> crate::error::problem::IntoProblem for NotAcceptable<T> {
 
 impl<T: ProblemType> crate::response::IntoResponse for NotAcceptable<T> {
     fn into_response(self) -> http::Response {
-        crate::error::problem::IntoProblem::into_problem(self).into_response()
+        crate::response::ShortCircuit::__refused(self, Refusing::default())
     }
 }
 
 impl<T: ProblemType> crate::response::ShortCircuit for NotAcceptable<T> {
     const STATUSES: &'static [u16] = &[406];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        let problem = crate::error::problem::IntoProblem::into_problem(self);
+        crate::error::members::refused(problem, problems.0, |_| {})
+    }
+
+    fn __refusal_responses(
+        registry: &mut crate::schema::registry::Registry,
+    ) -> kynos_openapi::Responses {
+        not_acceptable_responses::<T>(registry, true)
+    }
 }
 
 impl<T: ProblemType> crate::response::Responses for NotAcceptable<T> {
     fn responses(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            406,
-            crate::error::problem::refusal_response::<T>(
-                registry,
-                "no representation has a content coding the request accepts",
-            ),
-        )
+        not_acceptable_responses::<T>(registry, false)
     }
+}
+
+/// [`NotAcceptable`]'s 406, under the problem policy where `served`.
+fn not_acceptable_responses<T: ProblemType>(
+    registry: &mut crate::schema::registry::Registry,
+    served: bool,
+) -> kynos_openapi::Responses {
+    kynos_openapi::Responses::new().with(
+        406,
+        crate::error::problem::served_refusal_response::<T>(
+            registry,
+            http::StatusCode::NOT_ACCEPTABLE,
+            "no representation has a content coding the request accepts",
+            served,
+        ),
+    )
 }
 
 // Written out because `#[derive]` would bound each on the marker type.

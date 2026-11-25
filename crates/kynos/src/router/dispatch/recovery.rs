@@ -13,9 +13,12 @@ use std::{
 };
 
 use crate::{
-    error::problem::{Problem, problem_response},
+    error::{
+        members::{Policy, ProblemOrigin, declared_identity, panicked},
+        problem::{Problem, problem_response, summarized_response},
+        rejection::with_installed,
+    },
     http::{Response, StatusCode},
-    response::IntoResponse,
     router::operation::OperationCx,
 };
 
@@ -41,9 +44,10 @@ where
     })
 }
 
-/// The response a recovered panic becomes; it never exposes the payload.
-pub(crate) fn panic_response() -> Response {
-    Problem::new(StatusCode::INTERNAL_SERVER_ERROR).into_response()
+/// The response a recovered panic becomes, under the problem policy
+/// `problems`; it never exposes the payload.
+pub(crate) fn panic_response(problems: Option<Policy>) -> Response {
+    panicked(problems)
 }
 
 /// The payload of a panic an endpoint recovered, on its way to the dispatcher.
@@ -54,8 +58,11 @@ pub(crate) fn panic_response() -> Response {
 pub(super) struct Recovered(Arc<Mutex<Option<Box<dyn Any + Send>>>>);
 
 /// [`panic_response`], carrying the payload it was recovered from.
-pub(crate) fn recovered_response(payload: Box<dyn Any + Send>) -> Response {
-    let mut response = panic_response();
+pub(crate) fn recovered_response(
+    payload: Box<dyn Any + Send>,
+    problems: Option<Policy>,
+) -> Response {
+    let mut response = panic_response(problems);
     response
         .extensions_mut()
         .insert(Recovered(Arc::new(Mutex::new(Some(payload)))));
@@ -73,14 +80,25 @@ pub(super) fn take_recovered(response: &mut Response) -> Option<Box<dyn Any + Se
         .take()
 }
 
-/// Declares the 500 a recovery branch contributes to every operation it covers.
+/// Declares the 500 a recovery branch contributes to every operation it
+/// covers: the shared component, narrowed to the identity and the members the
+/// problem policy gives a recovered panic, where it gives either.
 pub(crate) fn describe(operation: &mut OperationCx<'_>) {
-    let responses = kynos_openapi::Responses::new().with(
-        500,
-        problem_response(
-            operation.registry(),
-            "the operation failed unexpectedly and was recovered",
-        ),
-    );
+    let registry = operation.registry();
+    let status = StatusCode::INTERNAL_SERVER_ERROR;
+    let (uri, title) = declared_identity(registry, ProblemOrigin::Panic, status, true);
+
+    let response = if uri.is_none() && registry.problem_members().is_empty() {
+        problem_response(registry, RECOVERED)
+    } else {
+        let problem = registry.resolve::<Problem>();
+        let members = with_installed(registry, &[], true);
+        summarized_response(&problem, RECOVERED, (uri, title, &members))
+    };
+
+    let responses = kynos_openapi::Responses::new().with(500, response);
     operation.add_responses(&responses);
 }
+
+/// What the 500 a recovery branch contributes says.
+const RECOVERED: &str = "the operation failed unexpectedly and was recovered";
