@@ -7,6 +7,7 @@ use kynos_openapi::{Method, PathTemplate};
 
 use super::{EndpointBuilder, Named};
 use crate::{
+    error::members::Installed,
     handler::Handler,
     http::{Parts, Request, Response, body::Body},
     middleware::{
@@ -73,10 +74,12 @@ where
         let (mut parts, body) = request.into_parts();
         async move {
             if install::catches::<P>() {
+                // Read before the head moves into what may unwind.
+                let problems = Installed::on(&parts.extensions);
                 // Boxed by `recover`, so it costs this future a pointer.
                 return match dispatch::recovery::recover(self.serve(parts, body, context)).await {
                     Ok(response) => response,
-                    Err(payload) => dispatch::recovery::recovered_response(payload),
+                    Err(payload) => dispatch::recovery::recovered_response(payload, problems),
                 };
             }
 
@@ -175,7 +178,11 @@ where
                 self.method,
             ),
         };
-        Next::new(&self.interceptors, self, context, Some(route)).run(request)
+        // Its refusals are rendered under the policy the router installed.
+        let problems = Installed::on(request.extensions());
+        Next::new(&self.interceptors, self, context, Some(route))
+            .with_problems(problems)
+            .run(request)
     }
 }
 

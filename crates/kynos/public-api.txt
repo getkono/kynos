@@ -75,8 +75,10 @@ pub kynos::error::members::ProblemOrigin::Content
 pub kynos::error::members::ProblemOrigin::CookieValue
 pub kynos::error::members::ProblemOrigin::HeaderField
 pub kynos::error::members::ProblemOrigin::Negotiation
+pub kynos::error::members::ProblemOrigin::Panic
 pub kynos::error::members::ProblemOrigin::PathParameter
 pub kynos::error::members::ProblemOrigin::QueryParameter
+pub kynos::error::members::ProblemOrigin::Refusal
 pub kynos::error::members::ProblemOrigin::Routing
 pub kynos::error::members::ProblemOrigin::Transport
 impl core::clone::Clone for kynos::error::members::ProblemOrigin
@@ -99,13 +101,13 @@ impl core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemO
 impl core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemOrigin
 pub struct kynos::error::members::ProblemCx<'a>
 impl<'a> kynos::error::members::ProblemCx<'a>
-pub fn kynos::error::members::ProblemCx<'a>::extensions(&self) -> &'a http::extensions::Extensions
-pub fn kynos::error::members::ProblemCx<'a>::headers(&self) -> &'a http::header::map::HeaderMap
-pub fn kynos::error::members::ProblemCx<'a>::method(&self) -> &'a http::method::Method
+pub fn kynos::error::members::ProblemCx<'a>::extensions(&self) -> core::option::Option<&'a http::extensions::Extensions>
+pub fn kynos::error::members::ProblemCx<'a>::headers(&self) -> core::option::Option<&'a http::header::map::HeaderMap>
+pub fn kynos::error::members::ProblemCx<'a>::method(&self) -> core::option::Option<&'a http::method::Method>
 pub fn kynos::error::members::ProblemCx<'a>::origin(&self) -> kynos::error::members::ProblemOrigin
 pub fn kynos::error::members::ProblemCx<'a>::problem(&self) -> &'a kynos::error::problem::Problem
 pub fn kynos::error::members::ProblemCx<'a>::status(&self) -> http::status::StatusCode
-pub fn kynos::error::members::ProblemCx<'a>::uri(&self) -> &'a http::uri::Uri
+pub fn kynos::error::members::ProblemCx<'a>::uri(&self) -> core::option::Option<&'a http::uri::Uri>
 impl<'a> core::fmt::Debug for kynos::error::members::ProblemCx<'a>
 pub fn kynos::error::members::ProblemCx<'a>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<'a> core::marker::Freeze for kynos::error::members::ProblemCx<'a>
@@ -115,8 +117,33 @@ impl<'a> core::marker::Unpin for kynos::error::members::ProblemCx<'a>
 impl<'a> core::marker::UnsafeUnpin for kynos::error::members::ProblemCx<'a>
 impl<'a> !core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemCx<'a>
 impl<'a> !core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemCx<'a>
-pub trait kynos::error::members::ProblemMembers: kynos::schema::Schema + serde_core::ser::Serialize
-pub fn kynos::error::members::ProblemMembers::for_problem(&kynos::error::members::ProblemCx<'_>) -> Self
+pub struct kynos::error::members::ProblemIdentity
+impl kynos::error::members::ProblemIdentity
+pub const fn kynos::error::members::ProblemIdentity::new(&'static str, &'static str) -> Self
+pub const fn kynos::error::members::ProblemIdentity::title(&self) -> &'static str
+pub const fn kynos::error::members::ProblemIdentity::type_uri(&self) -> &'static str
+impl core::clone::Clone for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::clone(&self) -> kynos::error::members::ProblemIdentity
+impl core::cmp::Eq for kynos::error::members::ProblemIdentity
+impl core::cmp::PartialEq for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::eq(&self, &kynos::error::members::ProblemIdentity) -> bool
+impl core::fmt::Debug for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::hash::Hash for kynos::error::members::ProblemIdentity
+pub fn kynos::error::members::ProblemIdentity::hash<__H: core::hash::Hasher>(&self, &mut __H)
+impl core::marker::Copy for kynos::error::members::ProblemIdentity
+impl core::marker::StructuralPartialEq for kynos::error::members::ProblemIdentity
+impl core::marker::Freeze for kynos::error::members::ProblemIdentity
+impl core::marker::Send for kynos::error::members::ProblemIdentity
+impl core::marker::Sync for kynos::error::members::ProblemIdentity
+impl core::marker::Unpin for kynos::error::members::ProblemIdentity
+impl core::marker::UnsafeUnpin for kynos::error::members::ProblemIdentity
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::error::members::ProblemIdentity
+impl core::panic::unwind_safe::UnwindSafe for kynos::error::members::ProblemIdentity
+pub trait kynos::error::members::ProblemPolicy: 'static
+pub type kynos::error::members::ProblemPolicy::Members: kynos::schema::Schema + serde_core::ser::Serialize + 'static
+pub fn kynos::error::members::ProblemPolicy::identity(kynos::error::members::ProblemOrigin, http::status::StatusCode) -> core::option::Option<kynos::error::members::ProblemIdentity>
+pub fn kynos::error::members::ProblemPolicy::members(&kynos::error::members::ProblemCx<'_>) -> Self::Members
 pub mod kynos::error::problem
 #[non_exhaustive] pub struct kynos::error::problem::PointerError
 pub kynos::error::problem::PointerError::detail: alloc::string::String
@@ -6556,7 +6583,7 @@ pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_pani
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
 pub fn kynos::router::Router<C, P, I, S>::operation_id_case(self, kynos::router::operation::OperationIdCase) -> Self
-pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problems<Q: kynos::error::members::ProblemPolicy>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
@@ -9130,7 +9157,7 @@ pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_pani
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
 pub fn kynos::router::Router<C, P, I, S>::operation_id_case(self, kynos::router::operation::OperationIdCase) -> Self
-pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problems<Q: kynos::error::members::ProblemPolicy>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self
@@ -10012,6 +10039,9 @@ pub trait kynos::schema::SerdeTagged
 pub const kynos::schema::SerdeTagged::TAG: &'static str
 pub const kynos::schema::SerdeTagged::VARIANTS: &'static [&'static str]
 pub fn kynos::schema::SerdeTagged::variant(&self) -> &'static str
+pub trait kynos::schema::UnitEnum: core::marker::Sized + 'static
+pub const kynos::schema::UnitEnum::VARIANTS: &'static [Self]
+pub fn kynos::schema::UnitEnum::as_str(&self) -> &'static str
 pub fn kynos::schema::instantiation_name(&str, &[core::option::Option<kynos_openapi::model::components::ComponentName>]) -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub mod kynos::security
 pub mod kynos::security::auth
@@ -11810,7 +11840,7 @@ pub fn kynos::router::Router<C, P, I, S>::nest<NP: kynos::middleware::catch_pani
 pub fn kynos::router::Router<C, P, I, S>::not_found(self, kynos::router::policy::FallbackPolicy) -> Self
 pub fn kynos::router::Router<C, P, I, S>::observe<O: kynos::middleware::Observer<C>>(self, O) -> Self
 pub fn kynos::router::Router<C, P, I, S>::operation_id_case(self, kynos::router::operation::OperationIdCase) -> Self
-pub fn kynos::router::Router<C, P, I, S>::problem_members<M: kynos::error::members::ProblemMembers>(self) -> Self
+pub fn kynos::router::Router<C, P, I, S>::problems<Q: kynos::error::members::ProblemPolicy>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::security_scheme<Scheme: kynos::security::SecurityScheme>(self) -> Self
 pub fn kynos::router::Router<C, P, I, S>::server(self, kynos_openapi::model::server::Server) -> Self
 pub fn kynos::router::Router<C, P, I, S>::tag<T: kynos::router::operation::Tag>(self) -> Self

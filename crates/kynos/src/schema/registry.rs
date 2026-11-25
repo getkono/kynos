@@ -61,11 +61,18 @@ pub struct Registry {
     /// different `SecurityScheme::NAME`, not a renamed schema.
     scheme_conflicts: Vec<ContributionConflict>,
 
-    /// The extension members
-    /// [`Router::problem_members`](crate::router::Router::problem_members)
-    /// adds to every problem Kynos renders itself: each one's name, schema, and
+    /// The extension members the [`ProblemPolicy`] that
+    /// [`Router::problems`](crate::router::Router::problems) installs adds to
+    /// every problem Kynos renders itself: each one's name, schema, and
     /// whether every problem sends it. Read by each such problem's response.
+    ///
+    /// [`ProblemPolicy`]: crate::error::members::ProblemPolicy
     problem_members: Vec<(String, OpenApiSchema, bool)>,
+
+    /// The type and title that policy gives a problem Kynos would send as
+    /// `about:blank`, by where it came from and its status; `None` where no
+    /// policy is installed.
+    problem_identity: Option<crate::error::members::Identify>,
 
     /// What an [`AuthRejection`](crate::error::rejection::AuthRejection) held
     /// in a transparent variant declares while a guard describes the error
@@ -317,16 +324,33 @@ impl Registry {
         }
     }
 
-    /// Declares `members` on every problem Kynos renders itself, before any
-    /// operation is described.
-    pub(crate) fn declare_problem_members(&mut self, members: Vec<(String, OpenApiSchema, bool)>) {
+    /// Declares `members`, and the types and titles `identity` gives, on
+    /// every problem Kynos renders itself, before any operation is described.
+    pub(crate) fn declare_problem_policy(
+        &mut self,
+        members: Vec<(String, OpenApiSchema, bool)>,
+        identity: crate::error::members::Identify,
+    ) {
         self.problem_members = members;
+        self.problem_identity = Some(identity);
     }
 
-    /// What [`declare_problem_members`](Self::declare_problem_members)
+    /// The members [`declare_problem_policy`](Self::declare_problem_policy)
     /// declared; empty where nothing did.
     pub(crate) fn problem_members(&self) -> &[(String, OpenApiSchema, bool)] {
         &self.problem_members
+    }
+
+    /// The identity a problem from `origin` answering with `status` carries
+    /// in place of `about:blank`, under the policy
+    /// [`declare_problem_policy`](Self::declare_problem_policy) declared.
+    pub(crate) fn problem_identity(
+        &self,
+        origin: crate::error::members::ProblemOrigin,
+        status: crate::http::StatusCode,
+    ) -> Option<crate::error::members::ProblemIdentity> {
+        self.problem_identity
+            .and_then(|identify| identify(origin, status))
     }
 
     /// Sets what a held `AuthRejection` declares, returning what it replaced,

@@ -9,7 +9,11 @@
 use std::{borrow::Cow, marker::PhantomData};
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     http::{self, HeaderMap},
     middleware::{Continued, Interceptor, Next},
     response::{IntoResponse, ShortCircuit},
@@ -354,8 +358,9 @@ impl std::error::Error for CrossSiteReason {}
 
 /// What a refused request is answered with.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`Csrf::problem_type`].
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one. Set it with [`Csrf::problem_type`].
 pub struct CrossSite<T = ()> {
     /// Carries `T` without storing one; `fn() -> T` keeps it `Send` and `Sync`.
     problem_type: PhantomData<fn() -> T>,
@@ -374,21 +379,42 @@ impl<T: ProblemType> IntoProblem for CrossSite<T> {
 
 impl<T: ProblemType> IntoResponse for CrossSite<T> {
     fn into_response(self) -> http::Response {
-        self.into_problem().into_response()
+        self.__refused(Refusing::default())
     }
 }
 
 impl<T: ProblemType> ShortCircuit for CrossSite<T> {
     const STATUSES: &'static [u16] = &[403];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        refused(self.into_problem(), problems.0, |_| {})
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        cross_site_responses::<T>(registry, true)
+    }
 }
 
 impl<T: ProblemType> crate::response::Responses for CrossSite<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            403,
-            refusal_response::<T>(registry, "the request came from another site"),
-        )
+        cross_site_responses::<T>(registry, false)
     }
+}
+
+/// [`CrossSite`]'s 403, under the problem policy where `served`.
+fn cross_site_responses<T: ProblemType>(
+    registry: &mut Registry,
+    served: bool,
+) -> kynos_openapi::Responses {
+    kynos_openapi::Responses::new().with(
+        403,
+        served_refusal_response::<T>(
+            registry,
+            http::StatusCode::FORBIDDEN,
+            "the request came from another site",
+            served,
+        ),
+    )
 }
 
 impl<C, T> Interceptor<C> for Csrf<T>

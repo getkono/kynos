@@ -1,7 +1,8 @@
 //! `#[derive(ParamValue)]`.
 //!
 //! A field-less enum's text form is the names the `Schema` derive gives its
-//! variants: `Display` writes the one serde writes, or for an identifier enum,
+//! variants: `UnitEnum::as_str`, which `Display` writes, returns the one serde
+//! writes, or for an identifier enum,
 //! which serde never writes, the one serde reads it by; `FromStr` reads every
 //! one serde reads, aliases included, which is the schema's `enum`. The
 //! `Schema` derive's refusals run first, so the names it would refuse never
@@ -93,16 +94,27 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         quote!(#(#read)|* => ::core::result::Result::Ok(Self::#ident))
     });
     let expected = names.iter().flat_map(|(_, _, read)| read);
+    let every = variants.iter().map(|variant| &variant.ident);
 
     Ok(quote! {
         // The impls name the type, so a `#[deprecated]` type would otherwise
-        // warn at its own definition, as the `Schema` derive also allows.
+        // warn at its own definition, as the `Schema` derive also allows; so
+        // would a `#[deprecated]` variant every arm names.
+        #[allow(deprecated)]
+        impl #impl_generics ::kynos::schema::UnitEnum for #name #ty_generics #where_clause {
+            const VARIANTS: &'static [Self] = &[#(Self::#every),*];
+
+            fn as_str(&self) -> &'static str {
+                match self {
+                    #(#written,)*
+                }
+            }
+        }
+
         #[allow(deprecated)]
         impl #impl_generics ::core::fmt::Display for #name #ty_generics #where_clause {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                f.pad(match self {
-                    #(#written,)*
-                })
+                f.pad(::kynos::schema::UnitEnum::as_str(self))
             }
         }
 

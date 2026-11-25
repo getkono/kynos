@@ -14,7 +14,11 @@ use kynos_openapi::model::schema::types::SchemaType;
 use tokio::io::AsyncRead;
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     extract::body::limit::{BodyLimit, Capped, collect_capped},
     http::{self, body::Body},
     middleware::{
@@ -102,19 +106,7 @@ where
     L: ProblemType,
 {
     fn into_response(self) -> http::Response {
-        let reason = self.reason;
-        let mut response = self.into_problem().into_response();
-
-        // Only on this 415: on a media-type 415 it would misread as a coding
-        // complaint (section 15.5.16).
-        if reason == Reason::UnsupportedCoding {
-            response.headers_mut().insert(
-                http::header::ACCEPT_ENCODING,
-                http::HeaderValue::from_static(ACCEPTED),
-            );
-        }
-
-        response
+        self.__refused(Refusing::default())
     }
 }
 
@@ -159,6 +151,24 @@ where
     L: ProblemType,
 {
     const STATUSES: &'static [u16] = &[400, 413, 415];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        let reason = self.reason;
+        refused(self.into_problem(), problems.0, |response| {
+            // Only on this 415: on a media-type 415 it would misread as a
+            // coding complaint (section 15.5.16).
+            if reason == Reason::UnsupportedCoding {
+                response.headers_mut().insert(
+                    http::header::ACCEPT_ENCODING,
+                    http::HeaderValue::from_static(ACCEPTED),
+                );
+            }
+        })
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        undecodable_responses::<U, M, L>(registry, true)
+    }
 }
 
 impl<U, M, L> Responses for Undecodable<U, M, L>
@@ -168,27 +178,47 @@ where
     L: ProblemType,
 {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new()
-            .with(
-                400,
-                refusal_response::<M>(
-                    registry,
-                    "the request body did not decode as the coding it declared",
-                ),
-            )
-            .with(
-                413,
-                refusal_response::<L>(registry, "the request body exceeds the configured limit"),
-            )
-            .with(
-                415,
-                refusal_response::<U>(
-                    registry,
-                    "the request body's content coding is not one this server decodes",
-                )
-                .with_header("Accept-Encoding", accepted_encoding_header()),
-            )
+        undecodable_responses::<U, M, L>(registry, false)
     }
+}
+
+/// [`Undecodable`]'s 400, 413 and 415, under the problem policy where
+/// `served`.
+fn undecodable_responses<U, M, L>(registry: &mut Registry, served: bool) -> kynos_openapi::Responses
+where
+    U: ProblemType,
+    M: ProblemType,
+    L: ProblemType,
+{
+    kynos_openapi::Responses::new()
+        .with(
+            400,
+            served_refusal_response::<M>(
+                registry,
+                http::StatusCode::BAD_REQUEST,
+                "the request body did not decode as the coding it declared",
+                served,
+            ),
+        )
+        .with(
+            413,
+            served_refusal_response::<L>(
+                registry,
+                http::StatusCode::PAYLOAD_TOO_LARGE,
+                "the request body exceeds the configured limit",
+                served,
+            ),
+        )
+        .with(
+            415,
+            served_refusal_response::<U>(
+                registry,
+                http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "the request body's content coding is not one this server decodes",
+                served,
+            )
+            .with_header("Accept-Encoding", accepted_encoding_header()),
+        )
 }
 
 // Written out: `#[derive]` would bound each on all three markers.
