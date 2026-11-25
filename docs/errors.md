@@ -130,7 +130,7 @@ enum StoreError {
 
 | Position | Key | Meaning |
 | --- | --- | --- |
-| type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the `slug`, or the kebab-cased variant name |
+| type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the `slug`, or the kebab-cased variant name without a raw identifier's `r#`, held to the `slug` rule, so a non-ASCII name needs a `slug` |
 | type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
 | type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it; or a parenthesized list of them, converting into each and answering as the first |
 | type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds and `Error` with its source; no `#[error(...)]` beside it |
@@ -422,7 +422,8 @@ problem.
 grammar does not define, a `base` that is neither a string literal nor a path,
 a `base` on a variant, a `title` or `type` on an enum, a `slug` outside URI
 path characters, with an empty or dot segment, on an enum,
-beside `type`, with no `base`, or on a variant answering as another, an
+beside `type`, with no `base`, or on a variant answering as another, a
+name under `base` whose kebab case is outside URI path characters, an
 `extension` on a field with
 no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an
 `#[error(transparent)]` variant with a `title`, `type` or `extension(...)` and

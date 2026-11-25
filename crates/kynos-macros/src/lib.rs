@@ -751,9 +751,9 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// error at `default` in a crate declaring none. A type without `base` stays
 /// at `about:blank`.
 ///
-/// Under `base`, a variant, or a struct, publishes its kebab-cased name, or
-/// the `slug` it names, so two failures can share one type URI without either
-/// restating the prefix:
+/// Under `base`, a variant, or a struct, publishes its kebab-cased name, a raw
+/// identifier's `r#` dropped, or the `slug` it names, so two failures can share
+/// one type URI without either restating the prefix:
 ///
 /// ```ignore
 /// #[derive(Debug, thiserror::Error, ApiError)]
@@ -767,7 +767,9 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// none of which is empty or a dot segment, since `base` carries the separator
 /// and a client resolving `.` or `..` reads another URI. Beside `type`, which names
 /// the whole URI, on an enum rather than its variants, or on a type with no
-/// `base` to hang it under, it is a compile error rather than dropped.
+/// `base` to hang it under, it is a compile error rather than dropped. The
+/// kebab-cased name is held to the same rule, so a non-ASCII name needs a
+/// `slug`.
 ///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
 /// A type declaring a failure of its own without a `Display` is rejected at

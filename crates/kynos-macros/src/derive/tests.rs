@@ -5385,7 +5385,7 @@ mod api_error {
             expanded.contains("\"https://errors.example.com/type\""),
             "{expanded}"
         );
-        assert!(!expanded.contains("r#type\""), "{expanded}");
+        assert!(!expanded.contains("example.com/r#"), "{expanded}");
 
         each_case_is_refused(
             vec![case(

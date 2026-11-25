@@ -3,7 +3,9 @@
 
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, quote};
-use syn::{Data, DeriveInput, Fields, GenericParam, Generics, Ident, LitStr, Type, Variant};
+use syn::{
+    Data, DeriveInput, Fields, GenericParam, Generics, Ident, LitStr, Type, Variant, ext::IdentExt,
+};
 
 use super::{
     Extension, Failure, Outcome, TypeUri,
@@ -255,11 +257,14 @@ fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> syn::Resul
     if let Some((uri, _)) = &args.type_uri {
         return Ok(Some(TypeUri::Literal(uri.clone())));
     }
+    let Some(base) = base else {
+        return Ok(None);
+    };
     let slug = match &args.slug {
         Some((slug, _)) => spelled(slug)?,
-        None => kebab(&name.to_string()),
+        None => named(name)?,
     };
-    Ok(base.map(|base| match base {
+    Ok(Some(match base {
         Base::Literal(base) => TypeUri::Literal(format!("{base}{slug}")),
         Base::Const(path) => TypeUri::Joined {
             base: path.clone(),
@@ -312,6 +317,24 @@ fn spelled(literal: &LitStr) -> syn::Result<String> {
              URI reads another one. Name the segment",
         ),
     })
+}
+
+/// The slug a failure naming none publishes: its name as written, without a
+/// raw identifier's `r#`, kebab-cased, and held to [`slug::refusal`] as a
+/// `slug` is, since a non-ASCII name kebab-cases to no URI path.
+fn named(name: &Ident) -> syn::Result<String> {
+    let slug = kebab(&name.unraw().to_string());
+    match slug::refusal(&slug) {
+        None => Ok(slug),
+        Some(_) => Err(syn::Error::new(
+            name.span(),
+            format!(
+                "`{name}` would publish its kebab-cased name `{slug}` under `base`, which a \
+                 URI path cannot hold unencoded; name its type URI with \
+                 `#[problem(slug = \"...\")]`, percent-encoded as it is sent"
+            ),
+        )),
+    }
 }
 
 /// A Rust type or variant name as a URI slug.
