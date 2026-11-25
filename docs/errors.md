@@ -420,8 +420,8 @@ problem.
 
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,
-a `base` on a variant, a `slug` outside URI path characters, with an empty
-or dot segment, on an enum,
+a `base` on a variant, a `title` or `type` on an enum, a `slug` outside URI
+path characters, with an empty or dot segment, on an enum,
 beside `type`, with no `base`, or on a variant answering as another, an
 `extension` on a field with
 no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an
