@@ -1074,6 +1074,7 @@ pub kynos_openapi::model::paths::item::PathItem::trace: core::option::Option<all
 impl kynos_openapi::model::paths::item::PathItem
 pub fn kynos_openapi::model::paths::item::PathItem::new() -> Self
 pub fn kynos_openapi::model::paths::item::PathItem::operation(&self, kynos_openapi::model::paths::method::Method) -> core::option::Option<&kynos_openapi::model::paths::operation::Operation>
+pub fn kynos_openapi::model::paths::item::PathItem::operation_mut(&mut self, kynos_openapi::model::paths::method::Method) -> core::option::Option<&mut kynos_openapi::model::paths::operation::Operation>
 pub fn kynos_openapi::model::paths::item::PathItem::operations(&self) -> impl core::iter::traits::iterator::Iterator<Item = (kynos_openapi::model::paths::method::Method, &kynos_openapi::model::paths::operation::Operation)>
 pub fn kynos_openapi::model::paths::item::PathItem::operations_mut(&mut self) -> impl core::iter::traits::iterator::Iterator<Item = &mut kynos_openapi::model::paths::operation::Operation>
 pub fn kynos_openapi::model::paths::item::PathItem::set_operation(&mut self, kynos_openapi::model::paths::method::Method, kynos_openapi::model::paths::operation::Operation) -> core::option::Option<kynos_openapi::model::paths::operation::Operation>
@@ -3882,6 +3883,7 @@ pub kynos_openapi::PathItem::trace: core::option::Option<alloc::boxed::Box<kynos
 impl kynos_openapi::model::paths::item::PathItem
 pub fn kynos_openapi::model::paths::item::PathItem::new() -> Self
 pub fn kynos_openapi::model::paths::item::PathItem::operation(&self, kynos_openapi::model::paths::method::Method) -> core::option::Option<&kynos_openapi::model::paths::operation::Operation>
+pub fn kynos_openapi::model::paths::item::PathItem::operation_mut(&mut self, kynos_openapi::model::paths::method::Method) -> core::option::Option<&mut kynos_openapi::model::paths::operation::Operation>
 pub fn kynos_openapi::model::paths::item::PathItem::operations(&self) -> impl core::iter::traits::iterator::Iterator<Item = (kynos_openapi::model::paths::method::Method, &kynos_openapi::model::paths::operation::Operation)>
 pub fn kynos_openapi::model::paths::item::PathItem::operations_mut(&mut self) -> impl core::iter::traits::iterator::Iterator<Item = &mut kynos_openapi::model::paths::operation::Operation>
 pub fn kynos_openapi::model::paths::item::PathItem::set_operation(&mut self, kynos_openapi::model::paths::method::Method, kynos_openapi::model::paths::operation::Operation) -> core::option::Option<kynos_openapi::model::paths::operation::Operation>
