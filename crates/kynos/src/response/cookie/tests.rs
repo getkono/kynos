@@ -352,12 +352,12 @@ fn every_refusal_has_a_case() {
         cases.iter().map(|(refusal, ..)| *refusal).collect();
     assert_eq!(covered, std::collections::BTreeSet::from(REFUSALS));
 
-    let source = include_str!("../cookie.rs");
+    let source = include_str!("encode.rs");
     let encode = source
         .split_once("pub fn encode(")
         .and_then(|(_, rest)| rest.split_once("\n    }\n"))
         .map(|(body, _)| body)
-        .expect("`encode` is declared in `cookie.rs`");
+        .expect("`encode` is declared in `cookie/encode.rs`");
     assert_eq!(
         encode.matches("return None").count(),
         REFUSALS.len(),
