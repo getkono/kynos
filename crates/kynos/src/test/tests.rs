@@ -1,8 +1,9 @@
 //! The request body a `TestRequest` sends: what it yields, and what it tells a
 //! reader about its end and its length before the reader polls. And, in
 //! [`assertions`], how each `TestResponse::assert_*` helper fails, in
-//! [`shared_conformance`], what a shared `Coverage` holds a response to, and
-//! in `connected`, what a client built `connect` reaches and refuses.
+//! [`shared_conformance`], what a shared `Coverage` holds a response to, in
+//! [`view`], what a `ClientView` adds to its client's defaults, and in
+//! `connected`, what a client built `connect` reaches and refuses.
 //!
 //! `tests/client.rs` holds what a service reads from it; the end and length
 //! signals are read by a body's consumer rather than by the frames, so they
@@ -530,6 +531,252 @@ mod defaults {
     #[should_panic(expected = "`a=b\nc` is not a header value")]
     fn a_default_cookie_no_field_can_carry_panics() {
         let _ = client().with_default_cookie("a", "b\nc");
+    }
+}
+
+/// What a `ClientView` adds to its client's defaults, read off the request
+/// `send` would assemble, and that what it sends reaches the client's records.
+mod view {
+    use std::net::SocketAddr;
+
+    use crate::{
+        Router,
+        http::{HeaderValue, Request, Response, StatusCode, body::Body, header},
+        router::service::Service,
+        test::{Coverage, TestClient, TestRequest},
+    };
+
+    fn client() -> TestClient<()> {
+        TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        )
+    }
+
+    fn address(port: u16) -> SocketAddr {
+        SocketAddr::from(([192, 0, 2, 10], port))
+    }
+
+    /// Every `Authorization` the request would send.
+    fn credentials<'r, C>(request: &'r TestRequest<'_, C>) -> Vec<&'r HeaderValue> {
+        request
+            .headers
+            .get_all(header::AUTHORIZATION)
+            .iter()
+            .collect()
+    }
+
+    /// Prefixes join in the order they were given, and the path follows
+    /// them verbatim: a path of its own, a query on the prefix, or nothing.
+    #[test]
+    fn a_view_joins_its_prefixes_before_every_path() {
+        let client = client();
+        let api = client.at("/api").at("/v1");
+
+        assert_eq!(api.get("/reports").path, "/api/v1/reports");
+        assert_eq!(api.get("?page=2").path, "/api/v1?page=2");
+        assert_eq!(api.get("").path, "/api/v1");
+        assert_eq!(client.at("/api").get("/reports").path, "/api/reports");
+    }
+
+    /// A view without a prefix sends the path as the client does, any
+    /// request target included.
+    #[test]
+    fn a_view_without_a_prefix_sends_the_path_as_written() {
+        let client = client();
+
+        assert_eq!(client.view().options("*").path, "*");
+        assert_eq!(client.view().get("/reports").path, "/reports");
+    }
+
+    /// The nearest setting wins, by name: the request's over the view's,
+    /// the view's over the client's, and a client default the view does
+    /// not name still goes.
+    #[test]
+    fn a_view_field_replaces_the_clients_and_a_requests_own_replaces_the_views() {
+        let client = client()
+            .with_default_header("authorization", "Bearer default")
+            .with_default_header("x-trace", "on");
+        let admin = client.view().bearer("admin");
+
+        let request = admin.get("/a");
+        assert_eq!(
+            credentials(&request),
+            [&HeaderValue::from_static("Bearer admin")]
+        );
+        assert_eq!(
+            request.headers.get("x-trace"),
+            Some(&HeaderValue::from_static("on"))
+        );
+
+        let own = admin.get("/a").bearer("own");
+        assert_eq!(credentials(&own), [&HeaderValue::from_static("Bearer own")]);
+
+        let named = admin.header("Authorization", "Basic YTpi").get("/a");
+        assert_eq!(
+            credentials(&named),
+            [&HeaderValue::from_static("Basic YTpi")]
+        );
+    }
+
+    /// A setter leaves the view it was called on as it was, so the view a
+    /// credential was layered on, and the client, still send none.
+    #[test]
+    fn a_setter_leaves_its_view_unchanged() {
+        let client = client();
+        let api = client.at("/api");
+        let admin = api.bearer("admin");
+        let _ = api.at("/v1").header("x-trace", "on").peer(address(1));
+
+        assert!(admin.get("/a").headers.get("x-trace").is_none());
+        let request = api.get("/a");
+        assert_eq!(request.path, "/api/a");
+        assert!(request.headers.is_empty());
+        assert_eq!(request.peer, None);
+        assert!(client.get("/a").headers.is_empty());
+    }
+
+    /// The peer is the request's, else the view's, else the client's.
+    #[test]
+    fn a_view_peer_replaces_the_clients_and_a_requests_own_replaces_the_views() {
+        let client = client().with_peer(address(1));
+
+        assert_eq!(client.view().get("/a").peer, Some(address(1)));
+        let view = client.view().peer(address(2));
+        assert_eq!(view.get("/a").peer, Some(address(2)));
+        assert_eq!(view.get("/a").peer(address(3)).peer, Some(address(3)));
+    }
+
+    /// The client's default cookies reach a view's requests, joined by the
+    /// request's own as they are on the client's.
+    #[test]
+    fn a_view_sends_the_clients_default_cookies() {
+        let client = client().with_default_cookie("session", "abc123");
+        let request = client.at("/api").get("/a").cookie("theme", "dark");
+
+        assert_eq!(
+            request.cookie_field().as_deref(),
+            Some("session=abc123; theme=dark")
+        );
+    }
+
+    /// The issue's case: credentials minted mid-test, interleaved through
+    /// two views of one client. Each request carries its own view's, and
+    /// every exchange reaches the client's record and the shared coverage.
+    #[tokio::test]
+    async fn interleaved_views_send_their_own_credentials_into_one_record() {
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        let service = Service::<()>::new(document, |request: Request| async move {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::NO_CONTENT;
+            let seen = format!(
+                "{} {}",
+                request.uri(),
+                request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .map_or("-", |value| value.to_str().expect("a test's token"))
+            );
+            response
+                .headers_mut()
+                .insert("x-seen", seen.parse().expect("a field value"));
+            response
+        });
+        let coverage = Coverage::new();
+        let client = TestClient::new(service).with_coverage(&coverage);
+        let api = client.at("/api/v1");
+        let admin = api.bearer("admin");
+        let user = api.bearer("user");
+
+        let mut seen = Vec::new();
+        for (view, path) in [
+            (&admin, "/takedowns"),
+            (&user, "/reports"),
+            (&admin, "/reports"),
+        ] {
+            let response = view.get(path).send().await;
+            seen.push(response.header("x-seen").expect("echoed").to_owned());
+        }
+        seen.push(
+            api.get("/health")
+                .send()
+                .await
+                .header("x-seen")
+                .expect("echoed")
+                .to_owned(),
+        );
+
+        assert_eq!(
+            seen,
+            [
+                "/api/v1/takedowns Bearer admin",
+                "/api/v1/reports Bearer user",
+                "/api/v1/reports Bearer admin",
+                "/api/v1/health -",
+            ]
+        );
+        let recorded: Vec<String> = client
+            .recorded()
+            .iter()
+            .map(|observed| observed.target.clone())
+            .collect();
+        assert_eq!(
+            recorded,
+            [
+                "/api/v1/takedowns",
+                "/api/v1/reports",
+                "/api/v1/reports",
+                "/api/v1/health"
+            ]
+        );
+        assert_eq!(
+            coverage
+                .exchanges
+                .lock()
+                .expect("an unpoisoned record")
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "`api` is not a mount prefix: one begins with `/`")]
+    fn a_prefix_not_beginning_with_a_slash_panics() {
+        let _ = client().at("api");
+    }
+
+    /// Each would double a separator or put the path in a query, so each is
+    /// refused.
+    #[test]
+    fn a_prefix_ending_in_a_slash_or_carrying_a_query_panics() {
+        for prefix in ["/", "/api/", "/api?v=1", "/api#top"] {
+            let refused = std::panic::catch_unwind(|| {
+                let _ = client().at(prefix);
+            });
+            assert!(refused.is_err(), "`{prefix}` was taken as a mount prefix");
+        }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "`reports` is not a path under the view's `/api/v1`: begin it \
+                               with `/`"
+    )]
+    fn a_relative_path_under_a_prefix_panics() {
+        let client = client();
+        let _ = client.at("/api/v1").get("reports");
+    }
+
+    #[test]
+    #[should_panic(expected = "a `Cookie` header on a view would replace the client's \
+                               `with_default_cookie`s")]
+    fn a_view_cookie_header_beside_a_default_cookie_panics() {
+        let client = client().with_default_cookie("session", "abc123");
+        let _ = client.view().header("cookie", "raw=1");
     }
 }
 
@@ -1588,6 +1835,18 @@ mod misuse_located {
     }
 
     #[test]
+    fn a_view_given_what_it_cannot_carry_points_at_its_caller() {
+        let client = client();
+        fails_here!(let _ = client.at("api"));
+        fails_here!(let _ = client.view().at("/api/"));
+        fails_here!(let _ = client.view().header("a b", "x"));
+        fails_here!(let _ = client.view().bearer("a\nb"));
+        fails_here!(let _ = client.at("/api").get("reports"));
+        fails_here!(let _ = client.at("/api").method("GET", "reports"));
+        fails_here!(let _ = client.view().method("post", "/"));
+    }
+
+    #[test]
     fn a_request_given_what_http_cannot_carry_points_at_its_caller() {
         let client = client();
         fails_here!(let _ = client.get("/").header("a b", "x"));
@@ -2193,6 +2452,7 @@ mod connected {
         let peer = address("192.0.2.7:80");
         fails_here!(let _ = TestClient::connect(&running).with_peer(peer));
         fails_here!(let _ = TestClient::connect(&running).get("/").peer(peer));
+        fails_here!(let _ = TestClient::connect(&running).view().peer(peer));
         fails_here!(let _ = TestClient::connect(&running).with_request_body_idle_timeout(None));
     }
 

@@ -13,6 +13,7 @@ mod conformance;
 pub mod cookie;
 #[cfg(feature = "multipart")]
 pub mod multipart;
+pub mod view;
 
 #[cfg(test)]
 mod tests;
@@ -486,16 +487,68 @@ impl<C> TestClient<C> {
     }
 
     fn request(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
+        self.begin(method, path.to_owned(), self.headers.clone(), self.peer)
+    }
+
+    /// Begins a request to `target`, starting from `headers` and `peer`.
+    fn begin(
+        &self,
+        method: HttpMethod,
+        target: String,
+        headers: HeaderMap,
+        peer: Option<std::net::SocketAddr>,
+    ) -> TestRequest<'_, C> {
         TestRequest {
             client: self,
             method,
-            path: path.to_owned(),
-            headers: self.headers.clone(),
+            path: target,
+            headers,
             body: RequestBody::Whole(Bytes::new()),
             content_length: None,
-            peer: self.peer,
+            peer,
             cookies: Vec::new(),
         }
+    }
+
+    /// Begins a [`ClientView`](view::ClientView) of this client: requests
+    /// sent through it reach this client's transport and records, under the
+    /// defaults the view adds to this client's own.
+    ///
+    /// For what a client cannot be given as it is built: a credential a
+    /// login request through it mints, or two users' credentials
+    /// interleaved in one test.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// let token = client.post("/login").send().await.text().to_owned();
+    /// let user = client.view().bearer(&token);
+    /// user.get("/me").send().await.assert_status(200);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn view(&self) -> view::ClientView<'_, C> {
+        view::ClientView::of(self)
+    }
+
+    /// Begins a [`ClientView`](view::ClientView) of this client mounted at
+    /// `prefix`, as [`view().at(prefix)`](view::ClientView::at) does, so a
+    /// suite names its API's mount prefix once.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// let api = client.at("/api/v1");
+    /// // Requests `/api/v1/reports`.
+    /// api.get("/reports").send().await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`ClientView::at`](view::ClientView::at) does.
+    #[must_use]
+    #[track_caller]
+    pub fn at(&self, prefix: &str) -> view::ClientView<'_, C> {
+        self.view().at(prefix)
     }
 
     /// Records one exchange as its head arrived, into the shared coverage
@@ -1511,8 +1564,10 @@ pub struct TestRequest<'a, C> {
 impl<'a, C> TestRequest<'a, C> {
     /// Sets a header.
     ///
-    /// A bearer token is [`bearer`](Self::bearer), and a header every
-    /// request carries is [`TestClient::with_default_header`].
+    /// A bearer token is [`bearer`](Self::bearer), a header every
+    /// request carries is [`TestClient::with_default_header`], and one every
+    /// request a view begins carries is
+    /// [`ClientView::header`](view::ClientView::header).
     ///
     /// # Panics
     ///
