@@ -2616,6 +2616,112 @@ fn a_held_auth_rejection_keeps_the_scope_sets_narrowed_403() {
     );
 }
 
+/// A bearer token whose authenticator never refuses a valid one.
+#[derive(kynos::SecurityScheme)]
+#[security(bearer, credential = Claims, forbids = false)]
+struct Probe;
+
+/// Fails `Probe`, and `StoredProbe` below, with `TokenError`; never reached.
+struct Probes;
+
+impl<C: Sync> kynos::security::Authenticator<Probe, C> for Probes {
+    type Error = TokenError;
+
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::presented::Presented<
+            kynos::security::carrier::BearerToken,
+        >,
+        head: kynos::security::Head<'_>,
+        context: &C,
+    ) -> Result<Claims, TokenError> {
+        let _ = (presented, head, context);
+        Err(TokenError::Unreadable)
+    }
+}
+
+/// The context `Probes` authenticates in.
+struct Probed;
+
+impl kynos::security::Authenticates<Probe> for Probed {
+    type Authenticator = Probes;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Probes
+    }
+}
+
+#[kynos::get("/probe")]
+async fn probe(caller: kynos::security::auth::Auth<Probe>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// `TokenError` returned by a handler no guard precedes.
+#[kynos::get("/probe/unguarded")]
+async fn unguarded_probe() -> Result<NoContent, TokenError> {
+    Err(TokenError::Unreadable)
+}
+
+/// The statuses `path` declares.
+fn statuses(document: &Document, path: &str) -> BTreeSet<String> {
+    operation(document, path)
+        .responses
+        .responses
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// A held `AuthRejection` under a guard whose schemes never forbid declares
+/// what the guard does, which has no 403, beside the error's own 500; and no
+/// 503, since no scheme opted in to one.
+///
+/// Its own `Responses` would declare the wide 403, so a 403 here is the hold
+/// losing to it.
+#[test]
+fn a_held_auth_rejection_declares_no_403_where_no_scheme_forbids() {
+    let document = Router::<Probed>::new()
+        .mount(kynos::routes![probe])
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(statuses(&document, "/probe"), paths(&["204", "401", "500"]));
+}
+
+/// The narrowing is the guard's alone: in the router that holds it, the same
+/// error returned by a handler declares its own wide 403 again, whichever
+/// operation is described first, and the guarded one still declares none.
+///
+/// The guard sets the hold while it describes its error and restores it after,
+/// so the unguarded operation described after it must find none left; one
+/// described before it must not leak its wide 403 into the guard. Both orders
+/// emit the same document.
+#[test]
+fn a_held_auth_rejection_returned_by_a_handler_declares_the_wide_403_beside_a_guard() {
+    let guard_first = Router::<Probed>::new()
+        .mount(kynos::routes![probe, unguarded_probe])
+        .openapi()
+        .expect("a describable router");
+    let handler_first = Router::<Probed>::new()
+        .mount(kynos::routes![unguarded_probe, probe])
+        .openapi()
+        .expect("a describable router");
+
+    for document in [&guard_first, &handler_first] {
+        assert_eq!(statuses(document, "/probe"), paths(&["204", "401", "500"]));
+        assert_eq!(
+            statuses(document, "/probe/unguarded"),
+            paths(&["204", "401", "403", "500"])
+        );
+        assert_eq!(
+            declared_problem_schema(document, "/probe/unguarded", "403"),
+            serde_json::json!({ "$ref": "#/components/schemas/Problem" })
+        );
+    }
+    assert_eq!(guard_first, handler_first);
+}
+
 // --- Scope in what an unreachable store publishes ---------------------------
 //
 // `AuthRejection::unavailable` answers 503 where a credential store cannot be
@@ -2688,6 +2794,79 @@ fn only_a_scheme_that_may_be_unavailable_declares_a_503() {
     let bearer = operation(&document, "/me");
     assert!(!bearer.responses.responses.contains_key("503"));
     assert!(bearer.responses.responses.contains_key("401"));
+}
+
+/// A key whose store can be down, and whose authenticator never refuses a
+/// valid one.
+#[derive(kynos::SecurityScheme)]
+#[security(
+    api_key(in = "header", name = "x-probe-key"),
+    credential = Claims,
+    forbids = false,
+    unavailable
+)]
+struct StoredProbe;
+
+impl<C: Sync> kynos::security::Authenticator<StoredProbe, C> for Probes {
+    type Error = TokenError;
+
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::presented::Presented<kynos::security::carrier::ApiKey>,
+        head: kynos::security::Head<'_>,
+        context: &C,
+    ) -> Result<Claims, TokenError> {
+        let _ = (presented, head, context);
+        Err(kynos::error::rejection::AuthRejection::unavailable::<StoredProbe>().into())
+    }
+}
+
+impl kynos::security::Authenticates<StoredProbe> for Probed {
+    type Authenticator = Probes;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Probes
+    }
+}
+
+#[kynos::get("/probe/stored")]
+async fn stored_probe(caller: kynos::security::auth::Auth<StoredProbe>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+#[kynos::get("/probe/either")]
+async fn either_probe(
+    caller: kynos::security::auth::Auth<kynos::security::requirement::AnyOf<(Probe, StoredProbe)>>,
+) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// A held `AuthRejection` declares the 503 only under a guard naming a scheme
+/// that opted in, as the `about:blank` problem `Problem::new` writes, and still
+/// no 403 where none of its schemes forbids; the guard beside it naming only
+/// `Probe` declares neither.
+#[test]
+fn a_held_auth_rejection_declares_a_503_only_where_a_scheme_may_be_unavailable() {
+    let document = Router::<Probed>::new()
+        .mount(kynos::routes![probe, stored_probe, either_probe])
+        .openapi()
+        .expect("a describable router");
+
+    for path in ["/probe/stored", "/probe/either"] {
+        assert_eq!(
+            statuses(&document, path),
+            paths(&["204", "401", "500", "503"]),
+            "{path}"
+        );
+        assert_eq!(
+            published(&declared_problem_schema(&document, path, "503")),
+            vec!["about:blank".to_owned()],
+            "{path}"
+        );
+    }
+    assert_eq!(statuses(&document, "/probe"), paths(&["204", "401", "500"]));
 }
 
 // --- What `deny_unchecked_schemas` reaches ----------------------------------
