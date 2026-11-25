@@ -25,7 +25,7 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 use kynos_openapi::{
-    Document, Method, OperationAt,
+    Document, Method, OperationAt, StatusPattern,
     model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
 };
 use serde_json::{Map, Value};
@@ -186,6 +186,26 @@ impl<C> TestClient<C> {
             IdleTimeout::Default if stalled => Some(STALLED_BODY_IDLE_TIMEOUT),
             IdleTimeout::Default => Some(crate::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
         }
+    }
+
+    /// The description the answering service serves, which this client's
+    /// own assertions read: the document to give a [`Coverage`] assertion
+    /// without building the router a second time.
+    ///
+    /// ```
+    /// use kynos::{Router, test::{Coverage, TestClient}};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let coverage = Coverage::new();
+    /// let client = TestClient::new(Router::<()>::new().build(())?).with_coverage(&coverage);
+    /// // ... exercise the client, then:
+    /// coverage.assert_declared_responses_covered(client.openapi());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn openapi(&self) -> &Document {
+        self.service().openapi()
     }
 
     /// The service that answers, whose description assertions read.
@@ -535,7 +555,7 @@ impl<C> TestClient<C> {
     /// Panics listing every response that did not conform.
     #[track_caller]
     pub fn assert_conformance(&self) {
-        assert_conforms(self.service().openapi(), self.recorded().iter());
+        assert_conforms(self.openapi(), self.recorded().iter());
     }
 
     /// Asserts that every declared response was exercised at least once.
@@ -551,11 +571,12 @@ impl<C> TestClient<C> {
     pub fn assert_declared_responses_covered(&self) {
         let recorded = self.recorded();
         assert_covered(
-            self.service().openapi(),
+            self.openapi(),
             |_| true,
             recorded
                 .iter()
                 .map(|record| (&record.method, &record.uri, record.status)),
+            &[],
         );
     }
 }
@@ -978,7 +999,10 @@ impl Coverage {
     /// A 403 no test can provoke, from a scheme whose credential grants
     /// nothing beyond itself, is not declared once the scheme says so with
     /// [`FORBIDS`](crate::security::SecurityScheme::FORBIDS)
-    /// (`#[security(forbids = false)]`), so it needs no exchange here.
+    /// (`#[security(forbids = false)]`), so it needs no exchange here. One
+    /// that is declared and still unreachable, such as the 500 only a
+    /// recovered panic answers with, is named in an [`Exemptions`] given to
+    /// [`assert_declared_responses_covered_except`](Self::assert_declared_responses_covered_except).
     ///
     /// # Panics
     ///
@@ -1072,6 +1096,67 @@ impl Coverage {
         );
     }
 
+    /// Asserts that every response `document` declares was exercised by at
+    /// least one client recording here, except the ones `exempt` names, as
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// does for all of them.
+    ///
+    /// For a response no test can honestly produce, such as the 500 only a
+    /// recovered panic answers with. Each exemption is checked too, so none
+    /// outlives its reason: one naming a response `document` does not
+    /// declare, or one a client exercised after all, fails the assertion.
+    ///
+    /// ```
+    /// use kynos::test::{Coverage, Exemptions, TestClient};
+    ///
+    /// fn assert_suite_covered<C>(coverage: &Coverage, client: &TestClient<C>) {
+    ///     coverage.assert_declared_responses_covered_except(
+    ///         client.openapi(),
+    ///         &Exemptions::new().except("GET", "/health", 500, "only a panic answers 500"),
+    ///     );
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics listing every declared response that was neither seen nor
+    /// exempted, every exemption naming a response `document` does not
+    /// declare, and every exemption of a response that was seen.
+    #[track_caller]
+    pub fn assert_declared_responses_covered_except(
+        &self,
+        document: &Document,
+        exempt: &Exemptions,
+    ) {
+        let exchanges = self.exchanges();
+        assert_covered(
+            document,
+            |_| true,
+            exchanges.iter().map(Exchange::matched),
+            &exempt.entries,
+        );
+    }
+
+    /// Asserts that every response the document given to
+    /// [`for_document`](Self::for_document) declares was exercised by at
+    /// least one client recording here, except the ones `exempt` names, as
+    /// [`assert_declared_responses_covered_except`](Self::assert_declared_responses_covered_except)
+    /// does for an explicit document.
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), and otherwise as
+    /// [`assert_declared_responses_covered_except`](Self::assert_declared_responses_covered_except)
+    /// does.
+    #[track_caller]
+    pub fn assert_covered_except(&self, exempt: &Exemptions) {
+        self.assert_declared_responses_covered_except(
+            self.bound("assert_declared_responses_covered_except"),
+            exempt,
+        );
+    }
+
     /// The document this record was built for, or a panic naming `explicit`,
     /// the assertion that takes one instead.
     #[track_caller]
@@ -1091,7 +1176,7 @@ impl Coverage {
     #[track_caller]
     fn assert_against(&self, document: &Document, keep: impl Fn(&OperationAt<'_>) -> bool) {
         let exchanges = self.exchanges();
-        assert_covered(document, keep, exchanges.iter().map(Exchange::matched));
+        assert_covered(document, keep, exchanges.iter().map(Exchange::matched), &[]);
     }
 
     /// Reads back what has been recorded so far.
@@ -1100,6 +1185,111 @@ impl Coverage {
         self.exchanges
             .lock()
             .expect("a coverage record whose recorder panicked cannot be asserted on")
+    }
+}
+
+/// Declared responses a coverage assertion leaves out, each with the reason
+/// no test produces it, for
+/// [`Coverage::assert_declared_responses_covered_except`] and
+/// [`Coverage::assert_covered_except`].
+///
+/// Each entry names one response as the description declares it: the
+/// operation's method, its path template exactly as it appears under
+/// `paths`, such as `/users/{id}` rather than a request target, and the
+/// response's key. The assertion refuses an entry that names no declared
+/// response, and one whose response a test exercised after all, so the list
+/// cannot outlive what it records.
+///
+/// ```
+/// use kynos::{http::StatusCode, openapi::StatusPattern, test::Exemptions};
+///
+/// let exempt = Exemptions::new()
+///     .except("GET", "/health", 500, "only a recovered panic answers 500")
+///     .except("GET", "/ready", StatusCode::SERVICE_UNAVAILABLE, "the store never fails in a test")
+///     .except("POST", "/users", StatusPattern::ServerError, "nothing upstream fails in a test")
+///     .except("DELETE", "/users/{id}", "default", "a catch-all no handler returns");
+/// # let _ = exempt;
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct Exemptions {
+    entries: Vec<Exemption>,
+}
+
+impl Exemptions {
+    /// A list exempting nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Exempts the response `status` that `method` at `path` declares,
+    /// because of `reason`.
+    ///
+    /// `path` is the template as the description declares it, and `status`
+    /// the response's key: a [`StatusCode`] or its number for an exact key,
+    /// a [`StatusPattern`] for a range, or the key's text, which is how
+    /// `default` is written. `reason` is shown beside the exemption
+    /// wherever an assertion reports it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `method` or `status` names no method or response key, as
+    /// [`IntoMethod`] and [`IntoResponseKey`] say, when `reason` is blank,
+    /// and when the same response is exempted twice.
+    #[must_use]
+    #[track_caller]
+    pub fn except(
+        mut self,
+        method: impl IntoMethod,
+        path: &str,
+        status: impl IntoResponseKey,
+        reason: &str,
+    ) -> Self {
+        let method = method.into_method();
+        let key = status.into_response_key();
+        assert!(
+            !reason.trim().is_empty(),
+            "the exemption of `{method} {path} -> {key}` gives no reason; say why no test \
+             produces it"
+        );
+        assert!(
+            !self
+                .entries
+                .iter()
+                .any(|entry| entry.method == method && entry.template == path && entry.key == key),
+            "`{method} {path} -> {key}` is exempted twice"
+        );
+        self.entries.push(Exemption {
+            method,
+            template: path.to_owned(),
+            key,
+            reason: reason.to_owned(),
+        });
+        self
+    }
+}
+
+/// One response an [`Exemptions`] leaves out.
+#[derive(Clone, Debug)]
+struct Exemption {
+    method: HttpMethod,
+    template: String,
+    key: String,
+    reason: String,
+}
+
+impl Exemption {
+    /// Whether this names the response `key` of `method` at `template`.
+    fn names(&self, template: &str, method: Method, key: &str) -> bool {
+        self.template == template && self.method.as_str() == method.as_wire_str() && self.key == key
+    }
+
+    /// The exemption as a failure lists it.
+    fn line(&self) -> String {
+        format!(
+            "  {} {} -> {} ({})",
+            self.method, self.template, self.key, self.reason
+        )
     }
 }
 
@@ -1185,12 +1375,14 @@ fn routed(document: &Document) -> impl Iterator<Item = (&str, Method, OperationA
 }
 
 /// Asserts that every response the operations of `document` that `keep`
-/// selects declare is among `received`.
+/// selects declare is among `received` or `exempt`, and that each of `exempt`
+/// names a declared response none of `received` is.
 #[track_caller]
 fn assert_covered<'r>(
     document: &Document,
     keep: impl Fn(&OperationAt<'_>) -> bool,
     received: impl Iterator<Item = (&'r HttpMethod, &'r Uri, StatusCode)>,
+    exempt: &[Exemption],
 ) {
     let exercised: BTreeSet<(&str, Method, String)> = received
         .filter_map(|(method, uri, status)| {
@@ -1203,20 +1395,101 @@ fn assert_covered<'r>(
         .collect();
 
     let mut missing = Vec::new();
+    let mut declared = vec![false; exempt.len()];
+    let mut seen = Vec::new();
     for (template, method, at) in routed(document).filter(|(_, _, at)| keep(at)) {
         for key in declared_keys(&at.operation.responses) {
-            if !exercised.contains(&(template, method, key.clone())) {
-                missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
+            let exercised = exercised.contains(&(template, method, key.clone()));
+            match exempt
+                .iter()
+                .position(|entry| entry.names(template, method, &key))
+            {
+                Some(index) => {
+                    declared[index] = true;
+                    if exercised {
+                        seen.push(exempt[index].line());
+                    }
+                }
+                None if !exercised => {
+                    missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
+                }
+                None => {}
             }
         }
     }
+    let stale: Vec<String> = exempt
+        .iter()
+        .zip(declared)
+        .filter(|(_, declared)| !declared)
+        .map(|(entry, _)| format!("{}: {}", entry.line(), undeclared(document, entry)))
+        .collect();
 
-    assert!(
-        missing.is_empty(),
-        "{} declared but never exercised:\n{}",
-        responses(missing.len()),
-        missing.join("\n")
-    );
+    let mut failures = Vec::new();
+    if !missing.is_empty() {
+        failures.push(format!(
+            "{} declared but never exercised:\n{}",
+            responses(missing.len()),
+            missing.join("\n")
+        ));
+    }
+    if !stale.is_empty() {
+        failures.push(format!(
+            "{} no declared response:\n{}",
+            exemptions_naming(stale.len()),
+            stale.join("\n")
+        ));
+    }
+    if !seen.is_empty() {
+        failures.push(format!(
+            "{} a response a test exercised, which needs no exemption:\n{}",
+            exemptions_naming(seen.len()),
+            seen.join("\n")
+        ));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Why `entry` names no response `document` declares.
+fn undeclared(document: &Document, entry: &Exemption) -> String {
+    let Some(item) = document.paths.items.get(&entry.template) else {
+        let target = entry.template.parse::<Uri>().ok();
+        return match target
+            .as_ref()
+            .and_then(|uri| matched_template(document, uri))
+        {
+            Some(template) => format!(
+                "`{}` is a request target; name the template it matches, `{template}`",
+                entry.template
+            ),
+            None => format!("no path `{}` is declared", entry.template),
+        };
+    };
+    let Some(operation) =
+        Method::from_wire_str(entry.method.as_str()).and_then(|method| item.operation(method))
+    else {
+        return format!(
+            "`{}` declares no `{}` operation",
+            entry.template, entry.method
+        );
+    };
+    let keys: Vec<String> = declared_keys(&operation.responses)
+        .iter()
+        .map(|key| format!("`{key}`"))
+        .collect();
+    format!(
+        "the operation declares no `{}` response, only {}",
+        entry.key,
+        keys.join(", ")
+    )
+}
+
+/// `count` exemptions, and the verb agreeing with them.
+fn exemptions_naming(count: usize) -> String {
+    if count == 1 {
+        "1 exemption names".to_owned()
+    } else {
+        format!("{count} exemptions name")
+    }
 }
 
 /// A request under construction.
@@ -2641,6 +2914,71 @@ mod sealed {
 
     /// What closes [`IntoMethod`](super::IntoMethod) to the types here.
     pub trait SealedMethod {}
+
+    /// What closes [`IntoResponseKey`](super::IntoResponseKey) to the types
+    /// here.
+    pub trait SealedKey {}
+}
+
+/// A response key an [`Exemptions`] entry names: a [`StatusCode`] or its
+/// number for an exact key such as `500`, a [`StatusPattern`] for a range,
+/// or the key as a description writes it, `5XX` and `default` included.
+///
+/// Sealed: implemented for `StatusCode`, `u16`, `StatusPattern` and `&str`.
+pub trait IntoResponseKey: sealed::SealedKey {
+    /// The key as a `Responses` object writes it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a status is not 100 to 599, and when text is neither such
+    /// a status in three digits, a range from `1XX` to `5XX`, nor `default`.
+    fn into_response_key(self) -> String;
+}
+
+impl sealed::SealedKey for StatusCode {}
+impl sealed::SealedKey for u16 {}
+impl sealed::SealedKey for StatusPattern {}
+impl sealed::SealedKey for &str {}
+
+impl IntoResponseKey for StatusCode {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        self.as_u16().into_response_key()
+    }
+}
+
+impl IntoResponseKey for u16 {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        assert!(
+            (100..600).contains(&self),
+            "`{self}` is no response key, which is a status from 100 to 599"
+        );
+        StatusPattern::Code(self).to_string()
+    }
+}
+
+impl IntoResponseKey for StatusPattern {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        match self {
+            Self::Code(code) => code.into_response_key(),
+            range => range.to_string(),
+        }
+    }
+}
+
+impl IntoResponseKey for &str {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        assert!(
+            self == "default" || self.parse::<StatusPattern>().is_ok(),
+            "`{}` is no response key: write a status such as `500`, a range from `1XX` \
+             to `5XX`, or `default`",
+            self.escape_debug()
+        );
+        self.to_owned()
+    }
 }
 
 /// A method [`TestClient::method`] sends: a [`Method`](crate::http::Method),

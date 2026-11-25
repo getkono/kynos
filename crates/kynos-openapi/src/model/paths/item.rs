@@ -17,7 +17,8 @@ use crate::Map;
 /// The operations available on a single path.
 ///
 /// The per-method slots are boxed to keep the type small; use
-/// [`operation`](PathItem::operation) and
+/// [`operation`](PathItem::operation),
+/// [`operation_mut`](PathItem::operation_mut) and
 /// [`set_operation`](PathItem::set_operation) to avoid handling the boxes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PathItem {
@@ -126,9 +127,23 @@ impl PathItem {
         }
     }
 
+    /// Returns the operation for a method mutably, if declared, so one
+    /// operation is edited in place without handling its box.
+    #[must_use]
+    pub fn operation_mut(&mut self, method: Method) -> Option<&mut Operation> {
+        self.slot_mut(method).as_deref_mut()
+    }
+
     /// Sets the operation for a method, returning any operation it replaced.
     pub fn set_operation(&mut self, method: Method, operation: Operation) -> Option<Operation> {
-        let slot = match method {
+        self.slot_mut(method)
+            .replace(Box::new(operation))
+            .map(|boxed| *boxed)
+    }
+
+    /// The field holding a method's operation.
+    fn slot_mut(&mut self, method: Method) -> &mut Option<Box<Operation>> {
+        match method {
             Method::Get => &mut self.get,
             Method::Put => &mut self.put,
             Method::Post => &mut self.post,
@@ -139,8 +154,7 @@ impl PathItem {
             Method::Trace => &mut self.trace,
             #[cfg(feature = "openapi32")]
             Method::Query => &mut self.query,
-        };
-        slot.replace(Box::new(operation)).map(|boxed| *boxed)
+        }
     }
 
     /// Iterates over the declared fixed-method operations and their methods,
