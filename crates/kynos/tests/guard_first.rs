@@ -477,6 +477,34 @@ async fn a_guard_run_first_keeps_its_point_beside_an_interceptor_left_out() {
     assert_eq!(gate.checks(), 2);
 }
 
+/// A guard run first reads the head alone, so one covering only bodies
+/// mounted above it still leaves an operation reading none: the guard is
+/// checked, and the interceptor above it never runs.
+#[tokio::test]
+async fn a_guard_run_first_reads_no_body_for_an_interceptor_above_it() {
+    let gate = Gate::default();
+    let service = Router::new()
+        .group(
+            Group::new("/api")
+                .intercept(BodyWitness("body"))
+                .guard_first()
+                .mount(kynos::routes![mine]),
+        )
+        .build(gate.clone())
+        .expect("a describable router");
+
+    let admitted = get(&service, "/api/mine")
+        .header("x-api-key", "k_ok")
+        .header("content-length", "4")
+        .body("left")
+        .call()
+        .await;
+
+    assert_eq!(admitted.status, StatusCode::NO_CONTENT);
+    assert_eq!(gate.checks(), 1);
+    assert!(gate.passed().is_empty(), "{:?}", gate.passed());
+}
+
 // --- Scopes, nested --------------------------------------------------------
 
 /// `Router::guard_first` covers a group's operations, and outranks the
