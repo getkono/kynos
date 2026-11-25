@@ -257,6 +257,18 @@ set on the root router: on an absorbed one it is a
 `RouterError::NestedRouterPolicy` violation, like the policies
 [below](#application-level-policies).
 
+Edits read every response inline. A response two or more operations declare
+under the same status key, byte for byte, is moved under
+`components/responses` and `$ref`ed from each only after the last edit and
+after the description is validated, so an edit changing it at one operation
+leaves it unshared there rather than changing it everywhere, a violation the
+edit wrote into it is reported at each operation it wrote it at, and a
+response component the edit declares is never
+overwritten: a minted name passes over it, and over any name a response `$ref`
+already gives, and a response with exactly its bytes refers to it.
+[`schema.md`](schema.md#the-order-components-are-emitted-in) says how the
+minted names are chosen.
+
 No marker records that a document was mapped. The edit is the application's own
 declaration, checked like the rest of the document, which `Opaque` marks are
 not: they record what Kynos cannot check.
