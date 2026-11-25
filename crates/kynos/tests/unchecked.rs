@@ -420,6 +420,29 @@ fn a_gate_can_tolerate_one_waiver_and_still_catch_the_rest() {
     );
 }
 
+/// Sealing a router keeps the gate: a function returning `Sealed` reports what
+/// the router it sealed would, at either panic policy.
+#[test]
+fn a_sealed_router_reports_the_waivers_it_was_given() {
+    let waived = || with_catch_all().upgrade_unchecked("/ws", echo_path);
+    let expected = [
+        kynos::openapi::OpaqueReason::UntypedRoute,
+        kynos::openapi::OpaqueReason::ProtocolUpgrade,
+    ];
+
+    let propagating = waived().seal();
+    assert!(propagating.has_unchecked());
+    assert_eq!(propagating.unchecked_reasons(), expected);
+
+    let catching = waived().catch_panics().seal();
+    assert!(catching.has_unchecked());
+    assert_eq!(catching.unchecked_reasons(), expected);
+
+    let clean = Router::<()>::new().catch_panics().seal();
+    assert!(!clean.has_unchecked());
+    assert!(clean.unchecked_reasons().is_empty());
+}
+
 /// Two routes waived for one reason report it once.
 #[test]
 fn one_reason_is_reported_once_however_many_routes_took_it() {

@@ -9188,6 +9188,9 @@ pub fn kynos::router::sealed::Sealed<C>::build(self, C) -> kynos::error::Result<
 pub fn kynos::router::sealed::Sealed<C>::openapi(&self) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::sealed::Sealed<C>::openapi_as(&self, kynos_openapi::model::document::SpecVersion) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::sealed::Sealed<C>::validate(&self) -> kynos::error::Result<alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>> where C: 'static
+impl<C> kynos::router::sealed::Sealed<C>
+pub fn kynos::router::sealed::Sealed<C>::has_unchecked(&self) -> bool
+pub fn kynos::router::sealed::Sealed<C>::unchecked_reasons(&self) -> alloc::vec::Vec<kynos_openapi::annotation::OpaqueReason>
 impl<C> core::fmt::Debug for kynos::router::sealed::Sealed<C>
 pub fn kynos::router::sealed::Sealed<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<C> core::marker::Freeze for kynos::router::sealed::Sealed<C>

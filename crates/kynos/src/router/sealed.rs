@@ -142,6 +142,28 @@ impl<C> Sealed<C> {
     }
 }
 
+#[cfg(feature = "unchecked")]
+impl<C> Sealed<C> {
+    /// [`Router::has_unchecked`] on the router this sealed: the gate a CI job
+    /// asserts on survives sealing.
+    #[must_use]
+    pub fn has_unchecked(&self) -> bool {
+        match &self.router {
+            Erased::Propagate(router) => router.has_unchecked(),
+            Erased::Catch(router) => router.has_unchecked(),
+        }
+    }
+
+    /// [`Router::unchecked_reasons`] on the router this sealed.
+    #[must_use]
+    pub fn unchecked_reasons(&self) -> Vec<kynos_openapi::OpaqueReason> {
+        match &self.router {
+            Erased::Propagate(router) => router.unchecked_reasons(),
+            Erased::Catch(router) => router.unchecked_reasons(),
+        }
+    }
+}
+
 impl<C> std::fmt::Debug for Sealed<C> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let (router, catches): (&dyn std::fmt::Debug, bool) = match &self.router {
