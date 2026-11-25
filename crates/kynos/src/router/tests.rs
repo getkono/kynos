@@ -8,8 +8,8 @@
 //! `deny_unchecked_schemas` refuses the whole build.
 //!
 //! Below those, what a router makes of a malformed mount site, the
-//! `operationId`s a mounted reference publishes, and what a `map_openapi` edit
-//! reaches and may not change.
+//! `operationId`s a mounted reference publishes, what a `map_openapi` edit
+//! reaches and may not change, and which responses the document shares.
 
 use std::sync::{Arc, Mutex};
 
@@ -1191,5 +1191,425 @@ mod router_errors {
         .collect();
 
         assert_eq!(covered, declared);
+    }
+}
+
+/// Which responses the document names once under `components/responses`,
+/// under what name, and what it leaves inline.
+mod shared_responses {
+    use kynos_openapi::{Document, Header, Method, Ref, RefOr, Response, Schema};
+
+    use super::{Router, RouterError, handled};
+    use crate::router::endpoint::builder::EndpointBuilder;
+
+    /// A `GET` on each of `paths`, in that order.
+    fn router(paths: &[&'static str]) -> Router<()> {
+        paths.iter().fold(Router::<()>::new(), |router, &path| {
+            router.mount(EndpointBuilder::<(), _, _>::new(
+                Method::Get,
+                kynos_openapi::PathTemplate::parse(path).expect("a usable path template"),
+                handled,
+            ))
+        })
+    }
+
+    /// Declares `response` at `key` on the `GET` at each of `paths`.
+    fn declare(document: &mut Document, paths: &[&str], key: &str, response: &Response) {
+        for path in paths {
+            let operation = document.paths.items[*path]
+                .operation_mut(Method::Get)
+                .expect("a mounted GET");
+            let entry = RefOr::Item(response.clone());
+            if key == "default" {
+                operation.responses.default_response = Some(entry);
+            } else {
+                operation.responses.responses.insert(key.to_owned(), entry);
+            }
+        }
+    }
+
+    /// The entry the `GET` at `path` declares at `key`.
+    fn entry<'d>(document: &'d Document, path: &str, key: &str) -> &'d RefOr<Response> {
+        let responses = &document.paths.items[path]
+            .operation(Method::Get)
+            .expect("a mounted GET")
+            .responses;
+        if key == "default" {
+            responses.default_response.as_ref()
+        } else {
+            responses.responses.get(key)
+        }
+        .expect("a declared response")
+    }
+
+    fn reference(name: &str) -> RefOr<Response> {
+        RefOr::Ref(Ref::response(name))
+    }
+
+    fn component<'d>(document: &'d Document, name: &str) -> &'d Response {
+        let shared = &document.components.responses;
+        shared
+            .get(name)
+            .unwrap_or_else(|| panic!("no {name} among {:?}", shared.keys()))
+            .as_item()
+            .expect("an inline component")
+    }
+
+    /// The `204` every mounted operation answers, given its own name, and
+    /// referred to from each; once, it stays where it is.
+    #[test]
+    fn a_response_two_operations_declare_alike_is_named_once() {
+        let alone = router(&["/a"]).openapi().expect("describes");
+        let RefOr::Item(answered) = entry(&alone, "/a", "204") else {
+            panic!("a response one operation declares stays inline");
+        };
+        assert!(alone.components.responses.is_empty());
+
+        let shared = router(&["/a", "/b"]).openapi().expect("describes");
+
+        assert_eq!(component(&shared, "Status204"), answered);
+        for path in ["/a", "/b"] {
+            assert_eq!(
+                entry(&shared, path, "204"),
+                &reference("Status204"),
+                "{path}"
+            );
+        }
+    }
+
+    /// Every way two responses can differ keeps them apart. Responses
+    /// deriving one name each take the fingerprint of their own bytes, never
+    /// a position, so the names are the same in whatever order the
+    /// operations were mounted.
+    #[test]
+    fn responses_differing_anywhere_stay_apart_fingerprinted_by_their_bytes() {
+        let headed = || {
+            Response::new("first").with_header(
+                "Retry-After",
+                Header::new(Schema::of_type(kynos_openapi::SchemaType::Integer)),
+            )
+        };
+
+        for paths in [
+            ["/a", "/b", "/c", "/d", "/e", "/f", "/g"],
+            ["/g", "/f", "/e", "/d", "/c", "/b", "/a"],
+        ] {
+            let document = router(&paths)
+                .map_openapi(move |document| {
+                    declare(document, &["/a", "/b"], "500", &Response::new("second"));
+                    declare(document, &["/c", "/d"], "500", &Response::new("first"));
+                    declare(document, &["/e", "/f"], "500", &headed());
+                    declare(document, &["/g"], "500", &Response::new("once"));
+                })
+                .openapi()
+                .expect("describes");
+
+            // Literal, so a fingerprint that changed between builds fails here.
+            for (path, name, response) in [
+                ("/e", "Status500_7bba268f", headed()),
+                ("/c", "Status500_001d428d", Response::new("first")),
+                ("/a", "Status500_444ab20c", Response::new("second")),
+            ] {
+                assert_eq!(component(&document, name), &response, "{path}");
+                assert_eq!(entry(&document, path, "500"), &reference(name), "{path}");
+            }
+            assert!(!document.components.responses.contains_key("Status500"));
+            assert_eq!(
+                entry(&document, "/g", "500").as_item(),
+                Some(&Response::new("once"))
+            );
+        }
+    }
+
+    /// A response deserialized from `json`.
+    fn parsed(json: serde_json::Value) -> Response {
+        serde_json::from_value(json).expect("a response")
+    }
+
+    /// A problem response narrowed to `types`, each branch extending the
+    /// `Problem` component as the derive and the problem policy write it.
+    fn problem(description: &str, types: &[&str]) -> Response {
+        let branch = |ty: &str| {
+            serde_json::json!({"allOf": [
+                {"$ref": "#/components/schemas/Problem"},
+                {"properties": {"type": {"type": "string", "const": ty}}},
+            ]})
+        };
+        let schema = match types {
+            [ty] => branch(ty),
+            types => {
+                serde_json::json!({"oneOf": types.iter().map(|ty| branch(ty)).collect::<Vec<_>>()})
+            }
+        };
+        parsed(serde_json::json!({
+            "description": description,
+            "content": {"application/problem+json": {"schema": schema}},
+        }))
+    }
+
+    /// Shares every response `edit` declares, as the router does once the
+    /// document is validated.
+    fn hoisted(edit: impl FnOnce(&mut Document)) -> Document {
+        let mut document = router(&["/a", "/b", "/c", "/d"])
+            .openapi()
+            .expect("describes");
+        edit(&mut document);
+        crate::router::hoist::shared_responses(&mut document.paths, &mut document.components);
+        document
+    }
+
+    /// A name says what the response carries: the problem type it alone
+    /// publishes, then the schema component its first media type names,
+    /// directly, through `allOf`, or through every branch alike, then the key.
+    #[test]
+    fn a_response_is_named_for_what_it_carries() {
+        let reading = parsed(serde_json::json!({
+            "description": "the reading",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Reading"}}},
+        }));
+        let streamed = parsed(serde_json::json!({
+            "description": "the readings",
+            "content": {"application/x-ndjson": {"itemSchema": {"$ref": "#/components/schemas/Reading"}}},
+        }));
+        let out_of_stock = problem(
+            "out of stock",
+            &["https://errors.example.com/orders/out-of-stock"],
+        );
+        let either = problem(
+            "conflicted",
+            &[
+                "https://errors.example.com/a",
+                "https://errors.example.com/b",
+            ],
+        );
+        let typed = parsed(serde_json::json!({
+            "description": "typed",
+            "content": {"application/json": {"schema": {
+                "allOf": [{"$ref": "#/components/schemas/Order"}],
+                "properties": {"type": {"const": "https://errors.example.com/ignored"}},
+            }}},
+        }));
+        let cases = [
+            ("200", reading, "ReadingStatus200"),
+            ("206", streamed, "ReadingStatus206"),
+            (
+                "500",
+                problem("failed", &["about:blank"]),
+                "ProblemStatus500",
+            ),
+            ("409", out_of_stock, "OutOfStockProblemStatus409"),
+            ("422", either, "ProblemStatus422"),
+            ("202", typed, "OrderStatus202"),
+            ("4XX", Response::new("bare"), "Status4XX"),
+        ];
+
+        let document = hoisted(|document| {
+            for (key, response, _) in &cases {
+                declare(document, &["/a", "/b"], key, response);
+            }
+        });
+
+        for (key, response, name) in &cases {
+            assert_eq!(component(&document, name), response, "{key}");
+            assert_eq!(entry(&document, "/b", key), &reference(name), "{key}");
+        }
+    }
+
+    /// Adding responses never renames a shared one whose name the new ones do
+    /// not also derive: a 500 of another problem type, or the same problem at
+    /// another status, takes a name of its own. Only a second response
+    /// deriving the very same name fingerprints both, which
+    /// `responses_differing_anywhere_stay_apart_fingerprinted_by_their_bytes`
+    /// pins.
+    #[test]
+    fn adding_a_response_leaves_every_existing_name_unchanged() {
+        let failed = problem("failed", &["about:blank"]);
+        let base = |document: &mut Document| {
+            declare(document, &["/a", "/b"], "500", &failed);
+            declare(document, &["/a", "/b"], "404", &Response::new("missing"));
+        };
+        let before = hoisted(base);
+        let names = |document: &Document| -> Vec<String> {
+            document.components.responses.keys().cloned().collect()
+        };
+        // The handler's own 204 was shared when the router described it.
+        assert_eq!(
+            names(&before),
+            ["Status204", "ProblemStatus500", "Status404"]
+        );
+
+        let after = hoisted(|document| {
+            base(document);
+            declare(
+                document,
+                &["/c", "/d"],
+                "500",
+                &problem("exhausted", &["urn:quota"]),
+            );
+            declare(
+                document,
+                &["/c", "/d"],
+                "503",
+                &problem("busy", &["about:blank"]),
+            );
+        });
+        assert_eq!(
+            names(&after),
+            [
+                "Status204",
+                "ProblemStatus500",
+                "ProblemStatus503",
+                "QuotaProblemStatus500",
+                "Status404"
+            ]
+        );
+
+        for name in names(&before) {
+            assert_eq!(
+                after.components.responses[name.as_str()],
+                before.components.responses[name.as_str()],
+                "{name}"
+            );
+        }
+        assert_eq!(entry(&after, "/a", "500"), &reference("ProblemStatus500"));
+    }
+
+    /// A component is named for the key it is declared at, so one response
+    /// declared at two keys is two components, and `default` is `Default`.
+    #[test]
+    fn a_response_is_named_for_its_key() {
+        let denied = Response::new("denied");
+        let document = router(&["/a", "/b"])
+            .map_openapi(move |document| {
+                for key in ["401", "4XX", "default"] {
+                    declare(document, &["/a", "/b"], key, &denied);
+                }
+            })
+            .openapi()
+            .expect("describes");
+
+        for (key, name) in [
+            ("401", "Status401"),
+            ("4XX", "Status4XX"),
+            ("default", "Default"),
+        ] {
+            assert_eq!(entry(&document, "/b", key), &reference(name), "{key}");
+            assert_eq!(component(&document, name), &Response::new("denied"));
+        }
+    }
+
+    /// The application's own components are never overwritten: a name it
+    /// took is passed over, and a component of the same bytes is referred to
+    /// rather than repeated. Its edits read every response inline.
+    #[test]
+    fn the_application_s_components_are_kept_and_reused() {
+        let document = router(&["/a", "/b"])
+            .map_openapi(|document| {
+                for path in ["/a", "/b"] {
+                    assert!(!entry(document, path, "204").is_ref(), "{path}");
+                }
+                let components = &mut document.components.responses;
+                components.insert("Status503".to_owned(), RefOr::Item(Response::new("theirs")));
+                components.insert("Busy".to_owned(), RefOr::Item(Response::new("busy")));
+                declare(document, &["/a", "/b"], "503", &Response::new("ours"));
+                declare(document, &["/a", "/b"], "429", &Response::new("busy"));
+            })
+            .openapi()
+            .expect("describes");
+
+        assert_eq!(component(&document, "Status503"), &Response::new("theirs"));
+        assert_eq!(
+            component(&document, "Status503_cdcea112"),
+            &Response::new("ours")
+        );
+        assert_eq!(
+            entry(&document, "/a", "503"),
+            &reference("Status503_cdcea112")
+        );
+        assert_eq!(entry(&document, "/a", "429"), &reference("Busy"));
+        assert!(!document.components.responses.contains_key("Status429"));
+    }
+
+    /// Where the application took the fingerprinted name too, the response
+    /// is left inline at each operation: sharing is given up, never a name.
+    #[test]
+    fn a_response_whose_every_name_is_taken_stays_inline() {
+        let document = hoisted(|document| {
+            let components = &mut document.components.responses;
+            for name in ["Status503", "Status503_cdcea112"] {
+                components.insert(name.to_owned(), RefOr::Item(Response::new(name)));
+            }
+            declare(document, &["/a", "/b"], "503", &Response::new("ours"));
+        });
+
+        assert_eq!(document.components.responses.len(), 3);
+        for path in ["/a", "/b"] {
+            assert_eq!(
+                entry(&document, path, "503").as_item(),
+                Some(&Response::new("ours")),
+                "{path}"
+            );
+        }
+    }
+
+    /// A violation inside a response several operations declare alike is
+    /// reported at each of them, where it was written, never once at the
+    /// component sharing would have named.
+    #[test]
+    fn a_shared_response_s_violation_is_reported_where_each_operation_wrote_it() {
+        let refused = router(&["/a", "/b"])
+            .map_openapi(|document| {
+                let ignored = Response::new("failed").with_header(
+                    "Content-Type",
+                    Header::new(Schema::of_type(kynos_openapi::SchemaType::String)),
+                );
+                declare(document, &["/a", "/b"], "500", &ignored);
+            })
+            .openapi();
+        let Err(crate::Error::Invalid { violations }) = refused else {
+            panic!("an ignored header is refused");
+        };
+
+        let ignored: Vec<&str> = violations
+            .iter()
+            .filter(|violation| {
+                matches!(
+                    violation.error,
+                    RouterError::Spec(kynos_openapi::SpecError::IgnoredHeader { .. })
+                )
+            })
+            .map(|violation| violation.location.as_str())
+            .collect();
+        assert_eq!(
+            ignored,
+            [
+                "#/paths/~1a/get/responses/500/headers",
+                "#/paths/~1b/get/responses/500/headers"
+            ]
+        );
+    }
+
+    /// A name a `$ref` already gives is passed over even where nothing
+    /// declares it, so a minted component never answers a reference written
+    /// for another.
+    #[test]
+    fn a_name_a_reference_gives_is_never_minted() {
+        let mut document = router(&["/a", "/b"]).openapi().expect("describes");
+        declare(&mut document, &["/a", "/b"], "503", &Response::new("ours"));
+        document.paths.items["/a"]
+            .operation_mut(Method::Get)
+            .expect("a mounted GET")
+            .responses
+            .responses
+            .insert("502".to_owned(), reference("Status503"));
+
+        crate::router::hoist::shared_responses(&mut document.paths, &mut document.components);
+
+        assert!(!document.components.responses.contains_key("Status503"));
+        assert_eq!(
+            component(&document, "Status503_cdcea112"),
+            &Response::new("ours")
+        );
+        assert_eq!(entry(&document, "/a", "502"), &reference("Status503"));
     }
 }

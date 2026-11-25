@@ -15,6 +15,10 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
+#[path = "support/inline.rs"]
+mod inline;
+
+use inline::inlined;
 use support::{get, send};
 
 kynos::assets! {
@@ -714,7 +718,7 @@ fn every_file_is_a_described_operation() {
 /// Each operation declares the five statuses it can produce, and no more.
 #[test]
 fn each_operation_declares_every_status_a_file_can_answer_with() {
-    let document = served().openapi().expect("a describable router");
+    let document = inlined(served().openapi().expect("a describable router"));
     let operation = document.paths.items["/static/css/app.css"]
         .get
         .as_ref()

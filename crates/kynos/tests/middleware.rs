@@ -19,6 +19,10 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
+#[path = "support/inline.rs"]
+mod inline;
+
+use inline::inlined;
 use support::{App, get, send};
 
 /// The one policy both fixtures advertise.
@@ -297,12 +301,12 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
     assert_eq!(reply.status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(reply.json()["type"], URI);
 
-    let declared = serde_json::to_value(
+    let declared = serde_json::to_value(inlined(
         support::router()
             .intercept(RateLimit::new(AlwaysDenies::new()).problem_type::<Throttled>())
             .openapi()
             .expect("a describable router"),
-    )
+    ))
     .expect("a serializable document");
 
     assert_eq!(
@@ -313,12 +317,12 @@ async fn a_named_refusal_type_reaches_the_wire_and_the_document_it_declares() {
 
     // And the untyped limiter narrows to the URI *it* sends, so a service that
     // names nothing still declares what it really carries.
-    let untyped = serde_json::to_value(
+    let untyped = serde_json::to_value(inlined(
         support::router()
             .intercept(RateLimit::new(AlwaysDenies::new()))
             .openapi()
             .expect("a describable router"),
-    )
+    ))
     .expect("a serializable document");
 
     assert_eq!(
@@ -379,7 +383,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
     );
     assert!(reply.field("x-ratelimit-limit").is_none());
 
-    let declared = serde_json::to_value(
+    let declared = serde_json::to_value(inlined(
         support::router()
             .intercept(
                 RateLimit::new(AlwaysDenies::new())
@@ -388,7 +392,7 @@ async fn a_named_refusal_type_survives_taking_the_standard_fields() {
             )
             .openapi()
             .expect("a describable router"),
-    )
+    ))
     .expect("a serializable document");
 
     let operation = &declared["paths"]["/users/{id}"]["get"];
@@ -436,7 +440,8 @@ async fn a_named_cross_site_refusal_publishes_one_type_on_both_halves() {
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
     assert_eq!(reply.json()["type"], URI);
 
-    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+    let declared =
+        serde_json::to_value(inlined(service.openapi().clone())).expect("a serializable document");
     let schema = &declared["paths"]["/users"]["post"]["responses"]["403"]["content"]["application/problem+json"]
         ["schema"];
 
@@ -462,7 +467,8 @@ async fn an_unnamed_cross_site_refusal_publishes_about_blank_on_both_halves() {
 
     assert_eq!(reply.json()["type"], "about:blank");
 
-    let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+    let declared =
+        serde_json::to_value(inlined(service.openapi().clone())).expect("a serializable document");
     let schema = &declared["paths"]["/users"]["post"]["responses"]["403"]["content"]["application/problem+json"]
         ["schema"];
 
@@ -1855,6 +1861,7 @@ mod decompression {
         router::service::Service,
     };
 
+    use super::inlined;
     use super::support::{App, post};
 
     /// Repetitive enough that its ratio is far past anything a real payload
@@ -2249,7 +2256,8 @@ mod decompression {
         // so its 400 and 415 are the union of this interceptor's branch with
         // the extractor's `about:blank` one — which is the union rule working,
         // and would be invisible if each status published one branch.
-        let declared = serde_json::to_value(service.openapi()).expect("a serializable document");
+        let declared = serde_json::to_value(inlined(service.openapi().clone()))
+            .expect("a serializable document");
         let responses = &declared["paths"]["/echo"]["post"]["responses"];
 
         for (status, uri) in [

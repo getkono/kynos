@@ -47,7 +47,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// 3.1 for an API using no 3.2-only construct, and 3.2 for one that does —
     /// a `QUERY` operation, an item stream such as `Sse`, an `in: querystring`
     /// parameter. The `openapi32` feature does not decide it, since Cargo
-    /// unifies features across the dependency graph.
+    /// unifies features across the dependency graph. A response several
+    /// operations declare alike is [shared](Router#responses-operations-share).
     ///
     /// # Errors
     ///
@@ -330,24 +331,22 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         super::map::apply(&self.document_edits, &mut document, &mut violations);
 
         // From what the document uses, never from a (unified) cargo feature.
-        let document = lowest_expressing(&document)?;
+        let mut document = lowest_expressing(&document)?;
 
         // Before validation, which rejects an unstamped opaque document.
         #[cfg(feature = "unchecked")]
-        let document = {
-            let mut document = document;
-            self.unchecked.annotate(&mut document);
-            document
-        };
-
-        let version = document.spec_version().unwrap_or_default();
+        self.unchecked.annotate(&mut document);
 
         violations.extend(
-            kynos_openapi::validate::Validator::new(version)
+            kynos_openapi::validate::Validator::new(document.spec_version().unwrap_or_default())
                 .validate(&document)
                 .into_iter()
                 .map(lift),
         );
+        // After validation, so a violation inside a response several
+        // operations share is reported at each, where it was written; sharing
+        // changes what no operation says, so it adds none.
+        super::hoist::shared_responses(&mut document.paths, &mut document.components);
 
         if self.deny_unchecked_schemas {
             for violation in &mut violations {
