@@ -3432,6 +3432,7 @@ fn lists_member(element: &[u8], member: &[u8], methods: bool) -> bool {
 
 /// Whether `pointer` is an RFC 6901 JSON pointer: empty, or `/`-prefixed
 /// reference tokens in which every `~` opens `~0` or `~1`.
+#[cfg(feature = "json")]
 fn is_json_pointer(pointer: &str) -> bool {
     (pointer.is_empty() || pointer.starts_with('/'))
         && pointer
