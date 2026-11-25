@@ -807,13 +807,25 @@ and the interceptors covering it declared them.
 than declared, and a name has to survive remounting. A response two or more
 operations declare under one status key with the same serialized bytes is
 written there once
-([`router/hoist.rs`](../crates/kynos/src/router/hoist.rs)), named for the key
-alone: `Status404`, `Status4XX`, `Default`. The key, not a Rust type, because
-the type is gone by the time two operations' responses are compared, and not a
-reason phrase, which the `http` crate is free to reword. Two different
-responses at one key are told apart by suffix, `Status400`, `Status400_2`, in
-the order of their bytes, so the names, and the order they are emitted in, are
-the same whatever order the operations were mounted in. Sameness is the bytes,
+([`router/hoist.rs`](../crates/kynos/src/router/hoist.rs)), named for what it
+carries: the one problem type it publishes other than `about:blank`, in
+`PascalCase` from the type URI's last segment, then the schema component its
+first media type names (directly, as an `allOf`'s first `$ref`, or as every
+`oneOf` branch's), then the key: `OutOfStockProblemStatus409`,
+`ProblemStatus500`, `ReadingStatus200`, `Status204`, `Default`. Content, not a
+Rust type, because the type is gone by the time two operations' responses are
+compared; not a reason phrase, which the `http` crate is free to reword; and
+never a position, so adding a response or an operation renames nothing already
+shared unless it derives the very same name. When it does, every response
+deriving that name, like one whose name an application's component or `$ref`
+already holds, takes `_` and eight hex digits of the 64-bit FNV-1a hash of its own bytes,
+`ProblemStatus500_1f0c9a2e`: a fixed algorithm rather than the standard
+library's hasher, so the suffix is the same in every build, and the colliding
+responses are told apart by what they say rather than by the order they sort
+in. Where the suffixed name is taken too, the response stays inline. Shared
+responses are emitted in name order, after the application's own, so neither
+the names nor their order depend on the order operations were mounted in.
+Sameness is the bytes,
 not equality: two responses differing in a description, a header, a link or
 the order of two media types are not one response, and a `$ref` carries no
 siblings, so sharing never changes what an operation says. Headers inside a

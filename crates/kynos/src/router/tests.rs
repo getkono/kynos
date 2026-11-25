@@ -1247,7 +1247,10 @@ mod shared_responses {
     }
 
     fn component<'d>(document: &'d Document, name: &str) -> &'d Response {
-        document.components.responses[name]
+        let shared = &document.components.responses;
+        shared
+            .get(name)
+            .unwrap_or_else(|| panic!("no {name} among {:?}", shared.keys()))
             .as_item()
             .expect("an inline component")
     }
@@ -1274,10 +1277,12 @@ mod shared_responses {
         }
     }
 
-    /// Every way two responses can differ keeps them apart; the names follow
-    /// the bytes, never the order the operations were mounted in.
+    /// Every way two responses can differ keeps them apart. Responses
+    /// deriving one name each take the fingerprint of their own bytes, never
+    /// a position, so the names are the same in whatever order the
+    /// operations were mounted.
     #[test]
-    fn responses_differing_anywhere_stay_apart_named_by_their_bytes() {
+    fn responses_differing_anywhere_stay_apart_fingerprinted_by_their_bytes() {
         let headed = || {
             Response::new("first").with_header(
                 "Retry-After",
@@ -1299,23 +1304,174 @@ mod shared_responses {
                 .openapi()
                 .expect("describes");
 
-            // `{"description":"first","headers":...}` sorts before
-            // `{"description":"first"}`, since `,` precedes `}`, and both
-            // before `{"description":"second"}`.
-            assert_eq!(component(&document, "Status500"), &headed());
-            assert_eq!(component(&document, "Status500_2"), &Response::new("first"));
-            assert_eq!(
-                component(&document, "Status500_3"),
-                &Response::new("second")
-            );
-            assert_eq!(entry(&document, "/e", "500"), &reference("Status500"));
-            assert_eq!(entry(&document, "/c", "500"), &reference("Status500_2"));
-            assert_eq!(entry(&document, "/a", "500"), &reference("Status500_3"));
+            // Literal, so a fingerprint that changed between builds fails here.
+            for (path, name, response) in [
+                ("/e", "Status500_7bba268f", headed()),
+                ("/c", "Status500_001d428d", Response::new("first")),
+                ("/a", "Status500_444ab20c", Response::new("second")),
+            ] {
+                assert_eq!(component(&document, name), &response, "{path}");
+                assert_eq!(entry(&document, path, "500"), &reference(name), "{path}");
+            }
+            assert!(!document.components.responses.contains_key("Status500"));
             assert_eq!(
                 entry(&document, "/g", "500").as_item(),
                 Some(&Response::new("once"))
             );
         }
+    }
+
+    /// A response deserialized from `json`.
+    fn parsed(json: serde_json::Value) -> Response {
+        serde_json::from_value(json).expect("a response")
+    }
+
+    /// A problem response narrowed to `types`, each branch extending the
+    /// `Problem` component as the derive and the problem policy write it.
+    fn problem(description: &str, types: &[&str]) -> Response {
+        let branch = |ty: &str| {
+            serde_json::json!({"allOf": [
+                {"$ref": "#/components/schemas/Problem"},
+                {"properties": {"type": {"type": "string", "const": ty}}},
+            ]})
+        };
+        let schema = match types {
+            [ty] => branch(ty),
+            types => {
+                serde_json::json!({"oneOf": types.iter().map(|ty| branch(ty)).collect::<Vec<_>>()})
+            }
+        };
+        parsed(serde_json::json!({
+            "description": description,
+            "content": {"application/problem+json": {"schema": schema}},
+        }))
+    }
+
+    /// Shares every response `edit` declares, as the router does once the
+    /// document is validated.
+    fn hoisted(edit: impl FnOnce(&mut Document)) -> Document {
+        let mut document = router(&["/a", "/b", "/c", "/d"])
+            .openapi()
+            .expect("describes");
+        edit(&mut document);
+        crate::router::hoist::shared_responses(&mut document.paths, &mut document.components);
+        document
+    }
+
+    /// A name says what the response carries: the problem type it alone
+    /// publishes, then the schema component its first media type names,
+    /// directly, through `allOf`, or through every branch alike, then the key.
+    #[test]
+    fn a_response_is_named_for_what_it_carries() {
+        let reading = parsed(serde_json::json!({
+            "description": "the reading",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Reading"}}},
+        }));
+        let streamed = parsed(serde_json::json!({
+            "description": "the readings",
+            "content": {"application/x-ndjson": {"itemSchema": {"$ref": "#/components/schemas/Reading"}}},
+        }));
+        let out_of_stock = problem(
+            "out of stock",
+            &["https://errors.example.com/orders/out-of-stock"],
+        );
+        let either = problem(
+            "conflicted",
+            &[
+                "https://errors.example.com/a",
+                "https://errors.example.com/b",
+            ],
+        );
+        let typed = parsed(serde_json::json!({
+            "description": "typed",
+            "content": {"application/json": {"schema": {
+                "allOf": [{"$ref": "#/components/schemas/Order"}],
+                "properties": {"type": {"const": "https://errors.example.com/ignored"}},
+            }}},
+        }));
+        let cases = [
+            ("200", reading, "ReadingStatus200"),
+            ("206", streamed, "ReadingStatus206"),
+            (
+                "500",
+                problem("failed", &["about:blank"]),
+                "ProblemStatus500",
+            ),
+            ("409", out_of_stock, "OutOfStockProblemStatus409"),
+            ("422", either, "ProblemStatus422"),
+            ("202", typed, "OrderStatus202"),
+            ("4XX", Response::new("bare"), "Status4XX"),
+        ];
+
+        let document = hoisted(|document| {
+            for (key, response, _) in &cases {
+                declare(document, &["/a", "/b"], key, response);
+            }
+        });
+
+        for (key, response, name) in &cases {
+            assert_eq!(component(&document, name), response, "{key}");
+            assert_eq!(entry(&document, "/b", key), &reference(name), "{key}");
+        }
+    }
+
+    /// Adding responses never renames a shared one whose name the new ones do
+    /// not also derive: a 500 of another problem type, or the same problem at
+    /// another status, takes a name of its own. Only a second response
+    /// deriving the very same name fingerprints both, which
+    /// `responses_differing_anywhere_stay_apart_fingerprinted_by_their_bytes`
+    /// pins.
+    #[test]
+    fn adding_a_response_leaves_every_existing_name_unchanged() {
+        let failed = problem("failed", &["about:blank"]);
+        let base = |document: &mut Document| {
+            declare(document, &["/a", "/b"], "500", &failed);
+            declare(document, &["/a", "/b"], "404", &Response::new("missing"));
+        };
+        let before = hoisted(base);
+        let names = |document: &Document| -> Vec<String> {
+            document.components.responses.keys().cloned().collect()
+        };
+        // The handler's own 204 was shared when the router described it.
+        assert_eq!(
+            names(&before),
+            ["Status204", "ProblemStatus500", "Status404"]
+        );
+
+        let after = hoisted(|document| {
+            base(document);
+            declare(
+                document,
+                &["/c", "/d"],
+                "500",
+                &problem("exhausted", &["urn:quota"]),
+            );
+            declare(
+                document,
+                &["/c", "/d"],
+                "503",
+                &problem("busy", &["about:blank"]),
+            );
+        });
+        assert_eq!(
+            names(&after),
+            [
+                "Status204",
+                "ProblemStatus500",
+                "ProblemStatus503",
+                "QuotaProblemStatus500",
+                "Status404"
+            ]
+        );
+
+        for name in names(&before) {
+            assert_eq!(
+                after.components.responses[name.as_str()],
+                before.components.responses[name.as_str()],
+                "{name}"
+            );
+        }
+        assert_eq!(entry(&after, "/a", "500"), &reference("ProblemStatus500"));
     }
 
     /// A component is named for the key it is declared at, so one response
@@ -1362,10 +1518,38 @@ mod shared_responses {
             .expect("describes");
 
         assert_eq!(component(&document, "Status503"), &Response::new("theirs"));
-        assert_eq!(component(&document, "Status503_2"), &Response::new("ours"));
-        assert_eq!(entry(&document, "/a", "503"), &reference("Status503_2"));
+        assert_eq!(
+            component(&document, "Status503_cdcea112"),
+            &Response::new("ours")
+        );
+        assert_eq!(
+            entry(&document, "/a", "503"),
+            &reference("Status503_cdcea112")
+        );
         assert_eq!(entry(&document, "/a", "429"), &reference("Busy"));
         assert!(!document.components.responses.contains_key("Status429"));
+    }
+
+    /// Where the application took the fingerprinted name too, the response
+    /// is left inline at each operation: sharing is given up, never a name.
+    #[test]
+    fn a_response_whose_every_name_is_taken_stays_inline() {
+        let document = hoisted(|document| {
+            let components = &mut document.components.responses;
+            for name in ["Status503", "Status503_cdcea112"] {
+                components.insert(name.to_owned(), RefOr::Item(Response::new(name)));
+            }
+            declare(document, &["/a", "/b"], "503", &Response::new("ours"));
+        });
+
+        assert_eq!(document.components.responses.len(), 3);
+        for path in ["/a", "/b"] {
+            assert_eq!(
+                entry(&document, path, "503").as_item(),
+                Some(&Response::new("ours")),
+                "{path}"
+            );
+        }
     }
 
     /// A name a `$ref` already gives is passed over even where nothing
@@ -1385,7 +1569,10 @@ mod shared_responses {
         crate::router::hoist::shared_responses(&mut document.paths, &mut document.components);
 
         assert!(!document.components.responses.contains_key("Status503"));
-        assert_eq!(component(&document, "Status503_2"), &Response::new("ours"));
+        assert_eq!(
+            component(&document, "Status503_cdcea112"),
+            &Response::new("ours")
+        );
         assert_eq!(entry(&document, "/a", "502"), &reference("Status503"));
     }
 }

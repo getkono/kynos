@@ -153,9 +153,14 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// response rather than many anonymous copies. A response declared once stays
 /// inline, and one already given by `$ref` is left as written.
 ///
-/// The name is the key's: `Status404`, `Status4XX`, `Default`. Two different
-/// responses at one key are `Status400` and `Status400_2`, in the order of
-/// their serialized bytes, so no name depends on the order operations were
+/// The name says what the response carries: the problem type it alone
+/// publishes other than `about:blank`, then the schema component its first
+/// media type names, then the key, as in `OutOfStockProblemStatus409`,
+/// `ProblemStatus500`, `ReadingStatus200`, `Status204` or `Default`, so
+/// adding an operation or a response never renames one already shared.
+/// Only where two different responses would take one name does each append
+/// a fingerprint of its own bytes instead, `ProblemStatus500_1f0c9a2e`,
+/// never a position, so no name depends on the order operations were
 /// mounted in. A response differing anywhere — a description, a header, a
 /// link — is a different response, so sharing never changes what an
 /// operation says.
