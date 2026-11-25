@@ -326,7 +326,11 @@ which every `serde_json::Number` serializes as a one-field struct. It excludes
 by exact name the two oracles holding `to_yaml` to `serde_norway`, which
 differ by design under the switch, and forces the feature per invocation: a
 dev-dependency would unify it into every `--all-targets` build and leave the
-default number path untested.
+default number path untested. [`mise run test:preserve-order`](../mise.toml)
+does the same for `serde_json/preserve_order`, under which a `serde_json::Value`
+keeps insertion order rather than sorting: only there does
+`to_canonical_json`'s own sort decide its output, so only there can its
+exact-bytes test fail.
 
 **A gap [`nfr.md`](nfr.md) documents is characterized.** Excluding a known-lossy
 shape from a generator keeps the property honest, but on its own it leaves the

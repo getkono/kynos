@@ -462,6 +462,8 @@ impl kynos_openapi::model::document::Document
 pub fn kynos_openapi::model::document::Document::is_authoritative(&self) -> bool
 pub fn kynos_openapi::model::document::Document::restamp_authority(&mut self)
 impl kynos_openapi::model::document::Document
+pub fn kynos_openapi::model::document::Document::to_canonical_json(&self) -> core::result::Result<alloc::string::String, serde_json::error::Error>
+impl kynos_openapi::model::document::Document
 pub fn kynos_openapi::model::document::Document::to_yaml(&self) -> core::result::Result<alloc::string::String, kynos_openapi::emit::yaml::YamlError>
 impl kynos_openapi::model::document::Document
 pub fn kynos_openapi::model::document::Document::validate(&self, kynos_openapi::model::document::SpecVersion) -> core::result::Result<(), alloc::vec::Vec<kynos_openapi::validate::violation::Violation>>
@@ -3266,6 +3268,8 @@ pub fn kynos_openapi::model::document::Document::to_json(&self) -> core::result:
 impl kynos_openapi::model::document::Document
 pub fn kynos_openapi::model::document::Document::is_authoritative(&self) -> bool
 pub fn kynos_openapi::model::document::Document::restamp_authority(&mut self)
+impl kynos_openapi::model::document::Document
+pub fn kynos_openapi::model::document::Document::to_canonical_json(&self) -> core::result::Result<alloc::string::String, serde_json::error::Error>
 impl kynos_openapi::model::document::Document
 pub fn kynos_openapi::model::document::Document::to_yaml(&self) -> core::result::Result<alloc::string::String, kynos_openapi::emit::yaml::YamlError>
 impl kynos_openapi::model::document::Document
