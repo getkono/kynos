@@ -5041,6 +5041,17 @@ mod api_error {
                 "a status belongs on each variant",
             ),
             case(
+                "a type URI on the enum, which no variant publishes",
+                quote::quote!(
+                    #[problem(type = "https://errors.example.com/store")]
+                    enum StoreError {
+                        #[problem(status = 410)]
+                        Gone,
+                    }
+                ),
+                "a `title` or `type` names one failure, so it belongs on each variant",
+            ),
+            case(
                 "a variant that never says what status it produces",
                 quote::quote!(
                     enum StoreError {
