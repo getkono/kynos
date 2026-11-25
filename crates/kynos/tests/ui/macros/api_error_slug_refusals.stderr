@@ -1,0 +1,23 @@
+error: `slug` is the part of the type URI after `base`, so it is a non-empty run of the characters a URI path admits, written percent-encoded as it is sent
+  --> tests/ui/macros/api_error_slug_refusals.rs:12:56
+   |
+12 | #[problem(base = "https://errors.example.com/", slug = "post removed", status = 410)]
+   |                                                        ^^^^^^^^^^^^^^
+
+error: `slug` names one failure's type URI under `base`, so it belongs on each variant publishing under it. Move it to the variants
+  --> tests/ui/macros/api_error_slug_refusals.rs:16:49
+   |
+16 | #[problem(base = "https://errors.example.com/", slug = "removed")]
+   |                                                 ^^^^
+
+error: `type` is the whole URI and `slug` its part after `base`, so they cannot both name it; keep `slug` to publish under `base`, or `type` alone
+  --> tests/ui/macros/api_error_slug_refusals.rs:27:29
+   |
+27 |     #[problem(status = 409, slug = "removed", type = "https://errors.example.com/removed")]
+   |                             ^^^^
+
+error: `slug` names the type URI's part after `base`, and `RemovedConflict` has no `base` to hang it under; add `base = ...` to the type, or write the whole URI as `type = "..."`
+  --> tests/ui/macros/api_error_slug_refusals.rs:34:29
+   |
+34 |     #[problem(status = 409, slug = "removed")]
+   |                             ^^^^

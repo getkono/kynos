@@ -4,7 +4,7 @@ error: `variant_of` names the wider variant one variant is, so it belongs on tha
 25 | #[problem(variant_of = ProfileProblem::Unavailable)]
    |           ^^^^^^^^^^
 
-error: a variant `variant_of` names answers with the wider variant's declarations, so it takes no `status`, `title`, `type`, `transparent` or `extension` of its own
+error: a variant `variant_of` names answers with the wider variant's declarations, so it takes no `status`, `title`, `type`, `slug`, `transparent` or `extension` of its own
   --> tests/ui/macros/api_error_variant_of_refusals.rs:31:15
    |
 31 |     #[problem(variant_of = ProfileProblem::Unavailable, status = 503)]

@@ -87,6 +87,7 @@ pub(super) fn expand(
     if args.status.is_some()
         || args.title.is_some()
         || args.type_uri.is_some()
+        || args.slug.is_some()
         || args.base.is_some()
         || !args.constants.is_empty()
         || args.described.is_some()
@@ -96,8 +97,8 @@ pub(super) fn expand(
         return Err(syn::Error::new(
             span,
             "a subset answers with the wider enum's declarations, so `subset_of` takes no \
-             `status`, `title`, `type`, `base`, `extension`, `describe`, `transparent` or `from` \
-             of its own",
+             `status`, `title`, `type`, `slug`, `base`, `extension`, `describe`, `transparent` or \
+             `from` of its own",
         ));
     }
 

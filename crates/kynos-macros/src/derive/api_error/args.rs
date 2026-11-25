@@ -39,6 +39,9 @@ pub(super) struct ProblemArgs {
     pub(super) status: Option<(u16, Span)>,
     pub(super) title: Option<String>,
     pub(super) type_uri: Option<String>,
+    /// `slug`: the part of the type URI after `base`, in place of the
+    /// kebab-cased name, at the span of `slug`.
+    pub(super) slug: Option<(LitStr, Span)>,
     pub(super) base: Option<Base>,
     /// `transparent`: on a variant, it answers as the error it holds; on an
     /// enum, every variant does, and the enum displays as what it holds.
@@ -108,6 +111,9 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                 )?,
                 "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
                 "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
+                // Spelled, and checked against `type` and `base`, where the
+                // outcomes are read, since a variant's `base` is its enum's.
+                "slug" => args.slug = Some((meta.value()?.parse::<LitStr>()?, span)),
                 "base" if position == Position::Type => args.base = Some(base(&meta)?),
                 "base" => {
                     return Err(syn::Error::new(

@@ -706,6 +706,22 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// error at `default` in a crate declaring none. A type without `base` stays
 /// at `about:blank`.
 ///
+/// Under `base`, a variant, or a struct, publishes its kebab-cased name, or
+/// the `slug` it names, so two failures can share one type URI without either
+/// restating the prefix:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// #[error("this post was removed")]
+/// #[problem(base = PROBLEM_BASE, slug = "removed", status = 409, title = "Removed")]
+/// struct RemovedConflict;
+/// ```
+///
+/// A `slug` is joined verbatim, as `kynos::problem_type!` joins one, so it is
+/// written in URI path characters, percent-encoded. Beside `type`, which names
+/// the whole URI, on an enum rather than its variants, or on a type with no
+/// `base` to hang it under, it is a compile error rather than dropped.
+///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
 /// A type declaring a failure of its own without a `Display` is rejected at
 /// the derive; one whose every variant is transparent reads none.

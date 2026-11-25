@@ -5321,6 +5321,39 @@ enum DefaultLookupError<T: std::fmt::Debug> {
     TenantUnknown,
 }
 
+/// `LookupError` with its `UserUnknown` renamed, publishing the same type URI
+/// by naming its `slug` under the `const` prefix rather than restating it.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = PROBLEM_BASE)]
+enum SluggedLookupError {
+    #[error("no user with that id")]
+    #[problem(status = 404, slug = "user-unknown", title = "User unknown")]
+    Missing,
+
+    #[error("no tenant with that slug")]
+    #[problem(status = 404, title = "Tenant unknown")]
+    TenantUnknown,
+}
+
+/// A struct naming its `slug` under a literal prefix.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("no user with that id")]
+#[problem(
+    base = "https://errors.example.com/",
+    slug = "user-unknown",
+    status = 404
+)]
+struct SluggedStruct;
+
+/// A variant naming its `slug` under the crate's `problem_base!`.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = default)]
+enum SluggedDefaultError {
+    #[error("no user with that id")]
+    #[problem(status = 409, slug = "user-unknown")]
+    Conflict,
+}
+
 /// Two failures answering with one status, neither naming a type and the enum
 /// declaring no `base`, so both publish `about:blank`. The schema is one
 /// branch — a `oneOf` repeating a `const` is satisfied by two at once — but
@@ -6382,6 +6415,34 @@ fn a_default_base_publishes_what_the_crate_problem_base_does() {
 
     assert_eq!(
         emitted_responses::<DefaultLookupError<u8>>(),
+        emitted_responses::<LookupError>()
+    );
+}
+
+/// A `slug` replaces the kebab-cased name under whichever `base` applies — a
+/// literal, a `const` or the crate's default — so a failure shares another's
+/// type URI without restating the prefix: on the wire, still borrowed, and in
+/// the description, which is the one a literal `type` of that URI writes.
+#[test]
+fn a_slug_names_the_type_uri_under_base() {
+    use kynos::error::problem::IntoProblem;
+    use std::borrow::Cow;
+
+    let joined = SluggedLookupError::Missing.into_problem();
+    assert_eq!(joined.type_uri, "https://errors.example.com/user-unknown");
+    assert!(matches!(joined.type_uri, Cow::Borrowed(_)));
+
+    assert_eq!(
+        SluggedStruct.into_problem().type_uri,
+        "https://errors.example.com/user-unknown"
+    );
+
+    let defaulted = SluggedDefaultError::Conflict.into_problem();
+    assert_eq!(defaulted.type_uri, kynos::problem_type!("user-unknown"));
+    assert!(matches!(defaulted.type_uri, Cow::Borrowed(_)));
+
+    assert_eq!(
+        emitted_responses::<SluggedLookupError>(),
         emitted_responses::<LookupError>()
     );
 }
