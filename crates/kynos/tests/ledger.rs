@@ -429,6 +429,46 @@ fn problem_type_refuses_the_slugs_the_derive_refuses() {
     );
 }
 
+/// The two rules agree on every single ASCII character, and a few multi-byte
+/// ones, alone, inside a segment and as a segment of its own.
+///
+/// The short-string walk above covers each branch with a handful of
+/// characters; this covers each byte, so the two hand-copied punctuation
+/// lists cannot drift apart unnoticed.
+#[test]
+fn problem_type_and_the_derive_agree_on_every_ascii_character() {
+    let characters = (0..=0x7F_u8)
+        .map(char::from)
+        .chain(['\u{80}', 'é', '€', '\u{1F600}']);
+
+    let mut admitted = 0;
+    for character in characters {
+        let inside = format!("a{character}b");
+        for candidate in [
+            format!("{character}"),
+            format!("a/{character}/b"),
+            inside.clone(),
+        ] {
+            let derive = derive_slug::refusal(&candidate);
+            assert_eq!(
+                format!("{derive:?}"),
+                format!("{:?}", slug::refusal(&candidate)),
+                "the derive and `problem_type!` disagree on {candidate:?}"
+            );
+            if candidate == inside && derive.is_none() {
+                admitted += 1;
+            }
+        }
+    }
+
+    // RFC 3986's `pchar` outside a percent-encoding: 62 letters and digits,
+    // `-._~`, the 11 sub-delims and `:@`; and `/` between segments.
+    assert_eq!(
+        admitted, 80,
+        "both rules admit {admitted} characters inside a segment, not the 79 `pchar`s and `/`"
+    );
+}
+
 /// Every `tests.rs` under `directory`, where the macro crate keeps its ledgers.
 fn ledger_files(directory: &Path, found: &mut Vec<std::path::PathBuf>) {
     for entry in fs::read_dir(directory).expect("the macro crate's source is readable") {
