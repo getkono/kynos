@@ -945,6 +945,18 @@ mod assertions {
         }
     }
 
+    /// What `fail` panicked with, for a table of cases each refused in its
+    /// own words.
+    fn panic_message(fail: impl FnOnce()) -> String {
+        let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(fail)) else {
+            panic!("the statement did not panic")
+        };
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .expect("a formatted panic message")
+    }
+
     /// `received`, from a client built with `with_problem_base(base)`.
     fn based(base: &str, status: StatusCode, body: &'static [u8]) -> TestResponse {
         TestResponse {
@@ -1236,6 +1248,302 @@ mod assertions {
     fn assert_problem_fails_on_a_status_member_the_status_line_disagrees_with() {
         received(StatusCode::NOT_FOUND, &[PROBLEM], br#"{"status":410}"#)
             .assert_problem(404, "about:blank");
+    }
+
+    /// The member is compared as JSON, so a string and a number are each
+    /// written as the Rust value they are.
+    #[test]
+    fn assert_problem_extension_passes_on_the_member_as_json() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[PROBLEM],
+            br#"{"code":"quota_exceeded","quota":3}"#,
+        )
+        .assert_problem_extension("code", "quota_exceeded")
+        .assert_problem_extension("quota", 3);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: expected the problem's `code` to be `\"quota_exceeded\"`, \
+                    received `\"rate_limited\"`"
+    )]
+    fn assert_problem_extension_fails_on_another_value() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[PROBLEM],
+            br#"{"code":"rate_limited"}"#,
+        )
+        .assert_problem_extension("code", "quota_exceeded");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: expected the problem's `code` to be `\"quota_exceeded\"`, \
+                    and the document carries no `code`"
+    )]
+    fn assert_problem_extension_fails_on_an_absent_member() {
+        received(StatusCode::TOO_MANY_REQUESTS, &[PROBLEM], b"{}")
+            .assert_problem_extension("code", "quota_exceeded");
+    }
+
+    /// A JSON body carrying the member is not a problem to a client that
+    /// dispatches on the media type, which is what a hand-rolled check
+    /// reading `body["code"]` alone would let through.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: expected `Content-Type: application/problem+json`, \
+                    received `Content-Type: application/json`"
+    )]
+    fn assert_problem_extension_fails_on_another_media_type() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[("content-type", "application/json")],
+            br#"{"code":"quota_exceeded"}"#,
+        )
+        .assert_problem_extension("code", "quota_exceeded");
+    }
+
+    /// A registered member is read from its field, so as an extension it
+    /// would always read as absent.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: `detail` is a member RFC 9457 registers, not an extension"
+    )]
+    fn assert_problem_extension_refuses_a_registered_member() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[PROBLEM],
+            br#"{"detail":"no"}"#,
+        )
+        .assert_problem_extension("detail", "no");
+    }
+
+    #[test]
+    fn assert_has_header_passes_on_any_value() {
+        received(StatusCode::OK, &[("x-id", "")], b"")
+            .assert_has_header("x-id")
+            .assert_has_header("X-Id");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `x-id` is not on the response")]
+    fn assert_has_header_fails_on_an_absent_field() {
+        received(StatusCode::OK, &[], b"").assert_has_header("x-id");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `x id` is not a header name")]
+    fn assert_has_header_refuses_a_name_no_field_has() {
+        received(StatusCode::OK, &[], b"").assert_has_header("x id");
+    }
+
+    /// The essence alone is compared, in any case (RFC 9110 section 8.3.1).
+    #[test]
+    fn assert_content_type_passes_on_the_essence_whatever_its_parameters() {
+        received(
+            StatusCode::OK,
+            &[("content-type", "Text/Plain ; charset=utf-8")],
+            b"",
+        )
+        .assert_content_type("text/plain")
+        .assert_content_type("TEXT/PLAIN");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: expected `Content-Type: text/plain`, \
+                    received `Content-Type: text/plainer`")]
+    fn assert_content_type_fails_on_another_essence_sharing_its_prefix() {
+        received(StatusCode::OK, &[("content-type", "text/plainer")], b"")
+            .assert_content_type("text/plain");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: expected `Content-Type: text/plain`, and the response \
+                    carries none"
+    )]
+    fn assert_content_type_fails_on_an_absent_field() {
+        received(StatusCode::OK, &[], b"").assert_content_type("text/plain");
+    }
+
+    /// Parameters given here would be ignored, so passing on a `charset`
+    /// the response does not carry: refused rather than read as checked.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: `text/plain; charset=utf-8` is not a media type's \
+                    `type/subtype`"
+    )]
+    fn assert_content_type_refuses_an_essence_with_parameters() {
+        received(StatusCode::OK, &[("content-type", "text/plain")], b"")
+            .assert_content_type("text/plain; charset=utf-8");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `text` is not a media type's `type/subtype`")]
+    fn assert_content_type_refuses_a_type_without_a_subtype() {
+        received(StatusCode::OK, &[("content-type", "text/plain")], b"")
+            .assert_content_type("text");
+    }
+
+    /// Every field line is one list (RFC 9110 section 5.6.1), its elements
+    /// trimmed of whitespace, its empty ones ignored, and a field name
+    /// matched in any case.
+    #[test]
+    fn assert_header_lists_reads_every_line_as_one_list() {
+        received(
+            StatusCode::OK,
+            &[
+                (
+                    "access-control-allow-headers",
+                    " , Content-Type,\tX-Trace ,",
+                ),
+                ("access-control-allow-headers", "Authorization"),
+            ],
+            b"",
+        )
+        .assert_header_lists("access-control-allow-headers", "content-type")
+        .assert_header_lists("access-control-allow-headers", "x-trace")
+        .assert_header_lists("access-control-allow-headers", "authorization");
+    }
+
+    /// The substring check this replaces would pass here.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: expected `access-control-allow-headers` to list \
+                    `authorization`, received `access-control-allow-headers: X-Authorization, \
+                    Authorization-Token`"
+    )]
+    fn assert_header_lists_compares_whole_elements() {
+        received(
+            StatusCode::OK,
+            &[(
+                "access-control-allow-headers",
+                "X-Authorization, Authorization-Token",
+            )],
+            b"",
+        )
+        .assert_header_lists("access-control-allow-headers", "authorization");
+    }
+
+    /// A comma inside a `quoted-string` separates nothing.
+    #[test]
+    fn assert_header_lists_keeps_a_quoted_comma_inside_its_element() {
+        received(
+            StatusCode::OK,
+            &[("if-none-match", r#""a, b", W/"c""#)],
+            b"",
+        )
+        .assert_header_lists("if-none-match", r#""a, b""#)
+        .assert_header_lists("if-none-match", r#"W/"c""#);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected `if-none-match` to list `\"A, B\"`")]
+    fn assert_header_lists_compares_a_quoted_element_octet_for_octet() {
+        received(StatusCode::OK, &[("if-none-match", r#""a, b""#)], b"")
+            .assert_header_lists("if-none-match", r#""A, B""#);
+    }
+
+    /// An element with a parameter is no `token`, so its value's case holds.
+    #[test]
+    #[should_panic(expected = "expected `cache-control` to list `Max-Age=60`")]
+    fn assert_header_lists_compares_an_element_with_a_parameter_octet_for_octet() {
+        let response = received(
+            StatusCode::OK,
+            &[("cache-control", "public, max-age=60")],
+            b"",
+        );
+        response.assert_header_lists("cache-control", "max-age=60");
+        response.assert_header_lists("cache-control", "Max-Age=60");
+    }
+
+    /// Methods are case-sensitive (RFC 9110 section 9.1), where the tokens
+    /// of most other lists are not.
+    #[test]
+    fn assert_header_lists_compares_methods_case_sensitively() {
+        for name in ["allow", "access-control-allow-methods"] {
+            let response = received(StatusCode::OK, &[(name, "GET, HEAD")], b"");
+            response.assert_header_lists(name, "GET");
+            let message = panic_message(|| {
+                response.assert_header_lists(name, "get");
+            });
+            assert!(
+                message.contains(&format!("expected `{name}` to list `get`")),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `vary` is not on the response")]
+    fn assert_header_lists_fails_on_an_absent_field() {
+        received(StatusCode::OK, &[], b"").assert_header_lists("vary", "origin");
+    }
+
+    /// No element could equal a member holding a separator or padding, so
+    /// the check would fail whatever the response listed.
+    #[test]
+    fn assert_header_lists_refuses_a_member_that_is_not_one_element() {
+        let response = received(StatusCode::OK, &[("vary", "origin, accept")], b"");
+        for member in ["origin, accept", " origin", "", ","] {
+            let message = panic_message(|| {
+                response.assert_header_lists("vary", member);
+            });
+            assert!(
+                message.contains(&format!("`{member}` is not one list element")),
+                "{message}"
+            );
+        }
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    fn json_at_reads_the_value_a_pointer_names() {
+        let response = received(
+            StatusCode::OK,
+            &[],
+            br#"{"token":"t","items":[{"id":7}],"a/b":{"~":true}}"#,
+        );
+        assert_eq!(response.json_at::<String>("/token"), "t");
+        assert_eq!(response.json_at::<u32>("/items/0/id"), 7);
+        assert!(response.json_at::<bool>("/a~1b/~0"));
+        assert_eq!(
+            response.json_at::<serde_json::Value>("")["token"],
+            serde_json::json!("t")
+        );
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `/items/1` names nothing in the body")]
+    fn json_at_fails_on_a_pointer_naming_nothing() {
+        let _: u32 = received(StatusCode::OK, &[], br#"{"items":[7]}"#).json_at("/items/1");
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `/token` is not a `u32`")]
+    fn json_at_fails_on_a_value_of_another_type() {
+        let _: u32 = received(StatusCode::OK, &[], br#"{"token":"t"}"#).json_at("/token");
+    }
+
+    /// A pointer without its leading `/`, or with an escape RFC 6901 does not
+    /// define, names nothing; refused as the mistake it is rather than read
+    /// as an absent member.
+    #[cfg(feature = "json")]
+    #[test]
+    fn json_at_refuses_what_is_not_a_json_pointer() {
+        let response = received(StatusCode::OK, &[], br#"{"token":"t","~2":1}"#);
+        for pointer in ["token", "/~2", "/a~"] {
+            let message = panic_message(|| {
+                let _: serde_json::Value = response.json_at(pointer);
+            });
+            assert!(
+                message.contains(&format!("`{pointer}` is not a JSON pointer (RFC 6901)")),
+                "{message}"
+            );
+        }
     }
 
     /// Every registered member is read into its field, and only the rest are
