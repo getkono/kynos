@@ -362,21 +362,55 @@ fn a_query_api_key_reads_plus_as_a_space() {
     }
 }
 
-/// The first pair named the key decides; a later pair never stands in for one
-/// that could not be read.
+/// A key named by two pairs is refused as a header key sent twice is: choosing
+/// either would let whatever appends a pair pick the credential, and a proxy,
+/// cache key or log reading the other could disagree about who was presented.
+/// The count decides before any value is read, so neither an empty value nor
+/// one that is not UTF-8 hides the repeat.
 #[test]
-fn a_query_api_key_is_the_first_pair_named_the_key() {
-    let head = targeting("/reports?api_key&api_key=second");
+fn a_query_api_key_named_by_two_pairs_is_refused() {
+    for target in [
+        "/reports?api_key=first&api_key=second",
+        "/reports?api_key=same&api_key=same",
+        "/reports?api_key=first&other=1&api_key=second",
+        "/reports?api_key=first&api%5Fkey=second",
+        "/reports?api_key&api_key=second",
+        "/reports?api_key=first&api_key",
+        "/reports?api_key=%FF&api_key=second",
+        "/reports?api_key=first&api_key=%FF",
+    ] {
+        assert_malformed(
+            api_key(&targeting(target), KeyLocation::Query, "api_key"),
+            MalformedReason::Repeated,
+            target,
+        );
+    }
+}
+
+/// A key named by one pair is read from it, whatever else the target holds.
+#[test]
+fn a_query_api_key_named_by_one_pair_is_read() {
+    let head = targeting("/reports?api_key");
     let key = api_key(&head, KeyLocation::Query, "api_key")
         .require()
         .expect("present");
     assert_eq!(key.as_str(), "", "a pair with no `=` has an empty value");
 
-    let head = targeting("/reports?api_key=%FF&api_key=second");
+    let head = targeting("/reports?api_key=%FF&other=1");
     assert_malformed(
         api_key(&head, KeyLocation::Query, "api_key"),
         MalformedReason::NotText,
-        "a first value that is not UTF-8",
+        "a value that is not UTF-8",
+    );
+
+    let head = targeting("/reports?api_key_2=a&api_key=k&API_KEY=b");
+    let key = api_key(&head, KeyLocation::Query, "api_key")
+        .require()
+        .expect("present");
+    assert_eq!(
+        key.as_str(),
+        "k",
+        "only a pair named exactly the key counts"
     );
 }
 
@@ -419,9 +453,10 @@ fn with_cookies(fields: &[&[u8]]) -> Parts {
     request.into_parts().0
 }
 
-/// The first cookie of the key's name decides, as the first query pair does: a
-/// key that was sent and cannot be read is refused, never read as absent and
-/// never stood in for by a later cookie of the same name.
+/// The first cookie of the key's name decides, since a user agent orders a
+/// name's cookies most specific path first: a key that was sent and cannot be
+/// read is refused, never read as absent and never stood in for by a later
+/// cookie of the same name.
 #[test]
 fn a_cookie_api_key_that_is_not_ascii_is_refused() {
     for fields in [
