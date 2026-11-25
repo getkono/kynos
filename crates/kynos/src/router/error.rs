@@ -256,6 +256,11 @@ pub enum RouterError {
 
 /// Why a `#[schema(string)]` type does not carry an example it lists, as a
 /// [`StringExample`](RouterError::StringExample) violation says.
+///
+/// The serde refusals apply wherever the type implements serde, however it is
+/// used: the schema is described with no knowledge of its uses, and every use
+/// names the one component, a JSON body included. A type whose serde serves
+/// another purpose keeps that serde on a separate type.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum ExampleRefusal {
