@@ -298,6 +298,7 @@ mod stalled_head {
         fails_here!(drop(direct.get("/").send_stalled_head()));
         fails_here!(drop(direct.view().get("/").send_stalled_head()));
         fails_here!(drop(served.post("/").text("hello").send_stalled_head()));
+        fails_here!(drop(served.get("/a b").send_stalled_head()));
     }
 }
 

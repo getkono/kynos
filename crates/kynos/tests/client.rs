@@ -808,6 +808,22 @@ async fn a_stalled_head_past_the_servers_buffer_is_answered_and_reset() {
     );
 }
 
+/// Once the listener is closed, the connection is refused, which is a failure
+/// rather than a close the server chose.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+#[should_panic(expected = "GET /probe: the connection failed before the server closed it: ")]
+async fn a_stalled_head_once_its_server_shut_down_is_refused() {
+    let running = spawned(kynos::server::Server::new(service())).await;
+    let client = TestClient::connect(&running);
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+
+    let _ = client.get("/probe").send_stalled_head().await;
+}
+
 /// A client with no connection has no head to stall, so the request is
 /// refused rather than answered some other way.
 #[cfg(all(feature = "server", feature = "http1"))]
