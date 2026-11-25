@@ -271,6 +271,9 @@ pub mod prelude {
         router::{Router, group::Group},
         // Unaliased: rustc names a trait by its shortest visible path in
         // diagnostics. The derive shares the name from the macro namespace.
+        // Not `UnitEnum`: a glob import of it would capture a by-value
+        // inherent `as_str` called through a reference, and make a
+        // `VARIANTS` from another imported trait ambiguous.
         schema::{Nullable, ParamValue, Schema},
         security::auth::{Auth, Scoped},
     };

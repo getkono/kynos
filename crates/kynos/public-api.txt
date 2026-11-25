@@ -10039,6 +10039,9 @@ pub trait kynos::schema::SerdeTagged
 pub const kynos::schema::SerdeTagged::TAG: &'static str
 pub const kynos::schema::SerdeTagged::VARIANTS: &'static [&'static str]
 pub fn kynos::schema::SerdeTagged::variant(&self) -> &'static str
+pub trait kynos::schema::UnitEnum: core::marker::Sized + 'static
+pub const kynos::schema::UnitEnum::VARIANTS: &'static [Self]
+pub fn kynos::schema::UnitEnum::as_str(&self) -> &'static str
 pub fn kynos::schema::instantiation_name(&str, &[core::option::Option<kynos_openapi::model::components::ComponentName>]) -> core::option::Option<kynos_openapi::model::components::ComponentName>
 pub mod kynos::security
 pub mod kynos::security::auth

@@ -1020,7 +1020,8 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 
 /// Makes a field-less enum or a newtype a `kynos::schema::ParamValue`,
 /// emitting its `Display` and `FromStr`: an enum's from the variant names the
-/// [`Schema`](macro@Schema) derive publishes, a newtype's through its field.
+/// [`Schema`](macro@Schema) derive publishes, with its `UnitEnum` listing
+/// them, and a newtype's through its field.
 ///
 /// ```ignore
 /// #[derive(Serialize, Deserialize, Schema, ParamValue)]
@@ -1039,6 +1040,13 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// `#[serde(field_identifier)]` or `#[serde(variant_identifier)]` enum, which
 /// serde never writes, `Display`s each variant under the name serde reads it
 /// by, the deserialize side of a split `rename` or `rename_all`.
+///
+/// The enum is also a `kynos::schema::UnitEnum`, imported by that path since
+/// `kynos::prelude` leaves it out: `as_str()` returns the `&'static str`
+/// `Display` writes, and `Phase::VARIANTS` lists every variant in declaration
+/// order. A trait rather than inherent items, so an `as_str` or `VARIANTS` the
+/// enum declares itself still compiles, and code that does not import the
+/// trait resolves exactly as before.
 ///
 /// Every serde attribute the `Schema` derive refuses is refused here too, so
 /// the names a decoder reads are never ones that derive would not publish.
