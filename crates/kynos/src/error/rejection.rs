@@ -1502,11 +1502,16 @@ fn owe_challenge(
     };
 
     let headers = response.headers_mut();
-    headers.remove(header::WWW_AUTHENTICATE);
     // `from_str` refuses a challenge that would splice a header, as
-    // `AuthFields::write` does.
-    if let Some(value) = owed.and_then(|challenge| HeaderValue::from_str(challenge).ok()) {
-        headers.insert(header::WWW_AUTHENTICATE, value);
+    // `AuthFields::write` does. `insert` already drops every value the error
+    // wrote, so only a status owing none removes them, saving the 401 a probe.
+    match owed.and_then(|challenge| HeaderValue::from_str(challenge).ok()) {
+        Some(value) => {
+            headers.insert(header::WWW_AUTHENTICATE, value);
+        }
+        None => {
+            headers.remove(header::WWW_AUTHENTICATE);
+        }
     }
 }
 
