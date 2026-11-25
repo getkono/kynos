@@ -167,7 +167,7 @@ fn enforceable(pattern: &LitStr) -> Result<(), String> {
 }
 
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.
-fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+pub(super) fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     // A qualified key matches no key below, so the last refusal names it.
     let name = key_name(&meta.path);
     let span = meta.path.span();
@@ -179,7 +179,8 @@ fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
              field carrying it. Use a type that already claims the format -- `uuid::Uuid` behind \
              the `uuid1` feature, a date or time type behind `time-chrono04` or `time-jiff02`, \
              a decimal behind `decimal-rust1` or `decimal-big04` -- or give the value a newtype \
-             with its own `Schema` implementation. `pattern` is here if what you meant is a \
+             claiming it, `#[schema(string, format = \"...\")]` where its `FromStr` and \
+             `Display` carry it as text. `pattern` is here if what you meant is a \
              constraint on this field rather than a claim about the type",
         ));
     }

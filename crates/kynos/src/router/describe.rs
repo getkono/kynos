@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use super::build::TrialTable;
 use super::install::{
     catches, cors_conflict, error_at, highest_version, invalid, lift, lowest_expressing,
-    path_location, placeholder_info, refuse_registry_conflicts, unique_tags,
+    path_location, placeholder_info, refuse_registry_conflicts, refused_examples, unique_tags,
 };
 use super::{
     DeclaredTag, Document, Error, OperationCx, PanicPolicy, PathItem, Paths, Registry, Result,
@@ -313,6 +313,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
         }
 
+        violations.extend(refused_examples(&registry));
         refuse_registry_conflicts(&registry)?;
 
         let mut document = Document::new(

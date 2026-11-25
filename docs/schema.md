@@ -211,7 +211,9 @@ otherwise. A newtype whose
 Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
 schema describes the one value its `Display` writes, or with
 `#[derive(ParamValue)]`, which reads and writes a newtype through its field
-and a field-less enum by its variant names. A structured query, such
+and a field-less enum by its variant names. A type described with
+`#[schema(string)]`, the string its own `FromStr` and `Display` carry, keeps
+both under the derive, which adds the promise alone. A structured query, such
 as a search filter, is a whole `QueryString` under `openapi32` instead.
 
 The derived enum is also a `UnitEnum`, so a database column or a log field

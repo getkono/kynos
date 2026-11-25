@@ -50,6 +50,7 @@ mod pattern;
 mod refusals;
 mod serde_tagged;
 mod shape;
+mod string_form;
 
 use attributes::{
     constraints, field_read_name, is_described, is_flattened, is_open, is_phantom, is_required,
@@ -93,15 +94,25 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         ));
     }
     let container = Container::read(input);
-    refusals::check(input, &container)?;
+    let type_schema = container::type_schema(input)?;
     // Typed, so an expression that is not a `ConstraintProblem` fails at its span.
-    let constraint_problem = container::constraint_problem(input)?.map(|named| {
+    let constraint_problem = type_schema.constraint_problem.map(|named| {
         quote! {
             const CONSTRAINT_PROBLEM: ::core::option::Option<
                 ::kynos::schema::constraints::ConstraintProblem,
             > = ::core::option::Option::Some(#named);
         }
     });
+    // A string's declaration is not described, so no rule reading it applies.
+    if let Some(form) = &type_schema.string {
+        refusals::check_string(input)?;
+        return Ok(string_form::expand(
+            input,
+            form,
+            constraint_problem.as_ref(),
+        ));
+    }
+    refusals::check(input, &container)?;
 
     let name = &input.ident;
     let generics = schema_bounded_generics(input);
@@ -194,8 +205,17 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 /// none. Beside this derive both raise one refusal at one span, which rustc
 /// reports once.
 pub(crate) fn group_attributes(input: &DeriveInput) -> syn::Result<Option<syn::Expr>> {
+    let type_schema = container::type_schema(input)?;
+    if let Some(form) = type_schema.string {
+        return Err(syn::Error::new(
+            form.span,
+            "a parameter group is read field by field, each field its own parameter, and \
+             `#[schema(string)]` describes a type as one string. Drop `string`, or give the \
+             string its own type, a field of the group deriving `ParamValue`",
+        ));
+    }
     refusals::check_grammar(input, &Container::read(input))?;
-    container::constraint_problem(input)
+    Ok(type_schema.constraint_problem)
 }
 
 /// The input's generics, with `Schema` required of each type parameter.

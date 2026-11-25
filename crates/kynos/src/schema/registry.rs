@@ -6,6 +6,7 @@ use kynos_openapi::{ComponentName, Components, Schema as OpenApiSchema};
 
 use crate::{
     middleware::contribution::ContributionConflict,
+    router::error::{ExampleRefusal, RouterError},
     schema::{MapKey, NamedInstantiation, Schema},
 };
 
@@ -60,6 +61,10 @@ pub struct Registry {
     /// A contested scheme name is not a [`SchemaConflict`]: the remedy is a
     /// different `SecurityScheme::NAME`, not a renamed schema.
     scheme_conflicts: Vec<ContributionConflict>,
+
+    /// Examples [`Registry::refuse_example`] recorded, each beside where it
+    /// is listed, deduplicated.
+    refused_examples: Vec<(String, RouterError)>,
 
     /// The extension members the [`ProblemPolicy`] that
     /// [`Router::problems`](crate::router::Router::problems) installs adds to
@@ -324,6 +329,36 @@ impl Registry {
         }
     }
 
+    /// Records that `T`, a `#[schema(string)]` type, lists at `index` an
+    /// `example` it does not carry, for `refusal`.
+    ///
+    /// Recorded rather than returned for [`resolve`](Registry::resolve)'s
+    /// reason; the router reports it, located at the example under `T`'s
+    /// component, as a [`StringExample`](RouterError::StringExample)
+    /// violation.
+    pub(crate) fn refuse_example<T: Schema>(
+        &mut self,
+        index: usize,
+        example: &str,
+        refusal: ExampleRefusal,
+    ) {
+        let location = T::name().map_or_else(
+            || "#".to_owned(),
+            |name| format!("#/components/schemas/{name}/examples/{index}"),
+        );
+        let refused = (
+            location,
+            RouterError::StringExample {
+                schema: std::any::type_name::<T>(),
+                example: example.to_owned(),
+                refusal,
+            },
+        );
+        if !self.refused_examples.contains(&refused) {
+            self.refused_examples.push(refused);
+        }
+    }
+
     /// Declares `members`, and the types and titles `identity` gives, on
     /// every problem Kynos renders itself, before any operation is described.
     pub(crate) fn declare_problem_policy(
@@ -377,6 +412,12 @@ impl Registry {
     /// refused, in the order it found them.
     pub(crate) fn instantiation_name_refusals(&self) -> &[InstantiationNameRefusal] {
         &self.instantiation_names
+    }
+
+    /// Every example [`refuse_example`](Registry::refuse_example) recorded,
+    /// each beside its location, in the order it found them.
+    pub(crate) fn example_refusals(&self) -> &[(String, RouterError)] {
+        &self.refused_examples
     }
 
     /// Every conflict [`resolve`](Registry::resolve) discovered, in the order

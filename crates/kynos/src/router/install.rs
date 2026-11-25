@@ -81,6 +81,17 @@ pub(super) fn refuse_registry_conflicts(registry: &Registry) -> Result<()> {
     Ok(())
 }
 
+/// Each example a `#[schema(string)]` type lists and does not carry, as the
+/// violation located at it.
+pub(super) fn refused_examples(
+    registry: &Registry,
+) -> impl Iterator<Item = Violation<RouterError>> + '_ {
+    registry
+        .example_refusals()
+        .iter()
+        .map(|(location, error)| error_at(location.as_str(), error.clone()))
+}
+
 /// The visibly placeholder `info` block a router that declared none emits.
 pub(super) fn placeholder_info() -> Info {
     Info::new("API", "0.0.0")

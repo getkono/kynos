@@ -1381,6 +1381,486 @@ fn a_derived_newtype_param_value_reads_and_writes_through_its_field() {
     implements_param_value::<Cursor>();
 }
 
+/// What a title reference names, which is no string of its own: serde would
+/// write it as an object.
+#[derive(Debug, Clone, PartialEq)]
+struct MediaId {
+    provider: String,
+    id: u64,
+}
+
+/// A title reference, `<provider>:<id>`.
+#[derive(Debug, Clone, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize)]
+#[schema(string, min_length = 3, max_length = 24)]
+#[schema(examples("tmdb:550", "anilist:21"))]
+#[serde(into = "String", try_from = "String")]
+struct TitleRef(MediaId);
+
+impl std::fmt::Display for TitleRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.0.provider, self.0.id)
+    }
+}
+
+impl std::str::FromStr for TitleRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (provider, id) = text
+            .split_once(':')
+            .ok_or_else(|| format!("{text:?} names no provider"))?;
+        let id = id.parse().map_err(|_| format!("{id:?} is no id"))?;
+        Ok(Self(MediaId {
+            provider: provider.to_owned(),
+            id,
+        }))
+    }
+}
+
+impl TryFrom<String> for TitleRef {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl From<TitleRef> for String {
+    fn from(title: TitleRef) -> Self {
+        title.to_string()
+    }
+}
+
+/// A string whose example its own `FromStr` refuses.
+#[derive(Schema)]
+#[schema(string, examples("tmdb"))]
+struct MisdescribedRef(MediaId);
+
+/// A string whose example breaks its own bound.
+#[derive(Schema)]
+#[schema(string, max_length = 4, examples("tmdb:550"))]
+struct OverlongRef(MediaId);
+
+macro_rules! displayed_as_title_ref {
+    ($($ty:ident),*) => {$(
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Display::fmt(&TitleRef(self.0.clone()), f)
+            }
+        }
+
+        impl std::str::FromStr for $ty {
+            type Err = String;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                text.parse::<TitleRef>().map(|title| Self(title.0))
+            }
+        }
+    )*};
+}
+
+displayed_as_title_ref!(MisdescribedRef, OverlongRef);
+
+/// A `#[schema(string)]` type is the string its `Display` writes, whatever it
+/// declares: `type: string`, its own prose, its text's bounds and examples,
+/// and its own component name. serde, converting through `String`, agrees.
+#[test]
+fn a_string_type_is_described_as_its_text() {
+    assert_eq!(
+        emitted::<TitleRef>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A title reference, `<provider>:<id>`.",
+            "minLength": 3,
+            "maxLength": 24,
+            "examples": ["tmdb:550", "anilist:21"],
+        })
+    );
+    assert_eq!(
+        <TitleRef as SchemaTrait>::name().map(|name| name.to_string()),
+        Some("TitleRef".to_owned())
+    );
+
+    let title: TitleRef = "tmdb:550".parse().expect("the example parses");
+    let written = serde_json::to_value(title.clone()).expect("a title serializes");
+    assert_eq!(written, serde_json::json!("tmdb:550"));
+    assert_eq!(
+        serde_json::from_value::<TitleRef>(written).ok(),
+        Some(title)
+    );
+}
+
+/// The text's bounds are checked on the text `Display` writes, at the
+/// value's own pointer.
+#[test]
+fn a_string_type_checks_its_bounds_on_its_text() {
+    use kynos::schema::constraints::{Pointer, Violations};
+
+    let fits: TitleRef = "tmdb:550".parse().expect("a reference parses");
+    assert!(Violations::of(&fits, Pointer::root()).is_ok());
+
+    let long: TitleRef = "a-provider-named-at-length:550"
+        .parse()
+        .expect("a reference parses");
+    let failures = Violations::of(&long, Pointer::root()).expect_err("30 characters break 24");
+    assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+}
+
+/// A reference in the `uri-reference` format, which its own `FromStr` checks.
+#[derive(Schema)]
+#[schema(string, format = "uri-reference", examples("tmdb:550"))]
+struct LinkedRef(MediaId);
+
+displayed_as_title_ref!(LinkedRef);
+
+/// `format` on a `#[schema(string)]` type is the type's own claim about its
+/// text, described beside `type: string`.
+#[test]
+fn a_string_type_names_its_format() {
+    assert_eq!(
+        emitted::<LinkedRef>(),
+        serde_json::json!({
+            "type": "string",
+            "format": "uri-reference",
+            "description": "A reference in the `uri-reference` format, which its own `FromStr` checks.",
+            "examples": ["tmdb:550"],
+        })
+    );
+}
+
+/// The problem a broken [`EncodedRef`] answers with.
+const BAD_REFERENCE: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/bad-reference",
+    );
+
+/// A reference carried base64-encoded.
+#[derive(Schema)]
+#[schema(string, content_encoding = "base64", content_media_type = "text/plain")]
+#[schema(constraint_problem = BAD_REFERENCE)]
+struct EncodedRef(MediaId);
+
+displayed_as_title_ref!(EncodedRef);
+
+/// The content keys describe the text, and `constraint_problem` beside
+/// `string` is the type's own problem, as on any other type.
+#[test]
+fn a_string_type_describes_its_content_and_names_its_problem() {
+    assert_eq!(
+        emitted::<EncodedRef>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A reference carried base64-encoded.",
+            "contentEncoding": "base64",
+            "contentMediaType": "text/plain",
+        })
+    );
+    assert_eq!(
+        <EncodedRef as SchemaTrait>::CONSTRAINT_PROBLEM,
+        Some(BAD_REFERENCE)
+    );
+}
+
+/// A reference whose provider is lowercase letters.
+#[cfg(feature = "pattern")]
+#[derive(Schema)]
+#[schema(string, pattern = "^[a-z]+:")]
+struct PatternedRef(MediaId);
+
+#[cfg(feature = "pattern")]
+displayed_as_title_ref!(PatternedRef);
+
+/// `pattern` is described, and checked on the text `Display` writes.
+#[cfg(feature = "pattern")]
+#[test]
+fn a_string_type_checks_its_pattern_on_its_text() {
+    use kynos::schema::constraints::{Pointer, Violations};
+
+    assert_eq!(emitted::<PatternedRef>()["pattern"], "^[a-z]+:");
+    let fits: PatternedRef = "tmdb:550".parse().expect("a reference parses");
+    assert!(Violations::of(&fits, Pointer::root()).is_ok());
+    let shouted: PatternedRef = "TMDB:550".parse().expect("a reference parses");
+    let failures = Violations::of(&shouted, Pointer::root()).expect_err("uppercase breaks it");
+    assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+}
+
+/// A side of a trade, written `buy` or `sell`.
+#[derive(Debug, PartialEq, Schema)]
+#[schema(string, examples("buy", "sell"))]
+enum TradeSide {
+    Buy,
+    Sell,
+}
+
+impl std::fmt::Display for TradeSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Buy => "buy",
+            Self::Sell => "sell",
+        })
+    }
+}
+
+impl std::str::FromStr for TradeSide {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "buy" => Ok(Self::Buy),
+            "sell" => Ok(Self::Sell),
+            other => Err(format!("{other:?} is no side")),
+        }
+    }
+}
+
+/// An enum carrying `string` is its text, not its variants.
+#[test]
+fn a_string_enum_is_described_as_its_text() {
+    assert_eq!(
+        emitted::<TradeSide>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A side of a trade, written `buy` or `sell`.",
+            "examples": ["buy", "sell"],
+        })
+    );
+}
+
+/// What `/titles/{title}` captures: a string type as a path parameter.
+#[derive(PathParams)]
+struct ByTitle {
+    title: TitleRef,
+}
+
+/// A derived `ParamValue` on a `#[schema(string)]` type keeps the type's own
+/// `FromStr` and `Display`, so the type is a path parameter.
+#[test]
+fn a_string_type_is_a_parameter_through_its_own_text() {
+    implements_param_value::<TitleRef>();
+    implements_path_params::<ByTitle>();
+    assert_eq!(
+        "tmdb:550"
+            .parse::<TitleRef>()
+            .map(|title| title.to_string()),
+        Ok("tmdb:550".to_owned())
+    );
+}
+
+/// What `/misdescribed/{title}/{overlong}` captures: two string types whose
+/// examples their own types refuse.
+#[derive(PathParams)]
+struct ByBrokenExamples {
+    title: MisdescribedRef,
+    overlong: OverlongRef,
+}
+
+impl kynos::schema::ParamValue for MisdescribedRef {}
+impl kynos::schema::ParamValue for OverlongRef {}
+
+#[kynos::get("/misdescribed/{title}/{overlong}")]
+async fn by_broken_examples(
+    kynos::extract::params::path::Path(path): kynos::extract::params::path::Path<ByBrokenExamples>,
+) -> kynos::response::status::NoContent {
+    let _ = path;
+    kynos::response::status::NoContent
+}
+
+/// An example the type's own `FromStr` refuses, or whose value breaks the
+/// text's own bounds, is a violation located at the example, so the router
+/// refuses to build rather than publish it.
+#[test]
+fn a_router_refuses_a_string_example_its_type_does_not_carry() {
+    use kynos::router::error::ExampleRefusal;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_broken_examples]);
+    assert_eq!(
+        refused_examples(&router),
+        [
+            (
+                "#/components/schemas/MisdescribedRef/examples/0".to_owned(),
+                "MisdescribedRef",
+                "tmdb".to_owned(),
+                ExampleRefusal::Unparsed,
+            ),
+            (
+                "#/components/schemas/OverlongRef/examples/0".to_owned(),
+                "OverlongRef",
+                "tmdb:550".to_owned(),
+                ExampleRefusal::OutOfBounds {
+                    failures: vec!["must be at most 4 characters long".to_owned()],
+                },
+            ),
+        ]
+    );
+}
+
+/// Each `StringExample` violation building `router` reports: where, the
+/// type's last path segment, the example, and why.
+fn refused_examples(
+    router: &kynos::Router<()>,
+) -> Vec<(
+    String,
+    &'static str,
+    String,
+    kynos::router::error::ExampleRefusal,
+)> {
+    use kynos::router::error::RouterError;
+
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing refused examples was built");
+    };
+    violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            RouterError::StringExample {
+                schema,
+                example,
+                refusal,
+            } => Some((
+                violation.location,
+                schema.rsplit("::").next().unwrap_or(schema),
+                example,
+                refusal,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A plain serde derive on a newtype: serde writes the member, `"550"`, while
+/// `Display` writes `ref:550`.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[schema(string, examples("ref:550"))]
+struct PrefixedRef(String);
+
+/// A plain serde derive on a struct with named fields, which reads an object
+/// rather than the string; its `Serialize` is written by hand through the
+/// text.
+#[derive(Schema, serde::Deserialize)]
+#[schema(string, examples("tmdb:550"))]
+struct HalfDerivedRef {
+    provider: String,
+    id: u64,
+}
+
+/// A `Serialize` that refuses every value.
+#[derive(Schema)]
+#[schema(string, examples("tmdb:550"))]
+struct UnwritableRef(MediaId);
+
+impl serde::Serialize for HalfDerivedRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl serde::Serialize for UnwritableRef {
+    fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("never written"))
+    }
+}
+
+impl std::fmt::Display for PrefixedRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ref:{}", self.0)
+    }
+}
+
+impl std::str::FromStr for PrefixedRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.strip_prefix("ref:")
+            .map(|id| Self(id.to_owned()))
+            .ok_or_else(|| format!("{text:?} is no reference"))
+    }
+}
+
+impl std::fmt::Display for HalfDerivedRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.provider, self.id)
+    }
+}
+
+impl std::str::FromStr for HalfDerivedRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.parse::<TitleRef>().map(|title| Self {
+            provider: title.0.provider,
+            id: title.0.id,
+        })
+    }
+}
+
+displayed_as_title_ref!(UnwritableRef);
+
+impl kynos::schema::ParamValue for PrefixedRef {}
+impl kynos::schema::ParamValue for HalfDerivedRef {}
+impl kynos::schema::ParamValue for UnwritableRef {}
+
+/// What `/serde/{title}/{prefixed}/{half}/{unwritable}` captures: one string
+/// type serde carries as its text, and three it does not.
+#[derive(PathParams)]
+struct BySerde {
+    title: TitleRef,
+    prefixed: PrefixedRef,
+    half: HalfDerivedRef,
+    unwritable: UnwritableRef,
+}
+
+#[kynos::get("/serde/{title}/{prefixed}/{half}/{unwritable}")]
+async fn by_serde(
+    kynos::extract::params::path::Path(path): kynos::extract::params::path::Path<BySerde>,
+) -> kynos::response::status::NoContent {
+    let _ = path;
+    kynos::response::status::NoContent
+}
+
+/// A serde derive with no attribute is invisible to the `Schema` derive, so
+/// each example is put through the type's own serde: `Serialize` must write
+/// the `Display` text as a JSON string and `Deserialize` must read the example
+/// as one. `TitleRef`, converting through `String`, carries its examples.
+#[test]
+fn a_router_refuses_a_string_example_its_serde_does_not_carry_as_text() {
+    use kynos::router::error::ExampleRefusal;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_serde]);
+    let refused = refused_examples(&router);
+    let [prefixed, half, unwritable] = refused.as_slice() else {
+        panic!("three refused examples: {refused:?}");
+    };
+
+    assert_eq!(
+        prefixed,
+        &(
+            "#/components/schemas/PrefixedRef/examples/0".to_owned(),
+            "PrefixedRef",
+            "ref:550".to_owned(),
+            ExampleRefusal::Miswritten {
+                written: "\"550\"".to_owned(),
+                displayed: "ref:550".to_owned(),
+            },
+        )
+    );
+    assert!(
+        matches!(
+            half,
+            (_, "HalfDerivedRef", _, ExampleRefusal::Undeserializable { reason })
+                if reason.contains("expected struct HalfDerivedRef")
+        ),
+        "{half:?}"
+    );
+    assert!(
+        matches!(
+            unwritable,
+            (_, "UnwritableRef", _, ExampleRefusal::Unserializable { reason })
+                if reason == "never written"
+        ),
+        "{unwritable:?}"
+    );
+}
+
 /// A deprecated type says so, and says nothing about the note.
 #[test]
 #[allow(deprecated)]

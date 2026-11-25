@@ -8887,6 +8887,35 @@ pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::describ
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::method(&self) -> kynos_openapi::model::paths::method::Method
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::path(&self) -> &kynos_openapi::model::paths::template::PathTemplate
 pub mod kynos::router::error
+#[non_exhaustive] pub enum kynos::router::error::ExampleRefusal
+pub kynos::router::error::ExampleRefusal::Miswritten
+pub kynos::router::error::ExampleRefusal::Miswritten::displayed: alloc::string::String
+pub kynos::router::error::ExampleRefusal::Miswritten::written: alloc::string::String
+pub kynos::router::error::ExampleRefusal::OutOfBounds
+pub kynos::router::error::ExampleRefusal::OutOfBounds::failures: alloc::vec::Vec<alloc::string::String>
+pub kynos::router::error::ExampleRefusal::Undeserializable
+pub kynos::router::error::ExampleRefusal::Undeserializable::reason: alloc::string::String
+pub kynos::router::error::ExampleRefusal::Unparsed
+pub kynos::router::error::ExampleRefusal::Unserializable
+pub kynos::router::error::ExampleRefusal::Unserializable::reason: alloc::string::String
+impl core::clone::Clone for kynos::router::error::ExampleRefusal
+pub fn kynos::router::error::ExampleRefusal::clone(&self) -> kynos::router::error::ExampleRefusal
+impl core::cmp::Eq for kynos::router::error::ExampleRefusal
+impl core::cmp::PartialEq for kynos::router::error::ExampleRefusal
+pub fn kynos::router::error::ExampleRefusal::eq(&self, &kynos::router::error::ExampleRefusal) -> bool
+impl core::error::Error for kynos::router::error::ExampleRefusal
+impl core::fmt::Debug for kynos::router::error::ExampleRefusal
+pub fn kynos::router::error::ExampleRefusal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::router::error::ExampleRefusal
+pub fn kynos::router::error::ExampleRefusal::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kynos::router::error::ExampleRefusal
+impl core::marker::Freeze for kynos::router::error::ExampleRefusal
+impl core::marker::Send for kynos::router::error::ExampleRefusal
+impl core::marker::Sync for kynos::router::error::ExampleRefusal
+impl core::marker::Unpin for kynos::router::error::ExampleRefusal
+impl core::marker::UnsafeUnpin for kynos::router::error::ExampleRefusal
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::error::ExampleRefusal
+impl core::panic::unwind_safe::UnwindSafe for kynos::router::error::ExampleRefusal
 #[non_exhaustive] pub enum kynos::router::error::RouterError
 pub kynos::router::error::RouterError::DuplicateOperation
 pub kynos::router::error::RouterError::DuplicateOperation::method: kynos_openapi::model::paths::method::Method
@@ -8916,6 +8945,10 @@ pub kynos::router::error::RouterError::ShortCircuitMismatch::declared: alloc::ve
 pub kynos::router::error::RouterError::ShortCircuitMismatch::described: alloc::vec::Vec<u16>
 pub kynos::router::error::RouterError::ShortCircuitMismatch::name: alloc::string::String
 pub kynos::router::error::RouterError::Spec(kynos_openapi::validate::violation::SpecError)
+pub kynos::router::error::RouterError::StringExample
+pub kynos::router::error::RouterError::StringExample::example: alloc::string::String
+pub kynos::router::error::RouterError::StringExample::refusal: kynos::router::error::ExampleRefusal
+pub kynos::router::error::RouterError::StringExample::schema: &'static str
 pub kynos::router::error::RouterError::UnguardedOperation
 pub kynos::router::error::RouterError::UnguardedOperation::method: kynos_openapi::model::paths::method::Method
 pub kynos::router::error::RouterError::UnguardedOperation::path: alloc::string::String

@@ -48,3 +48,15 @@ pub(super) fn check(input: &DeriveInput, container: &Container) -> syn::Result<(
 pub(super) fn check_grammar(input: &DeriveInput, container: &Container) -> syn::Result<()> {
     grammar::check_constraints(input, container)
 }
+
+/// Every refusal of a `#[schema(string)]` type, whose declaration is not
+/// described, so only the serde attributes saying how it travels are read.
+pub(super) fn check_string(input: &DeriveInput) -> syn::Result<()> {
+    wire_form::reject_unstringed_wire_form(input)
+}
+
+/// One key of the field grammar and its value, consumed from `meta`, for the
+/// text bounds a `#[schema(string)]` type writes on itself.
+pub(super) fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+    grammar::check_constraint(meta)
+}
