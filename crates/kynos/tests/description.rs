@@ -3604,6 +3604,54 @@ fn an_unprocessable_parameter_problem_declares_its_own_422() {
     assert_eq!(published(&schema), ["about:blank"], "{schema}");
 }
 
+/// What a broken bound of [`PageWindow`] sends, at 422 so it is declared alone.
+const PAGING_INVALID: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/paging-invalid",
+    )
+    .titled("The paging is invalid")
+    .unprocessable();
+
+/// A shared query group naming its own problem.
+#[derive(kynos::QueryParams)]
+#[schema(constraint_problem = PAGING_INVALID)]
+struct PageWindow {
+    #[schema(maximum = 200)]
+    limit: Option<u32>,
+}
+
+/// A group naming no problem of its own, flattening [`PageWindow`].
+#[derive(kynos::QueryParams)]
+struct Catalogue {
+    #[param(flatten)]
+    paging: PageWindow,
+    tag: Option<String>,
+}
+
+#[kynos::get("/catalogue")]
+async fn catalogue(_: kynos::extract::params::query::Query<Catalogue>) -> NoContent {
+    NoContent
+}
+
+/// A flattened group's own problem is declared on each operation taking the
+/// group flattening it, since the flattened group's decoder sends it; a
+/// parent naming none of its own does not hide it.
+#[test]
+fn a_flattened_query_groups_problem_is_declared_on_its_parents_operation() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![catalogue])
+        .openapi()
+        .expect("a describable router");
+
+    let declared = declared_problem(&operation(&document, "/catalogue"), "422");
+    assert_eq!(
+        declared["description"], "The paging is invalid",
+        "{declared}"
+    );
+    let schema = &declared["content"]["application/problem+json"]["schema"];
+    assert_eq!(published(schema), [PAGING_INVALID.type_uri], "{schema}");
+}
+
 /// A body and a parameter whose types name a problem declare it beside
 /// `about:blank`, each at its input's own status, with the `errors` member it
 /// always sends; a body whose type names none declares `about:blank` alone.
