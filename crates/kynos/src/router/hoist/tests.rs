@@ -89,6 +89,38 @@ fn responses_differing_only_in_key_order_share_one_component() {
     assert_eq!(components.responses.len(), 1);
 }
 
+/// Media types declared in the other order are the same response too, in
+/// every build: the component lists them as the first operation in document
+/// order declares them, and is named for that one's first.
+#[test]
+fn responses_differing_only_in_media_type_order_share_the_first_declared() {
+    let plain = r##""text/plain": {"schema": {"$ref": "#/components/schemas/Note"}}"##;
+    let json = r##""application/json": {"schema": {"$ref": "#/components/schemas/Reading"}}"##;
+    let content = |first: &str, second: &str| {
+        format!(
+            r#"{{"get": {{"responses": {{"200": {{"description": "the note", "content": {{{first}, {second}}}}}}}}}}}"#
+        )
+    };
+    let (plain, json) = (content(plain, json), content(json, plain));
+    let mut paths: Paths =
+        serde_json::from_str(&format!(r#"{{"/a": {plain}, "/b": {json}}}"#)).expect("paths");
+    let first = paths.items["/a"]
+        .operation(Method::Get)
+        .expect("a GET")
+        .responses
+        .responses["200"]
+        .clone();
+    let mut components = Components::default();
+
+    shared_responses(&mut paths, &mut components);
+
+    assert_eq!(components.responses.get("NoteStatus200"), Some(&first));
+    assert_eq!(
+        entry(&paths, "200"),
+        &RefOr::Ref(Ref::response("NoteStatus200"))
+    );
+}
+
 /// A suffix is hashed from a key-sorted form, so neither the order the
 /// response's fields serialize in nor the order a nested object's keys were
 /// written in, which `serde_json/preserve_order` keeps, changes it. The

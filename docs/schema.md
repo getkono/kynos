@@ -805,7 +805,8 @@ and the interceptors covering it declared them.
 
 `components/responses` is the exception, because its names are minted rather
 than declared, and a name has to survive remounting. A response two or more
-operations declare under one status key with the same serialized bytes is
+operations declare under one status key with the same compact JSON, every
+object's keys sorted, is
 written there once
 ([`router/hoist.rs`](../crates/kynos/src/router/hoist.rs)), named for what it
 carries: the one problem type it publishes other than `about:blank`, in
@@ -827,10 +828,16 @@ responses are told apart by what they say rather than by the order they sort
 in. Where the suffixed name is taken too, the response stays inline. Shared
 responses are emitted in name order, after the application's own, so neither
 the names nor their order depend on the order operations were mounted in.
-Sameness is the bytes,
-not equality: two responses differing in a description, a header, a link or
-the order of two media types are not one response, and a `$ref` carries no
-siblings, so sharing never changes what an operation says. Headers inside a
+Sameness is that same sorted JSON, not equality: two responses differing in a
+description, a header or a link are not one response, and a `$ref` carries no
+siblings, so sharing changes nothing an operation says. Two differing only in
+the order of an object's keys are one response in every build, the component
+written as the first in document order declares it, so an operation declaring
+two media types in the other order refers to one that lists them in this
+order. Neither OpenAPI version gives that order a meaning, and the committed
+canonical form already sorts it away; keeping it would key on the build, since
+`serde_json/preserve_order` decides the order of every key inside an example
+or extension. Headers inside a
 shared response are shared with it; a header is not hoisted on its own into
 `components/headers`, since a `$ref` to one is no shorter than most headers it
 would stand for.

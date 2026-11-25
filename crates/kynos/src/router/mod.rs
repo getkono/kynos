@@ -146,12 +146,13 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 ///
 /// # Responses operations share
 ///
-/// A response two or more operations declare under the same status key, byte
-/// for byte, is written once under `components/responses` and named by a bare
-/// `$ref` from each, so a description grows with the shapes an API answers
-/// with rather than with its operations, and a generator sees one named
-/// response rather than many anonymous copies. A response declared once stays
-/// inline, and one already given by `$ref` is left as written.
+/// A response two or more operations declare under the same status key, alike
+/// up to the order of an object's keys, is written once under
+/// `components/responses`, as the first of them declares it, and named by a
+/// bare `$ref` from each, so a description grows with the shapes an API
+/// answers with rather than with its operations, and a generator sees one
+/// named response rather than many anonymous copies. A response declared once
+/// stays inline, and one already given by `$ref` is left as written.
 ///
 /// The name says what the response carries: the problem type it alone
 /// publishes other than `about:blank`, then the schema component its first
@@ -159,19 +160,22 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// `ProblemStatus500`, `ReadingStatus200`, `Status204` or `Default`, so
 /// adding an operation or a response renames nothing already shared unless
 /// it derives the very same name. Where two different responses would take
-/// one name, each appends a fingerprint of its own bytes instead,
+/// one name, each appends a fingerprint of its content instead,
 /// `ProblemStatus500_1f0c9a2e`, so a new response deriving a name already
-/// shared renames that one too. The suffix is never a position, so no name
-/// depends on the order operations were mounted in. A response differing
-/// anywhere — a description, a header, a link — is a different response, so
-/// sharing never changes what an operation says.
+/// shared renames that one too. The fingerprint hashes the content with every
+/// object's keys sorted, so it is never a position, and no name depends on
+/// the order operations were mounted in or on a `serde_json` feature. A
+/// response differing anywhere — a description, a header, a link — is a
+/// different response, so sharing changes nothing an operation says but the
+/// order of an object's keys, media types and headers included, which neither
+/// OpenAPI version gives a meaning.
 ///
 /// It happens after every [`map_openapi`](Router::map_openapi) edit, so an
 /// edit reads every response inline, and after the description is
 /// validated, so a violation inside a shared response is reported at each
 /// operation declaring it. A response component an edit declares is never
 /// overwritten: a minted name passes over its name, and over any name a
-/// response `$ref` already gives, and a response with exactly its bytes
+/// response `$ref` already gives, and a response alike to it up to key order
 /// refers to it instead of minting another.
 ///
 /// # Returning one from a function
