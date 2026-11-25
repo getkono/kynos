@@ -28,7 +28,7 @@ type Declared = (String, String);
 /// one exists, and otherwise a new one named for what the response says, as
 /// [`derived`] spells it. Where two different responses derive one name, or
 /// the name is already declared or referred to, each takes the suffix
-/// [`fingerprint`] computes from its own bytes, so no name depends on what
+/// [`fingerprint`] computes from its own content, so no name depends on what
 /// else the document declares beyond that collision; where even that is
 /// taken, the response stays inline. Bytes, not equality, decide sameness,
 /// so two responses differing anywhere (a description, a header, a link, the
@@ -54,7 +54,7 @@ pub(super) fn shared_responses(paths: &mut Paths, components: &mut Components) {
         }
         if let Some(name) = existing.get(&bytes) {
             names.insert((key, bytes), name.clone());
-        } else if let Some(name) = derived(&key, &bytes) {
+        } else if let Some(name) = derived(&key, &response) {
             minted
                 .entry(name)
                 .or_default()
@@ -72,7 +72,7 @@ pub(super) fn shared_responses(paths: &mut Paths, components: &mut Components) {
             let name = if alone && !taken.contains(&name) {
                 name.clone()
             } else {
-                format!("{name}_{}", fingerprint(&declared.1))
+                format!("{name}_{}", fingerprint(&response))
             };
             // Taken only where a component or a `$ref` already holds this
             // fingerprinted name, or two fingerprints coincide; sharing is
@@ -141,14 +141,14 @@ fn existing(components: &Components) -> HashMap<String, String> {
     existing
 }
 
-/// The name a response declared at `key` with `bytes` is given before any
-/// suffix: its problem type, then the schema component its first media type
+/// The name `response`, declared at `key`, is given before any suffix: its
+/// problem type, then the schema component its first declared media type
 /// carries, then its key, such as `OutOfStockProblemStatus409`,
 /// `ProblemStatus500`, `ReadingStatus200`, `Status204` or `Default`.
 ///
 /// `None` where the key would make an illegal name; the schema and problem
 /// type are dropped where they would.
-fn derived(key: &str, bytes: &str) -> Option<String> {
+fn derived(key: &str, response: &Response) -> Option<String> {
     let status = if key == "default" {
         "Default".to_owned()
     } else {
@@ -157,14 +157,13 @@ fn derived(key: &str, bytes: &str) -> Option<String> {
     if !ComponentName::is_valid(&status) {
         return None;
     }
-    let response: Value = serde_json::from_str(bytes).ok()?;
-    let Some((media, media_type)) = response
-        .get("content")
-        .and_then(Value::as_object)
-        .and_then(|content| content.iter().next())
-    else {
+    // The typed map keeps declaration order in every build; a `Value` sorts
+    // its keys unless `serde_json/preserve_order` is on.
+    let Some((media, media_type)) = response.content.first() else {
         return Some(status);
     };
+    // Read by key alone below, so this `Value`'s own key order is moot.
+    let media_type = serde_json::to_value(media_type).unwrap_or_default();
     let schema = media_type
         .get("schema")
         .or_else(|| media_type.get("itemSchema"));
@@ -258,13 +257,21 @@ fn pascal(uri: &str) -> String {
         .collect()
 }
 
-/// Eight hex digits of the 64-bit FNV-1a hash of `bytes`: fixed by the
-/// algorithm rather than by the standard library's hasher, which may change
-/// between releases, so a suffixed name is the same in every build.
-fn fingerprint(bytes: &str) -> String {
-    let hash = bytes.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    });
+/// Eight hex digits of the 64-bit FNV-1a hash of `response` as compact JSON
+/// with every object's keys sorted, at every depth: fixed by the algorithm
+/// rather than by the standard library's hasher, which may change between
+/// releases, and by the sort rather than by whether
+/// `serde_json/preserve_order` keeps a nested `Value`'s insertion order, so
+/// a suffixed name is the same in every build.
+fn fingerprint(response: &Response) -> String {
+    let mut canonical = serde_json::to_value(response).unwrap_or_default();
+    canonical.sort_all_objects();
+    let hash = canonical
+        .to_string()
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
     format!("{:08x}", hash >> 32)
 }
 

@@ -810,7 +810,7 @@ written there once
 ([`router/hoist.rs`](../crates/kynos/src/router/hoist.rs)), named for what it
 carries: the one problem type it publishes other than `about:blank`, in
 `PascalCase` from the type URI's last segment, then the schema component its
-first media type names (directly, as an `allOf`'s first `$ref`, or as every
+first declared media type names (directly, as an `allOf`'s first `$ref`, or as every
 `oneOf` branch's), then the key: `OutOfStockProblemStatus409`,
 `ProblemStatus500`, `ReadingStatus200`, `Status204`, `Default`. Content, not a
 Rust type, because the type is gone by the time two operations' responses are
@@ -818,9 +818,11 @@ compared; not a reason phrase, which the `http` crate is free to reword; and
 never a position, so adding a response or an operation renames nothing already
 shared unless it derives the very same name. When it does, every response
 deriving that name, like one whose name an application's component or `$ref`
-already holds, takes `_` and eight hex digits of the 64-bit FNV-1a hash of its own bytes,
-`ProblemStatus500_1f0c9a2e`: a fixed algorithm rather than the standard
-library's hasher, so the suffix is the same in every build, and the colliding
+already holds, takes `_` and eight hex digits of the 64-bit FNV-1a hash of its
+compact JSON with every object's keys sorted, `ProblemStatus500_1f0c9a2e`: a
+fixed algorithm rather than the standard library's hasher, and sorted keys
+rather than whatever order `serde_json/preserve_order` leaves a nested example
+or extension in, so the suffix is the same in every build, and the colliding
 responses are told apart by what they say rather than by the order they sort
 in. Where the suffixed name is taken too, the response stays inline. Shared
 responses are emitted in name order, after the application's own, so neither
