@@ -1199,7 +1199,7 @@ mod router_errors {
 mod shared_responses {
     use kynos_openapi::{Document, Header, Method, Ref, RefOr, Response, Schema};
 
-    use super::{Router, handled};
+    use super::{Router, RouterError, handled};
     use crate::router::endpoint::builder::EndpointBuilder;
 
     /// A `GET` on each of `paths`, in that order.
@@ -1550,6 +1550,43 @@ mod shared_responses {
                 "{path}"
             );
         }
+    }
+
+    /// A violation inside a response several operations declare alike is
+    /// reported at each of them, where it was written, never once at the
+    /// component sharing would have named.
+    #[test]
+    fn a_shared_response_s_violation_is_reported_where_each_operation_wrote_it() {
+        let refused = router(&["/a", "/b"])
+            .map_openapi(|document| {
+                let ignored = Response::new("failed").with_header(
+                    "Content-Type",
+                    Header::new(Schema::of_type(kynos_openapi::SchemaType::String)),
+                );
+                declare(document, &["/a", "/b"], "500", &ignored);
+            })
+            .openapi();
+        let Err(crate::Error::Invalid { violations }) = refused else {
+            panic!("an ignored header is refused");
+        };
+
+        let ignored: Vec<&str> = violations
+            .iter()
+            .filter(|violation| {
+                matches!(
+                    violation.error,
+                    RouterError::Spec(kynos_openapi::SpecError::IgnoredHeader { .. })
+                )
+            })
+            .map(|violation| violation.location.as_str())
+            .collect();
+        assert_eq!(
+            ignored,
+            [
+                "#/paths/~1a/get/responses/500/headers",
+                "#/paths/~1b/get/responses/500/headers"
+            ]
+        );
     }
 
     /// A name a `$ref` already gives is passed over even where nothing
