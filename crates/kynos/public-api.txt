@@ -6599,6 +6599,8 @@ impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Rou
 pub fn kynos::router::Router<C, P, I, S>::openapi(&self) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::Router<C, P, I, S>::openapi_as(&self, kynos_openapi::model::document::SpecVersion) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::Router<C, P, I, S>::validate(&self) -> kynos::error::Result<alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>> where C: 'static
+impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
+pub fn kynos::router::Router<C, P, I, S>::seal(self) -> kynos::router::sealed::Sealed<C>
 impl<C: core::marker::Send + core::marker::Sync + 'static, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
 pub fn kynos::router::Router<C, P, I, S>::assets_directory(self, &str, kynos::router::assets::fs::Directory) -> Self
 impl<C> kynos::router::Router<C, kynos::middleware::catch_panic::Propagate, ()>
@@ -9117,6 +9119,22 @@ impl core::marker::Unpin for kynos::router::policy::TrailingSlashPolicy
 impl core::marker::UnsafeUnpin for kynos::router::policy::TrailingSlashPolicy
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::router::policy::TrailingSlashPolicy
 impl core::panic::unwind_safe::UnwindSafe for kynos::router::policy::TrailingSlashPolicy
+pub mod kynos::router::sealed
+pub struct kynos::router::sealed::Sealed<C>
+impl<C> kynos::router::sealed::Sealed<C>
+pub fn kynos::router::sealed::Sealed<C>::build(self, C) -> kynos::error::Result<kynos::router::service::Service<C>> where C: core::marker::Send + core::marker::Sync + 'static
+pub fn kynos::router::sealed::Sealed<C>::openapi(&self) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
+pub fn kynos::router::sealed::Sealed<C>::openapi_as(&self, kynos_openapi::model::document::SpecVersion) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
+pub fn kynos::router::sealed::Sealed<C>::validate(&self) -> kynos::error::Result<alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>> where C: 'static
+impl<C> core::fmt::Debug for kynos::router::sealed::Sealed<C>
+pub fn kynos::router::sealed::Sealed<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<C> core::marker::Freeze for kynos::router::sealed::Sealed<C>
+impl<C> core::marker::Send for kynos::router::sealed::Sealed<C>
+impl<C> core::marker::Sync for kynos::router::sealed::Sealed<C>
+impl<C> core::marker::Unpin for kynos::router::sealed::Sealed<C>
+impl<C> core::marker::UnsafeUnpin for kynos::router::sealed::Sealed<C>
+impl<C> !core::panic::unwind_safe::RefUnwindSafe for kynos::router::sealed::Sealed<C>
+impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::router::sealed::Sealed<C>
 pub mod kynos::router::service
 pub struct kynos::router::service::Service<C>
 impl<C> kynos::router::service::Service<C>
@@ -9173,6 +9191,8 @@ impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Rou
 pub fn kynos::router::Router<C, P, I, S>::openapi(&self) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::Router<C, P, I, S>::openapi_as(&self, kynos_openapi::model::document::SpecVersion) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::Router<C, P, I, S>::validate(&self) -> kynos::error::Result<alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>> where C: 'static
+impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
+pub fn kynos::router::Router<C, P, I, S>::seal(self) -> kynos::router::sealed::Sealed<C>
 impl<C: core::marker::Send + core::marker::Sync + 'static, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
 pub fn kynos::router::Router<C, P, I, S>::assets_directory(self, &str, kynos::router::assets::fs::Directory) -> Self
 impl<C> kynos::router::Router<C, kynos::middleware::catch_panic::Propagate, ()>
@@ -11886,6 +11906,8 @@ impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Rou
 pub fn kynos::router::Router<C, P, I, S>::openapi(&self) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::Router<C, P, I, S>::openapi_as(&self, kynos_openapi::model::document::SpecVersion) -> kynos::error::Result<kynos_openapi::model::document::Document> where C: 'static
 pub fn kynos::router::Router<C, P, I, S>::validate(&self) -> kynos::error::Result<alloc::vec::Vec<kynos_openapi::validate::violation::Violation<kynos::router::error::RouterError>>> where C: 'static
+impl<C, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
+pub fn kynos::router::Router<C, P, I, S>::seal(self) -> kynos::router::sealed::Sealed<C>
 impl<C: core::marker::Send + core::marker::Sync + 'static, P: kynos::middleware::catch_panic::PanicPolicy, I, S> kynos::router::Router<C, P, I, S>
 pub fn kynos::router::Router<C, P, I, S>::assets_directory(self, &str, kynos::router::assets::fs::Directory) -> Self
 impl<C> kynos::router::Router<C, kynos::middleware::catch_panic::Propagate, ()>
