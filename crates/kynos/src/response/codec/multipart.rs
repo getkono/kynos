@@ -127,6 +127,7 @@ impl<T: IntoMultipart> IntoResponse for MultipartForm<T> {
 
 /// The `Content-Type` naming a delimiter no part contains, and the body framed
 /// by it; a response and a test request are written alike.
+#[inline]
 pub(crate) fn encode(parts: Vec<Part>) -> (HeaderValue, Bytes) {
     let boundary = framing::boundary(parts.iter().map(|part| part.bytes.as_ref()));
     let body = framing::render(parts, &boundary);
