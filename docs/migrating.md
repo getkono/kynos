@@ -60,6 +60,7 @@ by task.
 | `origins.fold(Csrf::new(), \|c, o\| c.trusting_origin(o))` | `middleware::csrf::Csrf::new().trusting_origins(origins)`, which takes what `Cors::allow_origins` takes | #1420 |
 | A credential type wrapping `Result<Account, StoreError>`, so a lookup failure that is no outage could reach a 500, and an authorizer admitting its `Err` unchecked | `type Error = AuthError;` on the `security::Authenticator`, an `ApiError` holding `error::rejection::AuthRejection` in a transparent variant beside its own 500, and `?` inside `authenticate` | #1421 |
 | `auth.into_inner().resolve()?` at the top of every protected handler, unwrapping that deferred failure | `auth.into_inner()`: the guard already answered with the authenticator's error | #1421 |
+| A `QueryParams` field `diet: Option<String>`, split on `,` by hand and described as free text | `diet: Vec<Diet>` for `?diet=a&diet=b`, or `#[param(explode = false)] diet: Vec<Diet>` for one `?diet=a,b`; no pair is the empty list. Unlike the splitter, an item is not trimmed and an empty one is kept, so `?diet=` is a 400 for an enum | #1424 |
 
 ## 0.5 to 0.6
 

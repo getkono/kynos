@@ -5,9 +5,10 @@ use crate::http::Parts;
 
 /// The first value of `name` in the request target's query string.
 ///
-/// Read exactly as a derived [`Query`](crate::extract::params::query::Query)
-/// parameter of the same name: form-decoded, from the first pair naming it. A
-/// later pair never stands in for one that could not be read.
+/// Form-decoded as a derived [`Query`](crate::extract::params::query::Query)
+/// parameter of the same name is, from the first pair naming it, where a
+/// derived parameter refuses a second pair outright. A later pair never stands
+/// in for one that could not be read.
 ///
 /// [`Malformed`](Presented::Malformed) when that first value's octets are not
 /// UTF-8.

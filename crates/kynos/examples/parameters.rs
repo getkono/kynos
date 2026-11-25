@@ -25,7 +25,9 @@
 //!   `FromStr`, written with `Display`, and described by a schema that is not
 //!   an object or an array. `UserId` below derives `FromStr` and `Display`
 //!   through the integer it wraps, and `Order` derives them from the names its
-//!   schema lists.
+//!   schema lists. A query `Vec<T>` is the one list, of `ParamValue` items:
+//!   repeated pairs by default, or one comma-separated pair under
+//!   `#[param(explode = false)]`.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
 //!   implements the same two traits the derives implement. Nothing about the
 //!   derived path is privileged, which is what makes the rule "every argument
@@ -110,6 +112,13 @@ struct Page {
     /// that already carries one does not repeat itself.
     #[param(rename = "per_page")]
     per: u32,
+
+    /// Every pair named `tag`, `?tag=a&tag=b`; empty when there is none.
+    tag: Vec<String>,
+
+    /// One pair of comma-separated orders, `?sort=asc,desc`.
+    #[param(explode = false)]
+    sort: Vec<Order>,
 }
 
 /// Conditional-request headers.
@@ -192,8 +201,8 @@ impl Describe for ApiVersion {
 
 /// Fetches one user.
 ///
-/// Seven arguments, and the description lists exactly the eight things a
-/// consumer can observe: one path variable, three query parameters, two
+/// Seven arguments, and the description lists exactly the ten things a
+/// consumer can observe: one path variable, five query parameters, two
 /// conditional headers, one cookie and one custom header. `MatchedPath` and `ConnectInfo`
 /// contribute nothing, by saying so.
 #[kynos::get("/users/{id}")]

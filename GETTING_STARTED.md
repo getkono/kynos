@@ -64,6 +64,7 @@ by the release that shipped each, for code written before it.
 | An interceptor that only counts requests in flight | `middleware::Observer`'s `on_request`, then `on_response` or `on_abandoned` |
 | A literal schema bound kept equal to a `const` | `#[schema(maximum = CONST)]`, or any other numeric or count bound |
 | `FromStr`, `Display` and `schema::ParamValue` by hand for an enum or a newtype | `#[derive(kynos::ParamValue)]` |
+| A query parameter split on `,` by hand | a `Vec<T>` field in `#[derive(QueryParams)]`, with `#[param(explode = false)]` for one comma-separated pair |
 
 ## Getting data from middleware to a handler
 

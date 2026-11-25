@@ -1,25 +1,22 @@
-//! What the four parameter derives share: decoding, encoding and describing a
-//! field; each derive supplies only its own lookup.
+//! What the four parameter derives share: decoding and encoding a field here,
+//! describing it in [`describe`]; each derive supplies only its own lookup.
 //!
 //! A value becomes a field through [`FromStr`](std::str::FromStr) alone, never
 //! serde. Each field's type is bounded by `kynos::schema::ParamValue`, so its
 //! schema describes the one value `FromStr` reads. An `Option<T>` field is
 //! optional and described by `T`'s schema; the recognition is syntactic, so an
-//! alias for it reads as required.
+//! alias for it reads as required. A query group's `Vec<T>` field is a
+//! [`List`] of `T`s, recognised the same way.
+
+pub(crate) mod describe;
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
 use syn::{DeriveInput, Expr, Field, FieldsNamed, Ident, Type, spanned::Spanned};
 
-use crate::{
-    derive::{
-        common::wrapped,
-        schema::{
-            aliases::named_string, attributes::constraints, check::value::value_checks,
-            group_attributes,
-        },
-    },
-    doc::doc_string,
+use crate::derive::{
+    common::wrapped,
+    schema::{check::value::value_checks, group_attributes},
 };
 
 /// The problem a group's own `#[schema(constraint_problem = ...)]` names,
@@ -57,6 +54,19 @@ pub(crate) struct Param<'a> {
     fixed: Option<String>,
     /// Where the group's problem for every field's broken bound comes from.
     group: Group<'a>,
+    /// How a query group's `Vec<T>` field carries its items, where it is one.
+    list: Option<List>,
+}
+
+/// How a list parameter carries its items: OpenAPI's `style: form` with
+/// `explode` either way, the only two forms a query list has under RFC 6570.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum List {
+    /// One pair per item, `tag=a&tag=b`: `explode: true`.
+    Exploded,
+    /// One pair, its items joined by literal commas, `tag=a,b`:
+    /// `explode: false`.
+    Delimited,
 }
 
 impl<'a> Param<'a> {
@@ -77,8 +87,24 @@ impl<'a> Param<'a> {
                 name: name.clone(),
                 fixed: None,
                 group,
+                list: None,
             })
             .collect()
+    }
+
+    /// Makes this a list parameter carried as `list` says, or leaves it be.
+    pub(crate) fn listed(self, list: Option<List>) -> Self {
+        Self { list, ..self }
+    }
+
+    /// How this parameter carries its items, where it is a list.
+    pub(crate) fn list(&self) -> Option<List> {
+        self.list
+    }
+
+    /// The field as written, for reading its attributes.
+    pub(crate) fn field(&self) -> &Field {
+        self.field
     }
 
     /// Makes this a parameter that only ever carries `value`, or leaves it be.
@@ -115,6 +141,16 @@ impl<'a> Param<'a> {
     pub(crate) fn optional(&self) -> Option<&Type> {
         wrapped(self.ty(), "Option")
     }
+
+    /// The one value's type: a list's item, an `Option`'s inner type, else
+    /// the field's own. What `ParamValue` bounds, and whose problem a broken
+    /// bound answers with.
+    fn carried(&self) -> &Type {
+        if self.list.is_some() {
+            return wrapped(self.ty(), "Vec").expect("only a `Vec` field is listed");
+        }
+        self.optional().unwrap_or(self.ty())
+    }
 }
 
 /// Binds one field from an already-located value, or returns a rejection.
@@ -132,38 +168,10 @@ pub(crate) fn decode_field(
     let ident = param.ident();
     let ty = param.ty();
     let name = &param.name;
-    let span = param.field.ty.span();
-
-    // Only the paths are spanned to the field, so a type that does not parse
-    // or whose error does not display is reported there; `raw` keeps the
-    // derive's hygiene context, wherever the type's tokens came from.
-    let to_string = quote_spanned!(span=> ::std::string::ToString::to_string);
-    let parse = |inner: &Type| {
-        let from_str = quote_spanned!(span=> <#inner as ::core::str::FromStr>::from_str);
-        quote! {
-            match #from_str(raw) {
-                ::core::result::Result::Ok(value) => value,
-                ::core::result::Result::Err(error) => {
-                    return ::core::result::Result::Err(#rejection::Invalid {
-                        name: <::std::string::String as ::core::convert::From<_>>::from(#name),
-                        detail: #to_string(&error),
-                    });
-                }
-            }
-        }
-    };
-
-    // An `Option<T>` field bounds its `T`.
-    let carried = param.optional().unwrap_or(ty);
-    let bounded = quote_spanned! {carried.span()=>
-        {
-            fn carried_by_one_parameter<T: ::kynos::schema::ParamValue>() {}
-            carried_by_one_parameter::<#carried>();
-        }
-    };
+    let bounded = bounded(param);
 
     let read = if let Some(inner) = param.optional() {
-        let parsed = parse(inner);
+        let parsed = parse(param, inner, rejection, None);
         quote! {
             match found {
                 ::core::option::Option::Some(raw) => ::core::option::Option::Some(#parsed),
@@ -171,7 +179,7 @@ pub(crate) fn decode_field(
             }
         }
     } else {
-        let parsed = parse(ty);
+        let parsed = parse(param, ty, rejection, None);
         quote! {
             match found {
                 ::core::option::Option::Some(raw) => #parsed,
@@ -194,6 +202,96 @@ pub(crate) fn decode_field(
     }
 }
 
+/// Binds a list field from its items' octets, or returns a rejection naming
+/// the parameter and the index of the item that failed.
+///
+/// `items` is an expression iterating `Cow<'_, [u8]>`, one per item in wire
+/// order; none at all binds the empty list. An item is refused where its
+/// octets are not UTF-8 or its text does not parse, as one value is.
+pub(crate) fn decode_list(
+    param: &Param<'_>,
+    rejection: &TokenStream2,
+    items: &TokenStream2,
+) -> TokenStream2 {
+    let ident = param.ident();
+    let ty = param.ty();
+    let name = &param.name;
+    let bounded = bounded(param);
+    let index = Ident::new("index", proc_macro2::Span::call_site());
+    let parsed = parse(param, param.carried(), rejection, Some(&index));
+
+    quote! {
+        #bounded
+        let #ident: #ty = {
+            let mut list = ::std::vec::Vec::new();
+            for (#index, octets) in ::core::iter::Iterator::enumerate(
+                ::core::iter::IntoIterator::into_iter(#items),
+            ) {
+                let raw = match ::core::str::from_utf8(&octets) {
+                    ::core::result::Result::Ok(text) => text,
+                    ::core::result::Result::Err(_) => {
+                        return ::core::result::Result::Err(#rejection::Invalid {
+                            name: <::std::string::String as ::core::convert::From<_>>::from(#name),
+                            detail: ::std::format!(
+                                "item {}: the percent-decoded value is not UTF-8",
+                                #index,
+                            ),
+                        });
+                    }
+                };
+                list.push(#parsed);
+            }
+            list
+        };
+    }
+}
+
+/// The assertion that the field carries `ParamValue`s, spanned at the type it
+/// bounds: an `Option<T>`'s or a list's `T`, else the field's.
+fn bounded(param: &Param<'_>) -> TokenStream2 {
+    let carried = param.carried();
+    quote_spanned! {carried.span()=>
+        {
+            fn carried_by_one_parameter<T: ::kynos::schema::ParamValue>() {}
+            carried_by_one_parameter::<#carried>();
+        }
+    }
+}
+
+/// Parses `raw`, a `&str` in scope, as `inner`, else returns `Invalid` naming
+/// the parameter with the error's text, prefixed with the item's index where
+/// `index` names the binding holding it.
+fn parse(
+    param: &Param<'_>,
+    inner: &Type,
+    rejection: &TokenStream2,
+    index: Option<&Ident>,
+) -> TokenStream2 {
+    let name = &param.name;
+    let span = param.field.ty.span();
+
+    // Only the paths are spanned to the field, so a type that does not parse
+    // or whose error does not display is reported there; `raw` keeps the
+    // derive's hygiene context, wherever the type's tokens came from.
+    let to_string = quote_spanned!(span=> ::std::string::ToString::to_string);
+    let from_str = quote_spanned!(span=> <#inner as ::core::str::FromStr>::from_str);
+    let detail = index.map_or_else(
+        || quote!(#to_string(&error)),
+        |index| quote!(::std::format!("item {}: {}", #index, #to_string(&error))),
+    );
+    quote! {
+        match #from_str(raw) {
+            ::core::result::Result::Ok(value) => value,
+            ::core::result::Result::Err(error) => {
+                return ::core::result::Result::Err(#rejection::Invalid {
+                    name: <::std::string::String as ::core::convert::From<_>>::from(#name),
+                    detail: #detail,
+                });
+            }
+        }
+    }
+}
+
 /// The problem a broken bound on the field answers with: the group's, else
 /// the `CONSTRAINT_PROBLEM` of the `ParamValue` it carries.
 fn carried(param: &Param<'_>) -> TokenStream2 {
@@ -204,9 +302,10 @@ fn carried(param: &Param<'_>) -> TokenStream2 {
     }
 }
 
-/// The `CONSTRAINT_PROBLEM` of the `ParamValue` the field carries.
+/// The `CONSTRAINT_PROBLEM` of the `ParamValue` the field carries: a list's
+/// item's, since `Vec` names none of its own.
 fn typed(param: &Param<'_>) -> TokenStream2 {
-    let carried = param.optional().unwrap_or(param.ty());
+    let carried = param.carried();
     quote!(<#carried as ::kynos::schema::Schema>::CONSTRAINT_PROBLEM)
 }
 
@@ -286,100 +385,5 @@ pub(crate) fn render(param: &Param<'_>) -> TokenStream2 {
         quote! {
             ::core::option::Option::Some(#to_string(&self.#ident))
         }
-    }
-}
-
-/// Puts the field's `#[schema(...)]` bounds on the resolved `schema`, as the
-/// `Schema` derive puts them on a property; [`check_field`] enforces them.
-fn bounds(param: &Param<'_>) -> Option<TokenStream2> {
-    constraints(param.field).map(|constraints| quote!(let schema = #constraints.apply(schema);))
-}
-
-/// The schema of the one value the field carries, or a fixed parameter's
-/// `const`.
-///
-/// An `Option<T>` field is described by `T`'s schema: no parameter location
-/// can spell `null`, so its optionality is `required: false` alone.
-fn schema(param: &Param<'_>) -> TokenStream2 {
-    let ty = param.optional().unwrap_or(param.ty());
-    param.fixed.as_ref().map_or_else(
-        || quote!(registry.resolve::<#ty>()),
-        |value| named_string(std::slice::from_ref(value)),
-    )
-}
-
-/// The `parameters` body: one OpenAPI parameter per field, in declaration
-/// order, each schema resolved through the registry under its field's bounds.
-///
-/// `always_required` is the path location's, which the OpenAPI Parameter Object
-/// requires to be `required: true` whatever the Rust type says.
-pub(crate) fn parameters_body(
-    params: &[Param<'_>],
-    location: &TokenStream2,
-    always_required: bool,
-) -> TokenStream2 {
-    let entries = params.iter().map(|param| {
-        let schema = schema(param);
-        let name = &param.name;
-        let required = always_required || param.optional().is_none();
-        let constrained = bounds(param);
-        let described = doc_string(&param.field.attrs).map(|text| {
-            quote!(parameter.description = ::core::option::Option::Some(
-                <::std::string::String as ::core::convert::From<_>>::from(#text)
-            );)
-        });
-
-        quote! {
-            parameters.push({
-                let schema = #schema;
-                #constrained
-                let mut parameter =
-                    ::kynos::openapi::Parameter::new(#name, #location, schema);
-                parameter.required = ::core::option::Option::Some(#required);
-                #described
-                parameter
-            });
-        }
-    });
-
-    // A group of fixed headers alone resolves nothing through `registry`.
-    quote! {
-        let _ = &registry;
-        let mut parameters = ::std::vec::Vec::new();
-        #(#entries)*
-        parameters
-    }
-}
-
-/// The `response_headers` body: the same fields, as a `headers` map.
-pub(crate) fn response_headers_body(params: &[Param<'_>]) -> TokenStream2 {
-    let entries = params.iter().map(|param| {
-        let schema = schema(param);
-        let name = &param.name;
-        let required = param.optional().is_none();
-        let constrained = bounds(param);
-        let described = doc_string(&param.field.attrs).map(|text| {
-            quote!(header.description = ::core::option::Option::Some(
-                <::std::string::String as ::core::convert::From<_>>::from(#text)
-            );)
-        });
-
-        quote! {
-            headers.insert(<::std::string::String as ::core::convert::From<_>>::from(#name), {
-                let schema = #schema;
-                #constrained
-                let mut header = ::kynos::openapi::Header::new(schema);
-                header.required = ::core::option::Option::Some(#required);
-                #described
-                ::kynos::openapi::RefOr::Item(header)
-            });
-        }
-    });
-
-    quote! {
-        let _ = &registry;
-        let mut headers = ::kynos::openapi::Map::new();
-        #(#entries)*
-        headers
     }
 }
