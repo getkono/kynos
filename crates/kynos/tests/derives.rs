@@ -254,6 +254,23 @@ struct PhaseQuery {
     phase: Option<Phase>,
 }
 
+/// A group deriving `Schema` and no serde, so the probe the `Schema` derive
+/// emits for each `#[param(default)]` and `#[param(flatten)]` serde is not
+/// told resolves to a group serde does not read, under Clippy.
+#[derive(Schema, QueryParams)]
+struct UnreadPage {
+    #[param(default = 50)]
+    limit: u32,
+}
+
+#[derive(Schema, QueryParams)]
+struct UnreadListing {
+    #[param(flatten)]
+    page: UnreadPage,
+    #[param(default = false)]
+    deleted: bool,
+}
+
 #[derive(Reply)]
 enum CreateReply {
     #[reply(status = 201, description = "the user as stored")]
@@ -290,6 +307,8 @@ fn every_derive_implements_its_trait() {
     implements_path_params::<UserPath>();
     implements_query_params::<ListQuery>();
     implements_query_params::<PhaseQuery>();
+    implements_query_params::<UnreadListing>();
+    implements_schema::<UnreadListing>();
     implements_param_value::<Phase>();
     implements_unit_enum::<Phase>();
     implements_header_params::<Conditional>();
