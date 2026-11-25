@@ -8888,9 +8888,16 @@ pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::method(
 pub fn kynos::router::endpoint::builder::EndpointBuilder<C, H, A, P, I>::path(&self) -> &kynos_openapi::model::paths::template::PathTemplate
 pub mod kynos::router::error
 #[non_exhaustive] pub enum kynos::router::error::ExampleRefusal
+pub kynos::router::error::ExampleRefusal::Miswritten
+pub kynos::router::error::ExampleRefusal::Miswritten::displayed: alloc::string::String
+pub kynos::router::error::ExampleRefusal::Miswritten::written: alloc::string::String
 pub kynos::router::error::ExampleRefusal::OutOfBounds
 pub kynos::router::error::ExampleRefusal::OutOfBounds::failures: alloc::vec::Vec<alloc::string::String>
+pub kynos::router::error::ExampleRefusal::Undeserializable
+pub kynos::router::error::ExampleRefusal::Undeserializable::reason: alloc::string::String
 pub kynos::router::error::ExampleRefusal::Unparsed
+pub kynos::router::error::ExampleRefusal::Unserializable
+pub kynos::router::error::ExampleRefusal::Unserializable::reason: alloc::string::String
 impl core::clone::Clone for kynos::router::error::ExampleRefusal
 pub fn kynos::router::error::ExampleRefusal::clone(&self) -> kynos::router::error::ExampleRefusal
 impl core::cmp::Eq for kynos::router::error::ExampleRefusal

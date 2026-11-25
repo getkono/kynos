@@ -1550,49 +1550,194 @@ async fn by_broken_examples(
 /// refuses to build rather than publish it.
 #[test]
 fn a_router_refuses_a_string_example_its_type_does_not_carry() {
-    use kynos::{
-        Error,
-        router::error::{ExampleRefusal, RouterError},
-    };
+    use kynos::router::error::ExampleRefusal;
 
     let router = kynos::Router::<()>::new().mount(kynos::routes![by_broken_examples]);
-    let Err(Error::Invalid { violations }) = router.openapi() else {
-        panic!("a router describing refused examples was built");
-    };
-    let refused: Vec<_> = violations
-        .iter()
-        .filter_map(|violation| match &violation.error {
-            RouterError::StringExample {
-                schema,
-                example,
-                refusal,
-            } => Some((
-                violation.location.as_str(),
-                schema.rsplit("::").next(),
-                example.as_str(),
-                refusal.clone(),
-            )),
-            _ => None,
-        })
-        .collect();
     assert_eq!(
-        refused,
+        refused_examples(&router),
         [
             (
-                "#/components/schemas/MisdescribedRef/examples/0",
-                Some("MisdescribedRef"),
-                "tmdb",
+                "#/components/schemas/MisdescribedRef/examples/0".to_owned(),
+                "MisdescribedRef",
+                "tmdb".to_owned(),
                 ExampleRefusal::Unparsed,
             ),
             (
-                "#/components/schemas/OverlongRef/examples/0",
-                Some("OverlongRef"),
-                "tmdb:550",
+                "#/components/schemas/OverlongRef/examples/0".to_owned(),
+                "OverlongRef",
+                "tmdb:550".to_owned(),
                 ExampleRefusal::OutOfBounds {
                     failures: vec!["must be at most 4 characters long".to_owned()],
                 },
             ),
         ]
+    );
+}
+
+/// Each `StringExample` violation building `router` reports: where, the
+/// type's last path segment, the example, and why.
+fn refused_examples(
+    router: &kynos::Router<()>,
+) -> Vec<(
+    String,
+    &'static str,
+    String,
+    kynos::router::error::ExampleRefusal,
+)> {
+    use kynos::router::error::RouterError;
+
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing refused examples was built");
+    };
+    violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            RouterError::StringExample {
+                schema,
+                example,
+                refusal,
+            } => Some((
+                violation.location,
+                schema.rsplit("::").next().unwrap_or(schema),
+                example,
+                refusal,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A plain serde derive on a newtype: serde writes the member, `"550"`, while
+/// `Display` writes `ref:550`.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[schema(string, examples("ref:550"))]
+struct PrefixedRef(String);
+
+/// A plain serde derive on a struct with named fields, which reads an object
+/// rather than the string; its `Serialize` is written by hand through the
+/// text.
+#[derive(Schema, serde::Deserialize)]
+#[schema(string, examples("tmdb:550"))]
+struct HalfDerivedRef {
+    provider: String,
+    id: u64,
+}
+
+/// A `Serialize` that refuses every value.
+#[derive(Schema)]
+#[schema(string, examples("tmdb:550"))]
+struct UnwritableRef(MediaId);
+
+impl serde::Serialize for HalfDerivedRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl serde::Serialize for UnwritableRef {
+    fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("never written"))
+    }
+}
+
+impl std::fmt::Display for PrefixedRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ref:{}", self.0)
+    }
+}
+
+impl std::str::FromStr for PrefixedRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.strip_prefix("ref:")
+            .map(|id| Self(id.to_owned()))
+            .ok_or_else(|| format!("{text:?} is no reference"))
+    }
+}
+
+impl std::fmt::Display for HalfDerivedRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.provider, self.id)
+    }
+}
+
+impl std::str::FromStr for HalfDerivedRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.parse::<TitleRef>().map(|title| Self {
+            provider: title.0.provider,
+            id: title.0.id,
+        })
+    }
+}
+
+displayed_as_title_ref!(UnwritableRef);
+
+impl kynos::schema::ParamValue for PrefixedRef {}
+impl kynos::schema::ParamValue for HalfDerivedRef {}
+impl kynos::schema::ParamValue for UnwritableRef {}
+
+/// What `/serde/{title}/{prefixed}/{half}/{unwritable}` captures: one string
+/// type serde carries as its text, and three it does not.
+#[derive(PathParams)]
+struct BySerde {
+    title: TitleRef,
+    prefixed: PrefixedRef,
+    half: HalfDerivedRef,
+    unwritable: UnwritableRef,
+}
+
+#[kynos::get("/serde/{title}/{prefixed}/{half}/{unwritable}")]
+async fn by_serde(
+    kynos::extract::params::path::Path(path): kynos::extract::params::path::Path<BySerde>,
+) -> kynos::response::status::NoContent {
+    let _ = path;
+    kynos::response::status::NoContent
+}
+
+/// A serde derive with no attribute is invisible to the `Schema` derive, so
+/// each example is put through the type's own serde: `Serialize` must write
+/// the `Display` text as a JSON string and `Deserialize` must read the example
+/// as one. `TitleRef`, converting through `String`, carries its examples.
+#[test]
+fn a_router_refuses_a_string_example_its_serde_does_not_carry_as_text() {
+    use kynos::router::error::ExampleRefusal;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_serde]);
+    let refused = refused_examples(&router);
+    let [prefixed, half, unwritable] = refused.as_slice() else {
+        panic!("three refused examples: {refused:?}");
+    };
+
+    assert_eq!(
+        prefixed,
+        &(
+            "#/components/schemas/PrefixedRef/examples/0".to_owned(),
+            "PrefixedRef",
+            "ref:550".to_owned(),
+            ExampleRefusal::Miswritten {
+                written: "\"550\"".to_owned(),
+                displayed: "ref:550".to_owned(),
+            },
+        )
+    );
+    assert!(
+        matches!(
+            half,
+            (_, "HalfDerivedRef", _, ExampleRefusal::Undeserializable { reason })
+                if reason.contains("expected struct HalfDerivedRef")
+        ),
+        "{half:?}"
+    );
+    assert!(
+        matches!(
+            unwritable,
+            (_, "UnwritableRef", _, ExampleRefusal::Unserializable { reason })
+                if reason == "never written"
+        ),
+        "{unwritable:?}"
     );
 }
 

@@ -61,9 +61,10 @@ pub(super) fn reject_container_conversions(input: &DeriveInput) -> syn::Result<(
 /// `try_from`), since which directions are derived is not visible. A
 /// conversion through any other type, and `transparent`, are refused outright.
 ///
-/// A serde derive carrying no attribute at all is not visible either: Rust
-/// hands a derive its item without the `#[derive(...)]` attributes before it.
-/// That form is left to the documentation.
+/// A serde derive carrying no attribute at all is not visible here: Rust hands
+/// a derive its item without the `#[derive(...)]` attributes before it. The
+/// expansion puts each example through the type's own serde instead, when the
+/// router is built (see `string_form`).
 pub(super) fn reject_unstringed_wire_form(input: &DeriveInput) -> syn::Result<()> {
     if let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) {
         return Err(syn::Error::new(

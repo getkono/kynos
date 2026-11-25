@@ -18,9 +18,11 @@ use crate::doc::{doc_string, is_deprecated};
 /// `constraint_problem`, the type's own `CONSTRAINT_PROBLEM` item if it names
 /// one.
 ///
-/// `schema` records on the registry each example `FromStr` refuses or whose
-/// value breaks the text's bounds, which the router reports as a violation
-/// when it is built, so a document never shows an example the type refuses.
+/// `schema` records on the registry each example `FromStr` refuses, whose
+/// value breaks the text's bounds, or which the type's serde, where it has
+/// one, does not write as that text or read as a JSON string. The router
+/// reports each as a violation when it is built, so a document never shows an
+/// example the type does not carry.
 pub(super) fn expand(
     input: &DeriveInput,
     form: &StringForm,
@@ -66,6 +68,12 @@ pub(super) fn expand(
             ::kynos::__private::string_form::admit_examples::<Self>(
                 registry,
                 &[#(#examples),*],
+                |value: &Self, text: &::core::primitive::str| {
+                    #[allow(unused_imports)]
+                    use ::kynos::__private::string_form::{Reads, Unread, Unwritten, Written};
+                    let probe = ::kynos::__private::string_form::Serde(value);
+                    ((&probe).written(), (&probe).reads(text))
+                },
             );
         }
     });

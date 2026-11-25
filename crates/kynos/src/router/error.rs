@@ -227,4 +227,33 @@ pub enum ExampleRefusal {
         /// What each broken bound says.
         failures: Vec<String>,
     },
+
+    /// The type's `Serialize` writes the value `FromStr` reads as something
+    /// other than the JSON string its `Display` writes, as a serde derive
+    /// carrying no attribute writes a newtype's member or a struct's fields.
+    #[error(
+        "its `Serialize` writes as {written}, not as the string its `Display` writes, \
+         {displayed:?}; carry it through the text, with `#[serde(into = \"String\", \
+         try_from = \"String\")]` or serde written by hand"
+    )]
+    Miswritten {
+        /// The JSON serde wrote.
+        written: String,
+        /// The text `Display` wrote.
+        displayed: String,
+    },
+
+    /// The type's `Serialize` refuses the value `FromStr` reads.
+    #[error("its `Serialize` refuses to write: {reason}")]
+    Unserializable {
+        /// What serde said.
+        reason: String,
+    },
+
+    /// The type's `Deserialize` does not read the example as a JSON string.
+    #[error("its `Deserialize` does not read as a JSON string: {reason}")]
+    Undeserializable {
+        /// What serde said.
+        reason: String,
+    },
 }

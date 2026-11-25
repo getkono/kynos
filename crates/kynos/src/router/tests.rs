@@ -1190,6 +1190,16 @@ mod router_errors {
             "breaks the type's own bounds: must be at most 4 characters long; must match the \
              pattern `^a`"
         );
+        assert_eq!(
+            ExampleRefusal::Miswritten {
+                written: "\"550\"".to_owned(),
+                displayed: "ref:550".to_owned(),
+            }
+            .to_string(),
+            "its `Serialize` writes as \"550\", not as the string its `Display` writes, \
+             \"ref:550\"; carry it through the text, with `#[serde(into = \"String\", try_from \
+             = \"String\")]` or serde written by hand"
+        );
     }
 
     /// The ledger against the variants, transcribed, for the reason

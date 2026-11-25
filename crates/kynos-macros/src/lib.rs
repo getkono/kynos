@@ -489,10 +489,15 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// "String"`; `transparent`, and a conversion through any other type, are
 /// refused outright. `Serialize` and `Deserialize` written by hand, through
 /// `serializer.collect_str(self)` and `FromStr`, need no attribute. A serde
-/// derive carrying no attribute at all goes unseen, since Rust hands a derive
-/// its item without the `#[derive(...)]` attributes before it: it writes a
-/// newtype as its member and any other struct as an object, which the schema
-/// then misdescribes. A parameter group's derive refuses `string`.
+/// derive carrying no attribute at all is invisible to this derive, since Rust
+/// hands a derive its item without the `#[derive(...)]` attributes before it,
+/// and writes a newtype as its member and any other struct as an object. So
+/// each example is also put through the type's own serde where it has it:
+/// `Serialize` must write the value `FromStr` reads as the JSON string its
+/// `Display` writes, and `Deserialize` must read the example as a JSON
+/// string, or the example is a `StringExample` violation. A type listing no
+/// example has nothing to put through serde, so list one. A parameter group's
+/// derive refuses `string`.
 ///
 /// A concrete type takes its identifier as its component name, and a field
 /// referring back to it is a `$ref`. A generic type's instantiation takes its
