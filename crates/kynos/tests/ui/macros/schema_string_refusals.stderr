@@ -63,3 +63,9 @@ error: `format` names the format the text is in, such as `uuid` or `date-time`, 
    |
 70 | #[schema(string, format = "")]
    |                           ^^
+
+error: `#[schema(string)]` describes the type as the one string `Display` writes, so no member it declares is described and a member's `#[schema(...)]` would bound nothing. Bound the text on the type: `#[schema(string, max_length = ...)]`
+  --> tests/ui/macros/schema_string_refusals.rs:76:5
+   |
+76 |     #[schema(max_length = 8)]
+   |     ^

@@ -1,11 +1,11 @@
 //! `#[schema(string)]` describes a type as the one string `Display` writes, so
 //! it refuses what would describe anything else: a flag given a value, an
 //! empty `examples`, a text bound on a type that is no string, a generic
-//! parameter, a member's own bound, a key written twice, serde attributes
-//! saying the type travels as its declaration or as another type, a
-//! parameter group, and a `format` naming nothing. A refused derive emits nothing, so no `FromStr` or
-//! `Display` is needed here; serde's conversions are, and are written. The
-//! control is `pass/schema_string`.
+//! parameter, a field's or a variant's own bound, a key written twice, serde
+//! attributes saying the type travels as its declaration or as another type,
+//! a parameter group, and a `format` naming nothing. A refused derive emits
+//! nothing, so no `FromStr` or `Display` is needed here; serde's conversions
+//! are, and are written. The control is `pass/schema_string`.
 
 struct Inner;
 
@@ -69,5 +69,12 @@ struct Group {
 #[derive(kynos::Schema)]
 #[schema(string, format = "")]
 struct Unformatted(Inner);
+
+#[derive(kynos::Schema)]
+#[schema(string)]
+enum VariantBound {
+    #[schema(max_length = 8)]
+    One,
+}
 
 fn main() {}

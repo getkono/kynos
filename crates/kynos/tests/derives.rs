@@ -1528,6 +1528,104 @@ fn a_string_type_names_its_format() {
     );
 }
 
+/// The problem a broken [`EncodedRef`] answers with.
+const BAD_REFERENCE: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/bad-reference",
+    );
+
+/// A reference carried base64-encoded.
+#[derive(Schema)]
+#[schema(string, content_encoding = "base64", content_media_type = "text/plain")]
+#[schema(constraint_problem = BAD_REFERENCE)]
+struct EncodedRef(MediaId);
+
+displayed_as_title_ref!(EncodedRef);
+
+/// The content keys describe the text, and `constraint_problem` beside
+/// `string` is the type's own problem, as on any other type.
+#[test]
+fn a_string_type_describes_its_content_and_names_its_problem() {
+    assert_eq!(
+        emitted::<EncodedRef>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A reference carried base64-encoded.",
+            "contentEncoding": "base64",
+            "contentMediaType": "text/plain",
+        })
+    );
+    assert_eq!(
+        <EncodedRef as SchemaTrait>::CONSTRAINT_PROBLEM,
+        Some(BAD_REFERENCE)
+    );
+}
+
+/// A reference whose provider is lowercase letters.
+#[cfg(feature = "pattern")]
+#[derive(Schema)]
+#[schema(string, pattern = "^[a-z]+:")]
+struct PatternedRef(MediaId);
+
+#[cfg(feature = "pattern")]
+displayed_as_title_ref!(PatternedRef);
+
+/// `pattern` is described, and checked on the text `Display` writes.
+#[cfg(feature = "pattern")]
+#[test]
+fn a_string_type_checks_its_pattern_on_its_text() {
+    use kynos::schema::constraints::{Pointer, Violations};
+
+    assert_eq!(emitted::<PatternedRef>()["pattern"], "^[a-z]+:");
+    let fits: PatternedRef = "tmdb:550".parse().expect("a reference parses");
+    assert!(Violations::of(&fits, Pointer::root()).is_ok());
+    let shouted: PatternedRef = "TMDB:550".parse().expect("a reference parses");
+    let failures = Violations::of(&shouted, Pointer::root()).expect_err("uppercase breaks it");
+    assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+}
+
+/// A side of a trade, written `buy` or `sell`.
+#[derive(Debug, PartialEq, Schema)]
+#[schema(string, examples("buy", "sell"))]
+enum TradeSide {
+    Buy,
+    Sell,
+}
+
+impl std::fmt::Display for TradeSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Buy => "buy",
+            Self::Sell => "sell",
+        })
+    }
+}
+
+impl std::str::FromStr for TradeSide {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "buy" => Ok(Self::Buy),
+            "sell" => Ok(Self::Sell),
+            other => Err(format!("{other:?} is no side")),
+        }
+    }
+}
+
+/// An enum carrying `string` is its text, not its variants.
+#[test]
+fn a_string_enum_is_described_as_its_text() {
+    assert_eq!(
+        emitted::<TradeSide>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A side of a trade, written `buy` or `sell`.",
+            "examples": ["buy", "sell"],
+        })
+    );
+}
+
 /// What `/titles/{title}` captures: a string type as a path parameter.
 #[derive(PathParams)]
 struct ByTitle {

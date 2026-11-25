@@ -64,4 +64,27 @@ impl serde::Serialize for Count {
     }
 }
 
+/// A side, an enum travelling as its text, its variants carrying no bound.
+#[derive(kynos::Schema)]
+#[schema(string)]
+enum Side {
+    Buy,
+}
+
+impl fmt::Display for Side {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("buy")
+    }
+}
+
+impl FromStr for Side {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        (text == "buy")
+            .then_some(Self::Buy)
+            .ok_or_else(|| format!("{text:?} is no side"))
+    }
+}
+
 fn main() {}
