@@ -633,6 +633,47 @@ impl std::fmt::Display for UnknownVariant {
 
 impl std::error::Error for UnknownVariant {}
 
+/// A field-less enum, each variant named by one `&'static str`.
+///
+/// `#[derive(kynos::ParamValue)]` implements it for an enum from the names its
+/// `Schema` derive publishes, so a column, a log field or a lookup reads the
+/// wire name without restating it or allocating:
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::schema::UnitEnum;
+///
+/// #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+/// #[derive(kynos::Schema, kynos::ParamValue)]
+/// #[serde(rename_all = "lowercase")]
+/// enum ReportStatus {
+///     Open,
+///     Dismissed,
+/// }
+///
+/// assert_eq!(ReportStatus::Open.as_str(), "open");
+/// assert_eq!(ReportStatus::VARIANTS, [ReportStatus::Open, ReportStatus::Dismissed]);
+/// let names: Vec<_> = ReportStatus::VARIANTS.iter().map(UnitEnum::as_str).collect();
+/// assert_eq!(names, ["open", "dismissed"]);
+/// # }
+/// ```
+///
+/// A trait rather than inherent items, so a type's own `as_str` or `VARIANTS`
+/// is left alone, and generic code can range over any such enum. Reading a name
+/// back is `FromStr`, which the derive also implements.
+///
+/// Implement it by hand only beside a hand-written `Display`; the names are
+/// then yours to keep equal to what it writes.
+pub trait UnitEnum: Sized + 'static {
+    /// Every variant, in declaration order: the values themselves, where
+    /// [`SerdeTagged::VARIANTS`], whose variants may hold data, lists names.
+    const VARIANTS: &'static [Self];
+
+    /// The variant's name: the text its `Display` writes.
+    fn as_str(&self) -> &'static str;
+}
+
 /// A member of a JSON Merge Patch (RFC 7396): left out, sent as `null`, or
 /// sent with a value.
 ///

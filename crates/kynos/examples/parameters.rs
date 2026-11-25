@@ -25,7 +25,8 @@
 //!   `FromStr`, written with `Display`, and described by a schema that is not
 //!   an object or an array. `UserId` below derives `FromStr` and `Display`
 //!   through the integer it wraps, and `Order` derives them from the names its
-//!   schema lists. A query `Vec<T>` is the one list, of `ParamValue` items:
+//!   schema lists, which its `UnitEnum` exposes as `as_str` and `VARIANTS`. A
+//!   query `Vec<T>` is the one list, of `ParamValue` items:
 //!   repeated pairs by default, or one comma-separated pair under
 //!   `#[param(explode = false)]`.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
@@ -219,6 +220,9 @@ async fn get_user(
     // `matched` is the `paths` key with its `{}` intact, never the request's
     // own path, which is what makes it a bounded metric label.
     println!("v{} from {} for {}", version.0, peer.0, matched.0);
+    // A derived enum's wire name, borrowed rather than formatted.
+    let order = page.order.as_ref().map_or("unordered", UnitEnum::as_str);
+    println!("listed {order}");
     let _ = (page, conditional, preferences);
 
     Json(User {

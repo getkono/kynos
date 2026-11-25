@@ -214,6 +214,12 @@ schema describes the one value its `Display` writes, or with
 and a field-less enum by its variant names. A structured query, such
 as a search filter, is a whole `QueryString` under `openapi32` instead.
 
+The derived enum is also a `UnitEnum`, so a database column or a log field
+reads the same names without restating them: `status.as_str()` is the
+`&'static str` `Display` writes, and `Status::VARIANTS` lists every variant.
+They sit on a trait, in the prelude, rather than on the type, so an `as_str` the
+enum already declares keeps compiling and keeps winning a method call.
+
 ## Binary content
 
 Binary is fully in scope. What Kynos never emits is the OAS 3.0 spelling: "the

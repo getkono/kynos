@@ -35,7 +35,7 @@ use kynos::{
     },
     response::{IntoResponse, Responses},
     router::operation::Tag as TagTrait,
-    schema::{ParamValue as ParamValueTrait, Schema as SchemaTrait, UnknownVariant},
+    schema::{ParamValue as ParamValueTrait, Schema as SchemaTrait, UnitEnum, UnknownVariant},
     security::{
         SecurityScheme as SecuritySchemeTrait,
         carrier::{
@@ -267,6 +267,7 @@ fn implements_header_params<T: HeaderParams>() {}
 #[cfg(feature = "cookie")]
 fn implements_cookie_params<T: kynos::extract::params::cookie::CookieParams>() {}
 fn implements_param_value<T: ParamValueTrait>() {}
+fn implements_unit_enum<T: UnitEnum>() {}
 fn implements_tag<T: TagTrait>() {}
 fn implements_security_scheme<T: SecuritySchemeTrait>() {}
 fn implements_responses<T: IntoResponse + Responses>() {}
@@ -288,6 +289,7 @@ fn every_derive_implements_its_trait() {
     implements_query_params::<ListQuery>();
     implements_query_params::<PhaseQuery>();
     implements_param_value::<Phase>();
+    implements_unit_enum::<Phase>();
     implements_header_params::<Conditional>();
     #[cfg(feature = "cookie")]
     implements_cookie_params::<Session>();
@@ -1217,11 +1219,18 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
         ["checking", "awaiting_metadata", "metadata", "SEEDING"]
     );
 
-    for variant in [Phase::Checking, Phase::AwaitingMetadata, Phase::Seeding] {
+    // Every variant once, in declaration order; each `as_str` is what serde
+    // writes, and `Display` writes it.
+    assert_eq!(
+        Phase::VARIANTS,
+        [Phase::Checking, Phase::AwaitingMetadata, Phase::Seeding]
+    );
+    for &variant in Phase::VARIANTS {
         assert_eq!(
-            serde_json::Value::String(variant.to_string()),
+            serde_json::Value::from(variant.as_str()),
             serde_json::to_value(variant).expect("a unit variant serializes"),
         );
+        assert_eq!(variant.to_string(), variant.as_str());
     }
 
     for name in &listed {
@@ -1246,6 +1255,41 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
     assert_eq!(format!("{:>10}", Phase::Checking), "  checking");
     assert_eq!(format!("{:*<10}", Phase::Seeding), "SEEDING***");
     assert_eq!(format!("{:.3}", Phase::Checking), "che");
+}
+
+/// An enum declaring its own `as_str` and `VARIANTS`, which the derive's
+/// `UnitEnum` must not clash with.
+#[derive(Debug, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Severity {
+    Low,
+    High,
+}
+
+impl Severity {
+    const VARIANTS: [Self; 1] = [Self::High];
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Low => "Low severity",
+            Self::High => "High severity",
+        }
+    }
+}
+
+/// The derive's names sit on a trait, so a type's own items of the same names
+/// still compile and still win a path or a method call, and the wire names
+/// stay reachable through the trait.
+#[test]
+fn a_derived_unit_enum_leaves_the_types_own_items_alone() {
+    assert_eq!(Severity::High.as_str(), "High severity");
+    assert_eq!(Severity::VARIANTS, [Severity::High]);
+    assert_eq!(UnitEnum::as_str(&Severity::High), "high");
+    assert_eq!(
+        <Severity as UnitEnum>::VARIANTS,
+        [Severity::Low, Severity::High]
+    );
+    assert_eq!(Severity::High.to_string(), "high");
 }
 
 /// A newtype over one parameter value, written by serde as itself.
