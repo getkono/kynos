@@ -157,13 +157,14 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// publishes other than `about:blank`, then the schema component its first
 /// media type names, then the key, as in `OutOfStockProblemStatus409`,
 /// `ProblemStatus500`, `ReadingStatus200`, `Status204` or `Default`, so
-/// adding an operation or a response never renames one already shared.
-/// Only where two different responses would take one name does each append
-/// a fingerprint of its own bytes instead, `ProblemStatus500_1f0c9a2e`,
-/// never a position, so no name depends on the order operations were
-/// mounted in. A response differing anywhere — a description, a header, a
-/// link — is a different response, so sharing never changes what an
-/// operation says.
+/// adding an operation or a response renames nothing already shared unless
+/// it derives the very same name. Where two different responses would take
+/// one name, each appends a fingerprint of its own bytes instead,
+/// `ProblemStatus500_1f0c9a2e`, so a new response deriving a name already
+/// shared renames that one too. The suffix is never a position, so no name
+/// depends on the order operations were mounted in. A response differing
+/// anywhere — a description, a header, a link — is a different response, so
+/// sharing never changes what an operation says.
 ///
 /// It happens after every [`map_openapi`](Router::map_openapi) edit, so an
 /// edit reads every response inline, and after the description is
