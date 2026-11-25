@@ -46,6 +46,49 @@ fn a_response_is_named_for_the_media_type_declared_first() {
     );
 }
 
+/// Responses differing only in the order an object's keys were written in,
+/// which `serde_json/preserve_order` keeps in a nested `Value`, are one
+/// response in every build, so the canonical description does not change
+/// with that feature.
+#[test]
+fn responses_differing_only_in_key_order_share_one_component() {
+    let response = |sample: &str| {
+        format!(
+            r#"{{"description": "failed", "content": {{"text/plain": {{}}}}, "x-sample": {sample}}}"#
+        )
+    };
+    let operation = |sample: &str| {
+        format!(
+            r#"{{"get": {{"responses": {{"500": {}}}}}}}"#,
+            response(sample)
+        )
+    };
+    let (sorted, reversed) = (
+        operation(r#"{"a": 2, "b": 1}"#),
+        operation(r#"{"b": 1, "a": 2}"#),
+    );
+    let mut paths: Paths = serde_json::from_str(&format!(
+        r#"{{"/a": {sorted}, "/b": {sorted}, "/c": {reversed}, "/d": {reversed}}}"#
+    ))
+    .expect("paths");
+    let mut components = Components::default();
+
+    shared_responses(&mut paths, &mut components);
+
+    for path in ["/a", "/b", "/c", "/d"] {
+        assert_eq!(
+            paths.items[path]
+                .operation(Method::Get)
+                .expect("a GET")
+                .responses
+                .responses["500"],
+            RefOr::Ref(Ref::response("Status500")),
+            "{path}"
+        );
+    }
+    assert_eq!(components.responses.len(), 1);
+}
+
 /// A suffix is hashed from a key-sorted form, so neither the order the
 /// response's fields serialize in nor the order a nested object's keys were
 /// written in, which `serde_json/preserve_order` keeps, changes it. The
