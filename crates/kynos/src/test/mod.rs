@@ -2567,30 +2567,7 @@ impl TestResponse {
     #[track_caller]
     pub fn assert_problem(&self, status: impl IntoStatus, type_uri: &str) -> &Self {
         self.assert_status(status);
-
-        match self
-            .response
-            .headers()
-            .get(crate::http::header::CONTENT_TYPE)
-        {
-            Some(value) => {
-                assert!(
-                    crate::http::eq_ignore_ascii_case(
-                        crate::http::media::split_essence(value.as_bytes()).0,
-                        PROBLEM_JSON.as_bytes()
-                    ),
-                    "{}: expected `Content-Type: {PROBLEM_JSON}`, received `Content-Type: {}`\n{}",
-                    self.exchange(),
-                    value.as_bytes().escape_ascii(),
-                    self.rendered_body()
-                );
-            }
-            None => panic!(
-                "{}: expected `Content-Type: {PROBLEM_JSON}`, and the response carries none\n{}",
-                self.exchange(),
-                self.rendered_body()
-            ),
-        }
+        self.assert_content_type(PROBLEM_JSON);
 
         let problem = self.problem();
         let type_uri = self.problem_type(type_uri);
@@ -2612,6 +2589,114 @@ impl TestResponse {
             );
         }
         self
+    }
+
+    /// Asserts that this response is an RFC 9457 problem whose extension
+    /// member `name` is `expected`.
+    ///
+    /// Checks that `Content-Type` is `application/problem+json`, as
+    /// [`assert_problem`](Self::assert_problem) does, then compares the member
+    /// with `expected` as JSON, so `"quota_exceeded"` matches the string and
+    /// `3` the number. The status and the type are
+    /// [`assert_problem`](Self::assert_problem)'s, which this chains after.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .post("/uploads")
+    ///     .send()
+    ///     .await
+    ///     .assert_problem(429, "https://errors.example.com/quota")
+    ///     .assert_problem_extension("code", "quota_exceeded");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is one of the five members RFC 9457 section 3.1
+    /// registers, which are not extensions; when `Content-Type` is absent or
+    /// another media type; when the body is not a problem document, as
+    /// [`problem`](Self::problem) reads one; when the document does not carry
+    /// `name`; and when it carries another value.
+    #[track_caller]
+    pub fn assert_problem_extension(&self, name: &str, expected: impl serde::Serialize) -> &Self {
+        assert!(
+            !REGISTERED_MEMBERS.contains(&name),
+            "{}: `{name}` is a member RFC 9457 registers, not an extension; \
+             assert it with `assert_problem` or read it from `problem()`",
+            self.exchange()
+        );
+        let expected = match serde_json::to_value(expected) {
+            Ok(expected) => expected,
+            Err(error) => panic!(
+                "{}: the expected `{name}` is not representable as JSON: {error}",
+                self.exchange()
+            ),
+        };
+        self.assert_content_type(PROBLEM_JSON);
+
+        let problem = self.problem();
+        match problem.extensions.get(name) {
+            Some(actual) => assert!(
+                *actual == expected,
+                "{}: expected the problem's `{name}` to be `{expected}`, received `{actual}`\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+            None => panic!(
+                "{}: expected the problem's `{name}` to be `{expected}`, and the document \
+                 carries no `{name}`\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
+        self
+    }
+
+    /// The JSON value the RFC 6901 `pointer` names in the body, deserialized.
+    ///
+    /// The empty pointer names the whole document; `/items/0/id` the `id` of
+    /// the first element of `items`; `~1` and `~0` stand for a `/` and a `~`
+    /// inside a member name.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// let token: String = client.post("/sessions").send().await.json_at("/token");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `pointer` is not a JSON pointer, which is empty or opens
+    /// with `/` and escapes only `~0` and `~1`; when the body is not JSON; when
+    /// `pointer` names nothing in it; and when what it names is not a `T`.
+    #[cfg(feature = "json")]
+    #[must_use]
+    #[track_caller]
+    pub fn json_at<T: serde::de::DeserializeOwned>(&self, pointer: &str) -> T {
+        assert!(
+            is_json_pointer(pointer),
+            "{}: `{pointer}` is not a JSON pointer (RFC 6901): one is empty or opens with `/`, \
+             and escapes only `~0` and `~1`",
+            self.exchange()
+        );
+        let document: Value = self.json();
+        let Some(value) = document.pointer(pointer) else {
+            panic!(
+                "{}: `{pointer}` names nothing in the body\n{}",
+                self.exchange(),
+                self.rendered_body()
+            )
+        };
+        match T::deserialize(value) {
+            Ok(value) => value,
+            Err(error) => panic!(
+                "{}: `{pointer}` is not a `{}`: {error}\n{}",
+                self.exchange(),
+                std::any::type_name::<T>(),
+                self.rendered_body()
+            ),
+        }
     }
 
     /// The body read as an RFC 9457 problem document.
@@ -2785,9 +2870,7 @@ impl TestResponse {
     /// field, naming every value it carries.
     #[track_caller]
     pub fn assert_no_header(&self, name: &str) -> &Self {
-        let Ok(field) = HeaderName::from_bytes(name.as_bytes()) else {
-            panic!("{}: `{name}` is not a header name", self.exchange())
-        };
+        let field = self.field_name(name);
         let values: Vec<String> = self
             .response
             .headers()
@@ -2801,6 +2884,142 @@ impl TestResponse {
             self.exchange(),
             values.join(", ")
         );
+        self
+    }
+
+    /// Asserts a field `name` is on the response, whatever its value.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name, which no response could
+    /// carry, and when the response carries no such field.
+    #[track_caller]
+    pub fn assert_has_header(&self, name: &str) -> &Self {
+        let field = self.field_name(name);
+        assert!(
+            self.response.headers().contains_key(&field),
+            "{}: `{name}` is not on the response",
+            self.exchange()
+        );
+        self
+    }
+
+    /// Asserts the list-based field `name` lists `member` as one of its
+    /// elements (RFC 9110 section 5.6.1).
+    ///
+    /// Every field line filed under `name` is read as one list, split at each
+    /// comma outside a `quoted-string`, and each element is compared whole, its
+    /// surrounding whitespace aside: `authorization` is listed by
+    /// `Content-Type, Authorization` and not by `X-Authorization`. A `member`
+    /// that is a `token` matches in any ASCII case, as field names, directives
+    /// and codings compare; any other, such as a quoted entity tag or
+    /// `max-age=60`, matches octet for octet, and so does every element of
+    /// `Allow` and `Access-Control-Allow-Methods`, whose methods are
+    /// case-sensitive (RFC 9110 section 9.1): `get` is not `GET`.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .options("/items")
+    ///     .header("origin", "https://app.example.com")
+    ///     .header("access-control-request-method", "POST")
+    ///     .send()
+    ///     .await
+    ///     .assert_header_lists("access-control-allow-headers", "authorization")
+    ///     .assert_header_lists("vary", "origin");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name; when `member` is not one list
+    /// element, being empty, padded with whitespace or holding a comma outside
+    /// quotes, which no element could equal; when the response carries no such
+    /// field; and when no element is `member`, naming every line received.
+    #[track_caller]
+    pub fn assert_header_lists(&self, name: &str, member: &str) -> &Self {
+        let field = self.field_name(name);
+        let mut elements = list_elements(member.as_bytes());
+        assert!(
+            elements.next() == Some(member.as_bytes()) && elements.next().is_none(),
+            "{}: `{member}` is not one list element, so no `{name}` could list it",
+            self.exchange()
+        );
+
+        let lines = self.response.headers().get_all(&field);
+        assert!(
+            lines.iter().next().is_some(),
+            "{}: `{name}` is not on the response",
+            self.exchange()
+        );
+        let methods = METHOD_LISTS.contains(&field);
+        let listed = lines.iter().any(|line| {
+            list_elements(line.as_bytes())
+                .any(|element| lists_member(element, member.as_bytes(), methods))
+        });
+        assert!(
+            listed,
+            "{}: expected `{name}` to list `{member}`, received {}",
+            self.exchange(),
+            lines
+                .iter()
+                .map(|line| format!("`{name}: {}`", line.as_bytes().escape_ascii()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        self
+    }
+
+    /// Asserts the `Content-Type` names the media type `essence`, its
+    /// parameters aside: `text/plain` passes for `text/plain;
+    /// charset=utf-8`. Type and subtype compare in any ASCII case (RFC 9110
+    /// section 8.3.1).
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client.get("/metrics").send().await.assert_content_type("text/plain");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `essence` is not a `type/subtype` pair of tokens, which a
+    /// `Content-Type` carrying parameters to compare would not be either;
+    /// when the response carries no `Content-Type`; and when it names
+    /// another media type.
+    #[track_caller]
+    pub fn assert_content_type(&self, essence: &str) -> &Self {
+        assert!(
+            essence
+                .split_once('/')
+                .is_some_and(|(kind, subtype)| crate::http::is_token(kind.as_bytes())
+                    && crate::http::is_token(subtype.as_bytes())),
+            "{}: `{essence}` is not a media type's `type/subtype`; \
+             `assert_content_type` compares no parameters, and \
+             `assert_header` compares the field whole",
+            self.exchange()
+        );
+        match self
+            .response
+            .headers()
+            .get(crate::http::header::CONTENT_TYPE)
+        {
+            Some(value) => assert!(
+                crate::http::eq_ignore_ascii_case(
+                    crate::http::media::split_essence(value.as_bytes()).0,
+                    essence.as_bytes()
+                ),
+                "{}: expected `Content-Type: {essence}`, received `Content-Type: {}`\n{}",
+                self.exchange(),
+                value.as_bytes().escape_ascii(),
+                self.rendered_body()
+            ),
+            None => panic!(
+                "{}: expected `Content-Type: {essence}`, and the response carries none\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
         self
     }
 
@@ -2911,6 +3130,19 @@ impl TestResponse {
             self.path,
             self.status().as_u16()
         )
+    }
+
+    /// `name` as a header name.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not one, which no response could carry.
+    #[track_caller]
+    fn field_name(&self, name: &str) -> HeaderName {
+        let Ok(field) = HeaderName::from_bytes(name.as_bytes()) else {
+            panic!("{}: `{name}` is not a header name", self.exchange())
+        };
+        field
     }
 
     /// Takes the string member `name` out of a problem document's `members`.
@@ -3159,6 +3391,55 @@ fn has_scheme(reference: &str) -> bool {
     })
 }
 
+/// The elements of one list-based field line (RFC 9110 section 5.6.1):
+/// split at each comma outside a `quoted-string`, with the optional
+/// whitespace around each trimmed and the empty ones a recipient ignores
+/// dropped.
+fn list_elements(line: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut rest = Some(line);
+    std::iter::from_fn(move || {
+        let piece = rest?;
+        let Some(at) = crate::http::unquoted_position(piece, b',') else {
+            return rest.take();
+        };
+        rest = Some(&piece[at + 1..]);
+        Some(&piece[..at])
+    })
+    .map(<[u8]>::trim_ascii)
+    .filter(|element| !element.is_empty())
+}
+
+/// The list fields whose elements are methods, which compare case-sensitively
+/// (RFC 9110 section 9.1) where most listed tokens do not.
+const METHOD_LISTS: [HeaderName; 2] = [
+    crate::http::header::ALLOW,
+    crate::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+];
+
+/// Whether `element` is the list member `member`: in any ASCII case where
+/// `member` is a `token` and the field lists no `methods`, as the tokens
+/// most list fields carry compare (field names, connection options and
+/// content codings: RFC 9110 sections 5.1, 7.6.1 and 8.4.1), and octet for
+/// octet otherwise, as a method, a `quoted-string` or a parameter's value
+/// does.
+fn lists_member(element: &[u8], member: &[u8], methods: bool) -> bool {
+    if !methods && crate::http::is_token(member) {
+        crate::http::eq_ignore_ascii_case(element, member)
+    } else {
+        element == member
+    }
+}
+
+/// Whether `pointer` is an RFC 6901 JSON pointer: empty, or `/`-prefixed
+/// reference tokens in which every `~` opens `~0` or `~1`.
+fn is_json_pointer(pointer: &str) -> bool {
+    (pointer.is_empty() || pointer.starts_with('/'))
+        && pointer
+            .split('~')
+            .skip(1)
+            .all(|escaped| escaped.starts_with(['0', '1']))
+}
+
 /// `n responses`, or `1 response`, for an assertion message that counts them.
 fn responses(count: usize) -> String {
     if count == 1 {
@@ -3242,6 +3523,9 @@ impl TestEvent {
     }
 }
 
+/// The members RFC 9457 section 3.1 registers, which no extension may be.
+const REGISTERED_MEMBERS: [&str; 5] = ["type", "title", "status", "detail", "instance"];
+
 /// An RFC 9457 problem document, as [`TestResponse::problem`] read it.
 ///
 /// The members section 3.1 registers are typed; every other member is an
@@ -3277,7 +3561,7 @@ impl TestProblem {
     #[track_caller]
     pub fn extension<T: serde::de::DeserializeOwned>(&self, name: &str) -> Option<T> {
         assert!(
-            !["type", "title", "status", "detail", "instance"].contains(&name),
+            !REGISTERED_MEMBERS.contains(&name),
             "`{name}` is a member RFC 9457 registers, not an extension; read its field"
         );
         let value = self.extensions.get(name)?;

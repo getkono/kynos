@@ -11668,11 +11668,15 @@ impl<'a, C> !core::panic::unwind_safe::RefUnwindSafe for kynos::test::TestReques
 impl<'a, C> !core::panic::unwind_safe::UnwindSafe for kynos::test::TestRequest<'a, C>
 pub struct kynos::test::TestResponse
 impl kynos::test::TestResponse
+pub fn kynos::test::TestResponse::assert_content_type(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_cookie(&self, &str, &str) -> &Self
+pub fn kynos::test::TestResponse::assert_has_header(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_header(&self, &str, &str) -> &Self
+pub fn kynos::test::TestResponse::assert_header_lists(&self, &str, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_no_header(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_part(&self, u64, u64, u64) -> &Self
 pub fn kynos::test::TestResponse::assert_problem(&self, impl kynos::test::IntoStatus, &str) -> &Self
+pub fn kynos::test::TestResponse::assert_problem_extension(&self, &str, impl serde_core::ser::Serialize) -> &Self
 pub fn kynos::test::TestResponse::assert_problem_type(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_redirect(&self, &str) -> &Self
 pub fn kynos::test::TestResponse::assert_status(&self, impl kynos::test::IntoStatus) -> &Self
@@ -11686,6 +11690,7 @@ pub fn kynos::test::TestResponse::header_map(&self) -> &http::header::map::Heade
 pub fn kynos::test::TestResponse::headers(&self, &str) -> alloc::vec::Vec<&str>
 pub fn kynos::test::TestResponse::into_inner(self) -> kynos::http::Response
 pub fn kynos::test::TestResponse::json<T: serde_core::de::DeserializeOwned>(&self) -> T
+pub fn kynos::test::TestResponse::json_at<T: serde_core::de::DeserializeOwned>(&self, &str) -> T
 pub fn kynos::test::TestResponse::method(&self) -> &http::method::Method
 pub fn kynos::test::TestResponse::path(&self) -> &str
 pub fn kynos::test::TestResponse::problem(&self) -> kynos::test::TestProblem
