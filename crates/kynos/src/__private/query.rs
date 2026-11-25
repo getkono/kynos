@@ -159,7 +159,9 @@ impl<T> ProbeUnread for &Group<T> {}
                `QueryString<T>` would refuse what `Query<T>` reads",
     label = "serde is not told this default",
     note = "add `#[serde(default = \"...\")]` naming a function returning the same value, or \
-            `#[serde(default)]` where the type's `Default` is that value"
+            `#[serde(default)]` where the type's `Default` is that value",
+    note = "`Schema` checks the keys `#[derive(Deserialize)]` reads, which a hand-written \
+            `Deserialize` cannot be told: derive it instead, or drop `Schema`"
 )]
 pub trait DefaultAgrees {}
 
@@ -172,7 +174,9 @@ impl DefaultAgrees for UnreadBySerde {}
                in its place, so `QueryString<T>` and `Query<T>` would read the group differently",
     label = "serde is not told this flatten",
     note = "add `#[serde(flatten)]` beside `#[param(flatten)]`, so both read the flattened \
-            group's members in its place"
+            group's members in its place",
+    note = "`Schema` checks the keys `#[derive(Deserialize)]` reads, which a hand-written \
+            `Deserialize` cannot be told: derive it instead, or drop `Schema`"
 )]
 pub trait FlattenAgrees {}
 
