@@ -302,6 +302,15 @@ and a field-less enum by its variant names. A type described with
 both under the derive, which adds the promise alone. A structured query, such
 as a search filter, is a whole `QueryString` under `openapi32` instead.
 
+Where such a type implements serde, each example it lists must also round-trip
+serde as that string, even if the router only ever reads it as a parameter.
+The check runs where the type's schema is described, which knows nothing of
+where the type is used, and the one component it emits is the schema every
+use names, a JSON body included. So there is no opt-out: serde that serves
+another purpose, such as a storage form, moves to a separate type. Otherwise
+carry serde through the text, with `#[serde(into = "String", try_from =
+"String")]` or by hand through `collect_str` and `FromStr`.
+
 The derived enum is also a `UnitEnum`, so a database column or a log field
 reads the same names without restating them: `status.as_str()` is the
 `&'static str` `Display` writes, and `Status::VARIANTS` lists every variant.

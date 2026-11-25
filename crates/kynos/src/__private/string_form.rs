@@ -6,6 +6,11 @@
 //! not, so a type with no serde still compiles. Likewise [`Reads`] and
 //! [`Unread`] for `DeserializeOwned`. The type is concrete there, which the
 //! resolution needs; `#[schema(string)]` refuses a type parameter.
+//!
+//! The serde check is independent of use, with no opt-out: `Schema::schema`
+//! has no use-site context, so narrowing it to JSON bodies would need a
+//! reachability pass the registry does not have, and the macro already refuses
+//! a non-`String` serde attribute unconditionally.
 
 use std::{fmt::Display, str::FromStr};
 
