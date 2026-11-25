@@ -64,6 +64,9 @@ fn every_attribute_builder_is_covered_by_the_sweep() {
         "path",
         "same_site",
         "secure",
+        // `secure`'s field under a condition; its doctest holds it to
+        // `secure`.
+        "secure_if",
     ]);
 
     assert_eq!(

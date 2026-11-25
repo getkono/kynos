@@ -146,6 +146,28 @@ impl Cookie {
         self
     }
 
+    /// Sends the cookie only over a secure connection where `secure` holds.
+    ///
+    /// For a deployment setting, so a builder chain needs no branch. It sets
+    /// the flag rather than adding to it, so `secure_if(false)` clears an
+    /// earlier [`Cookie::secure`]. A cookie that is dropped without `Secure`
+    /// (see [`Cookie::encode`]) still sends it.
+    ///
+    /// ```
+    /// use kynos::response::cookie::Cookie;
+    ///
+    /// let locale = || Cookie::new("locale", "en-GB");
+    ///
+    /// assert_eq!(locale().secure_if(true), locale().secure());
+    /// assert_eq!(locale().secure_if(false), locale());
+    /// assert_eq!(locale().secure().secure_if(false), locale());
+    /// ```
+    #[must_use]
+    pub fn secure_if(mut self, secure: bool) -> Self {
+        self.secure = secure;
+        self
+    }
+
     /// Hides the cookie from scripts.
     #[must_use]
     pub fn http_only(mut self) -> Self {
