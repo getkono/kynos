@@ -114,12 +114,16 @@ cargo nextest run -p kynos-openapi \
 '''
 
 [tasks."test:preserve-order"]
-description = "Test kynos-openapi with serde_json's preserve_order forced on"
+description = "Test kynos-openapi and kynos's response hoisting with serde_json's preserve_order forced on"
 # As `test:arbitrary-precision`, for the other `serde_json` feature a downstream
 # graph may unify on: only under it does a `Value` keep insertion order, which
-# `to_canonical_json` must sort itself (docs/testing.md#cross-cutting).
+# `to_canonical_json` and the router's response hoisting must sort themselves
+# (docs/testing.md#cross-cutting).
 env = { CARGO_INCREMENTAL = "0" }
-run = "cargo nextest run -p kynos-openapi --features yaml,serde_json/preserve_order --no-tests=fail"
+run = [
+  "cargo nextest run -p kynos-openapi --features yaml,serde_json/preserve_order --no-tests=fail",
+  "cargo nextest run -p kynos --features serde_json/preserve_order --no-tests=fail -E 'test(/^router::hoist::/)'",
+]
 
 [tasks."features:check"]
 description = "Lint every reachable feature combination"

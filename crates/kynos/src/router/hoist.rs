@@ -17,29 +17,32 @@ use serde_json::Value;
 
 use crate::error::problem::ABOUT_BLANK;
 
-/// A response as declared at one key: the key, then its serialized bytes.
+/// A response as declared at one key: the key, then its [`canonical`] form.
 type Declared = (String, String);
 
 /// Replaces each inline response two or more operations declare under the
-/// same key with the same bytes by a `$ref` to one `components/responses`
-/// entry.
+/// same key with the same [`canonical`] form by a `$ref` to one
+/// `components/responses` entry, which holds the response as the first of
+/// them in document order declares it.
 ///
-/// The entry is a component the application declared with those bytes, where
+/// The entry is a component the application declared with that form, where
 /// one exists, and otherwise a new one named for what the response says, as
 /// [`derived`] spells it. Where two different responses derive one name, or
 /// the name is already declared or referred to, each takes the suffix
-/// [`fingerprint`] computes from its own bytes, so no name depends on what
-/// else the document declares beyond that collision; where even that is
-/// taken, the response stays inline. Bytes, not equality, decide sameness,
-/// so two responses differing anywhere (a description, a header, a link, the
-/// order of two media types) stay apart. A response given by reference is
-/// left as written.
+/// [`fingerprint`] computes from its canonical form, so no name depends on
+/// what else the document declares beyond that collision; where even that is
+/// taken, the response stays inline. The canonical form, not equality,
+/// decides sameness, so two responses differing anywhere (a description, a
+/// header, a link, the order of their own media types, headers or links)
+/// stay apart, and two differing only in the key order of a nested free-form
+/// object are one in every build.
+/// A response given by reference is left as written.
 pub(super) fn shared_responses(paths: &mut Paths, components: &mut Components) {
     let mut declared: BTreeMap<Declared, (usize, Response)> = BTreeMap::new();
     for (key, entry) in entries(paths) {
-        if let Some((bytes, response)) = inline(entry) {
+        if let Some((canonical, response)) = inline(entry) {
             declared
-                .entry((key, bytes))
+                .entry((key, canonical))
                 .or_insert_with(|| (0, response.clone()))
                 .0 += 1;
         }
@@ -48,17 +51,17 @@ pub(super) fn shared_responses(paths: &mut Paths, components: &mut Components) {
     let existing = existing(components);
     let mut names: HashMap<Declared, String> = HashMap::new();
     let mut minted: BTreeMap<String, Vec<(Declared, Response)>> = BTreeMap::new();
-    for ((key, bytes), (uses, response)) in declared {
+    for ((key, canonical), (uses, response)) in declared {
         if uses < 2 {
             continue;
         }
-        if let Some(name) = existing.get(&bytes) {
-            names.insert((key, bytes), name.clone());
-        } else if let Some(name) = derived(&key, &bytes) {
+        if let Some(name) = existing.get(&canonical) {
+            names.insert((key, canonical), name.clone());
+        } else if let Some(name) = derived(&key, &response) {
             minted
                 .entry(name)
                 .or_default()
-                .push(((key, bytes), response));
+                .push(((key, canonical), response));
         }
         // A key no status pattern spells would derive an illegal name; the
         // validator has reported the key where it is written instead.
@@ -93,10 +96,10 @@ pub(super) fn shared_responses(paths: &mut Paths, components: &mut Components) {
         return;
     }
     for (key, entry) in entries(paths) {
-        let Some((bytes, _)) = inline(entry) else {
+        let Some((canonical, _)) = inline(entry) else {
             continue;
         };
-        if let Some(name) = names.get(&(key, bytes)) {
+        if let Some(name) = names.get(&(key, canonical)) {
             *entry = RefOr::Ref(Ref::response(name));
         }
     }
@@ -123,32 +126,65 @@ fn entries(paths: &mut Paths) -> impl Iterator<Item = (String, &mut RefOr<Respon
         })
 }
 
-/// An inline response and its bytes; `None` for a reference, or for one
-/// that does not serialize, which is then left where it is.
+/// An inline response and its [`canonical`] form; `None` for a reference, or
+/// for one that does not serialize, which is then left where it is.
 fn inline(entry: &RefOr<Response>) -> Option<(String, &Response)> {
     let response = entry.as_item()?;
-    Some((serde_json::to_string(response).ok()?, response))
+    Some((canonical(response)?, response))
 }
 
-/// The first name under which `components` declares each inline response.
+/// `response` as compact JSON with every object's keys sorted by code point,
+/// at every depth, as `Document::to_canonical_json` sorts them, then, where
+/// the response declares its own media types, headers or links in another
+/// order, those three key lists as declared: the same text in every build.
+///
+/// The sort ignores the order of a nested free-form object (an example, a
+/// default, a `const`, an extension), which the direct serialization leaves
+/// sorted, or in insertion order under `serde_json/preserve_order`; only a
+/// walk naming every `Value` the model nests could keep it, and one added
+/// later would bring the build back into the comparison. The response's own
+/// lists are typed maps, ordered as declared in every build, and their order
+/// is kept: negotiation sends the first media type offered, so a response
+/// offering JSON first is not one offering text first. Appended only where
+/// it is not the sorted order, so a response declaring them sorted keeps the
+/// text, and the fingerprint, the sort alone gives it.
+fn canonical(response: &Response) -> Option<String> {
+    let mut value = serde_json::to_value(response).ok()?;
+    value.sort_all_objects();
+    let declared = [
+        response.content.keys().collect::<Vec<_>>(),
+        response.headers.keys().collect(),
+        response.links.keys().collect(),
+    ];
+    let sorted = declared.iter().all(|keys| keys.is_sorted());
+    Some(if sorted {
+        value.to_string()
+    } else {
+        // Compact JSON escapes every line feed, so this one only separates.
+        format!("{value}\n{}", serde_json::to_string(&declared).ok()?)
+    })
+}
+
+/// The first name under which `components` declares each inline response,
+/// by its [`canonical`] form.
 fn existing(components: &Components) -> HashMap<String, String> {
     let mut existing = HashMap::new();
     for (name, entry) in &components.responses {
-        if let Some((bytes, _)) = inline(entry) {
-            existing.entry(bytes).or_insert_with(|| name.clone());
+        if let Some((canonical, _)) = inline(entry) {
+            existing.entry(canonical).or_insert_with(|| name.clone());
         }
     }
     existing
 }
 
-/// The name a response declared at `key` with `bytes` is given before any
-/// suffix: its problem type, then the schema component its first media type
+/// The name `response`, declared at `key`, is given before any suffix: its
+/// problem type, then the schema component its first declared media type
 /// carries, then its key, such as `OutOfStockProblemStatus409`,
 /// `ProblemStatus500`, `ReadingStatus200`, `Status204` or `Default`.
 ///
 /// `None` where the key would make an illegal name; the schema and problem
 /// type are dropped where they would.
-fn derived(key: &str, bytes: &str) -> Option<String> {
+fn derived(key: &str, response: &Response) -> Option<String> {
     let status = if key == "default" {
         "Default".to_owned()
     } else {
@@ -157,14 +193,13 @@ fn derived(key: &str, bytes: &str) -> Option<String> {
     if !ComponentName::is_valid(&status) {
         return None;
     }
-    let response: Value = serde_json::from_str(bytes).ok()?;
-    let Some((media, media_type)) = response
-        .get("content")
-        .and_then(Value::as_object)
-        .and_then(|content| content.iter().next())
-    else {
+    // The typed map keeps declaration order in every build; a `Value` sorts
+    // its keys unless `serde_json/preserve_order` is on.
+    let Some((media, media_type)) = response.content.first() else {
         return Some(status);
     };
+    // Read by key alone below, so this `Value`'s own key order is moot.
+    let media_type = serde_json::to_value(media_type).unwrap_or_default();
     let schema = media_type
         .get("schema")
         .or_else(|| media_type.get("itemSchema"));
@@ -258,13 +293,16 @@ fn pascal(uri: &str) -> String {
         .collect()
 }
 
-/// Eight hex digits of the 64-bit FNV-1a hash of `bytes`: fixed by the
-/// algorithm rather than by the standard library's hasher, which may change
-/// between releases, so a suffixed name is the same in every build.
-fn fingerprint(bytes: &str) -> String {
-    let hash = bytes.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    });
+/// Eight hex digits of the 64-bit FNV-1a hash of a response's [`canonical`]
+/// form: fixed by the algorithm rather than by the standard library's
+/// hasher, which may change between releases, and by that form rather than
+/// by the build, so a suffixed name is the same in every build.
+fn fingerprint(canonical: &str) -> String {
+    let hash = canonical
+        .bytes()
+        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
+        });
     format!("{:08x}", hash >> 32)
 }
 
@@ -284,3 +322,6 @@ fn taken(paths: &mut Paths, components: &Components) -> HashSet<String> {
         .chain(referenced)
         .collect()
 }
+
+#[cfg(test)]
+mod tests;

@@ -1316,11 +1316,11 @@ mod shared_responses {
     }
 
     /// Every way two responses can differ keeps them apart. Responses
-    /// deriving one name each take the fingerprint of their own bytes, never
-    /// a position, so the names are the same in whatever order the
-    /// operations were mounted.
+    /// deriving one name each take the fingerprint of their content with
+    /// every object's keys sorted, never a position, so the names are the
+    /// same in whatever order the operations were mounted.
     #[test]
-    fn responses_differing_anywhere_stay_apart_fingerprinted_by_their_bytes() {
+    fn responses_differing_anywhere_stay_apart_fingerprinted_by_their_content() {
         let headed = || {
             Response::new("first").with_header(
                 "Retry-After",
@@ -1457,7 +1457,7 @@ mod shared_responses {
     /// not also derive: a 500 of another problem type, or the same problem at
     /// another status, takes a name of its own. Only a second response
     /// deriving the very same name fingerprints both, which
-    /// `responses_differing_anywhere_stay_apart_fingerprinted_by_their_bytes`
+    /// `responses_differing_anywhere_stay_apart_fingerprinted_by_their_content`
     /// pins.
     #[test]
     fn adding_a_response_leaves_every_existing_name_unchanged() {
