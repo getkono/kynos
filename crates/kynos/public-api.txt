@@ -11543,6 +11543,8 @@ impl<'a> core::marker::Unpin for kynos::test::cookie::TestSetCookie<'a>
 impl<'a> core::marker::UnsafeUnpin for kynos::test::cookie::TestSetCookie<'a>
 impl<'a> core::panic::unwind_safe::RefUnwindSafe for kynos::test::cookie::TestSetCookie<'a>
 impl<'a> core::panic::unwind_safe::UnwindSafe for kynos::test::cookie::TestSetCookie<'a>
+pub mod kynos::test::document
+pub fn kynos::test::document::assert_file_matches(impl core::convert::AsRef<std::path::Path>, &kynos_openapi::model::document::Document)
 pub mod kynos::test::multipart
 pub struct kynos::test::multipart::TestMultipart
 impl kynos::test::multipart::TestMultipart

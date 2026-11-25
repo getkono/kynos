@@ -11,6 +11,7 @@ mod body;
 mod conformance;
 #[cfg(feature = "cookie")]
 pub mod cookie;
+pub mod document;
 #[cfg(feature = "multipart")]
 pub mod multipart;
 pub mod view;

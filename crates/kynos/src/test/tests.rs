@@ -24,7 +24,7 @@ std::thread_local! {
 }
 
 /// The file and line `fail` panicked at, as the panic hook reads them.
-fn location(fail: impl FnOnce()) -> (String, u32) {
+pub(super) fn location(fail: impl FnOnce()) -> (String, u32) {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|info| {
         let location = info.location().expect("a panic raised here has a location");
@@ -48,6 +48,8 @@ macro_rules! fails_here {
         )
     };
 }
+
+pub(super) use fails_here;
 
 fn framed(bytes: &'static str, remaining: Option<u64>) -> Framed {
     Framed {

@@ -1,8 +1,8 @@
 //! Properties over a whole generated document.
 //!
-//! Round-tripping, determinism, the totality of validation, and the two
-//! emission rules; beside them, the totality of `pattern::translate`, whose
-//! input is a Schema Object's `pattern`. The path-template properties are in
+//! Round-tripping, determinism, the canonical form, the totality of
+//! validation, and the two emission rules; beside them, the totality of
+//! `pattern::translate`, whose input is a Schema Object's `pattern`. The path-template properties are in
 //! `templates.rs`; the generators both files draw on are in `support/`.
 
 use kynos_openapi::{
@@ -183,6 +183,22 @@ proptest! {
         let json = to_json(&document);
         prop_assert_eq!(to_json(&document.clone()), json.clone());
         prop_assert_eq!(to_json(&parse(&json)), json);
+    }
+
+    /// The canonical form reorders and changes nothing else: it reads as the
+    /// JSON `to_json` writes, and as the document, which emits it again.
+    #[test]
+    fn canonical_json_is_the_document_reordered(document in arb_document()) {
+        let canonical = document
+            .to_canonical_json()
+            .expect("a generated document repeats no key");
+        prop_assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&canonical).expect("canonical JSON parses"),
+            serde_json::from_str::<serde_json::Value>(&to_json(&document)).expect("JSON parses")
+        );
+        let read = parse(&canonical);
+        prop_assert_eq!(&read, &document);
+        prop_assert_eq!(read.to_canonical_json().expect("as before"), canonical);
     }
 
     /// YAML emission writes exactly what `serde_norway` writes for the model.
