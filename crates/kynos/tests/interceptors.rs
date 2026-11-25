@@ -1347,199 +1347,86 @@ fn an_interceptor_left_reading_bodies_covers_only_bodies() {
     );
 }
 
-/// Every interceptor Kynos ships, by what its `READS_BODY` says, against the
-/// cases this suite and `guard_first.rs` hold it to.
-///
-/// Read off disk over the whole of `src/`, since the `guard_first` guard
-/// implements `Interceptor` outside `middleware/`, so an interceptor added
-/// without a case, or one whose `READS_BODY` changes, fails here.
-#[test]
-fn every_interceptor_kynos_ships_has_its_body_read_witnessed() {
-    let mut sources = Vec::new();
-    collect_sources(
-        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")),
-        &mut sources,
-    );
-    let declared = reads_body_in(&sources);
-
-    let named = |names: &[&str]| -> BTreeSet<String> {
-        names.iter().map(|name| (*name).to_owned()).collect()
-    };
-    let saying = |value: &str| -> BTreeSet<String> {
-        declared
-            .iter()
-            .filter(|(_, said)| said == value)
-            .map(|(name, _)| name.clone())
-            .collect()
-    };
-
-    let mut head_only = head_only_witnessed();
-    head_only.extend(named(HEAD_ONLY_ELSEWHERE));
-    assert_eq!(
-        saying("false"),
-        head_only,
-        "an interceptor touching the head alone has no case holding a limit above it off a \
-         bodyless operation"
-    );
-    assert_eq!(
-        saying("N::READS_BODY"),
-        named(&["When"]),
-        "an interceptor forwarding what it scopes has no case beside \
-         `a_method_scoped_interceptor_reads_the_body_its_interceptor_reads`"
-    );
-    assert_eq!(
-        saying(""),
-        named(COVERING_ONLY_BODIES),
-        "an interceptor leaving `READS_BODY` at `true` is not one whose value is moot"
-    );
-}
-
-/// Each type implementing `Interceptor<C>` in `sources`, beside the value its
-/// impl gives `READS_BODY`, empty where it leaves the default.
-///
-/// Comment lines are dropped first, so a doc example implementing one is not
-/// counted, and whitespace collapsed, as [`implementors_in`] does. The impl
-/// head may name the trait through a path, so `super::Interceptor<C>` counts,
-/// while `ErasedInterceptor<C>` does not.
-fn reads_body_in(sources: &[String]) -> BTreeSet<(String, String)> {
-    const MARKER: &str = "Interceptor<C> for ";
-    const CONSTANT: &str = "const READS_BODY: bool = ";
-
-    let mut found = BTreeSet::new();
-    for source in sources {
-        let source = source
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("//"))
-            .flat_map(str::split_whitespace)
-            .collect::<Vec<_>>()
-            .join(" ");
-        for (at, _) in source.match_indices(MARKER) {
-            if source[..at].ends_with(|character: char| character.is_alphanumeric()) {
-                continue;
-            }
-            let rest = &source[at + MARKER.len()..];
-            let name = rest
-                .chars()
-                .take_while(|character| character.is_alphanumeric() || *character == '_')
-                .collect::<String>();
-
-            let open = rest.find('{').expect("an impl body");
-            let mut depth = 0_usize;
-            let mut close = open;
-            for (offset, character) in rest[open..].char_indices() {
-                match character {
-                    '{' => depth += 1,
-                    '}' => {
-                        depth -= 1;
-                        if depth == 0 {
-                            close = open + offset;
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let body = &rest[open..close];
-            let value = body.find(CONSTANT).map_or("", |start| {
-                let value = &body[start + CONSTANT.len()..];
-                &value[..value.find(';').expect("a terminated constant")]
-            });
-            found.insert((name, value.to_owned()));
-        }
-    }
-    found
-}
-
-/// The scan reads each value an impl gives `READS_BODY`, and the default where
-/// it gives none, through a wrapped or path-qualified head, and skips the
-/// erased trait and a doc example.
-#[test]
-fn the_body_read_scan_reads_each_spelling() {
-    let sources = [
-        "impl<C: Sync + 'static> Interceptor<C> for Head {\n    const READS_BODY: bool = false;\n}"
-            .to_owned(),
-        "impl<C, M, N> Interceptor<C>\n    for Scoped<M, N>\nwhere\n    N: Interceptor<C>,\n{\n    \
-         fn intercept() -> impl Future { async {} }\n    const READS_BODY: bool = N::READS_BODY;\n}"
-            .to_owned(),
-        "impl<C: 'static, G> super::Interceptor<C> for Span<G> {\n    const READS_BODY: bool = \
-         false;\n}"
-            .to_owned(),
-        "impl<C> Interceptor<C> for Reads {\n    type Reads = ();\n}".to_owned(),
-        "impl<C> ErasedInterceptor<C> for Erased {\n    const READS_BODY: bool = false;\n}"
-            .to_owned(),
-        "/// impl<C> Interceptor<C> for Example {\n/// }".to_owned(),
-    ];
-
-    assert_eq!(
-        reads_body_in(&sources),
-        [
-            ("Head", "false"),
-            ("Reads", ""),
-            ("Scoped", "N::READS_BODY"),
-            ("Span", "false"),
-        ]
-        .into_iter()
-        .map(|(name, value)| (name.to_owned(), value.to_owned()))
-        .collect::<BTreeSet<_>>()
-    );
-}
-
 // --- The two closed sets --------------------------------------------------
 
-/// Every interceptor Kynos ships, named against the set this suite accounts
-/// for.
+/// Every interceptor Kynos ships, beside what its `READS_BODY` says, named
+/// against the cases this suite and `guard_first.rs` hold it to.
 ///
 /// Witnessing a set someone chose says nothing about whether the set is the
 /// whole set. The declared side is therefore read off disk — every `.rs` file
-/// under `src/middleware/`, walked rather than transcribed — so an interceptor
-/// added in a module no list mentions still fails the build.
+/// under `src/`, walked rather than transcribed — so an interceptor added in a
+/// module no list mentions still fails the build. The whole of `src/` rather
+/// than `middleware/`, since the `guard_first` guard implements `Interceptor`
+/// in `router/endpoint/mod.rs`.
+///
+/// The witnessed side is the cases themselves rather than a list beside them:
+/// every interceptor touching the head alone is named by the `head_only!` case
+/// that mounts it, or by [`HEAD_ONLY_ELSEWHERE`]; `When`, forwarding what it
+/// scopes, by `a_method_scoped_interceptor_reads_the_body_its_interceptor_reads`;
+/// and each left reading bodies by [`COVERING_ONLY_BODIES`], whose exclusion
+/// `an_interceptor_left_reading_bodies_covers_only_bodies` earns. So an
+/// interceptor added without a case fails here, and so does one whose
+/// `READS_BODY` changes, or says anything but `false`, `N::READS_BODY` or the
+/// default.
 ///
 /// Naming the types rather than counting them is what makes the failure
 /// readable: a count says two numbers differ, a set says which interceptor
 /// nothing accounts for. It is also what lets two branches each add one and
 /// merge, since alphabetical insertion puts them on different lines.
 ///
-/// Neither side is `#[cfg]`-gated any more. Both are source text, and a file
-/// exists on disk whether or not the feature that compiles it is on, so this
-/// now holds at baseline features as well as under `--all-features`.
+/// Neither side is `#[cfg]`-gated. Both are source text, and a file exists on
+/// disk whether or not the feature that compiles it is on, so this holds at
+/// baseline features as well as under `--all-features`.
 #[test]
 fn every_interceptor_kynos_ships_is_accounted_for() {
-    /// Sorted. `Trace` is an `Observer` rather than an `Interceptor` — it
-    /// declares nothing, so it is not in this set and is named below instead.
-    const WITNESSED: &[&str] = &[
-        "BodySize",
-        "BodyTimeout",
-        "Cache",
-        "Compression",
-        "Concurrency",
-        "Conditional",
-        "Cors",
-        "Csrf",
-        "CsrfWhen",
-        "Decompression",
-        "RateLimit",
-        "RequestId",
-        "SecurityHeaders",
-        "SetCookies",
-        "Timeout",
-        "TrustedHosts",
-        "TrustedHostsWhen",
-        // A stack marker with no value, so it writes nothing; the
-        // method-scoped cases above read what its `N` declares.
-        "When",
-    ];
-
-    let declared = implementors_of("> Interceptor<C> for ");
+    let declared: BTreeSet<(String, String)> = implementations_of("Interceptor")
+        .into_iter()
+        .map(|(name, body)| {
+            let value = reads_body(&body).to_owned();
+            (name, value)
+        })
+        .collect();
 
     assert_eq!(
-        declared,
-        WITNESSED
+        declared
             .iter()
-            .map(|name| (*name).to_owned())
+            .map(|(_, value)| value.as_str())
             .collect::<BTreeSet<_>>(),
-        "`middleware/` implements `Interceptor` for a different set than this suite accounts \
-         for; an interceptor added without a case is one whose declaration nothing reads"
+        BTreeSet::from(["", "N::READS_BODY", "false"]),
+        "an interceptor says `READS_BODY` is something this sweep has no case for"
     );
+
+    let head_only = head_only_witnessed()
+        .into_iter()
+        .chain(HEAD_ONLY_ELSEWHERE.iter().map(|name| (*name).to_owned()))
+        .map(|name| (name, "false"));
+    let forwarding = [("When".to_owned(), "N::READS_BODY")];
+    let covering_only_bodies = COVERING_ONLY_BODIES
+        .iter()
+        .map(|name| ((*name).to_owned(), ""));
+    let witnessed: BTreeSet<(String, String)> = head_only
+        .chain(forwarding)
+        .chain(covering_only_bodies)
+        .map(|(name, value)| (name, value.to_owned()))
+        .collect();
+
+    assert_eq!(
+        declared, witnessed,
+        "`src/` implements `Interceptor` for a different set than this suite accounts for, or \
+         with a different `READS_BODY`; an interceptor added without a case is one whose \
+         declaration nothing reads"
+    );
+}
+
+/// The value an impl body gives `READS_BODY`, empty where it leaves the
+/// default.
+fn reads_body(body: &str) -> &str {
+    const CONSTANT: &str = "const READS_BODY: bool = ";
+
+    body.find(CONSTANT).map_or("", |start| {
+        let value = &body[start + CONSTANT.len()..];
+        &value[..value.find(';').expect("a terminated constant")]
+    })
 }
 
 /// Every observer Kynos ships, named the same way.
@@ -1556,7 +1443,10 @@ fn every_observer_kynos_ships_is_accounted_for() {
     /// Sorted.
     const WITNESSED: &[&str] = &["Trace"];
 
-    let declared = implementors_of("> Observer<C> for ");
+    let declared: BTreeSet<String> = implementations_of("Observer")
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
 
     assert_eq!(
         declared,
@@ -1564,68 +1454,124 @@ fn every_observer_kynos_ships_is_accounted_for() {
             .iter()
             .map(|name| (*name).to_owned())
             .collect::<BTreeSet<_>>(),
-        "`middleware/` implements `Observer` for a different set than this suite accounts for"
+        "`src/` implements `Observer` for a different set than this suite accounts for"
     );
 }
 
-/// The type names `middleware/` implements `marker` for, read off disk.
-///
-/// `marker` carries the `> ` that closes the impl's generic list, which is what
-/// keeps `Interceptor<C>` from also matching `ErasedInterceptor<C>`.
-fn implementors_of(marker: &str) -> BTreeSet<String> {
+/// Each implementation of `trait_name<C>` under `crates/kynos/src`, read off
+/// disk.
+fn implementations_of(trait_name: &str) -> Vec<(String, String)> {
     let mut sources = Vec::new();
     collect_sources(
-        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src/middleware")),
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")),
         &mut sources,
     );
-    assert!(
-        !sources.is_empty(),
-        "no sources found under `src/middleware/`"
-    );
+    assert!(!sources.is_empty(), "no sources found under `src/`");
 
-    implementors_in(marker, &sources)
+    implementations_in(trait_name, &sources)
 }
 
-/// The scan [`implementors_of`] runs, over source it is handed.
+/// The scan [`implementations_of`] runs, over source it is handed: each type
+/// implementing `trait_name<C>`, beside the impl's body.
 ///
-/// Whitespace is collapsed first: rustfmt wraps a long impl head before its
-/// `for`, and a marker matched against the raw text misses that implementor —
-/// which is how `SecurityHeaders` went uncounted.
-fn implementors_in(marker: &str, sources: &[String]) -> BTreeSet<String> {
-    sources
-        .iter()
-        .map(|source| source.split_whitespace().collect::<Vec<_>>().join(" "))
-        .flat_map(|source| {
-            source
-                .match_indices(marker)
-                .map(|(at, _)| {
-                    source[at + marker.len()..]
-                        .chars()
-                        .take_while(|character| character.is_alphanumeric() || *character == '_')
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect()
+/// Comment lines are dropped first, so a doc example implementing the trait is
+/// not counted, and whitespace is collapsed: rustfmt wraps a long impl head
+/// before its `for`, and a marker matched against the raw text misses that
+/// implementor — which is how `SecurityHeaders` once went uncounted. The head
+/// may name the trait through a path, so `super::Interceptor<C>` counts — which
+/// is how `TraceSpan` once went uncounted — while `ErasedInterceptor<C>`, whose
+/// name merely ends in the trait's, does not.
+fn implementations_in(trait_name: &str, sources: &[String]) -> Vec<(String, String)> {
+    let marker = format!("{trait_name}<C> for ");
+
+    let mut found = Vec::new();
+    for source in sources {
+        let source = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .flat_map(str::split_whitespace)
+            .collect::<Vec<_>>()
+            .join(" ");
+        for (at, _) in source.match_indices(&marker) {
+            if source[..at]
+                .ends_with(|character: char| character.is_alphanumeric() || character == '_')
+            {
+                continue;
+            }
+            let rest = &source[at + marker.len()..];
+            let name = rest
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect::<String>();
+
+            let open = rest.find('{').expect("an impl body");
+            let mut depth = 0_usize;
+            let mut close = rest.len();
+            for (offset, character) in rest[open..].char_indices() {
+                match character {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = open + offset;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            found.push((name, rest[open..close].to_owned()));
+        }
+    }
+    found
 }
 
-/// The scan finds an implementor whose head rustfmt wrapped before `for`, as
-/// it does one written on one line, and still skips the erased trait.
+/// The scan reads each spelling of an impl head — one line, wrapped before
+/// `for`, the trait named through a path — and each value an impl gives
+/// `READS_BODY`, the default where it gives none, while it skips the erased
+/// trait, a doc example, and another trait's implementation.
 #[test]
-fn the_interceptor_scan_reads_a_wrapped_impl_head() {
+fn the_implementation_scan_reads_each_spelling() {
     let sources = [
-        "impl<C: Sync + 'static> Interceptor<C> for OneLine {".to_owned(),
-        "impl<C, const A: bool, const B: bool> Interceptor<C>\n    for Wrapped<A, B>\nwhere"
+        "impl<C: Sync + 'static> Interceptor<C> for Head {\n    const READS_BODY: bool = false;\n}"
             .to_owned(),
-        "impl<C> ErasedInterceptor<C> for Erased {".to_owned(),
+        "impl<C, M, N> Interceptor<C>\n    for Scoped<M, N>\nwhere\n    N: Interceptor<C>,\n{\n    \
+         fn intercept() -> impl Future { async {} }\n    const READS_BODY: bool = N::READS_BODY;\n}"
+            .to_owned(),
+        "impl<C: 'static, G> super::Interceptor<C> for Span<G> {\n    const READS_BODY: bool = \
+         false;\n}"
+            .to_owned(),
+        "impl<C> Interceptor<C> for Reads {\n    type Reads = ();\n}".to_owned(),
+        "impl<C> ErasedInterceptor<C> for Erased {\n    const READS_BODY: bool = false;\n}"
+            .to_owned(),
+        "/// impl<C> Interceptor<C> for Example {\n/// }".to_owned(),
+        "impl<C> Observer<C> for Watches {\n    fn observe() {}\n}".to_owned(),
     ];
 
     assert_eq!(
-        implementors_in("> Interceptor<C> for ", &sources),
-        ["OneLine", "Wrapped"]
+        implementations_in("Interceptor", &sources)
             .into_iter()
-            .map(str::to_owned)
-            .collect::<BTreeSet<_>>()
+            .map(|(name, body)| {
+                let value = reads_body(&body).to_owned();
+                (name, value)
+            })
+            .collect::<BTreeSet<_>>(),
+        [
+            ("Head", "false"),
+            ("Reads", ""),
+            ("Scoped", "N::READS_BODY"),
+            ("Span", "false"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect::<BTreeSet<_>>()
+    );
+    assert_eq!(
+        implementations_in("Observer", &sources)
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>(),
+        ["Watches"]
     );
 }
 
@@ -1744,10 +1690,10 @@ fn every_short_circuit_kynos_ships_is_accounted_for() {
 
 /// The type names `crates/kynos/src` implements `trait_name` for, read off disk.
 ///
-/// Line-oriented rather than the `> Marker for ` substring `implementors_of`
-/// uses, for two reasons that marker cannot cover: `ShortCircuit` takes no
-/// generic argument to close the match on, and `middleware/limits/timeout.rs`
-/// writes `impl ShortCircuit for TookTooLong` inside a doc example, which a bare
+/// Line-oriented rather than the `Trait<C> for ` marker `implementations_of`
+/// matches, since `ShortCircuit` takes no generic argument to close the match
+/// on, and `middleware/limits/timeout.rs` writes
+/// `impl ShortCircuit for TookTooLong` inside a doc example, which a bare
 /// substring would count as a shipped implementation. Two conditions rather
 /// than one: the line's code *begins* with `impl`, which excludes the `/// # `
 /// that doc example carries, and the trait name begins a path segment, which

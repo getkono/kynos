@@ -360,16 +360,21 @@ implementation to be missing from, which is why the set is asserted and the
 sweep derives what it must drive from it.
 
 The declared side of each of the three is read off disk, walked rather than
-transcribed, over the directory the trait's implementations actually live in:
-`src/middleware/` for the interceptor and observer sets, and the whole of
-`crates/kynos/src` for the `ShortCircuit` set, because `Infallible` implements
-it in `src/response/mod.rs`. The `READS_BODY` sweep beside them reads the whole
-of it for the same reason: the `guard_first` guard implements `Interceptor` in
+transcribed, over the whole of `crates/kynos/src`, since implementations live
+outside `src/middleware/`: `Infallible` implements `ShortCircuit` in
+`src/response/mod.rs`, and the `guard_first` guard implements `Interceptor` in
 `src/router/endpoint/mod.rs`. A transcribed list would be a third place the set
 is written down, and an implementation in a file it omits would be counted by
 nothing while both counters kept passing. Walking the directory removes the list rather than
 maintaining it, and lets the check hold at baseline features too, since source
 text exists on disk whether or not the feature that compiles it is on.
+
+The interceptor set goes one step further on the witnessed side: it is named by
+the cases themselves rather than a list beside them. Each interceptor is held to
+its `READS_BODY` by a case that mounts it, or, where no exchange can tell the
+value, by one asserting why it is moot, so the sweep pairs every
+implementation with the value it declares and fails when either an
+implementation or a value has no case.
 
 ### The sweep and the matrix assert one property over two sets
 
