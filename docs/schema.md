@@ -214,6 +214,32 @@ struct Page {
   query string able to send it; nor does a path parameter, which is always
   captured.
 
+A query group shared by several operations, such as paging, is declared once
+and flattened into each group that takes it:
+
+```rust,ignore
+#[derive(QueryParams)]
+struct ListEntries {
+    #[param(flatten)]
+    page: Page,
+    status: Option<EntryStatus>,
+}
+```
+
+- **The flattened group does its own work.** It decodes from the same query
+  string with its own defaults, bounds, repeated-pair refusal and rejection
+  problem, describes its parameters in its field's place, and encodes its own
+  pairs. A group may flatten one that flattens another.
+- **`flatten` stands alone** on its field: a `rename`, `default`, `explode`,
+  `#[schema(...)]` bound or `Option` there is refused, since the group's own
+  fields say each of those.
+- **A repeated name is a build error.** A name the flattened group shares with
+  its parent, or with another flattened group, is a
+  `RouterError::DuplicateQueryParameter` violation at each operation taking
+  the parent. It is not caught at compile time because only the flattened
+  group's own `parameters` knows its names, which keeps a hand-written group
+  flattenable.
+
 | Implements `ParamValue` | Feature |
 | --- | --- |
 | `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |

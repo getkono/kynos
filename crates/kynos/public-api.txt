@@ -8920,6 +8920,9 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::router::error::ExampleRefus
 pub kynos::router::error::RouterError::DuplicateOperation
 pub kynos::router::error::RouterError::DuplicateOperation::method: kynos_openapi::model::paths::method::Method
 pub kynos::router::error::RouterError::DuplicateOperation::path: alloc::string::String
+pub kynos::router::error::RouterError::DuplicateQueryParameter
+pub kynos::router::error::RouterError::DuplicateQueryParameter::group: &'static str
+pub kynos::router::error::RouterError::DuplicateQueryParameter::parameter: alloc::string::String
 pub kynos::router::error::RouterError::HeadDescribedTwice
 pub kynos::router::error::RouterError::HeadDescribedTwice::path: alloc::string::String
 pub kynos::router::error::RouterError::HeadWithoutGet

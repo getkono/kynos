@@ -77,6 +77,7 @@ by the release that shipped each, for code written before it.
 | A hand `impl Schema` describing a type `FromStr` and `Display` carry as one string, such as an identifier wrapping a structured value | `#[derive(Schema, ParamValue)]` and `#[schema(string, ..)]` on the type |
 | A query parameter split on `,` by hand | a `Vec<T>` field in `#[derive(QueryParams)]`, with `#[param(explode = false)]` for one comma-separated pair |
 | An `Option` query parameter and `.unwrap_or(DEFAULT)` in the handler | `#[param(default = DEFAULT)]` on the plain field, which the description states |
+| The same paging fields copied into every query group | one `QueryParams` group, and `#[param(flatten)]` on a field holding it in each |
 | An enum's wire names restated in an `as_str` or an `ALL` list | `#[derive(kynos::ParamValue)]`, then `schema::UnitEnum::as_str` (not `const`) and `T::VARIANTS` with the trait imported, or `s.parse()` |
 
 ## Getting data from middleware to a handler

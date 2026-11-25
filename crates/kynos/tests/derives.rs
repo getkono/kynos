@@ -11,8 +11,9 @@
 //! the path, query, header and cookie decoders' refusal of a value that breaks
 //! a bound; the query decoder's refusal of a declared value that is not UTF-8,
 //! and its decoding of `+` as a space and of an escaped `+` as a `+`; the
-//! query decoder's binding of an absent defaulted parameter, and the router's
-//! refusal of a default breaking its bounds; the cookie decoder's refusal of a
+//! query decoder's binding of an absent defaulted parameter and of a flattened
+//! group, and the router's refusal of a default breaking its bounds or a name
+//! a flattened group repeats; the cookie decoder's refusal of a
 //! declared cookie that is not ASCII; the header decoder's refusal of a missing required header or a value that is not
 //! ASCII, its reading of an absent optional header as `None`, the value a
 //! fixed header is written, compared and described as, and the 500 a value
@@ -3443,6 +3444,244 @@ fn a_router_refuses_a_default_breaking_its_parameters_bounds() {
                 "score".to_owned(),
                 "101".to_owned(),
                 vec!["must be at most 100".to_owned()],
+            ),
+        ]
+    );
+}
+
+// --- A flattened query group's parameters are its parent's -----------------
+//
+// A recorded runtime exception for the reason the bounds one is: a
+// `#[param(flatten)]` field is decoded, described and encoded by its own
+// group, from the same query string, and a name it shares with its parent is
+// refused when the router is built.
+
+#[derive(QueryParams, Debug, PartialEq)]
+struct PageParams {
+    cursor: Option<String>,
+    #[param(default = 50)]
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+}
+
+#[derive(QueryParams, Debug, PartialEq)]
+struct ListEntries {
+    #[param(flatten)]
+    page: PageParams,
+    #[param(default = false)]
+    deleted: bool,
+    status: Option<String>,
+}
+
+/// Two levels of flattening, beside a field named `query`, which the
+/// decoder's own argument must not be shadowed by.
+#[derive(QueryParams, Debug, PartialEq)]
+struct SearchEntries {
+    query: Option<String>,
+    #[param(flatten)]
+    entries: ListEntries,
+}
+
+/// A group generic over the group it flattens.
+#[derive(QueryParams, Debug, PartialEq)]
+struct Filtered<T> {
+    #[param(flatten)]
+    inner: T,
+    tag: Vec<String>,
+}
+
+/// Each flattened field is decoded from the whole query string by its own
+/// group, nested groups included, so its defaults, its bounds and its refusal
+/// of a repeated pair hold as they do when it is the handler's own group.
+#[test]
+fn a_flattened_query_group_decodes_from_the_same_query() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    let decoded = <SearchEntries as DecodeQuery>::decode(Some(
+        "status=open&limit=7&query=rust&cursor=c1&deleted=true",
+    ))
+    .expect("every parameter given");
+    assert_eq!(
+        decoded,
+        SearchEntries {
+            query: Some("rust".to_owned()),
+            entries: ListEntries {
+                page: PageParams {
+                    cursor: Some("c1".to_owned()),
+                    limit: 7,
+                },
+                deleted: true,
+                status: Some("open".to_owned()),
+            },
+        }
+    );
+
+    let absent = <SearchEntries as DecodeQuery>::decode(None).expect("nothing is required");
+    assert_eq!(
+        absent.entries,
+        ListEntries {
+            page: PageParams {
+                cursor: None,
+                limit: 50,
+            },
+            deleted: false,
+            status: None,
+        }
+    );
+
+    for (query, refused) in [("limit=1&limit=2", "limit"), ("limit=201", "limit")] {
+        match <SearchEntries as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, .. } | QueryRejection::Schema { name, .. }) => {
+                assert_eq!(name, refused, "{query}");
+            }
+            other => panic!("{query}: {other:?}"),
+        }
+    }
+
+    let generic = <Filtered<PageParams> as DecodeQuery>::decode(Some("tag=a&limit=3&tag=b"))
+        .expect("a generic parent");
+    assert_eq!(
+        (generic.inner.limit, generic.tag),
+        (3, vec!["a".to_owned(), "b".to_owned()])
+    );
+}
+
+/// A flattened group's parameters are described in its field's place, in
+/// declaration order, each as its own group describes it.
+#[test]
+fn a_flattened_query_group_is_described_in_its_fields_place() {
+    let names = |parameters: serde_json::Value| -> Vec<(String, bool)> {
+        parameters
+            .as_array()
+            .expect("a parameter list")
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter["name"].as_str().expect("a name").to_owned(),
+                    parameter["required"].as_bool().expect("required"),
+                )
+            })
+            .collect()
+    };
+    let expected = |names: &[&str]| -> Vec<(String, bool)> {
+        names
+            .iter()
+            .map(|name| ((*name).to_owned(), false))
+            .collect()
+    };
+    assert_eq!(
+        names(query_parameters::<SearchEntries>()),
+        expected(&["query", "cursor", "limit", "deleted", "status"])
+    );
+    assert_eq!(
+        query_parameters::<ListEntries>()[1],
+        query_parameters::<PageParams>()[1]
+    );
+    assert_eq!(
+        names(query_parameters::<Filtered<PageParams>>()),
+        expected(&["cursor", "limit", "tag"])
+    );
+}
+
+/// The encoder writes a flattened group's pairs in its field's place, and
+/// what it writes decodes back to the group it encoded.
+#[test]
+fn a_flattened_query_group_encodes_and_round_trips() {
+    use kynos::extract::params::query::{DecodeQuery, EncodeQuery};
+
+    let group = SearchEntries {
+        query: Some("a b".to_owned()),
+        entries: ListEntries {
+            page: PageParams {
+                cursor: None,
+                limit: 9,
+            },
+            deleted: false,
+            status: Some("open".to_owned()),
+        },
+    };
+    let encoded = group.encode();
+
+    assert_eq!(encoded, "query=a%20b&limit=9&deleted=false&status=open");
+    assert_eq!(
+        <SearchEntries as DecodeQuery>::decode(Some(&encoded)).expect("what it encoded"),
+        group
+    );
+}
+
+/// A group naming `limit` beside the `PageParams` it flattens.
+#[derive(QueryParams)]
+struct LimitTwice {
+    #[param(flatten)]
+    page: PageParams,
+    limit: Option<u32>,
+}
+
+/// A group flattening `PageParams` beside a group that flattens it again.
+#[derive(QueryParams)]
+struct PagedTwice {
+    #[param(flatten)]
+    entries: ListEntries,
+    #[param(flatten)]
+    page: PageParams,
+}
+
+#[kynos::get("/limit-twice")]
+async fn by_limit_twice(
+    kynos::extract::params::query::Query(query): kynos::extract::params::query::Query<LimitTwice>,
+) -> kynos::response::status::NoContent {
+    let _ = query;
+    kynos::response::status::NoContent
+}
+
+#[kynos::get("/paged-twice")]
+async fn by_paged_twice(
+    kynos::extract::params::query::Query(query): kynos::extract::params::query::Query<PagedTwice>,
+) -> kynos::response::status::NoContent {
+    let _ = query;
+    kynos::response::status::NoContent
+}
+
+/// A name a flattened group shares with its parent, or with another group the
+/// parent flattens, is a violation located at each operation taking the
+/// parent: both fields would read the one pair, and the description carries
+/// it once.
+#[test]
+fn a_router_refuses_a_name_a_flattened_group_repeats() {
+    use kynos::router::error::RouterError;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_limit_twice, by_paged_twice]);
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing a repeated name was built");
+    };
+    let refused: Vec<_> = violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            RouterError::DuplicateQueryParameter { group, parameter } => Some((
+                violation.location,
+                group.rsplit("::").next().unwrap_or(group),
+                parameter,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "#/paths/~1limit-twice/get".to_owned(),
+                "LimitTwice",
+                "limit".to_owned()
+            ),
+            (
+                "#/paths/~1paged-twice/get".to_owned(),
+                "PagedTwice",
+                "cursor".to_owned()
+            ),
+            (
+                "#/paths/~1paged-twice/get".to_owned(),
+                "PagedTwice",
+                "limit".to_owned()
             ),
         ]
     );

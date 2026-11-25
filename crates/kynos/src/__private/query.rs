@@ -34,6 +34,35 @@ pub fn default<T: Display>(
     with_default(schema, text)
 }
 
+/// Records on `registry`, as a
+/// [`DuplicateQueryParameter`](RouterError::DuplicateQueryParameter) naming
+/// `group`, each name of `parameters` that two of its members describe:
+/// `members` holds each one's range, a member being one of `group`'s own
+/// fields or one group it flattens. A name repeated inside one flattened
+/// group is that group's to report, from its own `parameters`.
+pub fn refuse_repeated(
+    registry: &mut Registry,
+    group: &'static str,
+    parameters: &[kynos_openapi::Parameter],
+    members: &[std::ops::Range<usize>],
+) {
+    for (index, member) in members.iter().enumerate() {
+        for parameter in &parameters[member.clone()] {
+            let earlier = members[..index].iter().any(|earlier| {
+                parameters[earlier.clone()]
+                    .iter()
+                    .any(|seen| seen.name == parameter.name)
+            });
+            if earlier {
+                registry.refuse_parameter(RouterError::DuplicateQueryParameter {
+                    group,
+                    parameter: parameter.name.clone(),
+                });
+            }
+        }
+    }
+}
+
 /// `schema` with `text`, what the parameter's value writes, as its `default`,
 /// typed as `schema` types the value: a JSON number where it admits a number,
 /// a boolean where it admits one, and the string otherwise, as a `$ref` to a

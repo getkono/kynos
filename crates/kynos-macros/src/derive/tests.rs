@@ -8613,6 +8613,16 @@ mod path_params {
                 ),
                 "a path parameter is always captured, so a `default` would never be read",
             ),
+            case(
+                "`flatten`, where each variable is one the template names",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(flatten)]
+                        page: Page,
+                    }
+                ),
+                "no group can be flattened into a path group",
+            ),
         ]
     }
 
@@ -8691,6 +8701,73 @@ mod query_params {
             include_str!("query_params.rs"),
             ledger().len(),
         );
+    }
+
+    /// A flattened field says `flatten` alone: its group's own fields say
+    /// each parameter's name, default, carriage and bounds.
+    fn flatten_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "another `#[param]` key beside `flatten`, which would say nothing",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten, rename = "p")]
+                        page: Page,
+                    }
+                ),
+                "`rename` beside `flatten` would say nothing",
+            ),
+            case(
+                "a bound on a flattened group, which is no one value",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten)]
+                        #[schema(minimum = 1)]
+                        page: Page,
+                    }
+                ),
+                "`#[schema(...)]` beside `flatten` would bound nothing",
+            ),
+            case(
+                "an `Option` around a flattened group, which is never absent",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten)]
+                        page: Option<Page>,
+                    }
+                ),
+                "a flattened group is never absent",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_flatten_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(flatten_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_flatten_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "query_params/flatten.rs",
+            include_str!("query_params/flatten.rs"),
+            flatten_ledger().len(),
+        );
+    }
+
+    /// A flattened field names no parameter, so its identifier may be one
+    /// of the group's own parameters' names.
+    #[test]
+    fn a_flattened_fields_identifier_is_no_parameter_name() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            struct Search {
+                #[param(flatten)]
+                page: Page,
+                #[param(rename = "page")]
+                number: u32,
+            }
+        );
+        assert!(expand_inner(&input).is_ok());
     }
 }
 

@@ -1241,6 +1241,29 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// A field under `#[param(flatten)]` holds another query group, whose
+/// parameters become this group's in the field's place: decoded from the same
+/// query string by that group's own `DecodeQuery`, with its own defaults,
+/// bounds, refusals and rejection problem, described by its own
+/// `QueryParams::parameters` and written by its own `EncodeQuery`. A
+/// flattened group may flatten others, and a group may be generic over the
+/// group it flattens; each impl is bounded on the field's type implementing
+/// the trait it delegates to. `flatten` stands alone: another `#[param]` key,
+/// a `#[schema(...)]` bound or an `Option` around the group is refused, since
+/// the group's own fields say each parameter's name, default, carriage and
+/// bounds. A name a flattened group shares with this group, or with another
+/// group it flattens, is a `RouterError::DuplicateQueryParameter` violation
+/// when the router is built, since only the flattened group knows its names.
+///
+/// ```ignore
+/// #[derive(kynos::QueryParams)]
+/// struct ListEntries {
+///     #[param(flatten)]
+///     page: Page,
+///     status: Option<EntryStatus>,
+/// }
+/// ```
+///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
 /// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos

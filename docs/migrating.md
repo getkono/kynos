@@ -83,6 +83,7 @@ by task.
 | `to_json()` through a `serde_json::Value` and `to_string_pretty` plus `'\n'`, compared with a committed file and rewritten under an environment variable | `test::document::assert_file_matches(path, &document)`, over `Document::to_canonical_json`; `KYNOS_UPDATE_DOCUMENTS=1` rewrites the file and fails the run | #1441 |
 | A hand `impl Schema` building a string `openapi::SchemaObject` for a type `FromStr` and `Display` carry as text, restating its doc comment and component name, and an empty `impl schema::ParamValue` beside it | `#[derive(Schema, ParamValue)]` with `#[schema(string, min_length = .., examples(".."))]` on the type; serde converting through `#[serde(into = "String", try_from = "String")]`, or written by hand through `collect_str` and `FromStr` | #1410 |
 | A `QueryParams` field `deleted: Option<bool>`, `.unwrap_or(false)` in each handler, and "(default false)" in its doc | `#[param(default = false)] deleted: bool`, or `#[param(default = DEFAULT_LIMIT)]` naming a `const`: the absent parameter binds it, and the description states it as the schema's `default` | #1412 |
+| The same paging fields, bounds and docs copied into every query group, and `PageParams { cursor: p.cursor, limit: p.limit }` rebuilt in each handler | `#[param(flatten)] page: PageParams` in each group, then `p.page` | #1412 |
 
 ## 0.5 to 0.6
 

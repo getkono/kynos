@@ -1057,6 +1057,7 @@ mod router_errors {
             RouterError::MappedOperation { .. } => "MappedOperation",
             RouterError::StringExample { .. } => "StringExample",
             RouterError::ParameterDefault { .. } => "ParameterDefault",
+            RouterError::DuplicateQueryParameter { .. } => "DuplicateQueryParameter",
         }
     }
 
@@ -1175,6 +1176,14 @@ mod router_errors {
                 "`app::Page` defaults the query parameter `limit` to \"500\", which breaks its \
                  bounds: must be at most 200",
             ),
+            (
+                RouterError::DuplicateQueryParameter {
+                    group: "app::Search",
+                    parameter: "limit".to_owned(),
+                },
+                "`app::Search` names the query parameter `limit` twice, through a flattened \
+                 group; rename one of them",
+            ),
         ]
     }
 
@@ -1237,6 +1246,7 @@ mod router_errors {
             "MappedOperation",
             "StringExample",
             "ParameterDefault",
+            "DuplicateQueryParameter",
         ]
         .into_iter()
         .collect();

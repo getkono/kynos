@@ -26,8 +26,8 @@ fn reject_optional(params: &[Param<'_>]) -> syn::Result<()> {
     }
 }
 
-/// `#[param(explode)]` and `default` are the query group's: a path variable
-/// is one value, always captured.
+/// `#[param(explode)]`, `default` and `flatten` are the query group's: a path
+/// variable is one value, always captured, named by the template.
 fn reject_query_keys(fields: &FieldsNamed) -> syn::Result<()> {
     for field in &fields.named {
         let args = field_args(field, "param")?;
@@ -43,6 +43,13 @@ fn reject_query_keys(fields: &FieldsNamed) -> syn::Result<()> {
                 default.span(),
                 "a path parameter is always captured, so a `default` would never be read. Only \
                  a `QueryParams` group's field takes it",
+            ));
+        }
+        if let Some(flatten) = args.flatten {
+            return Err(syn::Error::new(
+                flatten.span(),
+                "each path parameter is a variable the route template names, so no group can be \
+                 flattened into a path group. Only a `QueryParams` group's field takes `flatten`",
             ));
         }
     }

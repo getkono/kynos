@@ -121,6 +121,9 @@ pub(crate) struct FieldArgs {
     /// `default = <literal or path>`, which `#[param]` takes and only a query
     /// group's field honours.
     pub(crate) default: Option<Expr>,
+    /// A bare `flatten`, which `#[param]` takes and only a query group's
+    /// field honours.
+    pub(crate) flatten: Option<syn::Path>,
 }
 
 /// Reads a field's `#[param]`, `#[header]` or `#[cookie]` lists, named by
@@ -158,6 +161,7 @@ pub(crate) fn field_args(field: &Field, attribute: &str) -> syn::Result<FieldArg
                 "default" if attribute == "param" => {
                     args.default = Some(default_value(meta.value()?.parse()?)?);
                 }
+                "flatten" if attribute == "param" => args.flatten = Some(meta.path.clone()),
                 _ => {
                     return Err(unknown(
                         &meta.path,

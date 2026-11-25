@@ -30,7 +30,9 @@
 //!   string by `#[schema(string)]` and carried by its own `FromStr`. A
 //!   query `Vec<T>` is the one list, of `ParamValue` items:
 //!   repeated pairs by default, or one comma-separated pair under
-//!   `#[param(explode = false)]`.
+//!   `#[param(explode = false)]`. `#[param(default = ...)]` gives an absent
+//!   parameter its value, and `#[param(flatten)]` shares a group, such as
+//!   `Paging`, between the groups that page.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
 //!   implements the same two traits the derives implement. Nothing about the
 //!   derived path is privileged, which is what makes the rule "every argument
@@ -134,21 +136,37 @@ impl std::str::FromStr for Release {
     }
 }
 
-/// How a list is paged.
+/// How many users a page holds when the client does not say.
+const DEFAULT_PER_PAGE: u32 = 20;
+
+/// How any list is paged, declared once and flattened into each group that
+/// pages.
 #[allow(dead_code)]
 #[derive(QueryParams)]
-struct Page {
+struct Paging {
     /// Optional, because the type is.
     after: Option<u64>,
 
-    /// Refused with the names it accepts when it is none of them.
-    order: Option<Order>,
-
     /// `rename` is what lets a Rust name and a wire name differ without either
     /// being written twice. Both derives read serde's `rename` too, so a type
-    /// that already carries one does not repeat itself.
-    #[param(rename = "per_page")]
+    /// that already carries one does not repeat itself. An absent `per_page`
+    /// binds the default, which the description states beside the bounds it
+    /// is checked against when the router is built.
+    #[param(rename = "per_page", default = DEFAULT_PER_PAGE)]
+    #[schema(minimum = 1, maximum = 100)]
     per: u32,
+}
+
+/// How the user list is paged and filtered.
+#[allow(dead_code)]
+#[derive(QueryParams)]
+struct Page {
+    /// `after` and `per_page`, decoded and described by `Paging` itself.
+    #[param(flatten)]
+    paging: Paging,
+
+    /// Refused with the names it accepts when it is none of them.
+    order: Option<Order>,
 
     /// Every pair named `tag`, `?tag=a&tag=b`; empty when there is none.
     tag: Vec<String>,

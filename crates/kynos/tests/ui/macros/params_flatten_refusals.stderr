@@ -1,0 +1,23 @@
+error: a flattened group's parameters take their `rename` from its own fields, so `rename` beside `flatten` would say nothing. Write it on the field of the group it belongs to
+  --> tests/ui/macros/params_flatten_refusals.rs:13:31
+   |
+13 |     #[param(flatten, rename = "p")]
+   |                               ^^^
+
+error: a flattened group is no one value to bound, so `#[schema(...)]` beside `flatten` would bound nothing. Write each bound on the field of the group it belongs to
+  --> tests/ui/macros/params_flatten_refusals.rs:20:5
+   |
+20 |     #[schema(minimum = 1)]
+   |     ^
+
+error: a flattened group is never absent, since its own fields say which of its parameters may be, so an `Option` around it would never be `None`. Flatten the group itself
+  --> tests/ui/macros/params_flatten_refusals.rs:27:11
+   |
+27 |     page: Option<Page>,
+   |           ^^^^^^
+
+error: each path parameter is a variable the route template names, so no group can be flattened into a path group. Only a `QueryParams` group's field takes `flatten`
+  --> tests/ui/macros/params_flatten_refusals.rs:32:13
+   |
+32 |     #[param(flatten)]
+   |             ^^^^^^^

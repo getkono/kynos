@@ -56,54 +56,75 @@ pub(crate) fn parameters_body(
     location: &TokenStream2,
     always_required: bool,
 ) -> TokenStream2 {
-    let entries = params.iter().map(|param| {
-        let schema = schema(param);
-        let name = &param.name;
-        let required = if param.list.is_some() {
-            required_list(param)
-        } else {
-            let required = always_required || (param.optional().is_none() && !param.has_default());
-            quote!(#required)
-        };
-        let constrained = bounds(param);
-        let defaulted = default::described(param);
-        let described = doc_string(&param.field.attrs).map(|text| {
-            quote!(parameter.description = ::core::option::Option::Some(
-                <::std::string::String as ::core::convert::From<_>>::from(#text)
-            );)
-        });
-        // Written out though `form` with `explode` is the query default, so
-        // the document says how the list is carried without a reader knowing
-        // the default.
-        let styled = param.list.map(|list| {
-            let explode = list == List::Exploded;
-            quote! {
-                let parameter =
-                    parameter.with_style(::kynos::openapi::Style::Form, #explode);
-            }
-        });
+    collected(
+        params
+            .iter()
+            .map(|param| parameter_entry(param, location, always_required)),
+        &quote!(),
+    )
+}
 
-        quote! {
-            parameters.push({
-                let schema = #schema;
-                #constrained
-                #defaulted
-                let mut parameter =
-                    ::kynos::openapi::Parameter::new(#name, #location, schema);
-                parameter.required = ::core::option::Option::Some(#required);
-                #described
-                #styled
-                parameter
-            });
-        }
-    });
-
+/// A `parameters` body pushing each of `entries` onto `parameters` in order,
+/// then running `finish` over the whole list.
+pub(crate) fn collected(
+    entries: impl Iterator<Item = TokenStream2>,
+    finish: &TokenStream2,
+) -> TokenStream2 {
     // A group of fixed headers alone resolves nothing through `registry`.
     quote! {
         let _ = &registry;
         let mut parameters = ::std::vec::Vec::new();
         #(#entries)*
+        #finish
         parameters
+    }
+}
+
+/// The statement pushing the field's one OpenAPI parameter onto
+/// `parameters`, its schema resolved through `registry` under its bounds.
+pub(crate) fn parameter_entry(
+    param: &Param<'_>,
+    location: &TokenStream2,
+    always_required: bool,
+) -> TokenStream2 {
+    let schema = schema(param);
+    let name = &param.name;
+    let required = if param.list.is_some() {
+        required_list(param)
+    } else {
+        let required = always_required || (param.optional().is_none() && !param.has_default());
+        quote!(#required)
+    };
+    let constrained = bounds(param);
+    let defaulted = default::described(param);
+    let described = doc_string(&param.field.attrs).map(|text| {
+        quote!(parameter.description = ::core::option::Option::Some(
+            <::std::string::String as ::core::convert::From<_>>::from(#text)
+        );)
+    });
+    // Written out though `form` with `explode` is the query default, so
+    // the document says how the list is carried without a reader knowing
+    // the default.
+    let styled = param.list.map(|list| {
+        let explode = list == List::Exploded;
+        quote! {
+            let parameter =
+                parameter.with_style(::kynos::openapi::Style::Form, #explode);
+        }
+    });
+
+    quote! {
+        parameters.push({
+            let schema = #schema;
+            #constrained
+            #defaulted
+            let mut parameter =
+                ::kynos::openapi::Parameter::new(#name, #location, schema);
+            parameter.required = ::core::option::Option::Some(#required);
+            #described
+            #styled
+            parameter
+        });
     }
 }
 
