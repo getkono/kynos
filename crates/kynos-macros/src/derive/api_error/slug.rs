@@ -1,6 +1,12 @@
 //! What a `slug` names: one or more `/`-separated path segments, each a
 //! non-empty run of RFC 3986 `pchar`s, each `%` opening a percent-encoded
 //! octet, and none a dot segment.
+//!
+//! `kynos::problem_type!` joins its slug onto the same base by the same rule,
+//! ported to a `const fn` in `kynos::__private::problem::slug`, since this crate
+//! cannot be named from a `const`. The file uses nothing but `std`, so
+//! `crates/kynos/tests/ledger.rs` compiles it beside that port and holds the
+//! two to one answer.
 
 /// Why a `slug` publishes a type URI other than the one it reads as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
