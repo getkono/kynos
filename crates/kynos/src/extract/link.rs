@@ -69,8 +69,8 @@ pub struct Link<E> {
 impl<E: EndpointUri> Link<E> {
     /// Renders the target's URI, percent-encoding each parameter.
     ///
-    /// `params` is `()`, the target's `Path<P>` group, its `Query<Q>` group,
-    /// or `(P, Q)` when it extracts both.
+    /// `params` is `()`, the target's `Path<P>` group or one value, its
+    /// `Query<Q>` group, or `(P, Q)` when it extracts both.
     ///
     /// # Panics
     ///

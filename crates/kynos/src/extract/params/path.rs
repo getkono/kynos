@@ -40,7 +40,8 @@ use crate::{
 /// # Where the values come from
 ///
 /// Each value the router captured is percent-decoded before it reaches
-/// [`DecodePath::decode`], so a variable holding `%2F` arrives as `/`.
+/// [`DecodePath::decode`], or one value's `FromStr`, so a variable holding
+/// `%2F` arrives as `/`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Path<T>(pub T);
 
