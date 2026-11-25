@@ -1055,6 +1055,45 @@ async fn a_router_interceptor_covering_bodies_covers_a_fallback_whose_body_is_re
     }
 }
 
+/// Buffers the body, but only where something beneath it reads one, so
+/// mounted with nothing beneath that reads it runs on no fallback.
+struct BodyBuffers;
+
+impl<C: Sync + 'static> Interceptor<C> for BodyBuffers {
+    type Reads = ();
+    type Adds = ();
+    type Short = std::convert::Infallible;
+
+    const COVERS: Covers = Covers::BodyReading;
+
+    async fn intercept(
+        &self,
+        request: Request,
+        (): (),
+        context: &C,
+        next: Next<'_, C>,
+    ) -> Result<Continued, std::convert::Infallible> {
+        Buffers.intercept(request, (), context, next).await
+    }
+}
+
+/// Only an interceptor a fallback runs counts as reading its body: one that
+/// may read it but is itself left off the fallback widens nothing above it.
+#[tokio::test]
+async fn a_router_interceptor_left_off_a_fallback_widens_nothing_above_it() {
+    let service = over!(router, Bodies, BodyBuffers)
+        .build(App::new())
+        .expect("a describable router");
+
+    let unmatched = post(&service, "/nothing-here")
+        .header("content-type", "application/json")
+        .body(r#"{"id":2,"name":"a"}"#)
+        .call()
+        .await;
+
+    assert_eq!(unmatched.status, StatusCode::NOT_FOUND);
+}
+
 // --- The two closed sets --------------------------------------------------
 
 /// Every interceptor Kynos ships, named against the set this suite accounts
