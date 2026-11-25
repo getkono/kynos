@@ -5366,7 +5366,8 @@ mod api_error {
 
     /// A raw identifier publishes the name it spells, not its `r#` prefix,
     /// whose `#` would open a fragment; and a non-ASCII name publishes nothing
-    /// until a `slug` names it, on a variant as on a struct.
+    /// until a `slug` names it, on a variant as on a struct, while with no
+    /// `base` it publishes nothing and so compiles.
     #[test]
     fn a_kebab_cased_name_is_held_to_the_slug_rule() {
         let raw: syn::DeriveInput = syn::parse2(quote::quote!(
@@ -5413,6 +5414,19 @@ mod api_error {
         ))
         .expect("the case parses");
         assert!(expand_inner(&slugged).is_ok(), "a `slug` names it");
+
+        let baseless: syn::DeriveInput = syn::parse2(quote::quote!(
+            enum Menu {
+                #[error("sold out")]
+                #[problem(status = 410)]
+                Café,
+            }
+        ))
+        .expect("the case parses");
+        assert!(
+            expand_inner(&baseless).is_ok(),
+            "with no `base` the name publishes nothing, so nothing refuses it"
+        );
     }
 
     /// An empty `slug`, or a `%` opening no percent-encoded octet, is refused
