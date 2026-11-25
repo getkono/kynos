@@ -139,6 +139,92 @@ fn responses_differing_in_media_type_order_stay_apart() {
     assert_eq!(components.responses.len(), 2);
 }
 
+/// Shares a `200` response whose `field` declares the entries `first` and
+/// `second` give, in that order, on a `GET` at `/a` and `/b`, and one
+/// declaring them the other way round at `/c` and `/d`, checks the first two
+/// now reference the component `names[0]` and the last two `names[1]`, the
+/// only two components, and returns those components.
+fn shared_in_both_orders(field: &str, first: &str, second: &str, names: [&str; 2]) -> Components {
+    let operation = |one: &str, two: &str| {
+        format!(
+            r#"{{"get": {{"responses": {{"200": {{"description": "OK", "{field}": {{{one}, {two}}}}}}}}}}}"#
+        )
+    };
+    let (declared, reversed) = (operation(first, second), operation(second, first));
+    let mut paths: Paths = serde_json::from_str(&format!(
+        r#"{{"/a": {declared}, "/b": {declared}, "/c": {reversed}, "/d": {reversed}}}"#
+    ))
+    .expect("paths");
+    let mut components = Components::default();
+
+    shared_responses(&mut paths, &mut components);
+
+    for (operations, name) in [["/a", "/b"], ["/c", "/d"]].into_iter().zip(names) {
+        for path in operations {
+            assert_eq!(
+                paths.items[path]
+                    .operation(Method::Get)
+                    .expect("a GET")
+                    .responses
+                    .responses["200"],
+                RefOr::Ref(Ref::response(name)),
+                "{path}"
+            );
+        }
+    }
+    assert_eq!(components.responses.len(), 2);
+    components
+}
+
+/// Responses differing only in the order their headers are declared in stay
+/// two components in every build, each listing its own order, as
+/// `responses_differing_in_media_type_order_stay_apart` pins for media
+/// types. The literals are the ones every build must produce.
+#[test]
+fn responses_differing_in_header_order_stay_apart() {
+    let names = ["Status200_aa8800bb", "Status200_1049372f"];
+
+    let components = shared_in_both_orders(
+        "headers",
+        r#""X-Rate-Limit": {"schema": {"type": "integer"}}"#,
+        r#""ETag": {"schema": {"type": "string"}}"#,
+        names,
+    );
+
+    for (name, first) in names.into_iter().zip(["X-Rate-Limit", "ETag"]) {
+        let component = components.responses[name].as_item().expect("inline");
+        assert_eq!(
+            component.headers.keys().next().map(String::as_str),
+            Some(first),
+            "{name}"
+        );
+    }
+}
+
+/// Responses differing only in the order their links are declared in stay
+/// two components in every build, each listing its own order. The literals
+/// are the ones every build must produce.
+#[test]
+fn responses_differing_in_link_order_stay_apart() {
+    let names = ["Status200_c5b071ca", "Status200_a5ebdcc0"];
+
+    let components = shared_in_both_orders(
+        "links",
+        r#""self": {"operationId": "getReading"}"#,
+        r#""next": {"operationId": "listReadings"}"#,
+        names,
+    );
+
+    for (name, first) in names.into_iter().zip(["self", "next"]) {
+        let component = components.responses[name].as_item().expect("inline");
+        assert_eq!(
+            component.links.keys().next().map(String::as_str),
+            Some(first),
+            "{name}"
+        );
+    }
+}
+
 /// A suffix is hashed from a key-sorted form, so neither the order the
 /// response's fields serialize in nor the order a nested object's keys were
 /// written in, which `serde_json/preserve_order` keeps, changes it. The
