@@ -209,6 +209,49 @@ pub enum RouterError {
         /// Why the type does not carry it.
         refusal: ExampleRefusal,
     },
+
+    /// A query parameter's `#[param(default = ...)]` breaks the bounds its
+    /// field or its type declares, so the document would state a default the
+    /// API refuses when a client sends it, and the decoder would bind a value
+    /// no request could carry.
+    ///
+    /// Found while the group describes its parameters, which cannot fail, and
+    /// located at each operation taking the group.
+    #[error(
+        "`{group}` defaults the query parameter `{parameter}` to {default:?}, which breaks its \
+         bounds: {}",
+        failures.join("; ")
+    )]
+    ParameterDefault {
+        /// The group, as `std::any::type_name` spells it.
+        group: &'static str,
+        /// The parameter's wire name.
+        parameter: String,
+        /// The default, as its type's `Display` writes it.
+        default: String,
+        /// What each broken bound says.
+        failures: Vec<String>,
+    },
+
+    /// A query parameter group names one parameter twice, through a
+    /// `#[param(flatten)]` group: its own field and a flattened group's, or
+    /// two flattened groups'.
+    ///
+    /// Both fields would read the one pair naming it, and the description
+    /// can carry it once. Found while the group describes its parameters,
+    /// since only the flattened group knows its names, and located at each
+    /// operation taking the group.
+    #[error(
+        "`{group}` names the query parameter `{parameter}` twice, through a flattened group; \
+         rename one of them"
+    )]
+    DuplicateQueryParameter {
+        /// The group flattening the other, as `std::any::type_name` spells
+        /// it.
+        group: &'static str,
+        /// The parameter's wire name.
+        parameter: String,
+    },
 }
 
 /// Why a `#[schema(string)]` type does not carry an example it lists, as a

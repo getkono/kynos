@@ -66,6 +66,10 @@ pub struct Registry {
     /// is listed, deduplicated.
     refused_examples: Vec<(String, RouterError)>,
 
+    /// What [`Registry::refuse_parameter`] recorded since the router last
+    /// took it, for the operation being described, deduplicated.
+    refused_parameters: Vec<RouterError>,
+
     /// The extension members the [`ProblemPolicy`] that
     /// [`Router::problems`](crate::router::Router::problems) installs adds to
     /// every problem Kynos renders itself: each one's name, schema, and
@@ -357,6 +361,24 @@ impl Registry {
         if !self.refused_examples.contains(&refused) {
             self.refused_examples.push(refused);
         }
+    }
+
+    /// Records what is wrong with a parameter a group describes, which its
+    /// `parameters` cannot return.
+    ///
+    /// Recorded rather than returned for [`resolve`](Registry::resolve)'s
+    /// reason; the router takes it once the operation is described and
+    /// reports it located there.
+    pub(crate) fn refuse_parameter(&mut self, error: RouterError) {
+        if !self.refused_parameters.contains(&error) {
+            self.refused_parameters.push(error);
+        }
+    }
+
+    /// Takes what [`refuse_parameter`](Registry::refuse_parameter) recorded
+    /// since it was last taken, in the order it was recorded.
+    pub(crate) fn take_parameter_refusals(&mut self) -> Vec<RouterError> {
+        std::mem::take(&mut self.refused_parameters)
     }
 
     /// Declares `members`, and the types and titles `identity` gives, on

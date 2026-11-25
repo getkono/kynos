@@ -8,6 +8,7 @@
 //! alias for it reads as required. A query group's `Vec<T>` field is a
 //! [`List`] of `T`s, recognised the same way.
 
+pub(crate) mod default;
 pub(crate) mod describe;
 
 use proc_macro2::TokenStream as TokenStream2;
@@ -56,6 +57,9 @@ pub(crate) struct Param<'a> {
     group: Group<'a>,
     /// How a query group's `Vec<T>` field carries its items, where it is one.
     list: Option<List>,
+    /// What a query group's field binds when no pair names it, where its
+    /// `#[param(default = ...)]` says.
+    default: Option<Expr>,
 }
 
 /// How a list parameter carries its items: OpenAPI's `style: form` with
@@ -88,6 +92,7 @@ impl<'a> Param<'a> {
                 fixed: None,
                 group,
                 list: None,
+                default: None,
             })
             .collect()
     }
@@ -180,15 +185,18 @@ pub(crate) fn decode_field(
         }
     } else {
         let parsed = parse(param, ty, rejection, None);
+        let absent = default::value(param).unwrap_or_else(|| {
+            quote! {
+                return ::core::result::Result::Err(#rejection::Invalid {
+                    name: <::std::string::String as ::core::convert::From<_>>::from(#name),
+                    detail: <::std::string::String as ::core::convert::From<_>>::from(#missing),
+                })
+            }
+        });
         quote! {
             match found {
                 ::core::option::Option::Some(raw) => #parsed,
-                ::core::option::Option::None => {
-                    return ::core::result::Result::Err(#rejection::Invalid {
-                        name: <::std::string::String as ::core::convert::From<_>>::from(#name),
-                        detail: <::std::string::String as ::core::convert::From<_>>::from(#missing),
-                    });
-                }
+                ::core::option::Option::None => #absent,
             }
         }
     };

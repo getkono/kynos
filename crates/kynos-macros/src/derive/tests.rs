@@ -584,6 +584,102 @@ mod schema {
         ]
     }
 
+    /// The serde probes `expand_inner` emits for `input`, by the refusing
+    /// function each names.
+    fn param_probes(input: TokenStream2) -> Vec<&'static str> {
+        let input = syn::parse2(input).expect("the case itself must parse");
+        let expanded = expand_inner(&input)
+            .expect("a `#[param(...)]` serde is not told is the type checker's to refuse")
+            .to_string();
+        ["flatten_agrees", "default_agrees"]
+            .into_iter()
+            .filter(|probe| expanded.contains(probe))
+            .collect()
+    }
+
+    /// Each `#[param(...)]` serde is not also told is probed, for the type
+    /// checker to refuse where serde reads the group, which no derive input
+    /// shows.
+    #[test]
+    fn a_param_serde_is_not_told_is_probed() {
+        for (description, unspelt, probe) in [
+            (
+                "`#[param(flatten)]` on a field serde reads nested",
+                quote::quote!(
+                    struct Listing {
+                        #[param(flatten)]
+                        page: Page,
+                    }
+                ),
+                "flatten_agrees",
+            ),
+            (
+                "`#[param(default = ...)]` on a field serde requires",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        limit: u32,
+                    }
+                ),
+                "default_agrees",
+            ),
+        ] {
+            assert_eq!(param_probes(unspelt), [probe], "{description}");
+        }
+    }
+
+    /// Each `#[param(...)]` serde is also told, on the field or, for a
+    /// default, on the struct, is not probed, nor is a generic group, on which
+    /// the probe's specialization cannot resolve.
+    #[test]
+    fn a_param_serde_is_also_told_is_not_probed() {
+        for (description, accepted) in [
+            (
+                "a generic group",
+                quote::quote!(
+                    struct Page<T> {
+                        #[param(default = 50)]
+                        limit: u32,
+                        #[param(flatten)]
+                        rest: T,
+                    }
+                ),
+            ),
+            (
+                "both `flatten`s",
+                quote::quote!(
+                    struct Listing {
+                        #[param(flatten)]
+                        #[serde(flatten)]
+                        page: Page,
+                    }
+                ),
+            ),
+            (
+                "a field `default` naming a function",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        #[serde(default = "fifty")]
+                        limit: u32,
+                    }
+                ),
+            ),
+            (
+                "the struct's `default`",
+                quote::quote!(
+                    #[serde(default)]
+                    struct Page {
+                        #[param(default = 0)]
+                        offset: u32,
+                    }
+                ),
+            ),
+        ] {
+            assert!(param_probes(accepted).is_empty(), "{description}");
+        }
+    }
+
     /// The refusal a split `rename` raises where serde writes a member under
     /// one name and reads it under another.
     ///
@@ -5060,16 +5156,63 @@ mod attribute {
     /// The `#[param(...)]` keys only a parameter group reads, driven through
     /// the `QueryParams` derive.
     fn param_ledger() -> Vec<Case> {
-        vec![case(
-            "`explode` written as a string, which would read as a flag it is not",
-            quote::quote!(
-                struct Search {
-                    #[param(explode = "false")]
-                    diet: Vec<String>,
-                }
+        vec![
+            case(
+                "`explode` written as a string, which would read as a flag it is not",
+                quote::quote!(
+                    struct Search {
+                        #[param(explode = "false")]
+                        diet: Vec<String>,
+                    }
+                ),
+                "`explode` is `true` or `false`, written as a literal",
             ),
-            "`explode` is `true` or `false`, written as a literal",
-        )]
+            case(
+                "`default` computed, where the description states a settled value",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 25 * 2)]
+                        limit: u32,
+                    }
+                ),
+                "`default` is a literal or a path to a constant",
+            ),
+        ]
+    }
+
+    /// `default` is the `#[param]` grammar's alone, as `explode` is.
+    #[test]
+    fn default_is_no_header_or_cookie_key() {
+        let header: DeriveInput = syn::parse_quote!(
+            struct Traced {
+                #[header(default = "x")]
+                id: String,
+            }
+        );
+        let cookie: DeriveInput = syn::parse_quote!(
+            struct Session {
+                #[cookie(default = "x")]
+                id: String,
+            }
+        );
+        for (input, expand, grammar) in [
+            (
+                header,
+                crate::derive::headers::expand_inner as fn(&DeriveInput) -> _,
+                "`#[header(...)]`",
+            ),
+            (cookie, expand_inner, "`#[cookie(...)]`"),
+        ] {
+            let Err(error) = expand(&input) else {
+                panic!("{grammar} accepted `default`");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("`default` is not part of the {grammar} grammar")),
+                "{error}"
+            );
+        }
     }
 
     #[test]
@@ -8630,6 +8773,26 @@ mod path_params {
                 ),
                 "a path parameter is one value",
             ),
+            case(
+                "`default`, which a captured variable never reads",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(default = 1)]
+                        id: u64,
+                    }
+                ),
+                "a path parameter is always captured, so a `default` would never be read",
+            ),
+            case(
+                "`flatten`, where each variable is one the template names",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(flatten)]
+                        page: Page,
+                    }
+                ),
+                "no group can be flattened into a path group",
+            ),
         ]
     }
 
@@ -8673,6 +8836,26 @@ mod query_params {
                 ),
                 "this field is one value",
             ),
+            case(
+                "`default` on an `Option`, which would then never be `None`",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        limit: Option<u32>,
+                    }
+                ),
+                "a defaulted parameter is never absent once decoded",
+            ),
+            case(
+                "`default` on a list, which would leave the empty list unsendable",
+                quote::quote!(
+                    struct Search {
+                        #[param(default = DIET)]
+                        diet: Vec<String>,
+                    }
+                ),
+                "a default would leave no query string able to send the empty list",
+            ),
         ]
     }
 
@@ -8688,6 +8871,73 @@ mod query_params {
             include_str!("query_params.rs"),
             ledger().len(),
         );
+    }
+
+    /// A flattened field says `flatten` alone: its group's own fields say
+    /// each parameter's name, default, carriage and bounds.
+    fn flatten_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "another `#[param]` key beside `flatten`, which would say nothing",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten, rename = "p")]
+                        page: Page,
+                    }
+                ),
+                "`rename` beside `flatten` would say nothing",
+            ),
+            case(
+                "a bound on a flattened group, which is no one value",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten)]
+                        #[schema(minimum = 1)]
+                        page: Page,
+                    }
+                ),
+                "`#[schema(...)]` beside `flatten` would bound nothing",
+            ),
+            case(
+                "an `Option` around a flattened group, which is never absent",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten)]
+                        page: Option<Page>,
+                    }
+                ),
+                "a flattened group is never absent",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_flatten_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(flatten_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_flatten_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "query_params/flatten.rs",
+            include_str!("query_params/flatten.rs"),
+            flatten_ledger().len(),
+        );
+    }
+
+    /// A flattened field names no parameter, so its identifier may be one
+    /// of the group's own parameters' names.
+    #[test]
+    fn a_flattened_fields_identifier_is_no_parameter_name() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            struct Search {
+                #[param(flatten)]
+                page: Page,
+                #[param(rename = "page")]
+                number: u32,
+            }
+        );
+        assert!(expand_inner(&input).is_ok());
     }
 }
 

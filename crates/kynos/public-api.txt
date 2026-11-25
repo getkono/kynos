@@ -8920,6 +8920,9 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::router::error::ExampleRefus
 pub kynos::router::error::RouterError::DuplicateOperation
 pub kynos::router::error::RouterError::DuplicateOperation::method: kynos_openapi::model::paths::method::Method
 pub kynos::router::error::RouterError::DuplicateOperation::path: alloc::string::String
+pub kynos::router::error::RouterError::DuplicateQueryParameter
+pub kynos::router::error::RouterError::DuplicateQueryParameter::group: &'static str
+pub kynos::router::error::RouterError::DuplicateQueryParameter::parameter: alloc::string::String
 pub kynos::router::error::RouterError::HeadDescribedTwice
 pub kynos::router::error::RouterError::HeadDescribedTwice::path: alloc::string::String
 pub kynos::router::error::RouterError::HeadWithoutGet
@@ -8932,6 +8935,11 @@ pub kynos::router::error::RouterError::MappedOperation::method: kynos_openapi::m
 pub kynos::router::error::RouterError::MappedOperation::path: alloc::string::String
 pub kynos::router::error::RouterError::NestedRouterPolicy
 pub kynos::router::error::RouterError::NestedRouterPolicy::policy: &'static str
+pub kynos::router::error::RouterError::ParameterDefault
+pub kynos::router::error::RouterError::ParameterDefault::default: alloc::string::String
+pub kynos::router::error::RouterError::ParameterDefault::failures: alloc::vec::Vec<alloc::string::String>
+pub kynos::router::error::RouterError::ParameterDefault::group: &'static str
+pub kynos::router::error::RouterError::ParameterDefault::parameter: alloc::string::String
 pub kynos::router::error::RouterError::ProblemMemberReserved
 pub kynos::router::error::RouterError::ProblemMemberReserved::member: alloc::string::String
 pub kynos::router::error::RouterError::ProblemMemberReserved::members: &'static str

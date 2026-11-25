@@ -42,8 +42,10 @@ pub trait QueryParams: Sized {
     ///
     /// `#[derive(QueryParams)]` writes one per field, named and bounded as it
     /// decodes them, `style` left at its `form`-with-`explode` default but for
-    /// a `Vec<T>` field's, which states its `style` and `explode`. A group
-    /// written by hand describes the parameters its [`DecodeQuery`] reads.
+    /// a `Vec<T>` field's, which states its `style` and `explode`; a
+    /// `#[param(flatten)]` field contributes its group's. A group written by
+    /// hand describes the parameters its [`DecodeQuery`] reads, which is also
+    /// how a group flattening it learns the names it must not repeat.
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter>;
 
     /// The problems a value breaking a bound answers with, beside

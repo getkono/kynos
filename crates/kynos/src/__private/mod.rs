@@ -1,7 +1,7 @@
 //! Implementation detail of the `kynos-macros` expansions. Not public API.
 //!
-//! What lives here is the constraint, endpoint, path, problem, reply, string
-//! form, temporal and URI support, and the protobuf body type, a route
+//! What lives here is the constraint, endpoint, path, problem, query
+//! parameter, reply, string form, temporal and URI support, and the protobuf body type, a route
 //! attribute or a derive expands to. An item is `pub` only because
 //! expanded code has to name it; a helper no expansion names, such as the
 //! percent-coding in [`uri`], stays `pub(crate)`. Nothing in this module is
@@ -19,6 +19,7 @@ pub mod endpoint;
 pub mod fuzz;
 pub mod path;
 pub mod problem;
+pub mod query;
 pub mod reply;
 pub mod string_form;
 pub mod temporal;

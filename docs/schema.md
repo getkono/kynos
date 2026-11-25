@@ -182,6 +182,92 @@ many items, described as an array of `T` with `style: form`.
   `explode` on a scalar field or a path parameter is refused at compile time,
   since OpenAPI gives it no effect there.
 
+A query parameter may carry a default, written where the field is declared so
+the decoder, the description and the handler share one value:
+
+```rust,ignore
+#[derive(QueryParams)]
+struct Page {
+    #[param(default = DEFAULT_LIMIT)]
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+}
+```
+
+- **An absent parameter binds the default**, and the field is the plain type:
+  `limit: u32`, never `Option<u32>`, so a handler has no `unwrap_or` left to
+  write. An `Option` beside `default` is refused, since it would never be
+  `None`.
+- **The description states it**: the parameter is `required: false`, and its
+  schema's `default` is what the value's `Display` writes, typed as the schema
+  types it (a number, a boolean, else a string).
+- **A literal or a path**, such as `50`, `"en"`, `DEFAULT_LIMIT` or
+  `Order::Asc`. A number, `bool` or `char` literal is typed by the field; a
+  string literal or a path converts through the field type's `From`, so a
+  `const` the handlers share may be narrower than the field.
+- **A default breaking its bounds** is a `RouterError::ParameterDefault`
+  violation located at each operation taking the group, so the router refuses
+  to build rather than state a value the API refuses. It is checked when the
+  router is built, not at compile time, because a bound or a default may be a
+  `const` the derive cannot evaluate.
+- **A list takes none.** No pair is the empty list, so a default would leave no
+  query string able to send it; nor does a path parameter, which is always
+  captured.
+
+A query group shared by several operations, such as paging, is declared once
+and flattened into each group that takes it:
+
+```rust,ignore
+#[derive(QueryParams)]
+struct ListEntries {
+    #[param(flatten)]
+    page: Page,
+    status: Option<EntryStatus>,
+}
+```
+
+- **The flattened group does its own work.** It decodes from the same query
+  string with its own defaults, bounds, repeated-pair refusal and rejection
+  problem, describes its parameters in its field's place, and encodes its own
+  pairs. A group may flatten one that flattens another.
+- **`flatten` stands alone** on its field: a `rename`, `default`, `explode`,
+  `#[schema(...)]` bound or `Option` there is refused, since the group's own
+  fields say each of those.
+- **A repeated name is a build error.** A name the flattened group shares with
+  its parent, or with another flattened group, is a
+  `RouterError::DuplicateQueryParameter` violation at each operation taking
+  the parent. It is not caught at compile time because only the flattened
+  group's own `parameters` knows its names, which keeps a hand-written group
+  flattenable.
+
+A group that also derives `Schema` and serde's `Deserialize`, so a
+`QueryString<T>` reads it as a `Query<T>` does, says both keys to serde too, and
+the `Schema` derive refuses either one serde is not told (rule 52):
+
+```rust,ignore
+#[derive(QueryParams, Schema, Deserialize)]
+struct Page {
+    #[param(default = DEFAULT_LIMIT)]
+    #[serde(default = "default_limit")]
+    limit: u32,
+}
+
+#[derive(QueryParams, Schema, Deserialize)]
+struct ListEntries {
+    #[param(flatten)]
+    #[serde(flatten)]
+    page: Page,
+}
+```
+
+Without serde's keys, `QueryString<T>` would require `limit` and read `page` as
+one nested member. Only the presence of serde's default is checked: it names a
+function, which the derive cannot evaluate, so returning the same value as the
+`#[param(default)]` is the application's to keep. The refusal turns on the group
+implementing `DeserializeOwned`, which the derive cannot see, so the type checker
+raises it: a group deriving `Schema` and no serde, which no `QueryString<T>`
+reads, needs neither key, and a generic group is not checked.
+
 | Implements `ParamValue` | Feature |
 | --- | --- |
 | `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |
@@ -1026,6 +1112,7 @@ thread that uses it.
 | 49 | `MultipartForm` requires exactly the parts the `Schema` derive's `required` names, reading serde's attributes whether or not serde is derived: a field's `default`, bare or naming a function, makes its part optional and fills the field when it is left out, an `Option` without one is `None`, and a `Vec` must carry one, since an empty list is written as no part; under `deny_unknown_fields`, which closes the description under rule 32, a part no field declares is a 422 keyed by the name it was sent under, and otherwise it is ignored; a container `default`, which fills from a whole `Default` the decoder never builds, a container `tag`, described as a required property no part carries, a container `transparent`, described as the one field's schema while that field is still read as a part, and a field's `alias`, `flatten` and every `skip` key, which the description honours and a part cannot, are refused | `a_part_the_description_leaves_optional_may_be_left_out`, `an_empty_list_is_written_as_no_part_and_read_back_empty` and `a_closed_form_refuses_a_part_it_does_not_declare` in [`tests/extractors.rs`](../crates/kynos/tests/extractors.rs), against the emitted schema; the `multipart` ledger, `every_skip_is_refused` and `a_defaulted_field_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/multipart_container_default.rs`, `multipart_tag.rs`, `multipart_transparent.rs`, `multipart_alias.rs`, `multipart_skip.rs`, `multipart_flatten.rs` and `multipart_vec_without_default.rs` for the wording |
 | 50 | An instantiation `name_instantiation!` names and `Router::name_instantiation` registers, from any router nested or merged into the described one, is published under the alias's identifier wherever its mangled name would have been, wrappers sharing that name included, with the alias's doc comment as its `description` in place of the generic type's own; one instantiation named twice is a conflicting implementation at compile time, and two names for one mangled name, a name for an instantiation with none, and a `NAME` that is no component name each refuse the router as `Error::InstantiationName`; the macro refuses an alias with generic parameters, any attribute but a doc comment, and an identifier outside ASCII | the naming, the refusals and the build failure in [`registry/tests.rs`](../crates/kynos/src/schema/registry/tests.rs); `a_named_instantiation_declared_on_a_nested_router_names_its_component` in [`tests/description.rs`](../crates/kynos/tests/description.rs); the `name_instantiation` ledger and expansion in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `tests/ui/macros/name_instantiation_refusals.rs` and `tests/ui/traits/named_instantiation.rs` for the wording and `name_instantiation.rs` in the pass suite |
 | 51 | A `Nullable` named field serde reads, of a struct or an enum's struct variant, recognised by its type's last path segment as an `Option` is, carries `#[serde(default)]`, bare or naming a function, on the field or its struct, and is refused otherwise, as [Merge patches](#merge-patches) sets out; a `#[serde(transparent)]` struct's member, a positional member, a `flatten`ed member, which the `Flatten` bound refuses instead, and one `skip` or `skip_deserializing` leaves unread are left alone, since serde never reads any of them as a missing member; the default keeps it out of `required` under rule 19 | the `Nullable` row of the field ledger, `an_undefaulted_nullable_is_refused_wherever_serde_reads_it_missing` and `a_nullable_serde_never_reads_as_a_missing_null_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_nullable_member_is_optional_and_bounded_by_its_value` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs); the `merge_patch` module of [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) for what serde reads with and without the default; and `tests/ui/macros/schema_nullable_without_default.rs` for the wording, with `schema_nullable_with_default.rs` in the pass suite |
+| 52 | A named field of a non-generic type deriving `Schema` and implementing `DeserializeOwned` that carries `#[param(flatten)]` also carries `#[serde(flatten)]`, and one carrying `#[param(default = ...)]` also carries serde's `default`, bare or naming a function, on the field or its struct, and each is refused by the type checker otherwise, as [Parameter values](#parameter-values) sets out, since `Query<T>` and the `QueryString<T>` the schema describes would read the group differently; a group with no `DeserializeOwned`, which no `QueryString<T>` reads, is not refused, and whether serde's default returns the same value is not checked | `a_param_serde_is_not_told_is_probed` and `a_param_serde_is_also_told_is_not_probed` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_query_params_unspelt_to_serde.rs` for the wording, with `schema_query_params_spelt_to_serde.rs` and `schema_query_params_without_serde.rs` in the pass suite |
 
 ## Rationale
 

@@ -1,0 +1,23 @@
+error: a defaulted parameter is never absent once decoded, so an `Option` around it would never be `None`. Use the inner type, which binds the default when no pair names it
+ --> tests/ui/macros/params_default_refusals.rs:9:12
+  |
+9 |     limit: Option<u32>,
+  |            ^^^^^^
+
+error: a list parameter is absent exactly when it has no items, so a default would leave no query string able to send the empty list. Drop the `default`: no pair already binds the empty list
+  --> tests/ui/macros/params_default_refusals.rs:14:23
+   |
+14 |     #[param(default = DEFAULT_DIET)]
+   |                       ^^^^^^^^^^^^
+
+error: `default` is a literal or a path to a constant, such as `50`, `"asc"`, `DEFAULT_LIMIT` or `Order::Asc`: the value the description states is settled where the field is declared
+  --> tests/ui/macros/params_default_refusals.rs:20:23
+   |
+20 |     #[param(default = 25 * 2)]
+   |                       ^^
+
+error: a path parameter is always captured, so a `default` would never be read. Only a `QueryParams` group's field takes it
+  --> tests/ui/macros/params_default_refusals.rs:26:23
+   |
+26 |     #[param(default = 1)]
+   |                       ^

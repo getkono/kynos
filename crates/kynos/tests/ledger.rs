@@ -153,6 +153,10 @@ const RECORDED: &[(&str, &str)] = &[
         "split container `rename_all(serialize = ..., deserialize = ...)` whose two sides differ",
         "macros/schema_split_rename_all.stderr",
     ),
+    (
+        "A parameter group's `#[param(flatten)]`",
+        "macros/schema_query_params_unspelt_to_serde.stderr",
+    ),
 ];
 
 /// The attributes the `Schema` derive's rustdoc lists as refused, each named

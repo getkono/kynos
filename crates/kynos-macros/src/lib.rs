@@ -680,6 +680,15 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `field_identifier` or `variant_identifier` enum's container rule is not
 ///   refused: serde only reads the enum, so its deserialize side names every
 ///   variant.
+/// - A parameter group's `#[param(flatten)]` on a field serde reads nested,
+///   lacking serde's own `flatten`, and its `#[param(default = ...)]` on a
+///   field serde requires, lacking serde's own `default` on the field or its
+///   struct, where the group implements `DeserializeOwned`: `Query<T>` would
+///   read the group one way and `QueryString<T>`, which this derive
+///   describes, another. Say each to serde too; serde's default names a
+///   function, so returning the same value is the application's to keep. A
+///   group with no serde, which no `QueryString<T>` reads, and a generic one
+///   are not refused.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::schema::expand_inner)
@@ -1217,6 +1226,60 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 ///     cuisine: Vec<Cuisine>,
 /// }
 /// ```
+///
+/// A field one value under `#[param(default = ...)]` binds that value when no
+/// pair names it, so it is the plain type rather than an `Option`, and is
+/// described `required: false` with the value as its schema's `default`,
+/// written by its `Display` and typed as the schema types it. The value is a
+/// literal, typed by the field, or a path such as a `const` or a unit
+/// variant; a string literal or a path converts through the field type's
+/// `From`. A default breaking the field's bounds, or its type's, is a
+/// `RouterError::ParameterDefault` violation when the router is built. It is
+/// refused on an `Option`, which would never be `None`, and on a list, whose
+/// absence is already its emptiness.
+///
+/// ```ignore
+/// const DEFAULT_LIMIT: u32 = 50;
+///
+/// #[derive(kynos::QueryParams)]
+/// struct Page {
+///     /// Absent: 50.
+///     #[param(default = DEFAULT_LIMIT)]
+///     #[schema(minimum = 1, maximum = 200)]
+///     limit: u32,
+///     #[param(default = false)]
+///     deleted: bool,
+/// }
+/// ```
+///
+/// A field under `#[param(flatten)]` holds another query group, whose
+/// parameters become this group's in the field's place: decoded from the same
+/// query string by that group's own `DecodeQuery`, with its own defaults,
+/// bounds, refusals and rejection problem, described by its own
+/// `QueryParams::parameters` and written by its own `EncodeQuery`. A
+/// flattened group may flatten others, and a group may be generic over the
+/// group it flattens; each impl is bounded on the field's type implementing
+/// the trait it delegates to. `flatten` stands alone: another `#[param]` key,
+/// a `#[schema(...)]` bound or an `Option` around the group is refused, since
+/// the group's own fields say each parameter's name, default, carriage and
+/// bounds. A name a flattened group shares with this group, or with another
+/// group it flattens, is a `RouterError::DuplicateQueryParameter` violation
+/// when the router is built, since only the flattened group knows its names.
+///
+/// ```ignore
+/// #[derive(kynos::QueryParams)]
+/// struct ListEntries {
+///     #[param(flatten)]
+///     page: Page,
+///     status: Option<EntryStatus>,
+/// }
+/// ```
+///
+/// A group that also derives [`Schema`](macro@Schema) and serde's
+/// `Deserialize`, to be read as a `QueryString<T>` too, says each of these to
+/// serde as well: the `Schema` derive refuses a `default` whose field serde
+/// would require, and a `flatten` serde would read nested, so the two
+/// extractors cannot read one group differently.
 ///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the

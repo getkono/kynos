@@ -1,15 +1,18 @@
 //! `#[derive(QueryParams)]`.
 
+pub(crate) mod flatten;
+
 use quote::{quote, quote_spanned};
-use syn::{DeriveInput, Ident, spanned::Spanned};
+use syn::{DeriveInput, Expr, Ident, LitBool, spanned::Spanned};
 
 use crate::derive::{
-    attribute::field_args,
-    common::{NameCase, named_fields, reject_duplicate_names, wire_names, wrapped},
+    common::{named_fields, wrapped},
     params::{
-        List, Param, check_field, constraint_problems_body, construct, decode_field, decode_list,
-        describe::parameters_body, group_problem, render,
+        List, Param, check_field, constraint_problems_body, decode_field, decode_list,
+        describe::{collected, parameter_entry},
+        group_problem, render,
     },
+    query_params::flatten::{Flattened, Member},
 };
 
 /// How the field carries its items, where it is a `Vec<T>`: exploded unless
@@ -18,8 +21,7 @@ use crate::derive::{
 /// Refuses an `Option<Vec<T>>`, whose `Some` of an empty list no query string
 /// carries, and `explode` on a field that is one value, where OpenAPI says it
 /// has no effect and so would say nothing.
-fn list(param: &Param<'_>) -> syn::Result<Option<List>> {
-    let explode = field_args(param.field(), "param")?.explode;
+fn list(param: &Param<'_>, explode: Option<LitBool>) -> syn::Result<Option<List>> {
     if param
         .optional()
         .is_some_and(|inner| wrapped(inner, "Vec").is_some())
@@ -47,46 +49,99 @@ fn list(param: &Param<'_>) -> syn::Result<Option<List>> {
     }))
 }
 
+/// What the field binds when no pair names it, where its
+/// `#[param(default = ...)]` says.
+///
+/// Refuses a default on an `Option<T>`, which would never be `None` and so
+/// reads as optional while it is not, and on a list, whose absence is its
+/// emptiness: a default would leave the empty list no query string could ask
+/// for.
+fn default(param: &Param<'_>, default: Option<Expr>) -> syn::Result<Option<Expr>> {
+    let Some(value) = default else {
+        return Ok(None);
+    };
+    if param.optional().is_some() {
+        return Err(syn::Error::new(
+            param.ty().span(),
+            "a defaulted parameter is never absent once decoded, so an `Option` around it would \
+             never be `None`. Use the inner type, which binds the default when no pair names it",
+        ));
+    }
+    if wrapped(param.ty(), "Vec").is_some() {
+        return Err(syn::Error::new(
+            value.span(),
+            "a list parameter is absent exactly when it has no items, so a default would leave \
+             no query string able to send the empty list. Drop the `default`: no pair already \
+             binds the empty list",
+        ));
+    }
+    Ok(Some(value))
+}
+
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "QueryParams")?;
-    let names = wire_names(input, fields, "param")?;
-    reject_duplicate_names(fields, &names, "query parameter", NameCase::Sensitive)?;
-
-    let name = &input.ident;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-
-    // No `Schema` is emitted: beside a `Schema` derive it would conflict, and
-    // a group is described by its parameters, never as a body schema.
     // The attribute the `Schema` derive reads too, so a group deriving both
     // answers as `QueryString` reads it.
     let group = group_problem(input)?;
-    let params = Param::pair(fields, &names, group.as_ref())
-        .into_iter()
-        .map(|param| {
-            let list = list(&param)?;
-            Ok(param.listed(list))
+    let (params, members) = flatten::members(input, fields, group.as_ref())?;
+    let flattened: Vec<&Flattened<'_>> = members
+        .iter()
+        .filter_map(|member| match member {
+            Member::Flattened(flattened) => Some(flattened),
+            Member::Own(_) => None,
         })
-        .collect::<syn::Result<Vec<_>>>()?;
+        .collect();
+
+    let name = &input.ident;
+    let (impl_generics, ty_generics, _) = input.generics.split_for_impl();
+    let [described, decoded, encoded] = ["QueryParams", "DecodeQuery", "EncodeQuery"]
+        .map(|trait_name| flatten::bounded(&input.generics, &flattened, trait_name));
+
+    // No `Schema` is emitted: beside a `Schema` derive it would conflict, and
+    // a group is described by its parameters, never as a body schema.
     let rejection = quote!(::kynos::error::rejection::QueryRejection);
+    let location = quote!(::kynos::openapi::ParameterIn::Query);
 
     let pairs = query_slots(&params, &rejection);
-    let reads = params
-        .iter()
-        .enumerate()
-        .map(|(index, param)| read(param, &query_slot(index), &rejection));
-    let value = construct(&params);
-    let constraint_problems = constraint_problems_body(&params);
+    let keep_whole = (!flattened.is_empty()).then(flatten::keep_whole);
+    let mut reads = Vec::with_capacity(members.len());
+    let mut entries = Vec::with_capacity(members.len());
+    let mut writes = Vec::with_capacity(members.len());
+    let mut idents = Vec::with_capacity(members.len());
+    for member in &members {
+        let (read, entry, encode, ident) = match member {
+            Member::Own(index) => {
+                let param = &params[*index];
+                (
+                    read(param, &query_slot(*index), &rejection),
+                    parameter_entry(param, &location, false),
+                    encode_entry(param),
+                    param.ident(),
+                )
+            }
+            Member::Flattened(flattened) => (
+                flattened.decode(),
+                flattened.parameters(),
+                flattened.encode(),
+                flattened.ident(),
+            ),
+        };
+        reads.push(read);
+        writes.push(encode);
+        idents.push(ident);
+        entries.push(entry);
+    }
 
-    let parameters = parameters_body(
-        &params,
-        &quote!(::kynos::openapi::ParameterIn::Query),
-        false,
-    );
-    let encode = encode_body(&params);
+    let own_problems = constraint_problems_body(&params);
+    let (parameters, constraint_problems) = if flattened.is_empty() {
+        (collected(entries.into_iter(), &quote!()), own_problems)
+    } else {
+        flatten::composed(entries, &own_problems, &flattened)
+    };
 
     Ok(quote! {
         impl #impl_generics ::kynos::extract::params::query::QueryParams
-            for #name #ty_generics #where_clause
+            for #name #ty_generics #described
         {
             fn parameters(
                 registry: &mut ::kynos::schema::registry::Registry,
@@ -101,22 +156,25 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         }
 
         impl #impl_generics ::kynos::extract::params::query::DecodeQuery
-            for #name #ty_generics #where_clause
+            for #name #ty_generics #decoded
         {
             fn decode(
                 query: ::core::option::Option<&str>,
             ) -> ::core::result::Result<Self, ::kynos::error::rejection::QueryRejection> {
+                #keep_whole
                 #pairs
                 #(#reads)*
-                #value
+                ::core::result::Result::Ok(Self { #(#idents),* })
             }
         }
 
         impl #impl_generics ::kynos::extract::params::query::EncodeQuery
-            for #name #ty_generics #where_clause
+            for #name #ty_generics #encoded
         {
             fn encode(&self) -> ::std::string::String {
-                #encode
+                let mut query = ::std::string::String::new();
+                #(#writes)*
+                query
             }
         }
     })
@@ -266,66 +324,58 @@ fn query_slot(index: usize) -> Ident {
     quote::format_ident!("__kynos_query_{index}")
 }
 
-/// The `EncodeQuery::encode` body.
+/// What the `EncodeQuery::encode` body appends to `query` for one field.
 ///
 /// An absent optional parameter is omitted rather than written empty, and so
 /// is an empty list, which RFC 6570 treats as undefined. Each name and item is
 /// encoded by `kynos::__private::uri::encode_query_component`, which escapes a
 /// `,`, so it round-trips through the decoder [`query_slots`] writes; a
 /// delimited list's items are joined by a literal one.
-fn encode_body(params: &[Param<'_>]) -> proc_macro2::TokenStream {
-    let entries = params.iter().map(|param| {
-        let name = param.name();
-        let ident = param.ident();
-        // Only the path is spanned to the field, so an item that does not
-        // display is reported there.
-        let to_string = quote_spanned!(param.ty().span()=> ::std::string::ToString::to_string);
-        let pair = quote! {
-            if !query.is_empty() {
-                query.push('&');
-            }
-            query.push_str(&::kynos::__private::uri::encode_query_component(#name));
-            query.push('=');
-        };
-        match param.list() {
-            Some(List::Exploded) => {
-                return quote! {
-                    for item in &self.#ident {
+fn encode_entry(param: &Param<'_>) -> proc_macro2::TokenStream {
+    let name = param.name();
+    let ident = param.ident();
+    // Only the path is spanned to the field, so an item that does not
+    // display is reported there.
+    let to_string = quote_spanned!(param.ty().span()=> ::std::string::ToString::to_string);
+    let pair = quote! {
+        if !query.is_empty() {
+            query.push('&');
+        }
+        query.push_str(&::kynos::__private::uri::encode_query_component(#name));
+        query.push('=');
+    };
+    match param.list() {
+        Some(List::Exploded) => {
+            return quote! {
+                for item in &self.#ident {
+                    #pair
+                    query.push_str(&::kynos::__private::uri::encode_query_component(
+                        &#to_string(item),
+                    ));
+                }
+            };
+        }
+        Some(List::Delimited) => {
+            return quote! {
+                for (index, item) in ::core::iter::Iterator::enumerate(self.#ident.iter()) {
+                    if index == 0 {
                         #pair
-                        query.push_str(&::kynos::__private::uri::encode_query_component(
-                            &#to_string(item),
-                        ));
+                    } else {
+                        query.push(',');
                     }
-                };
-            }
-            Some(List::Delimited) => {
-                return quote! {
-                    for (index, item) in ::core::iter::Iterator::enumerate(self.#ident.iter()) {
-                        if index == 0 {
-                            #pair
-                        } else {
-                            query.push(',');
-                        }
-                        query.push_str(&::kynos::__private::uri::encode_query_component(
-                            &#to_string(item),
-                        ));
-                    }
-                };
-            }
-            None => {}
+                    query.push_str(&::kynos::__private::uri::encode_query_component(
+                        &#to_string(item),
+                    ));
+                }
+            };
         }
-        let rendered = render(param);
-        quote! {
-            if let ::core::option::Option::Some(value) = #rendered {
-                #pair
-                query.push_str(&::kynos::__private::uri::encode_query_component(&value));
-            }
-        }
-    });
-
+        None => {}
+    }
+    let rendered = render(param);
     quote! {
-        let mut query = ::std::string::String::new();
-        #(#entries)*
-        query
+        if let ::core::option::Option::Some(value) = #rendered {
+            #pair
+            query.push_str(&::kynos::__private::uri::encode_query_component(&value));
+        }
     }
 }
