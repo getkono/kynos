@@ -284,3 +284,6 @@ fn taken(paths: &mut Paths, components: &Components) -> HashSet<String> {
         .chain(referenced)
         .collect()
 }
+
+#[cfg(test)]
+mod tests;
