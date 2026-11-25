@@ -188,6 +188,26 @@ impl<C> TestClient<C> {
         }
     }
 
+    /// The description the answering service serves, which this client's
+    /// own assertions read: the document to give a [`Coverage`] assertion
+    /// without building the router a second time.
+    ///
+    /// ```
+    /// use kynos::{Router, test::{Coverage, TestClient}};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let coverage = Coverage::new();
+    /// let client = TestClient::new(Router::<()>::new().build(())?).with_coverage(&coverage);
+    /// // ... exercise the client, then:
+    /// coverage.assert_declared_responses_covered(client.openapi());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn openapi(&self) -> &Document {
+        self.service().openapi()
+    }
+
     /// The service that answers, whose description assertions read.
     fn service(&self) -> &Service<C> {
         match &self.transport {
@@ -535,7 +555,7 @@ impl<C> TestClient<C> {
     /// Panics listing every response that did not conform.
     #[track_caller]
     pub fn assert_conformance(&self) {
-        assert_conforms(self.service().openapi(), self.recorded().iter());
+        assert_conforms(self.openapi(), self.recorded().iter());
     }
 
     /// Asserts that every declared response was exercised at least once.
@@ -551,7 +571,7 @@ impl<C> TestClient<C> {
     pub fn assert_declared_responses_covered(&self) {
         let recorded = self.recorded();
         assert_covered(
-            self.service().openapi(),
+            self.openapi(),
             |_| true,
             recorded
                 .iter()

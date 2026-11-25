@@ -280,8 +280,8 @@ async fn coverage_shared_by_two_clients_covers_what_both_exercised() {
     exercise_reads(&reads).await;
     exercise_writes(&writes).await;
 
-    let document = service().expect("a describable router").openapi().clone();
-    coverage.assert_declared_responses_covered(&document);
+    // The document either client serves, which describes both.
+    coverage.assert_declared_responses_covered(writes.openapi());
 }
 
 /// A coverage bound to its document is asserted with no argument, and each
@@ -596,8 +596,7 @@ async fn a_client_through_a_server_is_answered_under_its_settings() {
 
     client.assert_conformance();
     client.assert_declared_responses_covered();
-    let document = service().expect("a describable router").openapi().clone();
-    coverage.assert_declared_responses_covered(&document);
+    coverage.assert_declared_responses_covered(client.openapi());
 }
 
 /// A failure on an absolute-form target is reported with the target as the

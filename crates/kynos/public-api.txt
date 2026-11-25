@@ -11520,6 +11520,7 @@ pub fn kynos::test::TestClient<C>::get(&self, &str) -> kynos::test::TestRequest<
 pub fn kynos::test::TestClient<C>::head(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::method(&self, impl kynos::test::IntoMethod, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::new(kynos::router::service::Service<C>) -> Self
+pub fn kynos::test::TestClient<C>::openapi(&self) -> &kynos_openapi::model::document::Document
 pub fn kynos::test::TestClient<C>::options(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::patch(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::post(&self, &str) -> kynos::test::TestRequest<'_, C>
