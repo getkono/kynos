@@ -316,7 +316,7 @@ mod security_headers {
             Continued,
             security_headers::{
                 DenyFraming, FramingSetting, Hsts, HstsSetting, NoDenyFraming, NoHsts,
-                SecurityFields, StrictTransportSecurity, conveyed_securely,
+                SecurityFields, SecurityHeaders, StrictTransportSecurity, conveyed_securely,
             },
         },
         schema::registry::Registry,
@@ -598,6 +598,33 @@ mod security_headers {
         assert_eq!(hsts.get("required"), None);
         assert_eq!(hsts["content"]["text/plain"]["schema"]["type"], "string");
         assert_eq!(headers.len(), 5);
+    }
+
+    /// Clones and prints an interceptor named only by its setting traits.
+    fn cloned_and_printed<H: HstsSetting, F: FramingSetting>(
+        headers: &SecurityHeaders<H, F>,
+    ) -> String {
+        format!("{:?}", headers.clone())
+    }
+
+    /// Code generic over the settings clones and prints as code naming them
+    /// does, and the print still says what was opted into.
+    #[test]
+    fn a_generic_interceptor_clones_and_prints() {
+        let baseline = cloned_and_printed(&SecurityHeaders::new());
+        let both = cloned_and_printed(
+            &SecurityHeaders::new()
+                .strict_transport_security(StrictTransportSecurity::max_age(Duration::from_secs(
+                    60,
+                )))
+                .deny_framing(),
+        );
+
+        assert!(baseline.starts_with("SecurityHeaders"), "{baseline}");
+        assert!(baseline.contains("transport: None"), "{baseline}");
+        assert!(both.contains("max-age=60"), "{both}");
+        assert!(both.contains("::Hsts, "), "{both}");
+        assert!(both.contains("::DenyFraming)"), "{both}");
     }
 
     #[test]

@@ -5404,10 +5404,10 @@ impl core::marker::Unpin for kynos::middleware::security_headers::StrictTranspor
 impl core::marker::UnsafeUnpin for kynos::middleware::security_headers::StrictTransportSecurity
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::security_headers::StrictTransportSecurity
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::security_headers::StrictTransportSecurity
-pub trait kynos::middleware::security_headers::FramingSetting: kynos::middleware::security_headers::private::Setting + core::marker::Send + core::marker::Sync + 'static
+pub trait kynos::middleware::security_headers::FramingSetting: kynos::middleware::security_headers::private::Setting + core::marker::Copy + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
 impl kynos::middleware::security_headers::FramingSetting for kynos::middleware::security_headers::DenyFraming
 impl kynos::middleware::security_headers::FramingSetting for kynos::middleware::security_headers::NoDenyFraming
-pub trait kynos::middleware::security_headers::HstsSetting: kynos::middleware::security_headers::private::Setting + core::marker::Send + core::marker::Sync + 'static
+pub trait kynos::middleware::security_headers::HstsSetting: kynos::middleware::security_headers::private::Setting + core::marker::Copy + core::fmt::Debug + core::marker::Send + core::marker::Sync + 'static
 impl kynos::middleware::security_headers::HstsSetting for kynos::middleware::security_headers::Hsts
 impl kynos::middleware::security_headers::HstsSetting for kynos::middleware::security_headers::NoHsts
 pub mod kynos::middleware::stack

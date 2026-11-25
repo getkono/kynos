@@ -90,14 +90,20 @@ mod private {
 /// Whether a [`SecurityHeaders`] sends `Strict-Transport-Security`: [`Hsts`]
 /// or [`NoHsts`].
 ///
-/// This trait is sealed; the two markers are its only implementations.
-pub trait HstsSetting: private::Setting + Send + Sync + 'static {}
+/// This trait is sealed; the two markers are its only implementations. It
+/// implies `Copy` and `Debug`, so code generic over it can clone and print a
+/// [`SecurityHeaders`] as code naming a marker can.
+pub trait HstsSetting: private::Setting + Copy + std::fmt::Debug + Send + Sync + 'static {}
 
 /// Whether a [`SecurityHeaders`] sends `X-Frame-Options: DENY`:
 /// [`DenyFraming`] or [`NoDenyFraming`].
 ///
-/// This trait is sealed; the two markers are its only implementations.
-pub trait FramingSetting: private::Setting + Send + Sync + 'static {}
+/// This trait is sealed; the two markers are its only implementations. It
+/// implies `Copy` and `Debug`, as [`HstsSetting`] does.
+pub trait FramingSetting:
+    private::Setting + Copy + std::fmt::Debug + Send + Sync + 'static
+{
+}
 
 /// Sends `Strict-Transport-Security`, as
 /// [`strict_transport_security`](SecurityHeaders::strict_transport_security)
