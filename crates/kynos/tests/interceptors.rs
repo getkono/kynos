@@ -1094,6 +1094,396 @@ async fn a_router_interceptor_left_off_a_fallback_widens_nothing_above_it() {
     assert_eq!(unmatched.status, StatusCode::NOT_FOUND);
 }
 
+// --- Which interceptors Kynos ships read the body -------------------------
+
+/// Holds [`Bodies`] to covering `ping`, which reads no body, exactly where
+/// `covered` says, in its description and in what it answers a request
+/// carrying a body.
+async fn assert_ping_covered(
+    name: &str,
+    document: kynos::Result<kynos::openapi::Document>,
+    service: kynos::Result<kynos::router::service::Service<App>>,
+    covered: bool,
+) {
+    let document = document.unwrap_or_else(|error| panic!("{name}: {error}"));
+    let service = service.unwrap_or_else(|error| panic!("{name}: {error}"));
+
+    let (_, operation) = document.paths.items["/ping"]
+        .operations()
+        .next()
+        .expect("one operation");
+    assert_eq!(
+        operation.responses.responses.contains_key("413"),
+        covered,
+        "{name}: the 413 declared"
+    );
+
+    let reply = get(&service, "/ping")
+        .header("content-length", "4")
+        .body(&b"left"[..])
+        .call()
+        .await;
+    assert_eq!(
+        reply.status == StatusCode::PAYLOAD_TOO_LARGE,
+        covered,
+        "{name}: answered {}",
+        reply.status
+    );
+}
+
+/// `ping` with `$interceptor` mounted beneath [`Bodies`] at the router, held
+/// to leaving `ping` uncovered: what runs beneath touched the head alone.
+macro_rules! assert_head_only {
+    ($name:expr, $interceptor:expr) => {{
+        let router = || {
+            Router::<App>::new()
+                .mount(kynos::routes![ping])
+                .intercept(Bodies)
+                .intercept($interceptor)
+        };
+        assert_ping_covered($name, router().openapi(), router().build(App::new()), false).await;
+    }};
+}
+
+/// Declares one `#[tokio::test]` per group, each holding every interceptor it
+/// names to [`assert_head_only!`], and `head_only_witnessed`, the name of
+/// every interceptor any group names.
+///
+/// Each name is the type its value builds, as the sweep below reads it off
+/// the impl head, and a failure names it. Every name is listed whatever this
+/// build enabled, since the sweep reads the source rather than the build;
+/// only the test is gated.
+macro_rules! head_only {
+    ($(
+        $(#[$attribute:meta])*
+        fn $test:ident { $($name:ident => $interceptor:expr;)* }
+    )*) => {
+        $(
+            $(#[$attribute])*
+            #[tokio::test]
+            async fn $test() {
+                $(assert_head_only!(stringify!($name), $interceptor);)*
+            }
+        )*
+
+        /// Every interceptor a group names.
+        fn head_only_witnessed() -> BTreeSet<String> {
+            [$($(stringify!($name),)*)*].into_iter().map(str::to_owned).collect()
+        }
+    };
+}
+
+/// Allows every request, advertising no quota.
+struct Unlimited;
+
+impl kynos::middleware::rate_limit::decision::RateLimitPolicy<App> for Unlimited {
+    async fn check(
+        &self,
+        _: &Request,
+        _: Route<'_>,
+        _: &App,
+    ) -> kynos::middleware::rate_limit::decision::Decision {
+        kynos::middleware::rate_limit::decision::Decision::allow(
+            kynos::middleware::rate_limit::decision::ServiceLimit::new(
+                "unlimited",
+                1,
+                1,
+                std::time::Duration::from_secs(60),
+            ),
+        )
+    }
+}
+
+/// Stores nothing, so every request is a miss the handler answers.
+#[cfg(feature = "cache")]
+struct Forgets;
+
+#[cfg(feature = "cache")]
+impl kynos::middleware::cache::store::CacheStore<App> for Forgets {
+    async fn get(
+        &self,
+        _: &kynos::middleware::cache::store::PrimaryKey<'_>,
+        _: &App,
+    ) -> Vec<kynos::middleware::cache::store::StoredResponse> {
+        Vec::new()
+    }
+
+    async fn put(
+        &self,
+        _: kynos::middleware::cache::store::PrimaryKey<'static>,
+        _: kynos::middleware::cache::store::StoredResponse,
+        _: &App,
+    ) {
+    }
+
+    async fn invalidate(&self, _: &kynos::middleware::cache::store::PrimaryKey<'static>, _: &App) {}
+}
+
+head_only! {
+    /// Each limit on time or load bounds the exchange, never the body's size:
+    /// `BodyTimeout` wraps the body for whatever beneath reads it.
+    fn a_limit_on_time_or_load_reads_no_body {
+        BodyTimeout => kynos::middleware::limits::body_timeout::BodyTimeout::idle(
+            std::time::Duration::from_secs(60),
+        );
+        Concurrency => kynos::middleware::limits::concurrency::Concurrency::new(
+            std::num::NonZeroUsize::MIN,
+        );
+        RateLimit => kynos::middleware::rate_limit::RateLimit::new(Unlimited);
+        Timeout => kynos::middleware::limits::timeout::Timeout::new(
+            std::time::Duration::from_secs(60),
+        );
+    }
+
+    /// Each that reads or writes header fields alone.
+    fn a_header_interceptor_reads_no_body {
+        Cors => Cors::new();
+        Csrf => kynos::middleware::csrf::Csrf::new();
+        CsrfWhen => kynos::middleware::csrf::Csrf::new().when(|_: &App| true);
+        RequestId => RequestId::new();
+        SecurityHeaders => kynos::middleware::security_headers::SecurityHeaders::new();
+        TrustedHosts => kynos::middleware::trusted_hosts::TrustedHosts::new();
+        TrustedHostsWhen => kynos::middleware::trusted_hosts::TrustedHosts::new()
+            .when(|_: &App| true);
+    }
+
+    /// A cache reads the response's body, never the request's.
+    #[cfg(feature = "cache")]
+    fn caching_reads_no_body {
+        Cache => kynos::middleware::cache::Cache::new(Forgets);
+        Conditional => kynos::middleware::conditional::Conditional::new();
+    }
+
+    /// Compression encodes the response's body, never the request's.
+    #[cfg(feature = "compression")]
+    fn compression_reads_no_body {
+        Compression => kynos::middleware::compression::Compression::new();
+    }
+
+    #[cfg(feature = "cookie")]
+    fn setting_cookies_reads_no_body {
+        SetCookies => kynos::middleware::cookies::SetCookies::new(Vec::new());
+    }
+
+    #[cfg(feature = "trace")]
+    fn a_trace_span_reads_no_body {
+        TraceSpan => kynos::middleware::trace::Trace::new().span(&[]);
+    }
+}
+
+/// `ping` in a group mounting `$inner` for safe methods beneath [`Bodies`].
+macro_rules! scoped_beneath_bodies {
+    ($inner:expr) => {
+        Router::<App>::new().group(
+            Group::new("/")
+                .intercept(Bodies)
+                .intercept_when(SafeMethods, $inner)
+                .mount(kynos::routes![ping]),
+        )
+    };
+}
+
+/// A method-scoped interceptor may read the body exactly where the one it
+/// scopes may: one that buffers it keeps `ping` covered, one touching the
+/// head alone leaves it uncovered.
+///
+/// The group runs the scoped interceptor itself, so nothing on either path
+/// reads `When`'s own `READS_BODY`; only the `const` assertion holds it to
+/// forwarding the scoped one's, for whatever comes to read the stack's type,
+/// and a value that does not forward fails to compile this file.
+#[tokio::test]
+async fn a_method_scoped_interceptor_reads_the_body_its_interceptor_reads() {
+    const {
+        assert!(
+            <kynos::middleware::stack::When<SafeMethods, Buffers> as Interceptor<App>>::READS_BODY
+        );
+        assert!(
+            !<kynos::middleware::stack::When<SafeMethods, Heads> as Interceptor<App>>::READS_BODY
+        );
+    }
+
+    assert_ping_covered(
+        "When<_, Buffers>",
+        scoped_beneath_bodies!(Buffers).openapi(),
+        scoped_beneath_bodies!(Buffers).build(App::new()),
+        true,
+    )
+    .await;
+    assert_ping_covered(
+        "When<_, Heads>",
+        scoped_beneath_bodies!(Heads).openapi(),
+        scoped_beneath_bodies!(Heads).build(App::new()),
+        false,
+    )
+    .await;
+}
+
+/// The interceptors Kynos ships leaving `READS_BODY` at `true` whose own
+/// [`Covers::BodyReading`] makes it moot: one runs only where something
+/// beneath reads the body already, so whether it reads one too changes
+/// nothing above it, and no test could tell its value.
+const COVERING_ONLY_BODIES: &[&str] = &["BodySize", "Decompression"];
+
+/// The interceptors Kynos ships touching the head alone whose case lives in
+/// another file: the `guard_first` guard, in `guard_first.rs`, since only a
+/// guarded operation installs it.
+const HEAD_ONLY_ELSEWHERE: &[&str] = &["GuardAhead"];
+
+/// Every exclusion in [`COVERING_ONLY_BODIES`] is earned: each covers only
+/// the operations whose body something beneath it reads.
+#[test]
+fn an_interceptor_left_reading_bodies_covers_only_bodies() {
+    use kynos::middleware::limits::body_size::BodyTooSlow;
+
+    assert_eq!(<BodySize as Interceptor<App>>::COVERS, Covers::BodyReading);
+    assert_eq!(
+        <BodySize<(), BodyTooSlow> as Interceptor<App>>::COVERS,
+        Covers::BodyReading
+    );
+    #[cfg(feature = "compression")]
+    assert_eq!(
+        <kynos::middleware::decompression::Decompression as Interceptor<App>>::COVERS,
+        Covers::BodyReading
+    );
+}
+
+/// Every interceptor Kynos ships, by what its `READS_BODY` says, against the
+/// cases this suite and `guard_first.rs` hold it to.
+///
+/// Read off disk over the whole of `src/`, since the `guard_first` guard
+/// implements `Interceptor` outside `middleware/`, so an interceptor added
+/// without a case, or one whose `READS_BODY` changes, fails here.
+#[test]
+fn every_interceptor_kynos_ships_has_its_body_read_witnessed() {
+    let mut sources = Vec::new();
+    collect_sources(
+        std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/src")),
+        &mut sources,
+    );
+    let declared = reads_body_in(&sources);
+
+    let named = |names: &[&str]| -> BTreeSet<String> {
+        names.iter().map(|name| (*name).to_owned()).collect()
+    };
+    let saying = |value: &str| -> BTreeSet<String> {
+        declared
+            .iter()
+            .filter(|(_, said)| said == value)
+            .map(|(name, _)| name.clone())
+            .collect()
+    };
+
+    let mut head_only = head_only_witnessed();
+    head_only.extend(named(HEAD_ONLY_ELSEWHERE));
+    assert_eq!(
+        saying("false"),
+        head_only,
+        "an interceptor touching the head alone has no case holding a limit above it off a \
+         bodyless operation"
+    );
+    assert_eq!(
+        saying("N::READS_BODY"),
+        named(&["When"]),
+        "an interceptor forwarding what it scopes has no case beside \
+         `a_method_scoped_interceptor_reads_the_body_its_interceptor_reads`"
+    );
+    assert_eq!(
+        saying(""),
+        named(COVERING_ONLY_BODIES),
+        "an interceptor leaving `READS_BODY` at `true` is not one whose value is moot"
+    );
+}
+
+/// Each type implementing `Interceptor<C>` in `sources`, beside the value its
+/// impl gives `READS_BODY`, empty where it leaves the default.
+///
+/// Comment lines are dropped first, so a doc example implementing one is not
+/// counted, and whitespace collapsed, as [`implementors_in`] does. The impl
+/// head may name the trait through a path, so `super::Interceptor<C>` counts,
+/// while `ErasedInterceptor<C>` does not.
+fn reads_body_in(sources: &[String]) -> BTreeSet<(String, String)> {
+    const MARKER: &str = "Interceptor<C> for ";
+    const CONSTANT: &str = "const READS_BODY: bool = ";
+
+    let mut found = BTreeSet::new();
+    for source in sources {
+        let source = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .flat_map(str::split_whitespace)
+            .collect::<Vec<_>>()
+            .join(" ");
+        for (at, _) in source.match_indices(MARKER) {
+            if source[..at].ends_with(|character: char| character.is_alphanumeric()) {
+                continue;
+            }
+            let rest = &source[at + MARKER.len()..];
+            let name = rest
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect::<String>();
+
+            let open = rest.find('{').expect("an impl body");
+            let mut depth = 0_usize;
+            let mut close = open;
+            for (offset, character) in rest[open..].char_indices() {
+                match character {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            close = open + offset;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            let body = &rest[open..close];
+            let value = body.find(CONSTANT).map_or("", |start| {
+                let value = &body[start + CONSTANT.len()..];
+                &value[..value.find(';').expect("a terminated constant")]
+            });
+            found.insert((name, value.to_owned()));
+        }
+    }
+    found
+}
+
+/// The scan reads each value an impl gives `READS_BODY`, and the default where
+/// it gives none, through a wrapped or path-qualified head, and skips the
+/// erased trait and a doc example.
+#[test]
+fn the_body_read_scan_reads_each_spelling() {
+    let sources = [
+        "impl<C: Sync + 'static> Interceptor<C> for Head {\n    const READS_BODY: bool = false;\n}"
+            .to_owned(),
+        "impl<C, M, N> Interceptor<C>\n    for Scoped<M, N>\nwhere\n    N: Interceptor<C>,\n{\n    \
+         fn intercept() -> impl Future { async {} }\n    const READS_BODY: bool = N::READS_BODY;\n}"
+            .to_owned(),
+        "impl<C: 'static, G> super::Interceptor<C> for Span<G> {\n    const READS_BODY: bool = \
+         false;\n}"
+            .to_owned(),
+        "impl<C> Interceptor<C> for Reads {\n    type Reads = ();\n}".to_owned(),
+        "impl<C> ErasedInterceptor<C> for Erased {\n    const READS_BODY: bool = false;\n}"
+            .to_owned(),
+        "/// impl<C> Interceptor<C> for Example {\n/// }".to_owned(),
+    ];
+
+    assert_eq!(
+        reads_body_in(&sources),
+        [
+            ("Head", "false"),
+            ("Reads", ""),
+            ("Scoped", "N::READS_BODY"),
+            ("Span", "false"),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_owned(), value.to_owned()))
+        .collect::<BTreeSet<_>>()
+    );
+}
+
 // --- The two closed sets --------------------------------------------------
 
 /// Every interceptor Kynos ships, named against the set this suite accounts
