@@ -185,8 +185,10 @@ pub(crate) mod test_client {
     use hyper_util::rt::TokioIo;
     use tokio::io::{AsyncRead, AsyncWrite};
     #[cfg(feature = "http1")]
-    use {bytes::Bytes, std::time::Duration, tokio::time::Instant};
+    use {bytes::Bytes, tokio::time::Instant};
 
+    #[cfg(feature = "http1")]
+    use crate::test::TestClosed;
     use crate::{
         extract::connection::Connection,
         http::{Request, Response, body::Body},
@@ -272,20 +274,15 @@ pub(crate) mod test_client {
         }
     }
 
-    /// What a stalled head resolves to: the octets the server wrote before
-    /// it closed the connection, and how long after the connection opened
-    /// it closed, on tokio's clock.
+    /// What a stalled head resolves to: how the server closed the
+    /// connection.
     #[cfg(feature = "http1")]
-    pub(crate) type Stalled =
-        Pin<Box<dyn Future<Output = std::io::Result<(Bytes, Duration)>> + Send>>;
+    pub(crate) type Stalled = Pin<Box<dyn Future<Output = std::io::Result<TestClosed>> + Send>>;
 
     /// Writes `head` over a fresh TCP connection to `address`, as
     /// [`stall_on`] does.
     #[cfg(feature = "http1")]
-    pub(crate) async fn stall_at(
-        address: SocketAddr,
-        head: Bytes,
-    ) -> std::io::Result<(Bytes, Duration)> {
+    pub(crate) async fn stall_at(address: SocketAddr, head: Bytes) -> std::io::Result<TestClosed> {
         let started = Instant::now();
         let stream = tokio::net::TcpStream::connect(address).await?;
         // The head leaves in one segment rather than waiting on an
@@ -297,14 +294,11 @@ pub(crate) mod test_client {
     /// Writes `head` on `io` and nothing after it, then reads what the server
     /// writes until it closes the connection, timed from `started`.
     ///
-    /// A reset or a refused write is a close too: a server that answers an
-    /// oversized head and hangs up may do either before the client is done.
+    /// A reset or a refused write is a close too, and one marked as
+    /// [`reset`](TestClosed::is_reset): a server that answers an oversized
+    /// head and hangs up may do either before the client is done.
     #[cfg(feature = "http1")]
-    async fn stall_on<I>(
-        mut io: I,
-        head: &[u8],
-        started: Instant,
-    ) -> std::io::Result<(Bytes, Duration)>
+    async fn stall_on<I>(mut io: I, head: &[u8], started: Instant) -> std::io::Result<TestClosed>
     where
         I: AsyncRead + AsyncWrite + Unpin,
     {
@@ -317,15 +311,22 @@ pub(crate) mod test_client {
                 BrokenPipe | ConnectionAborted | ConnectionReset
             )
         };
-        match io.write_all(head).await {
-            Err(error) if !closing(&error) => return Err(error),
-            _ => {}
-        }
+        let mut reset = match io.write_all(head).await {
+            Ok(()) => false,
+            Err(error) if closing(&error) => true,
+            Err(error) => return Err(error),
+        };
         let mut received = Vec::new();
         match io.read_to_end(&mut received).await {
-            Err(error) if !closing(&error) => Err(error),
-            _ => Ok((Bytes::from(received), started.elapsed())),
+            Ok(_) => {}
+            Err(error) if closing(&error) => reset = true,
+            Err(error) => return Err(error),
         }
+        Ok(TestClosed {
+            after: started.elapsed(),
+            received: Bytes::from(received),
+            reset,
+        })
     }
 
     /// Sends `request` over a fresh TCP connection to `address`, as

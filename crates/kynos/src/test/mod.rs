@@ -2238,10 +2238,9 @@ impl<'a, C> TestRequest<'a, C> {
             )
         };
         async move {
-            let (received, after) = stalled.await.unwrap_or_else(|error| {
+            stalled.await.unwrap_or_else(|error| {
                 panic!("{exchange}: the connection failed before the server closed it: {error}")
-            });
-            TestClosed { after, received }
+            })
         }
     }
 
@@ -2273,8 +2272,9 @@ impl<'a, C> TestRequest<'a, C> {
 #[cfg(all(feature = "server", feature = "http1"))]
 #[derive(Debug)]
 pub struct TestClosed {
-    after: std::time::Duration,
-    received: Bytes,
+    pub(crate) after: std::time::Duration,
+    pub(crate) received: Bytes,
+    pub(crate) reset: bool,
 }
 
 #[cfg(all(feature = "server", feature = "http1"))]
@@ -2291,6 +2291,17 @@ impl TestClosed {
     #[must_use]
     pub fn received(&self) -> &[u8] {
         &self.received
+    }
+
+    /// Whether the server ended the connection abortively, rather than with
+    /// an orderly close after reading the head: a TCP reset, or a write it
+    /// refused because it had already hung up. A server closing at its
+    /// header-read deadline has read the whole head, so it closes in order
+    /// and this is `false`; one that answers an oversized head and hangs up
+    /// with the rest of it unread makes it `true`.
+    #[must_use]
+    pub fn is_reset(&self) -> bool {
+        self.reset
     }
 }
 

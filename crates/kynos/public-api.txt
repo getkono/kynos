@@ -11681,6 +11681,7 @@ impl<C> !core::panic::unwind_safe::UnwindSafe for kynos::test::TestClient<C>
 pub struct kynos::test::TestClosed
 impl kynos::test::TestClosed
 pub fn kynos::test::TestClosed::after(&self) -> core::time::Duration
+pub fn kynos::test::TestClosed::is_reset(&self) -> bool
 pub fn kynos::test::TestClosed::received(&self) -> &[u8]
 impl core::fmt::Debug for kynos::test::TestClosed
 pub fn kynos::test::TestClosed::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result

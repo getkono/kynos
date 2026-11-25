@@ -756,6 +756,7 @@ async fn a_stalled_head_through_a_server_is_closed_at_its_header_read_timeout() 
 
     assert_answered_at(closed.after(), TIMEOUT);
     assert!(closed.received().is_empty(), "{:?}", closed.received());
+    assert!(!closed.is_reset(), "a deadline close is an orderly one");
 }
 
 /// Over a real socket, the listener's connection is closed at the same
@@ -777,10 +778,34 @@ async fn a_stalled_head_over_a_socket_is_closed_at_its_header_read_timeout() {
         closed.after()
     );
     assert!(closed.received().is_empty(), "{:?}", closed.received());
+    assert!(!closed.is_reset(), "a deadline close is an orderly one");
     running
         .shutdown()
         .await
         .expect("an idle server drains cleanly");
+}
+
+/// A head past the server's buffer is answered `431` and hung up on with the
+/// rest of it unread, so the close is a reset rather than an orderly one: the
+/// write the server stopped reading is refused. A megabyte is past both
+/// HTTP/1's default buffer and what the duplex holds beside it.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+async fn a_stalled_head_past_the_servers_buffer_is_answered_and_reset() {
+    let closed = TestClient::through_server(kynos::server::Server::new(service()))
+        .get("/probe")
+        .header("x-padding", &"a".repeat(1 << 20))
+        .send_stalled_head()
+        .await;
+
+    assert!(closed.is_reset());
+    assert!(
+        closed
+            .received()
+            .starts_with(b"HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "{:?}",
+        String::from_utf8_lossy(closed.received())
+    );
 }
 
 /// A client with no connection has no head to stall, so the request is
