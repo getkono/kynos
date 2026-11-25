@@ -687,7 +687,9 @@ RFC 6750 defines three ways to present a bearer token. Kynos reads one.
 
 Neither is a gap to be closed later. An *API key* in a query parameter is a
 different matter and is supported, because that is what `api_key(in = "query")`
-describes and the specification permits it.
+describes and the specification permits it. A key named by two pairs is
+`Malformed(Repeated)`, as a header key sent twice is, so a proxy or log reading
+one pair and the authenticator another cannot disagree about the credential.
 
 ### Where mutual TLS fits
 
