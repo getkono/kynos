@@ -89,36 +89,54 @@ fn responses_differing_only_in_key_order_share_one_component() {
     assert_eq!(components.responses.len(), 1);
 }
 
-/// Media types declared in the other order are the same response too, in
-/// every build: the component lists them as the first operation in document
-/// order declares them, and is named for that one's first.
+/// A response's own media types, headers and links keep their declared
+/// order: negotiation sends the first media type offered, so a response
+/// offering JSON first and one offering text first say different things,
+/// and stay two components in every build, each listing its own order. Both
+/// derive `Status200`, so each takes a suffix; the literals are the ones
+/// every build must produce.
 #[test]
-fn responses_differing_only_in_media_type_order_share_the_first_declared() {
-    let plain = r##""text/plain": {"schema": {"$ref": "#/components/schemas/Note"}}"##;
-    let json = r##""application/json": {"schema": {"$ref": "#/components/schemas/Reading"}}"##;
+fn responses_differing_in_media_type_order_stay_apart() {
     let content = |first: &str, second: &str| {
         format!(
-            r#"{{"get": {{"responses": {{"200": {{"description": "the note", "content": {{{first}, {second}}}}}}}}}}}"#
+            r#"{{"get": {{"responses": {{"200": {{"description": "OK", "content": {{"{first}": {{}}, "{second}": {{}}}}}}}}}}}}"#
         )
     };
-    let (plain, json) = (content(plain, json), content(json, plain));
-    let mut paths: Paths =
-        serde_json::from_str(&format!(r#"{{"/a": {plain}, "/b": {json}}}"#)).expect("paths");
-    let first = paths.items["/a"]
-        .operation(Method::Get)
-        .expect("a GET")
-        .responses
-        .responses["200"]
-        .clone();
+    let (json, text) = (
+        content("application/json", "text/plain"),
+        content("text/plain", "application/json"),
+    );
+    let mut paths: Paths = serde_json::from_str(&format!(
+        r#"{{"/a": {json}, "/b": {json}, "/c": {text}, "/d": {text}}}"#
+    ))
+    .expect("paths");
     let mut components = Components::default();
 
     shared_responses(&mut paths, &mut components);
 
-    assert_eq!(components.responses.get("NoteStatus200"), Some(&first));
-    assert_eq!(
-        entry(&paths, "200"),
-        &RefOr::Ref(Ref::response("NoteStatus200"))
-    );
+    for (operations, name, first) in [
+        (["/a", "/b"], "Status200_676f0c5e", "application/json"),
+        (["/c", "/d"], "Status200_a5eb568b", "text/plain"),
+    ] {
+        for path in operations {
+            assert_eq!(
+                paths.items[path]
+                    .operation(Method::Get)
+                    .expect("a GET")
+                    .responses
+                    .responses["200"],
+                RefOr::Ref(Ref::response(name)),
+                "{path}"
+            );
+        }
+        let component = components.responses[name].as_item().expect("inline");
+        assert_eq!(
+            component.content.keys().next().map(String::as_str),
+            Some(first),
+            "{name}"
+        );
+    }
+    assert_eq!(components.responses.len(), 2);
 }
 
 /// A suffix is hashed from a key-sorted form, so neither the order the
