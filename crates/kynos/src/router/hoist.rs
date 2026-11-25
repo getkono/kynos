@@ -33,8 +33,9 @@ type Declared = (String, String);
 /// what else the document declares beyond that collision; where even that is
 /// taken, the response stays inline. The canonical form, not equality,
 /// decides sameness, so two responses differing anywhere (a description, a
-/// header, a link) stay apart, and two differing only in the order of an
-/// object's keys, media types and headers included, are one in every build.
+/// header, a link, the order of their own media types, headers or links)
+/// stay apart, and two differing only in the key order of a nested free-form
+/// object are one in every build.
 /// A response given by reference is left as written.
 pub(super) fn shared_responses(paths: &mut Paths, components: &mut Components) {
     let mut declared: BTreeMap<Declared, (usize, Response)> = BTreeMap::new();
@@ -133,19 +134,35 @@ fn inline(entry: &RefOr<Response>) -> Option<(String, &Response)> {
 }
 
 /// `response` as compact JSON with every object's keys sorted by code point,
-/// at every depth, as `Document::to_canonical_json` sorts them: the same
-/// text in every build, where the direct serialization leaves a nested
-/// `Value` (an example, a default, a `const`, an extension) sorted, or in
-/// insertion order under `serde_json/preserve_order`.
+/// at every depth, as `Document::to_canonical_json` sorts them, then, where
+/// the response declares its own media types, headers or links in another
+/// order, those three key lists as declared: the same text in every build.
 ///
-/// A typed map's order is sorted too, rather than kept, since only a walk
-/// naming every `Value` the model nests could sort those alone, and one
-/// added later would bring the build back into the comparison; neither
-/// OpenAPI version gives an object's key order a meaning.
+/// The sort ignores the order of a nested free-form object (an example, a
+/// default, a `const`, an extension), which the direct serialization leaves
+/// sorted, or in insertion order under `serde_json/preserve_order`; only a
+/// walk naming every `Value` the model nests could keep it, and one added
+/// later would bring the build back into the comparison. The response's own
+/// lists are typed maps, ordered as declared in every build, and their order
+/// is kept: negotiation sends the first media type offered, so a response
+/// offering JSON first is not one offering text first. Appended only where
+/// it is not the sorted order, so a response declaring them sorted keeps the
+/// text, and the fingerprint, the sort alone gives it.
 fn canonical(response: &Response) -> Option<String> {
     let mut value = serde_json::to_value(response).ok()?;
     value.sort_all_objects();
-    Some(value.to_string())
+    let declared = [
+        response.content.keys().collect::<Vec<_>>(),
+        response.headers.keys().collect(),
+        response.links.keys().collect(),
+    ];
+    let sorted = declared.iter().all(|keys| keys.is_sorted());
+    Some(if sorted {
+        value.to_string()
+    } else {
+        // Compact JSON escapes every line feed, so this one only separates.
+        format!("{value}\n{}", serde_json::to_string(&declared).ok()?)
+    })
 }
 
 /// The first name under which `components` declares each inline response,

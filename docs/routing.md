@@ -258,14 +258,15 @@ set on the root router: on an absorbed one it is a
 [below](#application-level-policies).
 
 Edits read every response inline. A response two or more operations declare
-under the same status key, alike up to the order of an object's keys, is moved under
+under the same status key, alike up to the key order of a nested free-form
+object such as an example, is moved under
 `components/responses` and `$ref`ed from each only after the last edit and
 after the description is validated, so an edit changing it at one operation
 leaves it unshared there rather than changing it everywhere, a violation the
 edit wrote into it is reported at each operation it wrote it at, and a
 response component the edit declares is never
 overwritten: a minted name passes over it, and over any name a response `$ref`
-already gives, and a response alike to it up to key order refers to it.
+already gives, and a response alike to it up to that order refers to it.
 [`schema.md`](schema.md#the-order-components-are-emitted-in) says how the
 minted names are chosen.
 

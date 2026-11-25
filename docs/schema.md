@@ -806,7 +806,8 @@ and the interceptors covering it declared them.
 `components/responses` is the exception, because its names are minted rather
 than declared, and a name has to survive remounting. A response two or more
 operations declare under one status key with the same compact JSON, every
-object's keys sorted, is
+object's keys sorted, and its own media types, headers and links in the same
+order, is
 written there once
 ([`router/hoist.rs`](../crates/kynos/src/router/hoist.rs)), named for what it
 carries: the one problem type it publishes other than `about:blank`, in
@@ -820,7 +821,9 @@ never a position, so adding a response or an operation renames nothing already
 shared unless it derives the very same name. When it does, every response
 deriving that name, like one whose name an application's component or `$ref`
 already holds, takes `_` and eight hex digits of the 64-bit FNV-1a hash of its
-compact JSON with every object's keys sorted, `ProblemStatus500_1f0c9a2e`: a
+compact JSON with every object's keys sorted, followed by its media types,
+headers and links in declared order where that is not their sorted order,
+`ProblemStatus500_1f0c9a2e`: a
 fixed algorithm rather than the standard library's hasher, and sorted keys
 rather than whatever order `serde_json/preserve_order` leaves a nested example
 or extension in, so the suffix is the same in every build, and the colliding
@@ -828,16 +831,17 @@ responses are told apart by what they say rather than by the order they sort
 in. Where the suffixed name is taken too, the response stays inline. Shared
 responses are emitted in name order, after the application's own, so neither
 the names nor their order depend on the order operations were mounted in.
-Sameness is that same sorted JSON, not equality: two responses differing in a
-description, a header or a link are not one response, and a `$ref` carries no
-siblings, so sharing changes nothing an operation says. Two differing only in
-the order of an object's keys are one response in every build, the component
-written as the first in document order declares it, so an operation declaring
-two media types in the other order refers to one that lists them in this
-order. Neither OpenAPI version gives that order a meaning, and the committed
-canonical form already sorts it away; keeping it would key on the build, since
-`serde_json/preserve_order` decides the order of every key inside an example
-or extension. Headers inside a
+Sameness is that same text, not equality: two responses differing in a
+description, a header, a link, or the order of their own media types, headers
+or links are not one response, and a `$ref` carries no siblings, so sharing
+changes nothing an operation says. Media type order is meaning, since
+negotiation sends the first one offered, and the response's own maps keep
+their declared order in every build. Two differing only in the key order of
+a nested free-form object (an example, a default, a `const`, an extension)
+are one response in every build, the component written as the first in
+document order declares it: keeping that order would key on the build, since
+`serde_json/preserve_order` decides it, and neither OpenAPI version gives it a
+meaning. Headers inside a
 shared response are shared with it; a header is not hoisted on its own into
 `components/headers`, since a `$ref` to one is no shorter than most headers it
 would stand for.
