@@ -242,6 +242,51 @@ macro_rules! problem_base {
 /// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
 /// # fn main() {}
 /// ```
+///
+/// Nor does it compile with a `slug` the derive's `#[problem(slug = "...")]`
+/// refuses, as each of these is:
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("/insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope/");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("auth//insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("auth/../insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("auth/%2E%2E/insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("");
+/// # fn main() {}
+/// ```
 // `crate` is the caller's on purpose, as in `problem_base!`.
 #[expect(clippy::crate_in_macro_def)]
 #[macro_export]
