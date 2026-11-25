@@ -7,7 +7,7 @@ use std::{fmt, str::FromStr};
 
 /// A slug, converted through `String` by serde's derive.
 #[derive(Clone, kynos::Schema, serde::Serialize, serde::Deserialize)]
-#[schema(string, min_length = 1, examples("ada"))]
+#[schema(string, min_length = 1, format = "slug", examples("ada"))]
 #[serde(into = "String", try_from = "String")]
 struct Slug(Vec<u8>);
 

@@ -152,12 +152,15 @@ pub(crate) struct StringForm {
     pub(crate) text: Field,
     /// `examples(...)`, in the order written.
     pub(crate) examples: Vec<LitStr>,
+    /// `format = "..."`: the format the text is in.
+    pub(crate) format: Option<LitStr>,
 }
 
 /// The type's own `#[schema(...)]`: `constraint_problem = ...`, the problem a
 /// broken bound answers with, written once; and `string`, which describes the
-/// type as the text its `Display` writes, bounded by [`TEXT_KEYS`] and
-/// illustrated by `examples(...)`.
+/// type as the text its `Display` writes, bounded by [`TEXT_KEYS`],
+/// illustrated by `examples(...)` and named by `format = "..."`, a claim about
+/// the type that its own `FromStr` enforces, as no field's could.
 ///
 /// Any other key is refused rather than ignored: a bound written on the type
 /// would otherwise read as enforced and be neither described nor checked. So
@@ -170,7 +173,8 @@ pub(crate) fn type_schema(input: &DeriveInput) -> syn::Result<TypeSchema> {
     let mut string: Option<Span> = None;
     let mut bounds: Vec<TokenStream2> = Vec::new();
     let mut examples: Vec<LitStr> = Vec::new();
-    // The first text bound or `examples`, which only `string` admits.
+    let mut format: Option<LitStr> = None;
+    // The first text bound, `examples` or `format`, which only `string` admits.
     let mut textual: Option<(String, Span)> = None;
     let mut keys = Keys::new("is already set, and a type's `#[schema(...)]` takes each key once")
         .except(|key| key == "constraint_problem");
@@ -205,17 +209,13 @@ pub(crate) fn type_schema(input: &DeriveInput) -> syn::Result<TypeSchema> {
                     Ok(())
                 }
                 "examples" => {
-                    let content;
-                    syn::parenthesized!(content in meta.input);
-                    let listed = Punctuated::<LitStr, Comma>::parse_terminated(&content)?;
-                    if listed.is_empty() {
-                        return Err(meta.error(
-                            "`examples(...)` lists the strings a reader is shown, so it lists \
-                             at least one: `examples(\"...\")`, or leave the key out",
-                        ));
-                    }
+                    examples.extend(listed_examples(&meta)?);
                     textual.get_or_insert((key, meta.path.span()));
-                    examples.extend(listed);
+                    Ok(())
+                }
+                "format" => {
+                    format = Some(named_format(&meta)?);
+                    textual.get_or_insert((key, meta.path.span()));
                     Ok(())
                 }
                 _ if TEXT_KEYS.contains(&key.as_str()) => {
@@ -234,8 +234,8 @@ pub(crate) fn type_schema(input: &DeriveInput) -> syn::Result<TypeSchema> {
                     "a type's `#[schema(...)]` takes `constraint_problem = ...`, the problem a \
                      broken bound answers with, and `string`, describing the type as the text \
                      its `Display` writes, beside that text's `min_length`, `max_length`, \
-                     `pattern`, `content_encoding`, `content_media_type` and `examples(...)`; \
-                     any other bound goes on a field, whose value it holds",
+                     `pattern`, `content_encoding`, `content_media_type`, `format` and \
+                     `examples(...)`; any other bound goes on a field, whose value it holds",
                 )),
             }
         })?;
@@ -267,8 +267,36 @@ pub(crate) fn type_schema(input: &DeriveInput) -> syn::Result<TypeSchema> {
         span,
         text,
         examples,
+        format,
     });
     Ok(read)
+}
+
+/// The strings `examples(...)` lists, at least one.
+fn listed_examples(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<Vec<LitStr>> {
+    let content;
+    syn::parenthesized!(content in meta.input);
+    let listed = Punctuated::<LitStr, Comma>::parse_terminated(&content)?;
+    if listed.is_empty() {
+        return Err(meta.error(
+            "`examples(...)` lists the strings a reader is shown, so it lists at least one: \
+             `examples(\"...\")`, or leave the key out",
+        ));
+    }
+    Ok(listed.into_iter().collect())
+}
+
+/// The format `format = "..."` names, which is not empty.
+fn named_format(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<LitStr> {
+    let named: LitStr = meta.value()?.parse()?;
+    if named.value().trim().is_empty() {
+        return Err(syn::Error::new(
+            named.span(),
+            "`format` names the format the text is in, such as `uuid` or `date-time`, so it \
+             names one: `format = \"...\"`, or leave the key out",
+        ));
+    }
+    Ok(named)
 }
 
 /// What a `#[schema(string)]` type may not declare: a type or const

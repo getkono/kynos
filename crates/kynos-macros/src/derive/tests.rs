@@ -697,6 +697,14 @@ mod schema {
                 "no member it declares is described",
             ),
             case(
+                "`format` naming no format",
+                quote::quote!(
+                    #[schema(string, format = "")]
+                    struct Slug(Inner);
+                ),
+                "`format` names the format the text is in",
+            ),
+            case(
                 "a type key written twice",
                 quote::quote!(
                     #[schema(string, string)]

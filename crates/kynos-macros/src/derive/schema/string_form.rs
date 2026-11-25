@@ -34,6 +34,12 @@ pub(super) fn expand(
 
     let keywords = typed("keywords", "String");
     let examples = &form.examples;
+    let formatted = form.format.as_ref().map(|format| {
+        quote! {
+            keywords.format =
+                ::core::option::Option::Some(::std::string::ToString::to_string(#format));
+        }
+    });
     let listed = (!examples.is_empty()).then(|| {
         quote! {
             keywords.examples = ::core::option::Option::Some(::std::vec![
@@ -46,6 +52,7 @@ pub(super) fn expand(
     let schema = quote! {
         {
             #keywords
+            #formatted
             #listed
             let schema = ::kynos::openapi::Schema::Object(::std::boxed::Box::new(keywords));
             #constrained

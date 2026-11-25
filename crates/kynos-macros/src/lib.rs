@@ -469,8 +469,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// checked on the text `Display` writes for the decoded value, so a `FromStr`
 /// that normalizes is bounded on what it normalizes to. An example `FromStr`
 /// refuses, or whose value breaks the bounds, is a `StringExample` violation
-/// located at it, so the router refuses to build rather than mislead a reader. A
-/// `format` is not taken, for the reason it is not on a field. No member is
+/// located at it, so the router refuses to build rather than mislead a reader.
+/// `format = "..."` names the format the text is in, such as `uuid`: refused on
+/// a field, whose type makes that claim, it is the type's own claim here,
+/// which its `FromStr` enforces, and any non-empty name is taken, as JSON
+/// Schema allows a format it does not define. No member is
 /// described, so a member's `#[schema(...)]`, a type or const parameter, and a
 /// derived kind are not either.
 ///

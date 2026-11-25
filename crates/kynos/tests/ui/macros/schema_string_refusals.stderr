@@ -57,3 +57,9 @@ error: a parameter group is read field by field, each field its own parameter, a
    |
 64 | #[schema(string)]
    |          ^^^^^^
+
+error: `format` names the format the text is in, such as `uuid` or `date-time`, so it names one: `format = "..."`, or leave the key out
+  --> tests/ui/macros/schema_string_refusals.rs:70:27
+   |
+70 | #[schema(string, format = "")]
+   |                           ^^

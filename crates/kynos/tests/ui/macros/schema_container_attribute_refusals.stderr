@@ -1,4 +1,4 @@
-error: a type's `#[schema(...)]` takes `constraint_problem = ...`, the problem a broken bound answers with, and `string`, describing the type as the text its `Display` writes, beside that text's `min_length`, `max_length`, `pattern`, `content_encoding`, `content_media_type` and `examples(...)`; any other bound goes on a field, whose value it holds
+error: a type's `#[schema(...)]` takes `constraint_problem = ...`, the problem a broken bound answers with, and `string`, describing the type as the text its `Display` writes, beside that text's `min_length`, `max_length`, `pattern`, `content_encoding`, `content_media_type`, `format` and `examples(...)`; any other bound goes on a field, whose value it holds
  --> tests/ui/macros/schema_container_attribute_refusals.rs:8:10
   |
 8 | #[schema(minimum = 1)]

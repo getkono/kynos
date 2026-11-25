@@ -1506,6 +1506,28 @@ fn a_string_type_checks_its_bounds_on_its_text() {
     assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
 }
 
+/// A reference in the `uri-reference` format, which its own `FromStr` checks.
+#[derive(Schema)]
+#[schema(string, format = "uri-reference", examples("tmdb:550"))]
+struct LinkedRef(MediaId);
+
+displayed_as_title_ref!(LinkedRef);
+
+/// `format` on a `#[schema(string)]` type is the type's own claim about its
+/// text, described beside `type: string`.
+#[test]
+fn a_string_type_names_its_format() {
+    assert_eq!(
+        emitted::<LinkedRef>(),
+        serde_json::json!({
+            "type": "string",
+            "format": "uri-reference",
+            "description": "A reference in the `uri-reference` format, which its own `FromStr` checks.",
+            "examples": ["tmdb:550"],
+        })
+    );
+}
+
 /// What `/titles/{title}` captures: a string type as a path parameter.
 #[derive(PathParams)]
 struct ByTitle {
