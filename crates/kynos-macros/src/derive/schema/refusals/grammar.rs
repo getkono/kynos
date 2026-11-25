@@ -167,7 +167,7 @@ fn enforceable(pattern: &LitStr) -> Result<(), String> {
 }
 
 /// One `key` or `key = value` inside a field's `#[schema(...)]`.
-fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+pub(super) fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
     // A qualified key matches no key below, so the last refusal names it.
     let name = key_name(&meta.path);
     let span = meta.path.span();

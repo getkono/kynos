@@ -1381,6 +1381,145 @@ fn a_derived_newtype_param_value_reads_and_writes_through_its_field() {
     implements_param_value::<Cursor>();
 }
 
+/// What a title reference names, which is no string of its own: serde would
+/// write it as an object.
+#[derive(Debug, Clone, PartialEq)]
+struct MediaId {
+    provider: String,
+    id: u64,
+}
+
+/// A title reference, `<provider>:<id>`.
+#[derive(Debug, Clone, PartialEq, Schema, serde::Serialize, serde::Deserialize)]
+#[schema(string, min_length = 3, max_length = 24)]
+#[schema(examples("tmdb:550", "anilist:21"))]
+#[serde(into = "String", try_from = "String")]
+struct TitleRef(MediaId);
+
+impl std::fmt::Display for TitleRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.0.provider, self.0.id)
+    }
+}
+
+impl std::str::FromStr for TitleRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (provider, id) = text
+            .split_once(':')
+            .ok_or_else(|| format!("{text:?} names no provider"))?;
+        let id = id.parse().map_err(|_| format!("{id:?} is no id"))?;
+        Ok(Self(MediaId {
+            provider: provider.to_owned(),
+            id,
+        }))
+    }
+}
+
+impl TryFrom<String> for TitleRef {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl From<TitleRef> for String {
+    fn from(title: TitleRef) -> Self {
+        title.to_string()
+    }
+}
+
+/// A string whose example its own `FromStr` refuses.
+#[derive(Schema)]
+#[schema(string, examples("tmdb"))]
+struct MisdescribedRef(MediaId);
+
+/// A string whose example breaks its own bound.
+#[derive(Schema)]
+#[schema(string, max_length = 4, examples("tmdb:550"))]
+struct OverlongRef(MediaId);
+
+macro_rules! displayed_as_title_ref {
+    ($($ty:ident),*) => {$(
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Display::fmt(&TitleRef(self.0.clone()), f)
+            }
+        }
+
+        impl std::str::FromStr for $ty {
+            type Err = String;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                text.parse::<TitleRef>().map(|title| Self(title.0))
+            }
+        }
+    )*};
+}
+
+displayed_as_title_ref!(MisdescribedRef, OverlongRef);
+
+/// A `#[schema(string)]` type is the string its `Display` writes, whatever it
+/// declares: `type: string`, its own prose, its text's bounds and examples,
+/// and its own component name. serde, converting through `String`, agrees.
+#[test]
+fn a_string_type_is_described_as_its_text() {
+    assert_eq!(
+        emitted::<TitleRef>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A title reference, `<provider>:<id>`.",
+            "minLength": 3,
+            "maxLength": 24,
+            "examples": ["tmdb:550", "anilist:21"],
+        })
+    );
+    assert_eq!(
+        <TitleRef as SchemaTrait>::name().map(|name| name.to_string()),
+        Some("TitleRef".to_owned())
+    );
+
+    let title: TitleRef = "tmdb:550".parse().expect("the example parses");
+    let written = serde_json::to_value(title.clone()).expect("a title serializes");
+    assert_eq!(written, serde_json::json!("tmdb:550"));
+    assert_eq!(
+        serde_json::from_value::<TitleRef>(written).ok(),
+        Some(title)
+    );
+}
+
+/// The text's bounds are checked on the text `Display` writes, at the
+/// value's own pointer.
+#[test]
+fn a_string_type_checks_its_bounds_on_its_text() {
+    use kynos::schema::constraints::{Pointer, Violations};
+
+    let fits: TitleRef = "tmdb:550".parse().expect("a reference parses");
+    assert!(Violations::of(&fits, Pointer::root()).is_ok());
+
+    let long: TitleRef = "a-provider-named-at-length:550"
+        .parse()
+        .expect("a reference parses");
+    let failures = Violations::of(&long, Pointer::root()).expect_err("30 characters break 24");
+    assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+}
+
+/// An example the type's own `FromStr` refuses stops the document.
+#[test]
+#[should_panic(expected = "`MisdescribedRef`'s example \"tmdb\" is refused by its own `FromStr`")]
+fn a_string_example_its_type_refuses_panics() {
+    emitted::<MisdescribedRef>();
+}
+
+/// An example breaking the text's own bounds stops the document.
+#[test]
+#[should_panic(expected = "`OverlongRef`'s example \"tmdb:550\" breaks its own bounds")]
+fn a_string_example_breaking_its_bounds_panics() {
+    emitted::<OverlongRef>();
+}
+
 /// A deprecated type says so, and says nothing about the note.
 #[test]
 #[allow(deprecated)]

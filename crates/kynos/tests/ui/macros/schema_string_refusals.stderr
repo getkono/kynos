@@ -1,0 +1,59 @@
+error: `string` is a flag; write it alone
+  --> tests/ui/macros/schema_string_refusals.rs:13:10
+   |
+13 | #[schema(string = true)]
+   |          ^^^^^^
+
+error: `examples(...)` lists the strings a reader is shown, so it lists at least one: `examples("...")`, or leave the key out
+  --> tests/ui/macros/schema_string_refusals.rs:17:18
+   |
+17 | #[schema(string, examples())]
+   |                  ^^^^^^^^^^
+
+error: `max_length` on a type describes the text of a `#[schema(string)]` type, and this type is described by what it declares. Add `string` where `FromStr` and `Display` carry the type as one string, or put a bound on the field whose value it holds
+  --> tests/ui/macros/schema_string_refusals.rs:21:10
+   |
+21 | #[schema(max_length = 8)]
+   |          ^^^^^^^^^^
+
+error: a `#[schema(string)]` type is one component named by its identifier, so every instantiation of a generic one would be published under one name whatever its arguments. Make the type concrete, or implement `Schema` by hand returning a `name()` per instantiation
+  --> tests/ui/macros/schema_string_refusals.rs:26:16
+   |
+26 | struct Generic<T>(T);
+   |                ^
+
+error: `#[schema(string)]` describes the type as the one string `Display` writes, so no member it declares is described and a member's `#[schema(...)]` would bound nothing. Bound the text on the type: `#[schema(string, max_length = ...)]`
+  --> tests/ui/macros/schema_string_refusals.rs:30:20
+   |
+30 | struct MemberBound(#[schema(max_length = 8)] String);
+   |                    ^
+
+error: `string` is already set, and a type's `#[schema(...)]` takes each key once
+  --> tests/ui/macros/schema_string_refusals.rs:33:18
+   |
+33 | #[schema(string, string)]
+   |                  ^^^^^^
+
+error: `#[serde(transparent)]` makes serde write and read this type as its field, and `#[schema(string)]` describes it as the text its `Display` writes. Drop `string`, so the field's own schema describes it, or convert through the text: `#[serde(into = "String", try_from = "String")]`
+  --> tests/ui/macros/schema_string_refusals.rs:38:9
+   |
+38 | #[serde(transparent)]
+   |         ^^^^^^^^^^^
+
+error: `into = "u64"` makes serde carry this type as `u64`, and `#[schema(string)]` describes it as a string. Convert through `String`, or drop `string` and implement `Schema` by hand as `u64`'s
+  --> tests/ui/macros/schema_string_refusals.rs:43:9
+   |
+43 | #[serde(into = "u64")]
+   |         ^^^^
+
+error: a `#[serde(...)]` attribute is a serde derive's, and a serde derive carries this type as what it declares, not as the string `#[schema(string)]` describes. Convert both ways through the text, `#[serde(into = "String", try_from = "String")]`, or implement `Serialize` and `Deserialize` by hand through `Display` and `FromStr`
+  --> tests/ui/macros/schema_string_refusals.rs:54:3
+   |
+54 | #[serde(into = "String")]
+   |   ^^^^^
+
+error: a parameter group is read field by field, each field its own parameter, and `#[schema(string)]` describes a type as one string. Drop `string`, or give the string its own type, a field of the group deriving `ParamValue`
+  --> tests/ui/macros/schema_string_refusals.rs:64:10
+   |
+64 | #[schema(string)]
+   |          ^^^^^^

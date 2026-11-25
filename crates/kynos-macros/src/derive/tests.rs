@@ -637,7 +637,7 @@ mod schema {
                         total: u32,
                     }
                 ),
-                "a type's `#[schema(...)]` takes only `constraint_problem = ...`",
+                "a type's `#[schema(...)]` takes `constraint_problem = ...`",
             ),
             case(
                 "`constraint_problem` written twice",
@@ -652,10 +652,109 @@ mod schema {
         ]
     }
 
+    /// The refusals of `#[schema(string)]`: its own keys, what its type may
+    /// declare, and the serde attributes saying it travels as no string.
+    fn string_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`string` given a value",
+                quote::quote!(
+                    #[schema(string = true)]
+                    struct Slug(Inner);
+                ),
+                "`string` is a flag",
+            ),
+            case(
+                "`examples` listing nothing",
+                quote::quote!(
+                    #[schema(string, examples())]
+                    struct Slug(Inner);
+                ),
+                "`examples(...)` lists the strings a reader is shown",
+            ),
+            case(
+                "a text bound on a type that is no string",
+                quote::quote!(
+                    #[schema(max_length = 8)]
+                    struct Slug(Inner);
+                ),
+                "`max_length` on a type describes the text of a `#[schema(string)]` type",
+            ),
+            case(
+                "a type parameter on a string",
+                quote::quote!(
+                    #[schema(string)]
+                    struct Slug<T>(Inner<T>);
+                ),
+                "a `#[schema(string)]` type is one component named by its identifier",
+            ),
+            case(
+                "a member's own `#[schema(...)]` on a string",
+                quote::quote!(
+                    #[schema(string)]
+                    struct Slug(#[schema(max_length = 8)] Inner);
+                ),
+                "no member it declares is described",
+            ),
+            case(
+                "a type key written twice",
+                quote::quote!(
+                    #[schema(string, string)]
+                    struct Slug(Inner);
+                ),
+                "`string` is already set, and a type's `#[schema(...)]` takes each key once",
+            ),
+            case(
+                "a transparent string",
+                quote::quote!(
+                    #[schema(string)]
+                    #[serde(transparent)]
+                    struct Slug(Inner);
+                ),
+                "`#[serde(transparent)]` makes serde write and read this type as its field",
+            ),
+            case(
+                "a string converted through another type",
+                quote::quote!(
+                    #[schema(string)]
+                    #[serde(into = "u64", try_from = "String")]
+                    struct Slug(Inner);
+                ),
+                "`into = \"u64\"` makes serde carry this type as `u64`",
+            ),
+            case(
+                "a string serde derives from its declaration",
+                quote::quote!(
+                    #[schema(string)]
+                    #[serde(into = "String")]
+                    struct Slug(Inner);
+                ),
+                "a serde derive carries this type as what it declares",
+            ),
+        ]
+    }
+
+    /// The refusal of `#[schema(string)]` on a parameter group, which the
+    /// group derives raise from `schema.rs`.
+    fn group_ledger() -> Vec<Case> {
+        vec![case(
+            "a parameter group declared a string",
+            quote::quote!(
+                #[schema(string)]
+                struct ByPath {
+                    id: u32,
+                }
+            ),
+            "a parameter group is read field by field",
+        )]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(container_ledger(), expand_inner);
+        each_case_is_refused(string_ledger(), expand_inner);
+        each_case_is_refused(group_ledger(), crate::derive::path_params::expand_inner);
         each_case_is_refused(number_ledger(), expand_inner);
         each_case_is_refused(content_ledger(), expand_inner);
         each_case_is_refused(described_as_ledger(), expand_inner);
@@ -845,8 +944,9 @@ mod schema {
         }
     }
 
-    /// The row refusing a key written twice, which `attribute::Keys` raises.
-    const IN_ATTRIBUTE: usize = 1;
+    /// The rows refusing a key written twice, on a field and on the type,
+    /// which `attribute::Keys` raises.
+    const IN_ATTRIBUTE: usize = 2;
 
     #[test]
     fn every_schema_diagnostic_has_a_case() {
@@ -870,6 +970,8 @@ mod schema {
             .concat(),
             ledger().len()
                 + container_ledger().len()
+                + string_ledger().len()
+                + group_ledger().len()
                 + number_ledger().len()
                 + content_ledger().len()
                 + described_as_ledger().len()
@@ -8402,7 +8504,7 @@ mod parameter_groups {
                         limit: u32,
                     }
                 ),
-                "a type's `#[schema(...)]` takes only `constraint_problem = ...`",
+                "a type's `#[schema(...)]` takes `constraint_problem = ...`",
             ),
         ]
     }

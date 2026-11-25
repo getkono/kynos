@@ -1,0 +1,33 @@
+error[E0277]: the trait bound `Unread: FromStr` is not satisfied
+ --> tests/ui/macros/schema_string_without_from_str.rs:6:10
+  |
+6 | #[schema(string)]
+  |          ^^^^^^ unsatisfied trait bound
+  |
+help: the trait `FromStr` is not implemented for `Unread`
+ --> tests/ui/macros/schema_string_without_from_str.rs:7:1
+  |
+7 | struct Unread(u32);
+  | ^^^^^^^^^^^^^
+  = help: the following other types implement trait `FromStr`:
+            ByteString
+            CString
+            HeaderName
+            HeaderValue
+            IpAddr
+            Ipv4Addr
+            Ipv6Addr
+            LanguageTag
+          and $N others
+
+error[E0277]: `Unread` doesn't implement `std::fmt::Display`
+ --> tests/ui/macros/schema_string_without_from_str.rs:6:10
+  |
+6 | #[schema(string)]
+  |          ^^^^^^ unsatisfied trait bound
+  |
+help: the trait `std::fmt::Display` is not implemented for `Unread`
+ --> tests/ui/macros/schema_string_without_from_str.rs:7:1
+  |
+7 | struct Unread(u32);
+  | ^^^^^^^^^^^^^

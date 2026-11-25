@@ -1,9 +1,12 @@
 //! Forms whose wire value is not the one the declaration predicts: a
 //! conversion, a function override, an untagged or catch-all decoding rule, and
-//! a transparent struct that writes and reads through different fields.
+//! a transparent struct that writes and reads through different fields; and a
+//! `#[schema(string)]` type that serde does not carry as a string.
 
-use syn::{Data, DeriveInput, Field, Fields};
+use proc_macro2::Span;
+use syn::{Data, DeriveInput, Field, Fields, LitStr, Variant, spanned::Spanned};
 
+use crate::derive::common::skip_value;
 use crate::derive::schema::{
     attributes::{is_skipped_both_ways, serde_flag, serde_key_span, transparent_picks},
     container::Container,
@@ -42,9 +45,130 @@ pub(super) fn reject_container_conversions(input: &DeriveInput) -> syn::Result<(
              the {members} it declares, so a schema derived from the declaration would describe \
              a value the wire never carries. Implement `Schema` for this {noun} by hand, \
              describing the type serde converts through -- `registry.resolve::<T>()` where that \
-             is one type `T` in both directions"
+             is one type `T` in both directions -- or, where that type is `String` and `FromStr` \
+             and `Display` carry the same text, add `#[schema(string)]`"
         ),
     ))
+}
+
+/// A `#[schema(string)]` type whose serde attributes say it travels as
+/// something other than the string described.
+///
+/// A `#[serde(...)]` attribute anywhere on the type means a serde derive is
+/// there, the attribute being that derive's to register; and a serde derive
+/// writes and reads the declaration unless the type converts through `String`.
+/// So such a type must convert both ways through it (`into`, and `from` or
+/// `try_from`), since which directions are derived is not visible. A
+/// conversion through any other type, and `transparent`, are refused outright.
+///
+/// A serde derive carrying no attribute at all is not visible either: Rust
+/// hands a derive its item without the `#[derive(...)]` attributes before it.
+/// That form is left to the documentation.
+pub(super) fn reject_unstringed_wire_form(input: &DeriveInput) -> syn::Result<()> {
+    if let Some((_, span)) = serde_key_span(&input.attrs, &["transparent"]) {
+        return Err(syn::Error::new(
+            span,
+            "`#[serde(transparent)]` makes serde write and read this type as its field, and \
+             `#[schema(string)]` describes it as the text its `Display` writes. Drop `string`, \
+             so the field's own schema describes it, or convert through the text: \
+             `#[serde(into = \"String\", try_from = \"String\")]`",
+        ));
+    }
+
+    let (mut written, mut read) = (false, false);
+    for (key, converted, span) in container_conversions(&input.attrs) {
+        if !is_string(&converted) {
+            return Err(syn::Error::new(
+                span,
+                format!(
+                    "`{key} = \"{converted}\"` makes serde carry this type as `{converted}`, and \
+                     `#[schema(string)]` describes it as a string. Convert through `String`, or \
+                     drop `string` and implement `Schema` by hand as `{converted}`'s"
+                ),
+            ));
+        }
+        written |= key == "into";
+        read |= key != "into";
+    }
+    if written && read {
+        return Ok(());
+    }
+
+    let members = members_of(input).flat_map(|attrs| attrs.iter());
+    match input
+        .attrs
+        .iter()
+        .chain(members)
+        .find(|attr| attr.path().is_ident("serde"))
+    {
+        Some(attr) => Err(syn::Error::new(
+            attr.path().span(),
+            "a `#[serde(...)]` attribute is a serde derive's, and a serde derive carries this \
+             type as what it declares, not as the string `#[schema(string)]` describes. Convert \
+             both ways through the text, `#[serde(into = \"String\", try_from = \"String\")]`, \
+             or implement `Serialize` and `Deserialize` by hand through `Display` and `FromStr`",
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Each container `into`, `from` and `try_from`, with the type it names as
+/// written and the key's span.
+fn container_conversions(attrs: &[syn::Attribute]) -> Vec<(String, String, Span)> {
+    let mut found = Vec::new();
+    for attr in attrs {
+        if !attr.path().is_ident("serde") {
+            continue;
+        }
+        let _ = attr.parse_nested_meta(|meta| {
+            let key = meta.path.get_ident().map(ToString::to_string);
+            match key.filter(|key| CONVERSIONS.contains(&key.as_str())) {
+                Some(key) => {
+                    let converted: LitStr = meta.value()?.parse()?;
+                    found.push((key, converted.value(), meta.path.span()));
+                    Ok(())
+                }
+                None => skip_value(&meta),
+            }
+        });
+    }
+    found
+}
+
+/// Whether a conversion's type, as written, is the standard `String`.
+fn is_string(converted: &str) -> bool {
+    let compact: String = converted
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    matches!(
+        compact.trim_start_matches("::"),
+        "String" | "std::string::String" | "alloc::string::String"
+    )
+}
+
+/// The attributes of every field and variant the type declares.
+fn members_of(input: &DeriveInput) -> impl Iterator<Item = &[syn::Attribute]> {
+    let (variants, fields): (Vec<&Variant>, Vec<&Fields>) = match &input.data {
+        Data::Struct(data) => (Vec::new(), vec![&data.fields]),
+        Data::Enum(data) => (
+            data.variants.iter().collect(),
+            data.variants
+                .iter()
+                .map(|variant| &variant.fields)
+                .collect(),
+        ),
+        // Refused at the top of `expand_inner`.
+        Data::Union(_) => (Vec::new(), Vec::new()),
+    };
+    variants
+        .into_iter()
+        .map(|variant| variant.attrs.as_slice())
+        .chain(
+            fields
+                .into_iter()
+                .flat_map(|fields| fields.iter().map(|field| field.attrs.as_slice())),
+        )
 }
 
 /// `#[serde(untagged)]` has no describable decoding rule.

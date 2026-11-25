@@ -435,9 +435,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// or a parameter field decodes into answers with it — its `type`, and the
 /// title, status and detail it names. The value is any expression of type
 /// `kynos::schema::constraints::ConstraintProblem`, typically a `const` from
-/// the application's problem catalogue. It is the only key a type's
-/// `#[schema(...)]` takes, and is taken once; a bound written on the type is
-/// refused, since it goes on the field whose value it holds.
+/// the application's problem catalogue. It is taken once. Beside `string`,
+/// below, it is the only key a type's `#[schema(...)]` takes; any other bound
+/// written on the type is refused, since it goes on the field whose value it
+/// holds.
 ///
 /// ```ignore
 /// mod problems {
@@ -457,6 +458,41 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///     magnet: String,
 /// }
 /// ```
+///
+/// `#[schema(string)]` on the type describes it as the one string its
+/// `Display` writes and its `FromStr` reads, such as an identifier wrapping a
+/// structured value: `type: string` under the type's prose and component name,
+/// whatever it declares. It requires both traits, reported at the key. Beside
+/// it, the type's `#[schema(...)]` takes the text's `min_length`, `max_length`,
+/// `pattern`, `content_encoding` and `content_media_type`, under the field
+/// grammar's rules, and `examples("...", ...)`. The bounds are described and
+/// checked on the text `Display` writes for the decoded value, so a `FromStr`
+/// that normalizes is bounded on what it normalizes to. `schema` asserts that
+/// `FromStr` reads each example and that it keeps the bounds, so a broken
+/// example stops the router being built rather than misleading a reader. A
+/// `format` is not taken, for the reason it is not on a field. No member is
+/// described, so a member's `#[schema(...)]`, a type or const parameter, and a
+/// derived kind are not either.
+///
+/// ```ignore
+/// /// A title reference, `<provider>:<id>`.
+/// #[derive(kynos::Schema, serde::Serialize, serde::Deserialize)]
+/// #[schema(string, min_length = 3, examples("tmdb:550"))]
+/// #[serde(into = "String", try_from = "String")]
+/// struct TitleRef(MediaId); // with `FromStr`, `Display` and both conversions
+/// ```
+///
+/// serde must carry the type as that string. A `#[serde(...)]` attribute
+/// anywhere on the type belongs to a serde derive, which writes the
+/// declaration unless the type converts through the text, so it is refused
+/// unless the type carries `into = "String"` and `from` or `try_from =
+/// "String"`; `transparent`, and a conversion through any other type, are
+/// refused outright. `Serialize` and `Deserialize` written by hand, through
+/// `serializer.collect_str(self)` and `FromStr`, need no attribute. A serde
+/// derive carrying no attribute at all goes unseen, since Rust hands a derive
+/// its item without the `#[derive(...)]` attributes before it: it writes a
+/// newtype as its member and any other struct as an object, which the schema
+/// then misdescribes. A parameter group's derive refuses `string`.
 ///
 /// A concrete type takes its identifier as its component name, and a field
 /// referring back to it is a `$ref`. A generic type's instantiation takes its
@@ -530,8 +566,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// - `#[serde(into = ...)]`, `from` or `try_from` on the type itself, struct or
 ///   enum. serde then writes or reads the type they name, which the declared
 ///   fields or variants no longer predict. Implement `Schema` by hand, describing
-///   the type serde converts through. `#[serde(remote = ...)]` is accepted,
-///   since its fields mirror the type it names.
+///   the type serde converts through, or add `#[schema(string)]` where that
+///   type is `String`. `#[serde(remote = ...)]` is accepted, since its fields
+///   mirror the type it names.
 /// - `#[serde(transparent)]` on a struct serde writes through one field and
 ///   reads through another. serde writes through the field without `skip` or
 ///   `skip_serializing` and reads through the field without `skip`,

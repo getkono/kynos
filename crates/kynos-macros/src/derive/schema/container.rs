@@ -1,11 +1,19 @@
-//! What the type's own serde attributes say, read once per derive.
+//! What the type's own serde attributes and `#[schema(...)]` say, read once
+//! per derive.
 
-use syn::{Data, DeriveInput, Fields, LitStr, Variant};
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::quote;
+use syn::{
+    Data, DeriveInput, Expr, Field, Fields, LitStr, Variant, parse::Parser, punctuated::Punctuated,
+    spanned::Spanned, token::Comma,
+};
 
 use super::{
     attributes::{Sides, serde_flag, sides, variant_rename_all},
-    members::is_written,
+    members::{field_groups, is_written},
+    refusals::check_constraint,
 };
+use crate::derive::attribute::Keys;
 use crate::derive::common::skip_value;
 use crate::doc::doc_string;
 
@@ -115,45 +123,197 @@ impl Container {
     }
 }
 
-/// The type's own `#[schema(constraint_problem = ...)]`: the expression naming
-/// the problem a broken bound answers with, written once.
+/// The field grammar's keys a string takes, which bound a `#[schema(string)]`
+/// type's text when written on the type.
+const TEXT_KEYS: &[&str] = &[
+    "min_length",
+    "max_length",
+    "pattern",
+    "content_encoding",
+    "content_media_type",
+];
+
+/// What a type's own `#[schema(...)]` says.
+#[derive(Default)]
+pub(crate) struct TypeSchema {
+    /// `constraint_problem = ...`: the problem a broken bound answers with.
+    pub(crate) constraint_problem: Option<Expr>,
+    /// `string`, with the bounds and examples written beside it.
+    pub(crate) string: Option<StringForm>,
+}
+
+/// A `#[schema(string, ...)]` type: one string, which `FromStr` reads and
+/// `Display` writes, whatever the type declares.
+pub(crate) struct StringForm {
+    /// The `string` key, where what the key requires of the type is reported.
+    pub(crate) span: Span,
+    /// A `String` field carrying the text's bounds, so they are described and
+    /// checked as any string field's are.
+    pub(crate) text: Field,
+    /// `examples(...)`, in the order written.
+    pub(crate) examples: Vec<LitStr>,
+}
+
+/// The type's own `#[schema(...)]`: `constraint_problem = ...`, the problem a
+/// broken bound answers with, written once; and `string`, which describes the
+/// type as the text its `Display` writes, bounded by [`TEXT_KEYS`] and
+/// illustrated by `examples(...)`.
 ///
-/// It is the one key a type's `#[schema(...)]` takes, so any other is refused
-/// rather than ignored: a bound written on the type would otherwise read as
-/// enforced and be neither described nor checked. `constraint_type`, which it
-/// replaced, is refused naming it.
-pub(crate) fn constraint_problem(input: &DeriveInput) -> syn::Result<Option<syn::Expr>> {
-    let mut named: Option<syn::Expr> = None;
+/// Any other key is refused rather than ignored: a bound written on the type
+/// would otherwise read as enforced and be neither described nor checked. So
+/// is a text bound or `examples` without `string`, and under `string` a
+/// generic parameter or a member's own `#[schema(...)]`, which would describe
+/// nothing. `constraint_type`, which `constraint_problem` replaced, is refused
+/// naming it.
+pub(crate) fn type_schema(input: &DeriveInput) -> syn::Result<TypeSchema> {
+    let mut read = TypeSchema::default();
+    let mut string: Option<Span> = None;
+    let mut bounds: Vec<TokenStream2> = Vec::new();
+    let mut examples: Vec<LitStr> = Vec::new();
+    // The first text bound or `examples`, which only `string` admits.
+    let mut textual: Option<(String, Span)> = None;
+    let mut keys = Keys::new("is already set, and a type's `#[schema(...)]` takes each key once")
+        .except(|key| key == "constraint_problem");
+
     for attr in &input.attrs {
         if !attr.path().is_ident("schema") {
             continue;
         }
         attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("constraint_type") {
-                return Err(meta.error(
+            let key = keys.read(&meta.path)?;
+            match key.as_str() {
+                "constraint_type" => Err(meta.error(
                     "`constraint_type` is now `constraint_problem`, naming the whole problem: \
                      write `constraint_problem = \
                      kynos::schema::constraints::ConstraintProblem::of_type(...)`",
-                ));
+                )),
+                "constraint_problem" => {
+                    if read.constraint_problem.is_some() {
+                        return Err(meta.error(
+                            "`constraint_problem` is already set: a type answers a broken bound \
+                             with one problem",
+                        ));
+                    }
+                    read.constraint_problem = Some(meta.value()?.parse()?);
+                    Ok(())
+                }
+                "string" => {
+                    if meta.input.peek(syn::Token![=]) || meta.input.peek(syn::token::Paren) {
+                        return Err(meta.error("`string` is a flag; write it alone"));
+                    }
+                    string = Some(meta.path.span());
+                    Ok(())
+                }
+                "examples" => {
+                    let content;
+                    syn::parenthesized!(content in meta.input);
+                    let listed = Punctuated::<LitStr, Comma>::parse_terminated(&content)?;
+                    if listed.is_empty() {
+                        return Err(meta.error(
+                            "`examples(...)` lists the strings a reader is shown, so it lists \
+                             at least one: `examples(\"...\")`, or leave the key out",
+                        ));
+                    }
+                    textual.get_or_insert((key, meta.path.span()));
+                    examples.extend(listed);
+                    Ok(())
+                }
+                _ if TEXT_KEYS.contains(&key.as_str()) => {
+                    // The grammar reads the value as a field's; the fork keeps
+                    // its tokens, spans and all, for the field built from them.
+                    let written = meta.input.fork();
+                    check_constraint(&meta)?;
+                    written.parse::<syn::Token![=]>()?;
+                    let value: Expr = written.parse()?;
+                    let path = &meta.path;
+                    bounds.push(quote!(#path = #value));
+                    textual.get_or_insert((key, meta.path.span()));
+                    Ok(())
+                }
+                _ => Err(meta.error(
+                    "a type's `#[schema(...)]` takes `constraint_problem = ...`, the problem a \
+                     broken bound answers with, and `string`, describing the type as the text \
+                     its `Display` writes, beside that text's `min_length`, `max_length`, \
+                     `pattern`, `content_encoding`, `content_media_type` and `examples(...)`; \
+                     any other bound goes on a field, whose value it holds",
+                )),
             }
-            if !meta.path.is_ident("constraint_problem") {
-                return Err(meta.error(
-                    "a type's `#[schema(...)]` takes only `constraint_problem = ...`, the \
-                     problem a broken bound answers with; bounds go on a field, whose value \
-                     they hold",
-                ));
-            }
-            if named.is_some() {
-                return Err(meta.error(
-                    "`constraint_problem` is already set: a type answers a broken bound with \
-                     one problem",
-                ));
-            }
-            named = Some(meta.value()?.parse()?);
-            Ok(())
         })?;
     }
-    Ok(named)
+
+    let Some(span) = string else {
+        return match textual {
+            Some((key, at)) => Err(syn::Error::new(
+                at,
+                format!(
+                    "`{key}` on a type describes the text of a `#[schema(string)]` type, and \
+                     this type is described by what it declares. Add `string` where `FromStr` \
+                     and `Display` carry the type as one string, or put a bound on the field \
+                     whose value it holds"
+                ),
+            )),
+            None => Ok(read),
+        };
+    };
+    reject_string_declaration(input)?;
+
+    // Unnamed, as a newtype's member is, and parsed rather than built, so
+    // the bounds keep the spans they were written at.
+    let text = Field::parse_unnamed.parse2(quote! {
+        #[schema(#(#bounds),*)]
+        ::std::string::String
+    })?;
+    read.string = Some(StringForm {
+        span,
+        text,
+        examples,
+    });
+    Ok(read)
+}
+
+/// What a `#[schema(string)]` type may not declare: a type or const
+/// parameter, since one component named by the type's identifier would stand
+/// for every instantiation; and a member's own `#[schema(...)]`, since no
+/// member is described.
+fn reject_string_declaration(input: &DeriveInput) -> syn::Result<()> {
+    if let Some(parameter) = input
+        .generics
+        .params
+        .iter()
+        .find(|parameter| !matches!(parameter, syn::GenericParam::Lifetime(_)))
+    {
+        return Err(syn::Error::new(
+            parameter.span(),
+            "a `#[schema(string)]` type is one component named by its identifier, so every \
+             instantiation of a generic one would be published under one name whatever its \
+             arguments. Make the type concrete, or implement `Schema` by hand returning a \
+             `name()` per instantiation",
+        ));
+    }
+    let members = field_groups(input)
+        .into_iter()
+        .flat_map(|fields| fields.iter())
+        .flat_map(|field| field.attrs.iter());
+    let variants = match &input.data {
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .flat_map(|variant| variant.attrs.iter())
+            .collect(),
+        Data::Struct(_) | Data::Union(_) => Vec::new(),
+    };
+    if let Some(attr) = members
+        .chain(variants)
+        .find(|attr| attr.path().is_ident("schema"))
+    {
+        return Err(syn::Error::new(
+            attr.span(),
+            "`#[schema(string)]` describes the type as the one string `Display` writes, so no \
+             member it declares is described and a member's `#[schema(...)]` would bound \
+             nothing. Bound the text on the type: `#[schema(string, max_length = ...)]`",
+        ));
+    }
+    Ok(())
 }
 
 /// The `= "..."` of a nested-meta item, when it has one.

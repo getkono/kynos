@@ -4,7 +4,7 @@ error: `maxium` is not part of the `#[schema(...)]` grammar, which is the keys o
 8 |     #[schema(maxium = 3)]
   |              ^^^^^^
 
-error: a type's `#[schema(...)]` takes only `constraint_problem = ...`, the problem a broken bound answers with; bounds go on a field, whose value they hold
+error: a type's `#[schema(...)]` takes `constraint_problem = ...`, the problem a broken bound answers with, and `string`, describing the type as the text its `Display` writes, beside that text's `min_length`, `max_length`, `pattern`, `content_encoding`, `content_media_type` and `examples(...)`; any other bound goes on a field, whose value it holds
   --> tests/ui/macros/params_schema_attribute_refused.rs:13:10
    |
 13 | #[schema(minimum = 1)]
