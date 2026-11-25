@@ -229,7 +229,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self.declare_security_schemes(&mut registry, &mut violations);
         self.name_instantiations(&mut registry);
         // Before any operation describes a problem carrying them.
-        if let Some(error) = Hook::declare(self.problem_members, &mut registry) {
+        if let Some(error) = Hook::declare(self.problems, &mut registry) {
             violations.push(error_at("#", error));
         }
 

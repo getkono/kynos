@@ -7,7 +7,11 @@
 use std::{marker::PhantomData, time::Duration};
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     extract::params::header::{EncodeHeaders, HeaderParams},
     http::{self, retry_after_header, set_retry_after},
     middleware::rate_limit::{
@@ -20,7 +24,9 @@ use crate::{
 
 /// What a limiter answers with when a policy refuses, in the `X-` spelling.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`.
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one.
 pub struct RateLimited<T = ()> {
     /// How long the client should wait before retrying.
     pub retry_after: Duration,
@@ -54,6 +60,14 @@ impl<T: ProblemType> IntoProblem for RateLimited<T> {
 
 impl<T: ProblemType> IntoResponse for RateLimited<T> {
     fn into_response(self) -> http::Response {
+        self.__refused(Refusing::default())
+    }
+}
+
+impl<T: ProblemType> ShortCircuit for RateLimited<T> {
+    const STATUSES: &'static [u16] = &[429];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
         // A denial's reset is its retry delay.
         refusal::<T, _>(
             self.retry_after,
@@ -62,24 +76,28 @@ impl<T: ProblemType> IntoResponse for RateLimited<T> {
                 remaining: 0,
                 reset: self.retry_after,
             },
+            problems,
         )
     }
-}
 
-impl<T: ProblemType> ShortCircuit for RateLimited<T> {
-    const STATUSES: &'static [u16] = &[429];
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let group = RateLimitHeaders::response_headers(registry);
+        described_refusal::<T>(registry, group, true)
+    }
 }
 
 impl<T: ProblemType> Responses for RateLimited<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let group = RateLimitHeaders::response_headers(registry);
-        described_refusal::<T>(registry, group)
+        described_refusal::<T>(registry, group, false)
     }
 }
 
 /// The same, in the draft's spelling.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`.
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one.
 pub struct RateLimitedFields<T = ()> {
     /// How long the client should wait before retrying.
     pub retry_after: Duration,
@@ -120,37 +138,54 @@ impl<T: ProblemType> IntoProblem for RateLimitedFields<T> {
 
 impl<T: ProblemType> IntoResponse for RateLimitedFields<T> {
     fn into_response(self) -> http::Response {
+        self.__refused(Refusing::default())
+    }
+}
+
+impl<T: ProblemType> ShortCircuit for RateLimitedFields<T> {
+    const STATUSES: &'static [u16] = &[429];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
         refusal::<T, _>(
             self.retry_after,
             &RateLimitFields {
                 limits: self.limits,
                 policies: self.policies,
             },
+            problems,
         )
     }
-}
 
-impl<T: ProblemType> ShortCircuit for RateLimitedFields<T> {
-    const STATUSES: &'static [u16] = &[429];
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        let group = RateLimitFields::response_headers(registry);
+        described_refusal::<T>(registry, group, true)
+    }
 }
 
 impl<T: ProblemType> Responses for RateLimitedFields<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
         let group = RateLimitFields::response_headers(registry);
-        described_refusal::<T>(registry, group)
+        described_refusal::<T>(registry, group, false)
     }
 }
 
-/// The 429's description, plus whichever header group produced it.
+/// The 429's description, plus whichever header group produced it, under the
+/// problem policy where `served`.
 ///
-/// [`refusal_response`] makes the named type a `const` in the declared schema.
+/// The named type is a `const` in the declared schema.
 fn described_refusal<T: ProblemType>(
     registry: &mut Registry,
     group: kynos_openapi::Map<kynos_openapi::RefOr<kynos_openapi::Header>>,
+    served: bool,
 ) -> kynos_openapi::Responses {
     let response = group.into_iter().fold(
-        refusal_response::<T>(registry, "the client has exceeded its request rate")
-            .with_header("Retry-After", retry_after_header()),
+        served_refusal_response::<T>(
+            registry,
+            http::StatusCode::TOO_MANY_REQUESTS,
+            "the client has exceeded its request rate",
+            served,
+        )
+        .with_header("Retry-After", retry_after_header()),
         |response, (name, header)| match header {
             kynos_openapi::RefOr::Item(header) => response.with_header(name, header),
             kynos_openapi::RefOr::Ref(_) => response,
@@ -168,14 +203,18 @@ fn problem<T: ProblemType>() -> Problem {
         .with_detail("the client has exceeded its request rate")
 }
 
-/// The 429 in either spelling: the problem, `Retry-After`, and `group` written
-/// through the same writer a forwarded response uses.
-fn refusal<T: ProblemType, G: EncodeHeaders>(retry_after: Duration, group: &G) -> http::Response {
-    let mut response = problem::<T>().into_response();
-    set_retry_after(&mut response, retry_after);
-    crate::response::headers::write_or_refuse(&mut response, group);
-
-    response
+/// The 429 in either spelling, under the problem policy `problems` holds: the
+/// problem, `Retry-After`, and `group` written through the same writer a
+/// forwarded response uses.
+fn refusal<T: ProblemType, G: EncodeHeaders>(
+    retry_after: Duration,
+    group: &G,
+    problems: Refusing,
+) -> http::Response {
+    refused(problem::<T>(), problems.0, |response| {
+        set_retry_after(response, retry_after);
+        crate::response::headers::write_or_refuse(response, group);
+    })
 }
 
 // Written out because `#[derive]` would bound the phantom marker `T`.
