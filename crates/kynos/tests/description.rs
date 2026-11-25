@@ -59,6 +59,11 @@
 //!
 //! The twelfth is which `operationId`s a case policy recases. A document that
 //! recased a written one, or left a derived one alone, would still validate.
+//!
+//! The thirteenth is which responses the document shares. The problems the
+//! framework writes, `catch_panics`'s 500 and a derived `ApiError`'s, are the
+//! ones every operation repeats, and a document writing each out in full at
+//! every operation would still validate.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
@@ -3975,4 +3980,76 @@ fn a_recased_operation_id_repeating_a_written_one_is_refused() {
     let cased = router().operation_id_case(OperationIdCase::LowerCamel);
     assert_eq!(repeated(&cased).len(), 1);
     assert!(cased.openapi().is_err());
+}
+
+/// One problem type two operations answer with.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum StockError {
+    #[error("the item is out of stock")]
+    #[problem(
+        status = 409,
+        type = "https://errors.example.com/orders/out-of-stock",
+        title = "Out of stock"
+    )]
+    OutOfStock,
+}
+
+#[kynos::get("/stock/first")]
+async fn first_stock() -> Result<NoContent, StockError> {
+    Err(StockError::OutOfStock)
+}
+
+#[kynos::get("/stock/second")]
+async fn second_stock() -> Result<NoContent, StockError> {
+    Err(StockError::OutOfStock)
+}
+
+/// The recovery's 500 and the `ApiError`'s 409 are each written once under
+/// `components/responses`, named for the problem they carry, and every
+/// operation refers to that one component, which says what the operation's
+/// own response said and leaves the document valid.
+#[test]
+fn a_problem_the_framework_writes_at_two_operations_is_one_named_component() {
+    use kynos::openapi::{Ref, RefOr, validate::Validator};
+
+    let document = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![first_stock, second_stock])
+        .openapi()
+        .expect("a describable router");
+    let written = inlined(document.clone());
+
+    for (status, name) in [
+        ("409", "OutOfStockProblemStatus409"),
+        ("500", "ProblemStatus500"),
+    ] {
+        let shared = document.components.responses.get(name).unwrap_or_else(|| {
+            panic!("no {name} among {:?}", document.components.responses.keys())
+        });
+        assert!(
+            shared
+                .as_item()
+                .is_some_and(|response| response.content.contains_key("application/problem+json")),
+            "{name} is the problem response itself"
+        );
+        for path in ["/stock/first", "/stock/second"] {
+            let operation = |document: &Document| {
+                document.paths.items[path]
+                    .operation(kynos::openapi::Method::Get)
+                    .expect("a described GET")
+                    .responses
+                    .responses[status]
+                    .clone()
+            };
+            assert_eq!(
+                operation(&document),
+                RefOr::Ref(Ref::response(name)),
+                "{path}"
+            );
+            assert_eq!(&operation(&written), shared, "{path}");
+        }
+    }
+
+    let version = document.spec_version().unwrap_or_default();
+    assert_eq!(Validator::new(version).validate(&document), []);
 }
