@@ -1674,8 +1674,11 @@ could not be named even after the check passed.
 `SecurityHeaders` sets `Cache-Control: no-store`, `Referrer-Policy: no-referrer`
 and `X-Content-Type-Options: nosniff`; `strict_transport_security` and
 `deny_framing` add `Strict-Transport-Security` and `X-Frame-Options: DENY`.
-Each opt-in is a const generic, because each adds a declared name and a name
-`CompatibleWith` compares has to be in a `const`.
+Each opt-in is a type parameter, because each adds a declared name and a name
+`CompatibleWith` compares has to be in a `const`. The parameters are named
+markers rather than `bool`s, `SecurityHeaders<Hsts, DenyFraming>`, so a
+returned interceptor's type reads as what it sends, and each position takes
+its own sealed trait, so the two cannot be given in the wrong order.
 
 **Each field replaces what the chain set.** That is what lets the document
 state every fixed field as a `const`: a handler's own `Cache-Control` surviving

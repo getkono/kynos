@@ -71,6 +71,7 @@ by task.
 | `const ALL: [Self; N]` and `ALL.into_iter().find(\|v\| v.as_str() == s)` | `T::VARIANTS` with `schema::UnitEnum` imported, or `s.parse()` through the `FromStr` the same derive implements | #1431 |
 | `#[problem(type = "<base literal>removed")]` beside a `const` base, and a test that the two agree | `#[problem(base = PROBLEM_BASE, slug = "removed")]` on a struct, or `slug = "removed"` on a variant under its enum's `base` | #1425 |
 | `-> Router<App, impl PanicPolicy, impl Sized + use<>, impl Sized + use<>>`, the `use<>` only so a call on a temporary compiles | `-> router::sealed::Sealed<App>`, and `.seal()` last in the body | #1435 |
+| `middleware::security_headers::SecurityHeaders<false, true>`, or any other pair of `bool`s, in a type naming one | `SecurityHeaders<NoHsts, DenyFraming>`, each marker from `middleware::security_headers`: `Hsts` or `NoHsts` first, `DenyFraming` or `NoDenyFraming` second; `SecurityFields` takes the same two | #1435 |
 
 ## 0.5 to 0.6
 
