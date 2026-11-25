@@ -45,6 +45,7 @@ mod flatten;
 pub(crate) mod instantiation;
 mod kinds;
 pub(crate) mod members;
+mod params;
 #[cfg(feature = "pattern")]
 mod pattern;
 mod refusals;
@@ -161,11 +162,13 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let kinds = kinds::newtype(input, &container, &generics);
     let flatten = flatten::emit(input, &container, &generics);
     let tagged = serde_tagged::emit(input, &container, &struct_name(input, &container));
+    let params = params::emit(input, &container);
 
     Ok(quote! {
         #flatten
         #kinds
         #tagged
+        #params
 
         // The impl names the type, so a `#[deprecated]` type would otherwise warn
         // at its own definition (as serde's derives also allow).

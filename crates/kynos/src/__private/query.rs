@@ -1,7 +1,15 @@
 //! What a `#[derive(QueryParams)]` group's `parameters` does beyond building
-//! each Parameter Object.
+//! each Parameter Object, and the probe by which the `Schema` derive refuses a
+//! `#[param(default)]` or `#[param(flatten)]` serde reads otherwise.
+//!
+//! serde is probed by autoref specialization, as in
+//! [`string_form`](super::string_form): `(&Group::<T>::new()).by_serde()`
+//! resolves to [`ReadBySerde`] where `T` implements `DeserializeOwned`, so a
+//! `QueryString<T>` reads it, and to [`UnreadBySerde`] where it does not.
+//! Only the latter implements [`DefaultAgrees`] and [`FlattenAgrees`], so a
+//! group no `QueryString<T>` can read, having no serde, compiles.
 
-use std::fmt::Display;
+use std::{fmt::Display, marker::PhantomData};
 
 use kynos_openapi::{Schema as OpenApiSchema, SchemaType, TypeSet};
 
@@ -91,4 +99,93 @@ pub(crate) fn with_default(schema: OpenApiSchema, text: String) -> OpenApiSchema
     };
     object.default = Some(typed);
     OpenApiSchema::Object(object)
+}
+
+/// A query group, whose serde [`ProbeRead`] and [`ProbeUnread`] probe.
+pub struct Group<T>(PhantomData<T>);
+
+impl<T> Group<T> {
+    /// The probe of `T`.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self(PhantomData)
+    }
+}
+
+impl<T> Default for Group<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<T> std::fmt::Debug for Group<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Group(..)")
+    }
+}
+
+/// A group serde reads, so a `QueryString<T>` reads it too.
+#[derive(Debug)]
+pub struct ReadBySerde;
+
+/// A group serde does not read, so only a `Query<T>` reads it.
+#[derive(Debug)]
+pub struct UnreadBySerde;
+
+/// Resolves a `DeserializeOwned` group to [`ReadBySerde`].
+pub trait ProbeRead {
+    /// That serde reads the group.
+    fn by_serde(&self) -> ReadBySerde {
+        ReadBySerde
+    }
+}
+
+impl<T: serde::de::DeserializeOwned> ProbeRead for Group<T> {}
+
+/// The fallback of [`ProbeRead`], for a group with no `DeserializeOwned`.
+pub trait ProbeUnread {
+    /// That serde does not read the group.
+    fn by_serde(&self) -> UnreadBySerde {
+        UnreadBySerde
+    }
+}
+
+impl<T> ProbeUnread for &Group<T> {}
+
+/// What a group whose field carries `#[param(default = ...)]` and no serde
+/// `default` must be: one serde does not read.
+#[diagnostic::on_unimplemented(
+    message = "serde requires this field, which `#[param(default = ...)]` fills, so \
+               `QueryString<T>` would refuse what `Query<T>` reads",
+    label = "serde is not told this default",
+    note = "add `#[serde(default = \"...\")]` naming a function returning the same value, or \
+            `#[serde(default)]` where the type's `Default` is that value"
+)]
+pub trait DefaultAgrees {}
+
+impl DefaultAgrees for UnreadBySerde {}
+
+/// What a group whose field carries `#[param(flatten)]` and no serde
+/// `flatten` must be: one serde does not read.
+#[diagnostic::on_unimplemented(
+    message = "serde reads this field as one nested member, which `#[param(flatten)]` reads \
+               in its place, so `QueryString<T>` and `Query<T>` would read the group differently",
+    label = "serde is not told this flatten",
+    note = "add `#[serde(flatten)]` beside `#[param(flatten)]`, so both read the flattened \
+            group's members in its place"
+)]
+pub trait FlattenAgrees {}
+
+impl FlattenAgrees for UnreadBySerde {}
+
+/// Refuses, where `probe` is [`ReadBySerde`], a `#[param(default = ...)]`
+/// serde is not told.
+pub fn default_agrees<P: DefaultAgrees>(probe: &P) {
+    let _ = probe;
+}
+
+/// Refuses, where `probe` is [`ReadBySerde`], a `#[param(flatten)]` serde is
+/// not told.
+pub fn flatten_agrees<P: FlattenAgrees>(probe: &P) {
+    let _ = probe;
 }

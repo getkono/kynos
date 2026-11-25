@@ -683,10 +683,12 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// - A parameter group's `#[param(flatten)]` on a field serde reads nested,
 ///   lacking serde's own `flatten`, and its `#[param(default = ...)]` on a
 ///   field serde requires, lacking serde's own `default` on the field or its
-///   struct: `Query<T>` would read the group one way and `QueryString<T>`,
-///   which this derive describes, another. Say each to serde too; serde's
-///   default names a function, so returning the same value is the
-///   application's to keep.
+///   struct, where the group implements `DeserializeOwned`: `Query<T>` would
+///   read the group one way and `QueryString<T>`, which this derive
+///   describes, another. Say each to serde too; serde's default names a
+///   function, so returning the same value is the application's to keep. A
+///   group with no serde, which no `QueryString<T>` reads, and a generic one
+///   are not refused.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::schema::expand_inner)

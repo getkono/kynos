@@ -131,9 +131,17 @@ fn every_guided_diagnostic_has_a_snapshot() {
             "ClosedFlatten",
             "macros/schema_flatten_internally_tagged_denying_unknown_fields.stderr",
         ),
+        (
+            "DefaultAgrees",
+            "macros/schema_query_params_unspelt_to_serde.stderr",
+        ),
         ("Describe", "traits/describe.stderr"),
         ("EndpointMeta", "traits/endpoint_meta.stderr"),
         ("Flatten", "traits/flatten.stderr"),
+        (
+            "FlattenAgrees",
+            "macros/schema_query_params_unspelt_to_serde.stderr",
+        ),
         ("FromRequest", "antipattern/raw_request_extractor.stderr"),
         (
             "FromRequestParts",

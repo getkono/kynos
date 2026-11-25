@@ -584,12 +584,26 @@ mod schema {
         ]
     }
 
-    /// The refusals of a query group's `#[param(...)]` serde is not also told,
-    /// which `Query<T>` and the `QueryString<T>` this derive describes would
-    /// read differently.
-    fn param_ledger() -> Vec<Case> {
-        vec![
-            case(
+    /// The serde probes `expand_inner` emits for `input`, by the refusing
+    /// function each names.
+    fn param_probes(input: TokenStream2) -> Vec<&'static str> {
+        let input = syn::parse2(input).expect("the case itself must parse");
+        let expanded = expand_inner(&input)
+            .expect("a `#[param(...)]` serde is not told is the type checker's to refuse")
+            .to_string();
+        ["flatten_agrees", "default_agrees"]
+            .into_iter()
+            .filter(|probe| expanded.contains(probe))
+            .collect()
+    }
+
+    /// Each `#[param(...)]` serde is not also told is probed, for the type
+    /// checker to refuse where serde reads the group, which no derive input
+    /// shows.
+    #[test]
+    fn a_param_serde_is_not_told_is_probed() {
+        for (description, unspelt, probe) in [
+            (
                 "`#[param(flatten)]` on a field serde reads nested",
                 quote::quote!(
                     struct Listing {
@@ -597,9 +611,9 @@ mod schema {
                         page: Page,
                     }
                 ),
-                "Add `#[serde(flatten)]` beside `#[param(flatten)]`",
+                "flatten_agrees",
             ),
-            case(
+            (
                 "`#[param(default = ...)]` on a field serde requires",
                 quote::quote!(
                     struct Page {
@@ -607,16 +621,30 @@ mod schema {
                         limit: u32,
                     }
                 ),
-                "would refuse what `Query<T>` fills with its default",
+                "default_agrees",
             ),
-        ]
+        ] {
+            assert_eq!(param_probes(unspelt), [probe], "{description}");
+        }
     }
 
     /// Each `#[param(...)]` serde is also told, on the field or, for a
-    /// default, on the struct, is accepted.
+    /// default, on the struct, is not probed, nor is a generic group, on which
+    /// the probe's specialization cannot resolve.
     #[test]
-    fn a_param_serde_is_also_told_is_accepted() {
+    fn a_param_serde_is_also_told_is_not_probed() {
         for (description, accepted) in [
+            (
+                "a generic group",
+                quote::quote!(
+                    struct Page<T> {
+                        #[param(default = 50)]
+                        limit: u32,
+                        #[param(flatten)]
+                        rest: T,
+                    }
+                ),
+            ),
             (
                 "both `flatten`s",
                 quote::quote!(
@@ -648,10 +676,7 @@ mod schema {
                 ),
             ),
         ] {
-            let input = syn::parse2(accepted).expect("the case itself must parse");
-            if let Err(error) = expand_inner(&input) {
-                panic!("{description} was refused: {error}");
-            }
+            assert!(param_probes(accepted).is_empty(), "{description}");
         }
     }
 
@@ -842,7 +867,6 @@ mod schema {
         each_case_is_refused(field_ledger(), expand_inner);
         each_case_is_refused(tag_ledger(), expand_inner);
         each_case_is_refused(rename_ledger(), expand_inner);
-        each_case_is_refused(param_ledger(), expand_inner);
     }
 
     /// A qualified key matches no constraint, so it reaches the unknown-key
@@ -1043,7 +1067,6 @@ mod schema {
                 include_str!("schema/refusals/grammar.rs"),
                 include_str!("schema/refusals/naming.rs"),
                 include_str!("schema/refusals/object_keys.rs"),
-                include_str!("schema/refusals/params.rs"),
                 include_str!("schema/refusals/recursion.rs"),
                 include_str!("schema/refusals/skips.rs"),
                 include_str!("schema/refusals/wire_form.rs"),
@@ -1061,7 +1084,6 @@ mod schema {
                 + field_ledger().len()
                 + tag_ledger().len()
                 + rename_ledger().len()
-                + param_ledger().len()
                 - IN_ATTRIBUTE,
         );
     }
