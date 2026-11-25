@@ -5152,6 +5152,42 @@ mod api_error {
                 "a non-empty run of the characters a URI path admits",
             ),
             case(
+                "a `slug` opening with the `/` its `base` carries",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "/removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Drop the leading `/`",
+            ),
+            case(
+                "a `slug` ending in `/`",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "removed/")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Drop the trailing `/`",
+            ),
+            case(
+                "a `slug` with an empty segment",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "moderation//removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Write a single `/` between segments",
+            ),
+            case(
+                "a `slug` with a dot segment",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "moderation/../removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "are dot segments",
+            ),
+            case(
                 "a `slug` on the enum, when each variant names its own",
                 quote::quote!(
                     #[problem(base = "https://errors.example.com/", slug = "removed")]
@@ -5213,6 +5249,8 @@ mod api_error {
             "moderation/removed",
             "a%2Fb",
             "-._~!$&'()*+,;=:@",
+            "v1.2/...",
+            "a%2Eb/%2E%2E%2E",
         ] {
             let input = syn::parse2(quote::quote!(
                 #[problem(base = "https://errors.example.com/", slug = #slug)]
@@ -5222,6 +5260,35 @@ mod api_error {
             ))
             .expect("the case parses");
             assert!(expand_inner(&input).is_ok(), "`{slug}` was refused");
+        }
+    }
+
+    /// Beyond the ledger's one row each: a bare `/` is refused as leading, and
+    /// a dot segment wherever it sits, whichever dot is percent-encoded and in
+    /// either case, since RFC 3986 decodes `%2E` before resolving it.
+    #[test]
+    fn a_slug_refuses_a_dot_segment_however_spelled() {
+        for (slug, expects) in [
+            ("/", "Drop the leading `/`"),
+            (".", "are dot segments"),
+            ("..", "are dot segments"),
+            ("moderation/./removed", "are dot segments"),
+            ("%2E", "are dot segments"),
+            ("moderation/%2e%2E", "are dot segments"),
+            (".%2E/removed", "are dot segments"),
+        ] {
+            each_case_is_refused(
+                vec![case(
+                    "a `slug` whose segments name another URI",
+                    quote::quote!(
+                        #[problem(base = "https://errors.example.com/", slug = #slug)]
+                        #[problem(status = 410)]
+                        struct Removed;
+                    ),
+                    expects,
+                )],
+                expand_inner,
+            );
         }
     }
 

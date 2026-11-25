@@ -138,7 +138,7 @@ enum StoreError {
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
-| variant | `slug` | the type URI's part after `base`, in place of the kebab-cased name, joined verbatim in URI path characters; on a struct too, never on an enum, never beside `type`, and only under a `base` |
+| variant | `slug` | the type URI's part after `base`, in place of the kebab-cased name, joined verbatim as that name is: `/`-separated segments in URI path characters, none empty or a dot segment, so no leading, trailing or doubled `/`; on a struct too, never on an enum, never beside `type`, and only under a `base` |
 | variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`, or as `AuthRejection`, which an authenticator's own error holds ([`security.md`](security.md#an-authenticator-may-fail-with-the-applications-own-error)); implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
 | variant | `from` | on a transparent variant, generate `From` the error it holds, as `thiserror`'s `#[from]` would; never beside that `#[from]`, and one variant per held type |
 | variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
@@ -420,7 +420,8 @@ problem.
 
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,
-a `base` on a variant, a `slug` outside URI path characters, on an enum,
+a `base` on a variant, a `slug` outside URI path characters, with an empty
+or dot segment, on an enum,
 beside `type`, with no `base`, or on a variant answering as another, an
 `extension` on a field with
 no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an

@@ -267,10 +267,54 @@ fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> syn::Resul
     }))
 }
 
-/// What a `slug` names: a non-empty run of the characters RFC 3986 admits in
-/// a path, `pchar` and `/`, each `%` opening a percent-encoded octet, since it
-/// is joined verbatim onto `base` as the type URI's tail.
+/// What a `slug` names: one or more `/`-separated path segments, each a
+/// non-empty run of RFC 3986 `pchar`s, each `%` opening a percent-encoded
+/// octet, and none a dot segment. It is joined verbatim onto `base`, as the
+/// kebab-cased name is, so it is refused wherever it would publish a URI a
+/// sibling's slug names differently or one resolution would rewrite.
 fn spelled(literal: &LitStr) -> syn::Result<String> {
+    let slug = characters(literal)?;
+    let span = literal.span();
+    if slug.starts_with('/') {
+        return Err(syn::Error::new(
+            span,
+            "`slug` is joined onto `base` verbatim, as the kebab-cased name is, so `base` \
+             carries the separator; a leading `/` under a `base` ending in one publishes an \
+             empty path segment, a type URI other than the one a sibling's `slug` without it \
+             names. Drop the leading `/`",
+        ));
+    }
+    if slug.ends_with('/') {
+        return Err(syn::Error::new(
+            span,
+            "a `slug` ending in `/` publishes a type URI other than the same slug without it, \
+             as a kebab-cased name never ends in one. Drop the trailing `/`",
+        ));
+    }
+    for segment in slug.split('/') {
+        if segment.is_empty() {
+            return Err(syn::Error::new(
+                span,
+                "`//` in a `slug` is an empty path segment, publishing a type URI other than \
+                 the one naming it with a single `/`. Write a single `/` between segments",
+            ));
+        }
+        let decoded = segment.replace("%2E", ".").replace("%2e", ".");
+        if decoded == "." || decoded == ".." {
+            return Err(syn::Error::new(
+                span,
+                "`.` and `..` in a `slug`, percent-encoded as `%2E` or not, are dot segments, \
+                 which RFC 3986 reference resolution removes, so a client resolving the type \
+                 URI reads another one. Name the segment",
+            ));
+        }
+    }
+    Ok(slug)
+}
+
+/// A `slug`'s characters: a non-empty run of the characters RFC 3986 admits
+/// in a path, `pchar` and `/`, each `%` opening a percent-encoded octet.
+fn characters(literal: &LitStr) -> syn::Result<String> {
     let slug = literal.value();
     let bytes = slug.as_bytes();
     let mut index = 0;

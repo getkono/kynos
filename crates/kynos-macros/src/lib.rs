@@ -718,7 +718,9 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// ```
 ///
 /// A `slug` is joined verbatim, as `kynos::problem_type!` joins one, so it is
-/// written in URI path characters, percent-encoded. Beside `type`, which names
+/// written in URI path characters, percent-encoded, as `/`-separated segments
+/// none of which is empty or a dot segment, since `base` carries the separator
+/// and a client resolving `.` or `..` reads another URI. Beside `type`, which names
 /// the whole URI, on an enum rather than its variants, or on a type with no
 /// `base` to hang it under, it is a compile error rather than dropped.
 ///
