@@ -16,16 +16,18 @@ mise pins the toolchain and every tool the gates use.
 
 ```bash
 mise install
-mise exec -- hk install --mise   # commit-msg, pre-commit and pre-push hooks
-mise run check                   # the gates a local change owes
-mise run ci                      # every check CI runs on master and PRs
+mise run hooks:install   # commit-msg, pre-commit and pre-push hooks
+mise run check           # the gates a local change owes
+mise run ci              # every check CI runs on master and PRs
 ```
 
 CI splits them. Every pull request runs the fast ones, `commits:check` and
-`msrv:check`, and `commits:gates` over each of its commits (`ci.yml`). The rest, with `coverage:ci`, `publish:check`, the
-other platforms and the cost sweeps, run in `full.yml`: on the release pull
-request, on master once merges stop, and on a pull request labelled `ci:full`,
-which also mutates its changed lines. `full.yml` repeats `msrv:check`, so the
+`msrv:check`, and `commits:gates` over each of its commits (`ci.yml`; its
+`Per-commit gates` check is not a required one, so a red run does not stop a
+merge). The rest, with `coverage:ci`, `publish:check`, the other platforms and
+the cost sweeps, run in `full.yml`: on the release pull request, on master once
+merges stop, and on a pull request labelled `ci:full`, which also mutates its
+changed lines. `full.yml` repeats `msrv:check`, so the
 required `Comprehensive` check, and with it the release, blocks on it. Ask for
 the label when a change touches a feature flag, a `#[cfg]` or a
 platform-specific path.
@@ -41,7 +43,7 @@ platform-specific path.
 | `mise run lint` | Clippy over every feature, warnings denied |
 | `mise run features:check` | a feature flag or a `#[cfg]` changed; nothing else catches a broken combination |
 | `mise run docs:check` | a public item changed; `missing_docs` is denied |
-| `mise run commits:gates` | before pushing a series by hand; the `pre-push` hook runs it, `KYNOS_COMMIT_RANGE` names another range |
+| `mise run commits:gates` | before pushing a series by hand; the `pre-push` hook runs it over the refs a push names, `-- range OLD NEW` over another range |
 | `mise run containment:check` | a dependency or module moved; it enforces where each crate may be named |
 | `mise run tooling:check` | a script, `mise.toml` or `.cargo/config.toml` changed; it holds the Python floor and the dev build profile |
 
@@ -72,11 +74,13 @@ in the `commit-msg` hook and in CI. Merge commits are exempt.
 
 The hooks split the gates by cost. `pre-commit` stays fast: formatting, Clippy,
 containment and tooling, over the staged files. `pre-push` runs
-`mise run commits:gates`, which checks each commit the push publishes out on
-its own under `target/` and runs `lint`, `docs:check`, `api:check` and
-`msrv:check` there, each only on a commit that changes what it reads; CI's
-`commit-gates` job runs it over every commit of a pull request and of a master
-push. A commit that passes `pre-commit` can still fail it: hk's stash leaves
+`mise run commits:gates` over the refs the push names, whichever branch is
+checked out, and checks each commit they publish out on its own under
+`target/`, running `lint`, `docs:check`, `api:check` and `msrv:check` there,
+each only on a commit that changes what it reads; CI's `Per-commit gates` job
+runs it over every commit of a pull request and of a master push. hk runs the
+other two hooks; `pre-push` is `scripts/commit_gates.py`'s, because hk hands
+its steps none of the pushed refs. A commit that passes `pre-commit` can still fail it: hk's stash leaves
 untracked files in place whenever a tracked file has unstaged changes, so
 `pre-commit` may have built a tree the commit does not record. `test` is not
 one of the gates, for the red-test commit below.
