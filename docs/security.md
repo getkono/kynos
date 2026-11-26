@@ -363,19 +363,26 @@ against another type does not compile. `Authorizer::authorize` receives
 string a `filter_map` silently drops.
 
 `#[derive(Scope)]` writes `name` from the name serde writes each variant
-under, by the rule the `Schema` and `ParamValue` derives read, so the scope a
-configuration parses and the one a token carries cannot drift apart. An enum
-serde does not name says it with `#[scope(rename_all)]` and `#[scope(rename)]`
-instead, and only such an enum: either key on an enum implementing `Serialize`
-or `DeserializeOwned` is a compile error, as a `#[scope(rename)]` under
-`#[serde(rename_all)]` is, since each would be a second name for one scope.
-The check probes the traits, so it refuses a hand-written serde
-implementation too, whose names the derive cannot read either; such an enum
-implements `Scope` by hand. A generic enum is refused, the probe resolving only
-on a concrete type. Without either key the name is the variant's identifier, as
-serde's is, rather than a casing serde would not read. A name a token's
-space-separated `scope` list cannot carry (RFC 6749 section 3.3) and two
-variants naming one scope are compile errors.
+under, by the rule the `Schema` and `ParamValue` derives read, so on an enum
+deriving serde the scope a configuration parses and the one a token carries are
+one name. An enum serde does not name says it with `#[scope(rename_all)]` and
+`#[scope(rename)]` instead, and only such an enum: either key on an enum
+implementing `Serialize` or `DeserializeOwned` is a compile error, as a
+`#[scope(rename)]` under `#[serde(rename_all)]` is, since each would be a second
+name for one scope. The check probes the traits, so it refuses a key on a
+hand-written serde implementation too, whose names the derive cannot read. A
+generic enum is refused, the probe resolving only on a concrete type. Without
+either key the name is the variant's identifier, as derived serde's is, rather
+than a casing serde would not read. A name a token's space-separated `scope`
+list cannot carry (RFC 6749 section 3.3) and two variants naming one scope are
+compile errors.
+
+That leaves the one drift the derive cannot see. An enum whose `Serialize` or
+`Deserialize` is written by hand and that carries no key still derives `Scope`,
+under its variant identifiers, and nothing compares those with the names its
+serde implementation writes and reads, so a configuration can parse one scope
+and a token carry another. Such an enum implements `Scope` by hand, its `name`
+returning the names its serde implementation uses.
 
 | Where | Scope type |
 | --- | --- |
