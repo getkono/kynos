@@ -1,7 +1,7 @@
 //! Rate limiting.
 //!
 //! Kynos supplies the description, the 429, the headers and — through
-//! [`Quotas`](quota::Quotas) — a sliding-window algorithm over named quotas.
+//! [`Quotas`] — a sliding-window algorithm over named quotas.
 //! The application supplies *where the counters live*.
 //!
 //! # How this module is laid out
