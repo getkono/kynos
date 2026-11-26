@@ -19,6 +19,7 @@ use std::{borrow::Cow, time::Duration};
 
 use crate::http::HeaderValue;
 
+mod encode;
 mod header;
 
 /// When a cookie may accompany a cross-site request.
@@ -83,6 +84,11 @@ pub struct Cookie {
 
 impl Cookie {
     /// A cookie called `name` carrying `value`.
+    ///
+    /// Give it a [`Cookie::path`]: without one a user agent scopes it to the
+    /// directory of the request that set it (RFC 6265bis section 5.1.4), so a
+    /// cookie set by `POST /auth/login` is not sent to `/api`, and a removal
+    /// sent from another URL misses it.
     #[must_use]
     pub fn new(name: impl Into<Cow<'static, str>>, value: impl Into<Cow<'static, str>>) -> Self {
         Self {
@@ -105,12 +111,66 @@ impl Cookie {
     /// a non-positive `Max-Age` as the earliest representable date.
     ///
     /// The `path` and `domain` have to match the cookie being deleted, because
-    /// a browser keys on all three.
+    /// a browser keys on all three. Where the cookie being deleted is at hand,
+    /// [`Cookie::to_removal`] matches it without restating them.
     #[must_use]
     pub fn removal(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
             max_age: Some(Duration::ZERO),
             ..Self::new(name, "")
+        }
+    }
+
+    /// A cookie that deletes this one.
+    ///
+    /// Every attribute but the lifetime is kept, the value is emptied, and
+    /// `Max-Age=0` is sent, as [`Cookie::removal`] does. They are kept because
+    /// a user agent ignores a removal (RFC 6265bis section 5.7):
+    ///
+    /// - whose name, `Domain` and `Path` differ, which replaces nothing;
+    /// - without `Secure`, where its name prefix or `SameSite=None` demands it;
+    /// - whose `SameSite` is not `None`, sent from a cross-site context;
+    /// - without `Partitioned`, against a partitioned cookie, which is stored
+    ///   apart from an unpartitioned one of the same name (CHIPS).
+    ///
+    /// Keeping an attribute the original never set keeps nothing. A user agent
+    /// fills a missing `Path` with the directory of the request it answers
+    /// (section 5.1.4) and a missing `Domain` with that request's host, so a
+    /// removal answering a request to another URL is filed elsewhere and
+    /// misses the original. An explicit [`Cookie::path`], and a
+    /// [`Cookie::domain`] where the cookie is shared across hosts, is what
+    /// makes the removal match from any URL.
+    ///
+    /// ```
+    /// use kynos::response::cookie::{Cookie, SameSite};
+    ///
+    /// fn session(token: &str) -> Cookie {
+    ///     Cookie::new("sid", token.to_owned())
+    ///         .path("/app")
+    ///         .secure()
+    ///         .http_only()
+    ///         .same_site(SameSite::Strict)
+    /// }
+    ///
+    /// let logout = session("").to_removal();
+    ///
+    /// assert_eq!(
+    ///     logout.encode().expect("a representable cookie").to_str().unwrap(),
+    ///     "sid=; Path=/app; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
+    /// );
+    /// ```
+    #[must_use]
+    pub fn to_removal(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            value: Cow::Borrowed(""),
+            path: self.path.clone(),
+            domain: self.domain.clone(),
+            max_age: Some(Duration::ZERO),
+            secure: self.secure,
+            http_only: self.http_only,
+            same_site: self.same_site,
+            partitioned: self.partitioned,
         }
     }
 
@@ -144,6 +204,28 @@ impl Cookie {
     #[must_use]
     pub fn secure(mut self) -> Self {
         self.secure = true;
+        self
+    }
+
+    /// Sends the cookie only over a secure connection where `secure` holds.
+    ///
+    /// For a deployment setting, so a builder chain needs no branch. It sets
+    /// the flag rather than adding to it, so `secure_if(false)` clears an
+    /// earlier [`Cookie::secure`]. A cookie that is dropped without `Secure`
+    /// (see [`Cookie::encode`]) still sends it.
+    ///
+    /// ```
+    /// use kynos::response::cookie::Cookie;
+    ///
+    /// let locale = || Cookie::new("locale", "en-GB");
+    ///
+    /// assert_eq!(locale().secure_if(true), locale().secure());
+    /// assert_eq!(locale().secure_if(false), locale());
+    /// assert_eq!(locale().secure().secure_if(false), locale());
+    /// ```
+    #[must_use]
+    pub fn secure_if(mut self, secure: bool) -> Self {
+        self.secure = secure;
         self
     }
 
@@ -192,76 +274,7 @@ impl Cookie {
     /// does, and answers 500 where it returns `None`.
     #[must_use]
     pub fn encode(&self) -> Option<HeaderValue> {
-        if !crate::http::is_token(self.name.as_bytes()) || !is_cookie_value(&self.value) {
-            return None;
-        }
-
-        // RFC 6265bis section 5.6 step 5 measures name and value only.
-        if self.name.len().saturating_add(self.value.len()) > MAX_NAME_AND_VALUE {
-            return None;
-        }
-
-        // Sections 4.1.3.1 and 4.1.3.2: a user agent discards a cookie whose
-        // prefix requirements are unmet, so they are enforced here.
-        let host_prefixed = has_prefix(&self.name, HOST_PREFIX);
-        if host_prefixed {
-            // Refused rather than corrected: dropping either would silently
-            // widen the cookie's scope.
-            if self.domain.is_some() {
-                return None;
-            }
-            if self.path.as_deref().is_some_and(|path| path != "/") {
-                return None;
-            }
-        }
-
-        let mut rendered = format!("{}={}", self.name, self.value);
-
-        if host_prefixed {
-            // Supplied, since the default path derived from the request URI
-            // would fail the prefix check.
-            rendered.push_str("; Path=/");
-        } else if let Some(path) = &self.path {
-            if !is_attribute_value(path) {
-                return None;
-            }
-            rendered.push_str("; Path=");
-            rendered.push_str(path);
-        }
-        if let Some(domain) = &self.domain {
-            if !is_domain_value(domain) {
-                return None;
-            }
-            rendered.push_str("; Domain=");
-            rendered.push_str(domain);
-        }
-        if let Some(age) = self.max_age {
-            rendered.push_str("; Max-Age=");
-            rendered.push_str(&crate::http::whole_seconds(age).to_string());
-        }
-        // `SameSite=None`, `Partitioned` (CHIPS, draft-cutler-httpbis-
-        // partitioned-cookies section 2.1) and both name prefixes are silently
-        // dropped without `Secure`, so it is added for them.
-        if self.secure
-            || self.same_site == Some(SameSite::None)
-            || self.partitioned
-            || host_prefixed
-            || has_prefix(&self.name, SECURE_PREFIX)
-        {
-            rendered.push_str("; Secure");
-        }
-        if self.http_only {
-            rendered.push_str("; HttpOnly");
-        }
-        if let Some(same_site) = self.same_site {
-            rendered.push_str("; SameSite=");
-            rendered.push_str(same_site.as_str());
-        }
-        if self.partitioned {
-            rendered.push_str("; Partitioned");
-        }
-
-        HeaderValue::from_str(&rendered).ok()
+        self.render()
     }
 }
 
@@ -329,60 +342,6 @@ impl FromIterator<Cookie> for SetCookieHeaders {
             cookies: cookies.into_iter().collect(),
         }
     }
-}
-
-/// The most a cookie's name and value may total, per RFC 6265bis section 5.6.
-const MAX_NAME_AND_VALUE: usize = 4096;
-
-/// RFC 6265bis section 4.1.3.2's prefix.
-const HOST_PREFIX: &str = "__Host-";
-
-/// RFC 6265bis section 4.1.3.1's prefix.
-const SECURE_PREFIX: &str = "__Secure-";
-
-/// Whether `name` begins with `prefix` in any case.
-///
-/// RFC 6265bis section 5.4: "UAs MUST match cookie name prefixes
-/// case-insensitively", so `__host-` is discarded on the same terms as
-/// `__Host-`.
-fn has_prefix(name: &str, prefix: &str) -> bool {
-    name.as_bytes()
-        .get(..prefix.len())
-        .is_some_and(|head| head.eq_ignore_ascii_case(prefix.as_bytes()))
-}
-
-/// RFC 6265 section 4.1.1 `domain-value`, which is a `<subdomain>` per RFC 1034
-/// section 3.5 as updated by RFC 1123 section 2.1.
-///
-/// A leading `.` is tolerated because RFC 6265 section 5.2.3 strips one.
-fn is_domain_value(text: &str) -> bool {
-    let text = text.strip_prefix('.').unwrap_or(text);
-
-    !text.is_empty()
-        && text.split('.').all(|label| {
-            !label.is_empty()
-                && label.len() <= 63
-                && !label.starts_with('-')
-                && !label.ends_with('-')
-                && label
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
-        })
-}
-
-/// RFC 6265 section 4.1.1 `cookie-value`: no control, whitespace, `"`, `,`, `;`
-/// or `\`.
-fn is_cookie_value(text: &str) -> bool {
-    text.bytes()
-        .all(|byte| (0x21..=0x7e).contains(&byte) && !matches!(byte, b'"' | b',' | b';' | b'\\'))
-}
-
-/// An attribute value carries anything printable except `;`, which would end it.
-fn is_attribute_value(text: &str) -> bool {
-    !text.is_empty()
-        && text
-            .bytes()
-            .all(|byte| (0x20..=0x7e).contains(&byte) && byte != b';')
 }
 
 #[cfg(test)]

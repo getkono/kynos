@@ -20,7 +20,7 @@ fn rendered(cookie: &Cookie) -> Option<String> {
 /// `tests/interceptors.rs` walks `src/middleware/` rather than listing it: a
 /// transcribed list is a third place the set is written down, and it drifts.
 /// Every attribute builder takes `mut self` and returns `Self`, which is what
-/// separates them from `new`, `removal`, `name` and `encode`.
+/// separates them from `new`, `removal`, `to_removal`, `name` and `encode`.
 ///
 /// The scan reads the shape rather than a line. Comment lines go first, so a
 /// `pub fn` inside a doc example is not mistaken for a declaration, and what
@@ -64,6 +64,9 @@ fn every_attribute_builder_is_covered_by_the_sweep() {
         "path",
         "same_site",
         "secure",
+        // `secure`'s field under a condition; its doctest holds it to
+        // `secure`.
+        "secure_if",
     ]);
 
     assert_eq!(
@@ -108,6 +111,28 @@ fn a_removal_expires_the_cookie_it_names() {
     assert_eq!(
         rendered(&Cookie::removal("session").path("/app")).as_deref(),
         Some("session=; Path=/app; Max-Age=0")
+    );
+}
+
+/// A removal made from a cookie keeps every attribute a user agent could
+/// refuse it over, and replaces only the value and the lifetime.
+#[test]
+fn a_removal_of_a_cookie_keeps_every_attribute_but_its_value_and_lifetime() {
+    let original = Cookie::new("session", "abc123")
+        .path("/app")
+        .domain("example.com")
+        .max_age(Duration::from_secs(3_600))
+        .secure()
+        .http_only()
+        .same_site(SameSite::Strict)
+        .partitioned();
+
+    assert_eq!(
+        rendered(&original.to_removal()).as_deref(),
+        Some(
+            "session=; Path=/app; Domain=example.com; Max-Age=0; Secure; HttpOnly; \
+             SameSite=Strict; Partitioned"
+        )
     );
 }
 
@@ -352,12 +377,12 @@ fn every_refusal_has_a_case() {
         cases.iter().map(|(refusal, ..)| *refusal).collect();
     assert_eq!(covered, std::collections::BTreeSet::from(REFUSALS));
 
-    let source = include_str!("../cookie.rs");
+    let source = include_str!("encode.rs");
     let encode = source
-        .split_once("pub fn encode(")
+        .split_once("fn render(")
         .and_then(|(_, rest)| rest.split_once("\n    }\n"))
         .map(|(body, _)| body)
-        .expect("`encode` is declared in `cookie.rs`");
+        .expect("`encode`'s body, `render`, is declared in `cookie/encode.rs`");
     assert_eq!(
         encode.matches("return None").count(),
         REFUSALS.len(),

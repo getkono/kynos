@@ -7277,6 +7277,8 @@ pub fn kynos::response::cookie::Cookie::path(self, impl core::convert::Into<allo
 pub fn kynos::response::cookie::Cookie::removal(impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
 pub fn kynos::response::cookie::Cookie::same_site(self, kynos::response::cookie::SameSite) -> Self
 pub fn kynos::response::cookie::Cookie::secure(self) -> Self
+pub fn kynos::response::cookie::Cookie::secure_if(self, bool) -> Self
+pub fn kynos::response::cookie::Cookie::to_removal(&self) -> Self
 impl core::clone::Clone for kynos::response::cookie::Cookie
 pub fn kynos::response::cookie::Cookie::clone(&self) -> kynos::response::cookie::Cookie
 impl core::cmp::Eq for kynos::response::cookie::Cookie
