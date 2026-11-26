@@ -197,7 +197,8 @@ impl TrustedProxies {
     }
 
     /// Trusts every address in the networks `entries` write as
-    /// `address/prefix`, which write `header`.
+    /// `address/prefix`, or as an address alone for one host, which write
+    /// `header`.
     ///
     /// For a list read from configuration. Each entry is read as [`Network`]
     /// reads it, so `/0` is refused here too: say
@@ -206,13 +207,17 @@ impl TrustedProxies {
     /// ```
     /// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
     ///
-    /// let configured = ["10.0.0.0/8", "2001:db8::/32"];
-    /// let trusted = TrustedProxies::parse_networks(ProxyHeader::XForwarded, configured)?;
-    /// assert_eq!(trusted.to_string(), "X-Forwarded-For from 10.0.0.0/8, 2001:db8::/32");
+    /// let configured = "10.0.0.0/8,192.0.2.7,2001:db8::/32";
+    /// let header = "x-forwarded-for".parse()?;
+    /// let trusted = TrustedProxies::parse_networks(header, configured.split(','))?;
+    /// assert_eq!(
+    ///     trusted.to_string(),
+    ///     "X-Forwarded-For from 10.0.0.0/8, 192.0.2.7/32, 2001:db8::/32",
+    /// );
     ///
     /// let refused = TrustedProxies::parse_networks(ProxyHeader::XForwarded, ["0.0.0.0/0"]);
     /// assert_eq!(refused.unwrap_err().entry(), "0.0.0.0/0");
-    /// # Ok::<(), kynos::http::forwarded::InvalidNetworkEntry>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
@@ -355,7 +360,8 @@ impl fmt::Display for TrustedProxies {
 }
 
 /// A block of addresses sharing their leading `prefix` bits, written
-/// `address/prefix` (RFC 4632 section 3.1, RFC 4291 section 2.3).
+/// `address/prefix` (RFC 4632 section 3.1, RFC 4291 section 2.3), or the
+/// address alone for its one host, `/32` or `/128`.
 ///
 /// Never `/0`, and never a prefix longer than its address: the first trusts
 /// every peer there is, which [`TrustedProxies::everyone`] says outright, and
@@ -375,6 +381,9 @@ impl fmt::Display for TrustedProxies {
 /// let network: Network = "10.1.2.3/8".parse()?;
 /// assert_eq!(network.to_string(), "10.0.0.0/8");
 /// assert!(network.contains("10.200.0.1".parse()?));
+///
+/// let host: Network = "192.0.2.7".parse()?;
+/// assert_eq!(host.to_string(), "192.0.2.7/32");
 ///
 /// assert_eq!("0.0.0.0/0".parse::<Network>(), Err(InvalidNetwork::EveryAddress));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -486,12 +495,18 @@ impl FromStr for Network {
     type Err = InvalidNetwork;
 
     /// Reads `address/prefix`, with no surrounding whitespace, the prefix in
-    /// decimal digits and no leading zero.
+    /// decimal digits and no leading zero, or an address alone as its
+    /// [`host`](Self::host) network.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let (address, prefix) = text.split_once('/').ok_or(InvalidNetwork::NoPrefix)?;
+        let (address, prefix) = text
+            .split_once('/')
+            .map_or((text, None), |(address, prefix)| (address, Some(prefix)));
         let address = address
             .parse::<IpAddr>()
             .map_err(|_| InvalidNetwork::Address)?;
+        let Some(prefix) = prefix else {
+            return Ok(Self::host(address));
+        };
 
         let digits = prefix.bytes().all(|byte| byte.is_ascii_digit());
         if prefix.is_empty() || !digits || (prefix.len() > 1 && prefix.starts_with('0')) {
@@ -513,11 +528,8 @@ impl fmt::Display for Network {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum InvalidNetwork {
-    /// No `/prefix` follows the address.
-    #[error("no `/prefix` follows the address")]
-    NoPrefix,
-    /// The text before `/` is not an IPv4 or IPv6 address.
-    #[error("the text before `/` is not an IPv4 or IPv6 address")]
+    /// The address, alone or before `/`, is not an IPv4 or IPv6 address.
+    #[error("the address is not an IPv4 or IPv6 address")]
     Address,
     /// The text after `/` is not a decimal number without a leading zero.
     #[error("the text after `/` is not a decimal number without a leading zero")]

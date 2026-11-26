@@ -3168,7 +3168,6 @@ pub mod kynos::http::forwarded
 #[non_exhaustive] pub enum kynos::http::forwarded::InvalidNetwork
 pub kynos::http::forwarded::InvalidNetwork::Address
 pub kynos::http::forwarded::InvalidNetwork::EveryAddress
-pub kynos::http::forwarded::InvalidNetwork::NoPrefix
 pub kynos::http::forwarded::InvalidNetwork::Prefix
 pub kynos::http::forwarded::InvalidNetwork::PrefixTooLong
 pub kynos::http::forwarded::InvalidNetwork::PrefixTooLong::bits: u8

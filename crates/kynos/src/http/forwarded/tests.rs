@@ -889,6 +889,32 @@ fn a_host_network_holds_exactly_its_address() {
     assert!(!Network::host(ip("2001:db8::1")).contains(ip("2001:db8::")));
 }
 
+/// An address written alone is its host network, the way a reader of a
+/// trusted-proxy list reads `192.0.2.7`, and never a `/0` or a block wider
+/// than the one host.
+#[test]
+fn an_address_alone_reads_as_its_host_network() {
+    let cases: &[(&str, &str)] = &[
+        ("192.0.2.7", "192.0.2.7/32"),
+        ("0.0.0.0", "0.0.0.0/32"),
+        ("::1", "::1/128"),
+        ("::", "::/128"),
+        ("::ffff:192.0.2.7", "192.0.2.7/32"),
+    ];
+    for (written, network) in cases {
+        assert_eq!(net(written), Network::host(ip(written)), "{written}");
+        assert_eq!(net(written).to_string(), *network, "{written}");
+    }
+
+    let trusted =
+        TrustedProxies::parse_networks(ProxyHeader::XForwarded, ["192.0.2.7"]).expect("one host");
+    let headers = map(&[("x-forwarded-for", "203.0.113.9")]);
+    let resolved = Forwarded::resolve(&headers, Some(peer("192.0.2.7")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
+    let resolved = Forwarded::resolve(&headers, Some(peer("192.0.2.8")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("192.0.2.8")));
+}
+
 /// What a network is refused for, which is what a startup log shows.
 ///
 /// `/0` trusts every peer, so `Network` never holds one and
@@ -908,8 +934,11 @@ fn a_network_refuses_what_could_only_be_a_mistake() {
             InvalidNetwork::PrefixTooLong { bits: 32 },
         ),
         ("::/129", InvalidNetwork::PrefixTooLong { bits: 128 }),
-        ("10.0.0.1", InvalidNetwork::NoPrefix),
-        ("", InvalidNetwork::NoPrefix),
+        ("", InvalidNetwork::Address),
+        ("10.0.0", InvalidNetwork::Address),
+        ("[::1]", InvalidNetwork::Address),
+        (" 10.0.0.1", InvalidNetwork::Address),
+        ("10.0.0.1 ", InvalidNetwork::Address),
         ("10.0.0/8", InvalidNetwork::Address),
         ("[::1]/128", InvalidNetwork::Address),
         (" 10.0.0.0/8", InvalidNetwork::Address),
