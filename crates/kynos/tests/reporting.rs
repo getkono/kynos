@@ -112,11 +112,12 @@ reportable! {
         kynos::server::tls::error::TlsError;
     }
 
-    /// `InvalidNetwork` is returned where a trusted proxy is read from
-    /// configuration, which is startup.
-    fn a_network_refusal_is_reportable {
+    /// `InvalidNetwork` and `InvalidProxyHeader` are returned where a trusted
+    /// proxy is read from configuration, which is startup.
+    fn a_trusted_proxy_refusal_is_reportable {
         kynos::http::forwarded::InvalidNetwork;
         kynos::http::forwarded::InvalidNetworkEntry;
+        kynos::http::forwarded::InvalidProxyHeader;
     }
 
     /// `InvalidAsset` is returned at startup, where a hand-built asset set is

@@ -3201,10 +3201,15 @@ impl core::cmp::PartialEq for kynos::http::forwarded::ProxyHeader
 pub fn kynos::http::forwarded::ProxyHeader::eq(&self, &kynos::http::forwarded::ProxyHeader) -> bool
 impl core::fmt::Debug for kynos::http::forwarded::ProxyHeader
 pub fn kynos::http::forwarded::ProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::http::forwarded::ProxyHeader
+pub fn kynos::http::forwarded::ProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for kynos::http::forwarded::ProxyHeader
 pub fn kynos::http::forwarded::ProxyHeader::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for kynos::http::forwarded::ProxyHeader
 impl core::marker::StructuralPartialEq for kynos::http::forwarded::ProxyHeader
+impl core::str::traits::FromStr for kynos::http::forwarded::ProxyHeader
+pub type kynos::http::forwarded::ProxyHeader::Err = kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::ProxyHeader::from_str(&str) -> core::result::Result<Self, Self::Err>
 impl core::marker::Freeze for kynos::http::forwarded::ProxyHeader
 impl core::marker::Send for kynos::http::forwarded::ProxyHeader
 impl core::marker::Sync for kynos::http::forwarded::ProxyHeader
@@ -3262,6 +3267,27 @@ impl core::marker::Unpin for kynos::http::forwarded::InvalidNetworkEntry
 impl core::marker::UnsafeUnpin for kynos::http::forwarded::InvalidNetworkEntry
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::http::forwarded::InvalidNetworkEntry
 impl core::panic::unwind_safe::UnwindSafe for kynos::http::forwarded::InvalidNetworkEntry
+pub struct kynos::http::forwarded::InvalidProxyHeader
+impl kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::text(&self) -> &str
+impl core::clone::Clone for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::clone(&self) -> kynos::http::forwarded::InvalidProxyHeader
+impl core::cmp::Eq for kynos::http::forwarded::InvalidProxyHeader
+impl core::cmp::PartialEq for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::eq(&self, &kynos::http::forwarded::InvalidProxyHeader) -> bool
+impl core::error::Error for kynos::http::forwarded::InvalidProxyHeader
+impl core::fmt::Debug for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Freeze for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Send for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Sync for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Unpin for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::UnsafeUnpin for kynos::http::forwarded::InvalidProxyHeader
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::http::forwarded::InvalidProxyHeader
+impl core::panic::unwind_safe::UnwindSafe for kynos::http::forwarded::InvalidProxyHeader
 pub struct kynos::http::forwarded::Network
 impl kynos::http::forwarded::Network
 pub fn kynos::http::forwarded::Network::address(&self) -> core::net::ip_addr::IpAddr

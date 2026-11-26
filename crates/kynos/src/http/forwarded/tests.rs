@@ -983,6 +983,71 @@ fn a_policy_prints_whom_it_believes() {
     }
 }
 
+/// Each field reads back from the name it prints, in every arrangement of
+/// letter case a configuration might write it in (RFC 9110 section 5.1).
+///
+/// The `match` is the table's closure: a new field fails to compile here until
+/// its name is added.
+#[test]
+fn a_proxy_header_reads_back_from_its_name_in_any_case() {
+    for header in [ProxyHeader::Forwarded, ProxyHeader::XForwarded] {
+        let name = match header {
+            ProxyHeader::Forwarded => "Forwarded",
+            ProxyHeader::XForwarded => "X-Forwarded-For",
+        };
+        assert_eq!(header.to_string(), name);
+
+        let letters = name.bytes().filter(u8::is_ascii_alphabetic).count();
+        for arrangement in 0..1_u32 << letters {
+            let mut letter = 0;
+            let written: String = name
+                .chars()
+                .map(|c| {
+                    if !c.is_ascii_alphabetic() {
+                        return c;
+                    }
+                    letter += 1;
+                    if arrangement & (1 << (letter - 1)) == 0 {
+                        c.to_ascii_lowercase()
+                    } else {
+                        c.to_ascii_uppercase()
+                    }
+                })
+                .collect();
+            assert_eq!(written.parse(), Ok(header), "{written:?}");
+        }
+    }
+}
+
+/// What is not one field's exact name is refused, naming the text, so a
+/// startup failure says what the configuration held.
+///
+/// `X-Forwarded-Proto` and `X-Forwarded` name no field a client address is
+/// read from, and whitespace is refused as `Network` refuses it.
+#[test]
+fn a_proxy_header_refuses_anything_but_a_fields_name() {
+    for text in [
+        "",
+        "X-Forwarded",
+        "X-Forwarded-Proto",
+        "XForwarded",
+        " Forwarded",
+        "Forwarded ",
+        "forwarded-for",
+        "Forwarded,X-Forwarded-For",
+    ] {
+        let refused = text.parse::<ProxyHeader>().expect_err(text);
+        assert_eq!(refused.text(), text);
+    }
+    assert_eq!(
+        "X-Real-IP"
+            .parse::<ProxyHeader>()
+            .expect_err("no such field")
+            .to_string(),
+        "\"X-Real-IP\" is not a forwarding field: write `Forwarded` or `X-Forwarded-For`"
+    );
+}
+
 /// Trusting everyone is said outright, and it believes the leftmost element of
 /// either family's chain.
 #[test]

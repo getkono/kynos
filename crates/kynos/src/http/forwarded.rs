@@ -35,6 +35,66 @@ pub enum ProxyHeader {
     XForwarded,
 }
 
+impl ProxyHeader {
+    /// The field the client address is read from, as RFC 7239 and the de-facto
+    /// pair spell it.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Forwarded => "Forwarded",
+            Self::XForwarded => "X-Forwarded-For",
+        }
+    }
+}
+
+/// Reads the field's name, `Forwarded` or `X-Forwarded-For`, in any case
+/// (RFC 9110 section 5.1), and with no surrounding whitespace.
+///
+/// ```
+/// use kynos::http::forwarded::ProxyHeader;
+///
+/// assert_eq!("x-forwarded-for".parse(), Ok(ProxyHeader::XForwarded));
+/// assert_eq!(ProxyHeader::Forwarded.to_string().parse(), Ok(ProxyHeader::Forwarded));
+///
+/// let refused = "X-Forwarded-Proto".parse::<ProxyHeader>().unwrap_err();
+/// assert_eq!(refused.text(), "X-Forwarded-Proto");
+/// ```
+impl FromStr for ProxyHeader {
+    type Err = InvalidProxyHeader;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        [Self::Forwarded, Self::XForwarded]
+            .into_iter()
+            .find(|header| header.name().eq_ignore_ascii_case(text))
+            .ok_or_else(|| InvalidProxyHeader {
+                text: text.to_owned(),
+            })
+    }
+}
+
+/// The field's name, `Forwarded` or `X-Forwarded-For`, which
+/// [`FromStr`] reads back.
+impl fmt::Display for ProxyHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Text [`ProxyHeader`]'s [`FromStr`] refused: neither field's name.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{text:?} is not a forwarding field: write `Forwarded` or `X-Forwarded-For`")]
+pub struct InvalidProxyHeader {
+    /// The text as given.
+    text: String,
+}
+
+impl InvalidProxyHeader {
+    /// The text as given.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 /// Which hops may be believed when they describe the client, and through which
 /// field.
 ///
@@ -269,10 +329,7 @@ impl fmt::Display for TrustedProxies {
         let Some(header) = self.header() else {
             return f.write_str("nobody");
         };
-        f.write_str(match header {
-            ProxyHeader::Forwarded => "Forwarded from ",
-            ProxyHeader::XForwarded => "X-Forwarded-For from ",
-        })?;
+        write!(f, "{header} from ")?;
 
         match self.hops {
             0 => {}
