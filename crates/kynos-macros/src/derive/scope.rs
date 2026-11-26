@@ -9,15 +9,19 @@
 //! `Schema` and `ParamValue` derives read it by, so the enum a configuration
 //! parses and the scopes a description and a token carry are one set of
 //! strings. `#[scope(...)]` names an enum serde does not: each key is refused
-//! beside its serde counterpart, since two names for one scope are the drift
-//! the derive exists to remove. A name that is not an RFC 6749 section 3.3
-//! `scope-token`, and two variants naming one scope, are refused.
+//! beside a serde key naming the same scope, and, by a probe the type checker
+//! resolves, on an enum implementing `Serialize` or `DeserializeOwned`, since
+//! two names for one scope are the drift the derive exists to remove. A
+//! generic enum, on which the probe cannot resolve, a name that is not an
+//! RFC 6749 section 3.3 `scope-token`, and two variants naming one scope, are
+//! refused.
 
-use quote::quote;
+use quote::{quote, quote_spanned};
 use syn::{Data, DeriveInput, Fields, LitStr, Variant, ext::IdentExt, spanned::Spanned};
 
 use crate::derive::{
     attribute::{Keys, unknown},
+    common::skip_value,
     schema::{
         attributes::{rename_variant, serde_key_span},
         members::variant_wire_names,
@@ -55,6 +59,13 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
              make every variant a unit",
         ));
     }
+    if let Some(param) = input.generics.params.first() {
+        return Err(syn::Error::new(
+            param.span(),
+            "`Scope` checks its names against serde's on one concrete enum, which a generic \
+             one is not; derive it on an enum without generic parameters",
+        ));
+    }
 
     let rename_all = rename_all(input)?;
     let serde_rename_all = serde_key_span(&input.attrs, &["rename_all"]).is_some();
@@ -73,8 +84,10 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         let name = LitStr::new(name, variant.span());
         quote!(Self::#variant => #name,)
     });
+    let probe = probe(input, data);
 
     Ok(quote! {
+        #probe
         // A `#[deprecated]` enum or variant is named by every arm.
         #[automatically_derived]
         #[allow(deprecated)]
@@ -85,6 +98,45 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
                 }
             }
         }
+    })
+}
+
+/// The probe refusing, where serde writes or reads the enum, each
+/// `#[scope(...)]` key, at the key: serde names its scopes, and the key would
+/// be a second name. Nothing where no key is written. Only called once the
+/// keys have parsed, so a parse error here cannot occur.
+fn probe(input: &DeriveInput, data: &syn::DataEnum) -> Option<proc_macro2::TokenStream> {
+    let ident = &input.ident;
+    let mut calls = Vec::new();
+    let attrs = input
+        .attrs
+        .iter()
+        .chain(data.variants.iter().flat_map(|variant| &variant.attrs));
+    for attr in attrs.filter(|attr| attr.path().is_ident("scope")) {
+        let _ = attr.parse_nested_meta(|meta| {
+            calls.push(quote_spanned! {meta.path.span()=>
+                ::kynos::__private::scope::named_once(
+                    &(&&::kynos::__private::scope::Enum::<#ident>::new()).by_serde(),
+                );
+            });
+            skip_value(&meta)
+        });
+    }
+    if calls.is_empty() {
+        return None;
+    }
+    Some(quote! {
+        // Type-checked though never called, which is all the probe needs.
+        const _: () = {
+            #[allow(unused_imports)]
+            use ::kynos::__private::scope::{
+                ProbeRead as _, ProbeUnnamed as _, ProbeWritten as _,
+            };
+            #[allow(dead_code, deprecated)]
+            fn scope_keys_probed() {
+                #(#calls)*
+            }
+        };
     })
 }
 

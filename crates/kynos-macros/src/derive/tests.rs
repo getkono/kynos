@@ -9273,7 +9273,7 @@ mod tag {
 }
 
 mod scope {
-    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use super::{Case, TokenStream2, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::scope::expand_inner;
 
     fn ledger() -> Vec<Case> {
@@ -9293,6 +9293,15 @@ mod scope {
                     }
                 ),
                 "make every variant a unit",
+            ),
+            case(
+                "a generic enum, on which the serde probe cannot resolve",
+                quote::quote!(
+                    enum Grant<const N: usize> {
+                        Admin,
+                    }
+                ),
+                "derive it on an enum without generic parameters",
             ),
             case(
                 "a `rename_all` style serde does not take",
@@ -9424,6 +9433,48 @@ mod scope {
             )],
             expand_inner,
         );
+    }
+
+    /// How many `#[scope(...)]` keys `expand_inner` probes serde at.
+    fn probes(input: TokenStream2) -> usize {
+        let input = syn::parse2(input).expect("the case itself must parse");
+        expand_inner(&input)
+            .expect("a key on an enum serde names is the type checker's to refuse")
+            .to_string()
+            .matches("named_once")
+            .count()
+    }
+
+    /// Each `#[scope(...)]` key is probed, for the type checker to refuse
+    /// where serde names the enum, which no derive input shows; an enum
+    /// carrying none is not.
+    #[test]
+    fn each_scope_key_is_probed() {
+        for (description, input, expected) in [
+            (
+                "no key, the name serde's",
+                quote::quote!(
+                    enum Grant {
+                        Admin,
+                    }
+                ),
+                0,
+            ),
+            (
+                "`rename_all` on the enum and `rename` on a variant",
+                quote::quote!(
+                    #[scope(rename_all = "lowercase")]
+                    enum Grant {
+                        Admin,
+                        #[scope(rename = "root")]
+                        Root,
+                    }
+                ),
+                2,
+            ),
+        ] {
+            assert_eq!(probes(input), expected, "{description}");
+        }
     }
 
     #[test]

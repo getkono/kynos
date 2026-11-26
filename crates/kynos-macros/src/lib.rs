@@ -1611,9 +1611,12 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
-/// `rename_all` takes the styles serde's does. Each key is refused beside its
-/// serde counterpart, since a second name for a scope would be one serde does
-/// not read. Refused too: a struct or a union, a variant with fields, a name
+/// `rename_all` takes the styles serde's does. Either key is refused on an
+/// enum implementing `Serialize` or `DeserializeOwned`, derived or written by
+/// hand, as `rename` is under `#[serde(rename_all)]`, since a second name for a
+/// scope would be one serde does not read; an enum with a hand-written serde
+/// implements `Scope` by hand. Refused too: a struct or a union, a generic
+/// enum, on which that check cannot resolve, a variant with fields, a name
 /// that is not an RFC 6749 section 3.3 `scope-token` (empty, or holding a
 /// space, `"` or `\`, which a token's space-separated `scope` list cannot
 /// carry), and two variants naming one scope. `Clone`, `Send` and `Sync` are
