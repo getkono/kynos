@@ -769,8 +769,10 @@ run = "mise run fuzz --replay"
 [tasks.check]
 description = "Run formatting, linting, and tests"
 # The `features:*` tasks run last: `cargo hack` rewrites member manifests while
-# it works, which breaks anything sharing the workspace.
+# it works, which breaks anything sharing the workspace. `hooks:check` runs
+# first, so its warning is not lost behind a later failure.
 run = [
+  { task = "hooks:check" },
   { task = "format:check" },
   { task = "lint" },
   { task = "lint:baseline" },
@@ -888,3 +890,10 @@ description = "Install the commit-msg, pre-commit and pre-push hooks"
 # hands a step none of the refs a push names.
 tools = { python = "3.11.16" }
 run = ["hk install --mise", "python3 scripts/commit_gates.py install"]
+
+[tasks."hooks:check"]
+description = "Warn, never failing, where git would not run the pre-push hook hooks:install writes"
+# A checkout whose hooks predate `commit_gates.py install` has hk's two and no
+# `pre-push`, and nothing else says so. Silent under CI and outside a repository.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates.py check-install"
