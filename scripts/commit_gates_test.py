@@ -9,8 +9,10 @@ and in which tree, so a gate that silently checked the tip, the checkout or
 nothing fails here. `AfterAPushEvent` passes the range the way CI's job does,
 in a clone, over a forced push and a new ref. `ThePrePushHook` installs the
 hooks through `mise run hooks:install` and asks a real `git push` -- of the
-current branch, of another one, and of a delete -- whether the gate is armed
-over the refs pushed.
+current branch, of another one, of an update merging in published master
+commits, and of a delete -- whether the gate is armed over the refs pushed. `TheInstallCheck` asks `check-install` about a hook
+missing, foreign, unexecutable and installed, through a linked worktree and
+`core.hooksPath`, and under CI.
 
 Run as `mise run commits:gates:test`, or directly.
 """
@@ -18,6 +20,7 @@ Run as `mise run commits:gates:test`, or directly.
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -279,7 +282,7 @@ class ThePrePushHook(RangeTestCase):
         declared = tomllib.loads((ROOT / "mise.toml").read_text())
         tasks = declared["tasks"]
         stanzas = [f"[tools]\nhk = {json.dumps(declared['tools']['hk'])}\n", stub_tasks()]
-        for name in ("commits:gates", "hooks:install"):
+        for name in ("commits:gates", "hooks:install", "hooks:check"):
             stanzas.append(
                 f'[tasks."{name}"]\n'
                 f"run = {json.dumps(tasks[name]['run'])}\n"
@@ -350,6 +353,36 @@ class ThePrePushHook(RangeTestCase):
         self.assertEqual(self.remote_head("topic"), green)
         self.assertEqual(self.ran(), [(gate, green) for gate in GATE_NAMES])
 
+    def test_an_update_merging_in_published_master_commits_checks_only_its_own(self):
+        self.topic("green topic\n", "feat: green topic")
+        self.git("push", "-q", "--no-verify", "origin", "topic")
+        self.commit("crates/b.rs", "green master\n", "feat: green master")
+        self.git("push", "-q", "--no-verify", "origin", "master")
+        self.git("switch", "-q", "topic")
+        self.git("merge", "-q", "--no-edit", "--no-verify", "master")
+        own = self.commit(SOURCE, "green topic again\n", "feat: green topic again")
+        push = self.push("topic")
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertEqual(self.remote_head("topic"), own)
+        self.assertEqual(self.ran(), [(gate, own) for gate in GATE_NAMES])
+
+    def test_an_update_with_no_remote_tracking_branch_still_checks_only_its_own(self):
+        # Pushed to the remote's `file://` URL, which git does not match to
+        # `origin` as it would the path `origin` is configured with, so no
+        # remote-tracking branch records the remote commit.
+        self.topic("green topic\n", "feat: green topic")
+        self.git("push", "-q", "--no-verify", self.remote.as_uri(), "topic")
+        self.assertEqual(self.git("branch", "-r", "--list", "origin/topic").stdout, "")
+        self.commit("crates/b.rs", "green master\n", "feat: green master")
+        self.git("push", "-q", "--no-verify", "origin", "master")
+        self.git("switch", "-q", "topic")
+        self.git("merge", "-q", "--no-edit", "--no-verify", "master")
+        own = self.commit(SOURCE, "green topic again\n", "feat: green topic again")
+        push = self.push("topic")
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertEqual(self.remote_head("topic"), own)
+        self.assertEqual(self.ran(), [(gate, own) for gate in GATE_NAMES])
+
     def test_a_delete_publishes_nothing_to_check(self):
         self.git("push", "-q", "--no-verify", "origin", "master:topic")
         self.commit(SOURCE, "red lint\n", "wip: red head")
@@ -371,6 +404,118 @@ class ThePrePushHook(RangeTestCase):
         self.assertNotEqual(run.returncode, 0, run.stdout)
         self.assertIn("is not this repository's hook", run.stderr)
         self.assertEqual(hook.read_text(), "#!/bin/sh\nexit 0\n")
+
+    def test_the_check_is_silent_over_the_hook_install_wrote(self):
+        environment = {key: value for key, value in self.env.items() if key != "CI"}
+        run = subprocess.run(
+            ["mise", "run", "--quiet", "hooks:check"],
+            cwd=self.repository,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual((run.returncode, run.stdout, run.stderr), (0, "", ""))
+
+
+class TheInstallCheck(unittest.TestCase):
+    """`check-install` in a throwaway repository: what it warns about, always
+    exiting 0, and where it says nothing."""
+
+    def setUp(self):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        # Resolved, as git prints the paths the warnings name.
+        self.directory = Path(directory.name).resolve()
+        self.repository = self.directory / "repository"
+        self.repository.mkdir()
+        self.env = {key: value for key, value in hermetic_environment().items() if key != "CI"}
+        self.git("init", "-q", ".")
+
+    def git(self, *arguments, cwd=None):
+        return subprocess.run(
+            ["git", *arguments],
+            cwd=cwd or self.repository,
+            env=self.env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    def hook(self):
+        return self.repository / ".git" / "hooks" / "pre-push"
+
+    def check(self, cwd=None, **extra):
+        """`commit_gates.py check-install` from `cwd`; its stderr, once it exited 0."""
+        run = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "commit_gates.py"), "check-install"],
+            cwd=cwd or self.repository,
+            env={**self.env, **extra},
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual((run.returncode, run.stdout), (0, ""), run.stderr)
+        return run.stderr
+
+    def install(self, cwd=None):
+        subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "commit_gates.py"), "install"],
+            cwd=cwd or self.repository,
+            env=self.env,
+            capture_output=True,
+            check=True,
+        )
+
+    def test_a_missing_hook_names_the_task_that_installs_it(self):
+        warning = self.check()
+        self.assertIn("no pre-push hook", warning)
+        self.assertIn("`mise run hooks:install`", warning)
+
+    def test_a_foreign_hook_is_told_apart_from_a_missing_one(self):
+        self.hook().parent.mkdir(parents=True, exist_ok=True)
+        self.hook().write_text("#!/bin/sh\nexit 0\n")
+        self.hook().chmod(0o755)
+        warning = self.check()
+        self.assertIn("is not this repository's pre-push hook", warning)
+        self.assertIn("move it aside", warning)
+
+    def test_the_hook_install_wrote_is_silent(self):
+        self.install()
+        self.assertEqual(self.check(), "")
+
+    def test_a_marked_hook_git_cannot_execute_warns(self):
+        self.install()
+        self.hook().chmod(0o644)
+        self.assertIn("is not executable", self.check())
+
+    def test_ci_is_silent_over_a_missing_hook(self):
+        self.assertEqual(self.check(CI="true"), "")
+
+    def test_ci_set_to_zero_or_any_case_of_false_still_warns(self):
+        for value in ("0", "false", "FALSE"):
+            with self.subTest(CI=value):
+                self.assertIn("no pre-push hook", self.check(CI=value))
+
+    def test_outside_a_repository_is_silent(self):
+        outside = self.directory / "outside"
+        outside.mkdir()
+        self.assertEqual(self.check(cwd=outside, GIT_CEILING_DIRECTORIES=str(self.directory)), "")
+
+    def test_a_linked_worktree_reads_the_hook_its_common_directory_holds(self):
+        self.git("commit", "-q", "--allow-empty", "-m", "chore: base")
+        linked = self.directory / "linked"
+        self.git("worktree", "add", "-q", "--detach", str(linked))
+        self.assertIn(str(self.hook()), self.check(cwd=linked))
+        self.install(cwd=linked)
+        self.assertEqual(self.check(cwd=linked), "")
+        self.assertEqual(self.check(), "")
+
+    def test_core_hooks_path_is_where_the_hook_is_read(self):
+        self.install()
+        self.git("config", "core.hooksPath", "elsewhere")
+        warning = self.check()
+        self.assertIn(str(self.repository / "elsewhere" / "pre-push"), warning)
+        self.install()
+        self.assertEqual(self.check(), "")
 
 
 if __name__ == "__main__":

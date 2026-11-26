@@ -23,7 +23,9 @@ Which commits it checks is the command line's (`USAGE`):
 - `pre-push REMOTE URL`: the refs git names on stdin, as the hook passes them
   (`pushed`), so `git push origin other-branch` checks `other-branch` and not
   `HEAD`;
-- `install`: writes that hook; `mise run hooks:install` runs it.
+- `install`: writes that hook; `mise run hooks:install` runs it;
+- `check-install`: warns, never failing, where git would not run that hook
+  (`hook_warning`); `mise run check` runs it as `hooks:check`.
 """
 
 import fnmatch
@@ -34,7 +36,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-USAGE = "usage: commit_gates.py [range OLD NEW | pre-push REMOTE URL | install]"
+USAGE = "usage: commit_gates.py [range OLD NEW | pre-push REMOTE URL | install | check-install]"
 #: What a push publishes from `HEAD`: nothing a remote already has.
 DEFAULT_RANGE = ("HEAD", "--not", "--remotes")
 #: A full object name, SHA-1 or SHA-256; git spells "no object" as all zeros.
@@ -119,10 +121,12 @@ def pushed(lines, held):
 
     `lines` is the pre-push hook's stdin, `<local ref> <local sha> <remote ref>
     <remote sha>` per ref, and `held(sha)` says whether a commit is here. A
-    delete (an all-zero local sha) publishes nothing. An update publishes
-    `remote..local`; a new ref, or one whose remote commit is not here (a
-    forced push over commits never fetched), publishes what no remote-tracking
-    branch has, the same as the default range.
+    delete (an all-zero local sha) publishes nothing. An update publishes what
+    neither the remote commit nor any remote-tracking branch has, so master
+    commits merged in, which the ref's remote commit never reached, are not
+    gated again; a new ref, or one whose remote commit is not here (a forced
+    push over commits never fetched), publishes what no remote-tracking branch
+    has, the same as the default range.
     """
     specs = []
     for line in lines:
@@ -137,7 +141,7 @@ def pushed(lines, held):
         if is_null(remote) or not held(remote):
             specs.append([local, "--not", "--remotes"])
         else:
-            specs.append([f"{remote}..{local}"])
+            specs.append([local, "--not", remote, "--remotes"])
     return specs
 
 
@@ -192,6 +196,53 @@ def install(root, environment):
     hook.write_text(HOOK)
     hook.chmod(0o755)
     print(f"commit_gates: installed {hook}")
+
+
+def hook_warning(root, environment):
+    """Why git would not run `install`'s `pre-push` hook in `root`, or `None`.
+
+    Read where `install` writes it, so `core.hooksPath` and a linked worktree's
+    common directory resolve alike. A hook missing, written by something else,
+    or not executable each skips the per-commit gates on every push, silently:
+    the first is what a checkout whose hooks predate `install` has.
+    """
+    path = git(root, "rev-parse", "--git-path", "hooks/pre-push", environment=environment)
+    hook = root / path.strip()
+    if not hook.is_file():
+        return (
+            f"commit_gates: no pre-push hook at {hook}, so a push skips the per-commit "
+            "gates; run `mise run hooks:install`"
+        )
+    if HOOK_MARKER not in hook.read_text(errors="replace"):
+        return (
+            f"commit_gates: {hook} is not this repository's pre-push hook, so a push "
+            "skips the per-commit gates; move it aside and run `mise run hooks:install`"
+        )
+    if not os.access(hook, os.X_OK):
+        return (
+            f"commit_gates: {hook} is not executable, so git skips it and a push skips "
+            "the per-commit gates; run `mise run hooks:install`"
+        )
+    return None
+
+
+def check_install(environment):
+    """Print `hook_warning` for the repository the working directory is in.
+
+    Silent under CI, whose checkout has no hooks to install, and outside a
+    repository, as a source tarball is. Advisory: the gates it warns about are
+    CI's backstop too, so a missing hook is no reason to fail `check`.
+    """
+    if environment.get("CI", "").lower() not in ("", "0", "false"):
+        return
+    probe = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], env=environment, capture_output=True, text=True
+    )
+    if probe.returncode != 0:
+        return
+    warning = hook_warning(Path(probe.stdout.strip()), scrubbed(environment))
+    if warning:
+        print(warning, file=sys.stderr)
 
 
 def selection(root, arguments, stdin, environment):
@@ -250,6 +301,9 @@ def remove_tree(root, tree, environment):
 
 
 def main():
+    if sys.argv[1:] == ["check-install"]:
+        check_install(os.environ)
+        return 0
     environment = scrubbed(os.environ)
     # Resolved under the inherited environment, which is what names the
     # repository from a hook; everything after addresses it by path.

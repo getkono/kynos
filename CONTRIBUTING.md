@@ -80,7 +80,10 @@ checked out, and checks each commit they publish out on its own under
 each only on a commit that changes what it reads; CI's `Per-commit gates` job
 runs it over every commit of a pull request and of a master push. hk runs the
 other two hooks; `pre-push` is `scripts/commit_gates.py`'s, because hk hands
-its steps none of the pushed refs. A commit that passes `pre-commit` can still fail it: hk's stash leaves
+its steps none of the pushed refs. A checkout whose hooks predate that has no
+`pre-push` hook; `mise run check` starts with `hooks:check`, which warns,
+without failing, wherever git would not run it, until `mise run hooks:install`
+is rerun. A commit that passes `pre-commit` can still fail it: hk's stash leaves
 untracked files in place whenever a tracked file has unstaged changes, so
 `pre-commit` may have built a tree the commit does not record. `test` is not
 one of the gates, for the red-test commit below.
