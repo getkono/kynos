@@ -2,7 +2,9 @@
 //!
 //! [`Stamp`] encodes the group once, when it is constructed, and writes the
 //! stored fields onto every response passing through it, so a request pays
-//! for inserting them and nothing else.
+//! for inserting them and nothing else. Each value is an RFC 9110 section 5.5
+//! field value, which a fixed `#[header(value = ...)]` is checked to be where
+//! the group is declared.
 
 use std::{convert::Infallible, marker::PhantomData};
 
