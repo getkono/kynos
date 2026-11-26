@@ -321,7 +321,7 @@ impl TrustedProxies {
 ///
 /// let trusted = TrustedProxies::hops(ProxyHeader::Forwarded, 2)
 ///     .and_addresses(["192.0.2.1".parse()?])
-///     .and_networks(["10.9.9.9/8".parse()?]);
+///     .and_networks(["10.0.0.0/8".parse()?]);
 /// assert_eq!(
 ///     trusted.to_string(),
 ///     "Forwarded from the 2 nearest hops, 192.0.2.1, 10.0.0.0/8",
@@ -365,9 +365,11 @@ impl fmt::Display for TrustedProxies {
 ///
 /// Never `/0`, and never a prefix longer than its address: the first trusts
 /// every peer there is, which [`TrustedProxies::everyone`] says outright, and
-/// the second matches nothing. Bits past the prefix are cleared, so
-/// `10.1.2.3/8` is `10.0.0.0/8`, and that is what [`Display`](fmt::Display)
-/// prints.
+/// the second matches nothing. Written text sets no bit past its prefix:
+/// `192.0.2.7/24` is how an interface is written, and could mean the host or
+/// its block, so it is refused as [`InvalidNetwork::HostBits`], naming
+/// `192.0.2.0/24`. [`new`](Self::new) clears those bits instead, since it is
+/// asked for the block holding an address.
 ///
 /// An IPv4-mapped address is its IPv4 form, on either side: `::ffff:10.0.0.1`
 /// is in `10.0.0.0/8`, and `::ffff:10.0.0.0/104` *is* `10.0.0.0/8`, so
@@ -378,14 +380,16 @@ impl fmt::Display for TrustedProxies {
 /// ```
 /// use kynos::http::forwarded::{InvalidNetwork, Network};
 ///
-/// let network: Network = "10.1.2.3/8".parse()?;
-/// assert_eq!(network.to_string(), "10.0.0.0/8");
+/// let network: Network = "10.0.0.0/8".parse()?;
 /// assert!(network.contains("10.200.0.1".parse()?));
 ///
 /// let host: Network = "192.0.2.7".parse()?;
 /// assert_eq!(host.to_string(), "192.0.2.7/32");
 ///
 /// assert_eq!("0.0.0.0/0".parse::<Network>(), Err(InvalidNetwork::EveryAddress));
+/// let refused = "10.1.2.3/8".parse::<Network>().unwrap_err();
+/// assert_eq!(refused, InvalidNetwork::HostBits { network });
+/// assert_eq!(Network::new("10.1.2.3".parse()?, 8)?, network);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -398,6 +402,9 @@ pub struct Network {
 
 impl Network {
     /// The block of addresses sharing `address`'s leading `prefix` bits.
+    ///
+    /// Any address in the block names it: the bits past `prefix` are cleared,
+    /// so `10.1.2.3` with `8` is `10.0.0.0/8`.
     ///
     /// An IPv4-mapped `address` with a `prefix` of at least `96` is the IPv4
     /// block its last `prefix - 96` bits name.
@@ -514,7 +521,17 @@ impl FromStr for Network {
         }
         let prefix = prefix.parse::<u8>().unwrap_or(u8::MAX);
 
-        Self::new(address, prefix)
+        let network = Self::new(address, prefix)?;
+        // `new` folds only a mapped address, so the written one is compared in
+        // the family it was folded to.
+        let written = match (network.address, address) {
+            (IpAddr::V4(_), IpAddr::V6(v6)) => v6.to_ipv4_mapped().map(IpAddr::V4),
+            (_, address) => Some(address),
+        };
+        if written != Some(network.address) {
+            return Err(InvalidNetwork::HostBits { network });
+        }
+        Ok(network)
     }
 }
 
@@ -546,6 +563,17 @@ pub enum InvalidNetwork {
          every peer explicitly"
     )]
     EveryAddress,
+    /// The address has bits set past the prefix, as an interface's
+    /// `address/prefix` does, so whether one host or its whole block is meant
+    /// is unsaid.
+    #[error(
+        "the address has bits set past the prefix: write `{network}` for the network, or the \
+         address alone for one host"
+    )]
+    HostBits {
+        /// The block the address falls in.
+        network: Network,
+    },
 }
 
 /// An entry [`TrustedProxies::parse_networks`] refused, and why.
