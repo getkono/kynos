@@ -85,6 +85,7 @@ by the release that shipped each, for code written before it.
 | A rate limiter keyed on the authenticated account, checked in each handler | `middleware::rate_limit::key::ByPrincipal`, behind `guard_first` |
 | A 429 of your own for a limit keyed on a body field | `RateLimit::spend` on a `middleware::rate_limit::key::ByHandler` limiter, returning its `RateLimited` through a transparent variant |
 | An enum's wire names restated in an `as_str` or an `ALL` list | `#[derive(kynos::ParamValue)]`, then `schema::UnitEnum::as_str` (not `const`) and `T::VARIANTS` with the trait imported, or `s.parse()` |
+| A parser for a trusted-proxy setting's header name and its bare host addresses | `http::forwarded::ProxyHeader`'s `FromStr`, and `http::forwarded::TrustedProxies::parse_networks`, which reads `192.0.2.7` as `192.0.2.7/32`; the policy compares with `==` |
 
 ## Getting data from middleware to a handler
 

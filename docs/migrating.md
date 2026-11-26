@@ -91,6 +91,9 @@ by task.
 | `#[derive(Schema, PathParams)] struct SessionPath { id: Uuid }` and `Path(SessionPath { id }): Path<SessionPath>`, for a route of one variable | `Path(id): Path<Uuid>`, any `ParamValue`; a group's field doc comment is still where the parameter is described | #1413 |
 | A `governor` limiter checked at the top of each handler, keyed on the authenticated account | `.guard_first()`, then `.intercept(RateLimit::new(Quotas::new(middleware::rate_limit::key::ByPrincipal::new(\|Auth(account): &Auth<S>\| ..), store)))`, which is spent before the body is read | #1423 |
 | A hand-rolled 429 variant for a limit keyed on a body field | a `RateLimit` over `Quotas::new(middleware::rate_limit::key::ByHandler, store)` in the context, `limit.spend(&username).await?` in the handler, and a `#[problem(transparent, from)]` variant holding `middleware::rate_limit::refusal::RateLimited<T>` | #1423 |
+| An enum mirroring `http::forwarded::ProxyHeader`, a `match` over its lowercase names, and a mapping back to Kynos's | `value.parse::<http::forwarded::ProxyHeader>()`, which reads `forwarded` or `x-forwarded-for` in any letter case | #1429 |
+| A `contains('/')` check widening a bare address with `Network::new(address, 32 \| 128)` before `http::forwarded::TrustedProxies::parse_networks` | `parse_networks(header, entries)` alone, which reads a bare address as its host, or `http::forwarded::Network::host(address)`; unlike before, `10.1.2.3/8` is refused, not widened to `10.0.0.0/8` | #1429 |
+| A configuration struct holding `Vec<Network>` and its own header enum, only so a test can compare it | the `http::forwarded::TrustedProxies` itself, which compares with `==` as configured, its networks in any order | #1429 |
 
 ## 0.5 to 0.6
 
