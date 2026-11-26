@@ -8,11 +8,12 @@ use syn::{
 };
 
 use super::{
-    Extension, Failure, Outcome, TypeUri,
+    Extension, Failure, Outcome,
     args::{Base, Constant, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
     fields::{header_field, retry_after_field},
     slug::{self, Refusal},
     transparent::{self, error_transparent},
+    type_uri::TypeUri,
 };
 use crate::doc::doc_string;
 
