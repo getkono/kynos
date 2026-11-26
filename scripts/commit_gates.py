@@ -121,10 +121,12 @@ def pushed(lines, held):
 
     `lines` is the pre-push hook's stdin, `<local ref> <local sha> <remote ref>
     <remote sha>` per ref, and `held(sha)` says whether a commit is here. A
-    delete (an all-zero local sha) publishes nothing. An update publishes
-    `remote..local`; a new ref, or one whose remote commit is not here (a
-    forced push over commits never fetched), publishes what no remote-tracking
-    branch has, the same as the default range.
+    delete (an all-zero local sha) publishes nothing. An update publishes what
+    neither the remote commit nor any remote-tracking branch has, so master
+    commits merged in, which the ref's remote commit never reached, are not
+    gated again; a new ref, or one whose remote commit is not here (a forced
+    push over commits never fetched), publishes what no remote-tracking branch
+    has, the same as the default range.
     """
     specs = []
     for line in lines:
@@ -139,7 +141,7 @@ def pushed(lines, held):
         if is_null(remote) or not held(remote):
             specs.append([local, "--not", "--remotes"])
         else:
-            specs.append([f"{remote}..{local}"])
+            specs.append([local, "--not", remote, "--remotes"])
     return specs
 
 
