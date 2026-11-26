@@ -916,7 +916,9 @@ impl<C: 'static> BoundServer<C> {
     ///
     /// A requested shutdown is `Ok` however its drain ended, so
     /// `serve().await?` in `main` exits cleanly when the process is told to
-    /// stop; the [`Stopped`] says whether every connection finished.
+    /// stop; the [`Stopped`] says whether every connection finished. A drain
+    /// cut short also logs a warning, so discarding the [`Stopped`] still
+    /// leaves the abandoned work on record.
     ///
     /// To serve in the background, as a test or a second listener does,
     /// [`spawn`](Self::spawn) instead: its handle keeps the bound address
@@ -1003,6 +1005,7 @@ impl<C: 'static> BoundServer<C> {
         }
 
         lifecycle_sender.send_replace(Lifecycle::Draining);
+        let draining_since = tokio::time::Instant::now();
         let stopped = if forced {
             Stopped::Forced
         } else if self.config.shutdown_timeout.is_zero() {
@@ -1020,6 +1023,17 @@ impl<C: 'static> BoundServer<C> {
         };
 
         if stopped != Stopped::Drained {
+            // `Ok` exits `main` cleanly, so this is the only trace that a
+            // requested shutdown abandoned in-flight work. A failure already
+            // reports itself as `Err`.
+            if root_error.is_none() {
+                tracing::warn!(
+                    outcome = ?stopped,
+                    drained_for = ?draining_since.elapsed(),
+                    shutdown_timeout = ?self.config.shutdown_timeout,
+                    "shutdown stopped draining before every connection finished; the open ones are closed",
+                );
+            }
             lifecycle_sender.send_replace(Lifecycle::Forced);
             accept_loops.shutdown().await;
         }
@@ -1136,7 +1150,13 @@ impl<C> Running<C> {
         match task.await {
             Ok(served) => served,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-            Err(_) => Ok(Stopped::Forced),
+            Err(_) => {
+                tracing::warn!(
+                    outcome = ?Stopped::Forced,
+                    "the runtime cancelled the serving task; its open connections are closed undrained",
+                );
+                Ok(Stopped::Forced)
+            }
         }
     }
 }

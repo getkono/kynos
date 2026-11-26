@@ -2092,6 +2092,7 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
 /// as `shutdown_timeout` and `Stopped::TimedOut` both say.
 #[tokio::test]
 async fn zero_shutdown_timeout_reports_a_timeout_with_nothing_in_flight() {
+    let (warnings, _subscriber) = Warnings::capture();
     let stopped = crate::server::Server::new(test_service())
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .shutdown_timeout(std::time::Duration::ZERO)
@@ -2101,6 +2102,63 @@ async fn zero_shutdown_timeout_reports_a_timeout_with_nothing_in_flight() {
         .expect("a zero drain deadline is the stop that was asked for");
 
     assert_eq!(stopped, crate::server::lifecycle::Stopped::TimedOut);
+    let log = warnings.read();
+    assert!(
+        log.contains("WARN") && log.contains("outcome=TimedOut") && log.contains("drained_for="),
+        "a cut-short drain warns even with nothing in flight: {log}"
+    );
+}
+
+/// A drain every connection finished is the expected stop, so it warns of
+/// nothing.
+#[tokio::test(flavor = "current_thread")]
+async fn a_completed_drain_warns_of_nothing() {
+    let (warnings, _subscriber) = Warnings::capture();
+    let stopped = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async {}))
+        .serve()
+        .await
+        .expect("an idle server drains cleanly");
+
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Drained);
+    let log = warnings.read();
+    assert!(log.is_empty(), "a completed drain is silent: {log}");
+}
+
+/// A serving task the runtime cancelled never drained, so the handle reports
+/// it `Forced` and warns as a cut-short drain does.
+#[test]
+fn a_cancelled_serving_task_is_forced_and_warned_of() {
+    let (warnings, _subscriber) = Warnings::capture();
+    let serving_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime builds");
+    let running = serving_runtime.block_on(async {
+        crate::server::Server::new(test_service())
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .prepare()
+            .await
+            .expect("a loopback listener binds")
+            .spawn()
+    });
+    // Shutting the runtime down cancels every task it holds, the server's too.
+    drop(serving_runtime);
+
+    let stopped = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime builds")
+        .block_on(running.shutdown())
+        .expect("a cancelled task is a stop, not a failure");
+
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Forced);
+    let log = warnings.read();
+    assert!(
+        log.contains("WARN") && log.contains("outcome=Forced"),
+        "the warning names the outcome: {log}"
+    );
 }
 
 /// A trigger that fails, as an operating-system signal that cannot be
@@ -2781,6 +2839,46 @@ async fn a_spawned_unix_only_server_has_no_local_addr() {
         .expect("an idle server drains cleanly");
 }
 
+/// Every warning logged on this thread while its guard lives, kept for the
+/// case to read.
+#[derive(Clone, Default)]
+struct Warnings(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Warnings {
+    /// Installs a thread-local subscriber writing every warning here. A
+    /// current-thread runtime, or a future polled on the test's own task,
+    /// logs on this thread; a task spawned onto a worker does not.
+    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let warnings = Self::default();
+        let writer = warnings.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        (warnings, tracing::subscriber::set_default(subscriber))
+    }
+
+    fn read(&self) -> String {
+        let log = self.0.lock().expect("log unpoisoned").clone();
+        String::from_utf8(log).expect("the log is UTF-8")
+    }
+}
+
+impl std::io::Write for Warnings {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("log unpoisoned")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The open-file limit `prepare` fits to the connection cap. The cases that
 /// set a limit do so in-process, which is sound only because nextest runs
 /// every test in its own process.
@@ -2795,33 +2893,12 @@ async fn a_spawned_unix_only_server_has_no_local_addr() {
     ))
 ))]
 mod descriptor_limit {
-    use std::{
-        io,
-        num::NonZeroUsize,
-        sync::{Arc, Mutex},
-    };
+    use std::num::NonZeroUsize;
 
     use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 
+    use super::Warnings;
     use crate::server::descriptors::{RESERVED_DESCRIPTORS, raised, required};
-
-    /// What `prepare` writes to a log, kept for the case to read.
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-
-    impl io::Write for Captured {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0
-                .lock()
-                .expect("log unpoisoned")
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
 
     const fn limit(current: Option<u64>, maximum: Option<u64>) -> Rlimit {
         Rlimit { current, maximum }
@@ -2830,15 +2907,8 @@ mod descriptor_limit {
     /// Prepares a loopback server capped at `max_connections`, under a
     /// subscriber capturing every warning, and returns what it logged.
     async fn prepare(max_connections: usize) -> String {
-        let captured = Captured::default();
-        let writer = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(move || writer.clone())
-            .finish();
         // Thread-local, and the current-thread runtime prepares on this thread.
-        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let (warnings, _subscriber) = Warnings::capture();
         let service = crate::Router::<()>::new()
             .build(())
             .expect("an empty router builds");
@@ -2848,8 +2918,7 @@ mod descriptor_limit {
             .prepare()
             .await
             .expect("a loopback listener binds");
-        let log = captured.0.lock().expect("log unpoisoned").clone();
-        String::from_utf8(log).expect("the log is UTF-8")
+        warnings.read()
     }
 
     #[test]
