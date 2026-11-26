@@ -5,7 +5,7 @@ use super::{
     clock::Clock,
     decision::{Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders, SF_INTEGER_MAX},
-    key::Shared,
+    key::{ByPrincipal, RateLimitKey, Shared},
     quota::{Quota, Quotas, estimate, recovers_in},
     refusal::{RateLimited, RateLimitedFields},
     store::{RateLimitStore, StoreFailure},
@@ -19,6 +19,12 @@ use crate::{
     response::{IntoResponse, ShortCircuit},
     router::operation::Route,
     schema::registry::Registry,
+    security::{
+        Authenticates, Authenticator, Head,
+        auth::{Auth, MaybeAuth},
+        carrier::{BearerToken, presented::Presented},
+        schemes::Bearer,
+    },
 };
 
 /// A window of one second, for readability.
@@ -1031,6 +1037,140 @@ fn a_closure_keys_by_the_partition_it_returns() {
      -> Option<std::borrow::Cow<'static, str>> { Some("tenant:acme".into()) };
 
     assert_eq!(partition_of(&tenant, &[]).as_deref(), Some("tenant:acme"));
+}
+
+// --- Keying on the caller a guard admitted -----------------------------------
+
+/// A context whose bearer tokens no request in these tests presents: the
+/// guard is admitted by hand, as `guard_first` would admit it.
+struct Accounts;
+
+/// Refuses every token, since no test runs the guard itself.
+struct NoTokens;
+
+impl Authenticator<Bearer, Accounts> for NoTokens {
+    type Error = crate::error::rejection::AuthRejection;
+
+    async fn authenticate(
+        &self,
+        _: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Accounts,
+    ) -> Result<String, Self::Error> {
+        Err(crate::error::rejection::AuthRejection::unauthenticated())
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = NoTokens;
+
+    fn authenticator(&self) -> &NoTokens {
+        &NoTokens
+    }
+}
+
+/// The partition `key` gives a request that `admitted` admitted, or none.
+fn principal_of<G: Send + 'static>(
+    key: &impl RateLimitKey<Accounts>,
+    admitted: Option<G>,
+) -> Option<String> {
+    let mut request = crate::http::Request::new(Body::empty());
+    if let Some(guard) = admitted {
+        crate::security::admit(request.extensions_mut(), guard);
+    }
+    key.partition(
+        &request,
+        Route::new("/counted", "counted", Method::Get),
+        &Accounts,
+    )
+    .map(std::borrow::Cow::into_owned)
+}
+
+/// Each caller its guard admitted is a bucket of its own, named under a prefix
+/// no other shipped key writes; and the guard stays for the handler, so the
+/// credential is checked once.
+#[test]
+fn a_principal_key_names_the_caller_the_guard_admitted() {
+    let key = ByPrincipal::new(|Auth(token): &Auth<Bearer>| token.clone());
+
+    assert_eq!(
+        principal_of(&key, Some(Auth::<Bearer>("alice".to_owned()))).as_deref(),
+        Some("principal:alice")
+    );
+
+    let mut request = crate::http::Request::new(Body::empty());
+    crate::security::admit(request.extensions_mut(), Auth::<Bearer>("bob".to_owned()));
+    let _ = RateLimitKey::partition(
+        &key,
+        &request,
+        Route::new("/counted", "counted", Method::Get),
+        &Accounts,
+    );
+    let (mut parts, _) = request.into_parts();
+    let handed = crate::security::admitted::<Accounts, Auth<Bearer>>(&mut parts)
+        .expect("the key leaves the guard for the handler");
+    assert_eq!(handed.0, "bob");
+}
+
+/// A request no guard of the key's type admitted — none ran ahead, another
+/// guard did, or the request is a copy of the one admitted — counts against
+/// one shared bucket rather than escaping the limit or being keyed on the
+/// peer, unless `otherwise` names another key.
+#[test]
+fn a_request_no_guard_admitted_shares_one_bucket_unless_otherwise_names_a_key() {
+    let named = |Auth(token): &Auth<Bearer>| token.clone();
+    let key = ByPrincipal::new(named);
+    let alice = || Auth::<Bearer>("alice".to_owned());
+
+    assert_eq!(
+        principal_of::<Auth<Bearer>>(&key, None).as_deref(),
+        Some("principal:none")
+    );
+    assert_eq!(
+        principal_of(&key, Some(MaybeAuth::<Bearer>(Some("alice".to_owned())))).as_deref(),
+        Some("principal:none"),
+        "a `MaybeAuth` is not the `Auth` the key reads"
+    );
+
+    let mut admitted = crate::http::Request::new(Body::empty());
+    crate::security::admit(admitted.extensions_mut(), alice());
+    let copy = crate::http::Request::from_parts(admitted.into_parts().0.clone(), Body::empty());
+    assert_eq!(
+        RateLimitKey::partition(
+            &key,
+            &copy,
+            Route::new("/counted", "counted", Method::Get),
+            &Accounts
+        )
+        .as_deref(),
+        Some("principal:none"),
+        "a copy of the request is not the one the guard admitted"
+    );
+
+    let otherwise = ByPrincipal::new(named).otherwise(Shared("fallback".into()));
+    assert_eq!(
+        principal_of::<Auth<Bearer>>(&otherwise, None).as_deref(),
+        Some("fallback")
+    );
+    assert_eq!(
+        principal_of(&otherwise, Some(alice())).as_deref(),
+        Some("principal:alice")
+    );
+}
+
+/// A `MaybeAuth` admits an anonymous caller, so the closure names its bucket;
+/// the fallback is only for a request no guard admitted.
+#[test]
+fn an_anonymous_caller_a_maybe_guard_admitted_is_named_by_the_closure() {
+    let key = ByPrincipal::new(|MaybeAuth(token): &MaybeAuth<Bearer>| {
+        token.clone().unwrap_or_else(|| "anonymous".to_owned())
+    })
+    .otherwise(Shared("fallback".into()));
+
+    assert_eq!(
+        principal_of(&key, Some(MaybeAuth::<Bearer>(None))).as_deref(),
+        Some("principal:anonymous")
+    );
 }
 
 /// The peer key names the connection's IP and not its port, so a client's

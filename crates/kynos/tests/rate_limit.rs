@@ -15,21 +15,28 @@ use std::{
 
 use kynos::{
     Router,
+    error::rejection::AuthRejection,
     http::StatusCode,
     http::forwarded::{ProxyHeader, TrustedProxies},
     middleware::rate_limit::{
         RateLimit,
-        key::{And, ByClientAddress, ByHeader, ByPeerAddress, ByRoute, Shared},
+        key::{And, ByClientAddress, ByHeader, ByPeerAddress, ByPrincipal, ByRoute, Shared},
         quota::{Quota, Quotas},
         store::{RateLimitStore, StoreFailure},
     },
     response::status::NoContent,
+    security::{
+        Authenticates, Authenticator, Head,
+        auth::Auth,
+        carrier::{BearerToken, presented::Presented},
+        schemes::Bearer,
+    },
 };
 
 #[path = "support/mod.rs"]
 mod support;
 
-use support::get;
+use support::{get, post};
 
 // --- A store, which is the half Kynos does not ship ----------------------
 
@@ -576,6 +583,91 @@ async fn two_keys_joined_partition_by_both() {
     assert_eq!(call("/other", "acme").await, StatusCode::NO_CONTENT);
     // The same route, different tenant.
     assert_eq!(call("/counted", "other").await, StatusCode::NO_CONTENT);
+}
+
+/// Accepts any bearer token as the account it names, counting every check.
+#[derive(Clone, Default)]
+struct Accounts(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Authenticator<Bearer, Accounts> for Accounts {
+    type Error = AuthRejection;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Accounts,
+    ) -> Result<String, AuthRejection> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(presented.require()?.as_str().to_owned())
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+#[kynos::post("/bundles")]
+async fn publish(Auth(account): Auth<Bearer>) -> NoContent {
+    assert!(
+        !account.is_empty(),
+        "the guard's credential reached the handler"
+    );
+    NoContent
+}
+
+/// Keyed on the caller the guard admitted ahead of the limiter, so two
+/// accounts do not share a bucket, a caller without a credential is refused
+/// by the guard before it is counted, and the credential is checked once per
+/// request whichever of the two reads it.
+#[tokio::test]
+async fn keying_by_principal_separates_two_accounts_checked_once() {
+    let accounts = Accounts::default();
+    let service = Router::<Accounts>::new()
+        .guard_first()
+        .intercept(RateLimit::new(
+            Quotas::new(
+                ByPrincipal::new(|Auth(account): &Auth<Bearer>| account.clone()),
+                Counters::default(),
+            )
+            .quota(Quota::new("publish", 1, Duration::from_secs(600))),
+        ))
+        .mount(kynos::routes![publish])
+        .build(accounts.clone())
+        .expect("a describable router");
+
+    let call = |token: &'static str| {
+        let request = post(&service, "/bundles");
+        async move {
+            if token.is_empty() {
+                request.call().await.status
+            } else {
+                request
+                    .header("authorization", &format!("Bearer {token}"))
+                    .call()
+                    .await
+                    .status
+            }
+        }
+    };
+
+    assert_eq!(call("alice").await, StatusCode::NO_CONTENT);
+    assert_eq!(call("alice").await, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        call("bob").await,
+        StatusCode::NO_CONTENT,
+        "one account's quota refused another's request"
+    );
+    assert_eq!(call("").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        accounts.0.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "each credential presented was checked once"
+    );
 }
 
 /// A key that exempts a request reads no counter and reports the full quota.

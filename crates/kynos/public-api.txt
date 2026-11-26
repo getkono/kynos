@@ -4957,6 +4957,24 @@ impl core::marker::Unpin for kynos::middleware::rate_limit::key::ByPeerAddress
 impl core::marker::UnsafeUnpin for kynos::middleware::rate_limit::key::ByPeerAddress
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::key::ByPeerAddress
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::key::ByPeerAddress
+pub struct kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>
+impl<G, F, E> kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>
+pub fn kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>::otherwise<K>(self, K) -> kynos::middleware::rate_limit::key::ByPrincipal<G, F, K>
+impl<G, F> kynos::middleware::rate_limit::key::ByPrincipal<G, F>
+pub fn kynos::middleware::rate_limit::key::ByPrincipal<G, F>::new<R>(F) -> Self where F: core::ops::function::Fn(&G) -> R, R: core::convert::Into<alloc::borrow::Cow<'static, str>>
+impl<C, G, F, R, E> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where G: kynos::security::Guard<C>, F: core::ops::function::Fn(&G) -> R + core::marker::Send + core::marker::Sync + 'static, R: core::convert::Into<alloc::borrow::Cow<'static, str>>, E: kynos::middleware::rate_limit::key::RateLimitKey<C>
+pub fn kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
+impl<G, F, E: core::fmt::Debug> core::fmt::Debug for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>
+pub fn kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl<G, F, E> core::clone::Clone for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::clone::Clone, E: core::clone::Clone
+pub fn kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>::clone(&self) -> Self
+impl<G, F, E> core::marker::Freeze for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::marker::Freeze, E: core::marker::Freeze
+impl<G, F, E> core::marker::Send for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::marker::Send, E: core::marker::Send
+impl<G, F, E> core::marker::Sync for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::marker::Sync, E: core::marker::Sync
+impl<G, F, E> core::marker::Unpin for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::marker::Unpin, E: core::marker::Unpin
+impl<G, F, E> core::marker::UnsafeUnpin for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::marker::UnsafeUnpin, E: core::marker::UnsafeUnpin
+impl<G, F, E> core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::panic::unwind_safe::RefUnwindSafe, E: core::panic::unwind_safe::RefUnwindSafe
+impl<G, F, E> core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where F: core::panic::unwind_safe::UnwindSafe, E: core::panic::unwind_safe::UnwindSafe
 pub struct kynos::middleware::rate_limit::key::ByRoute
 impl core::clone::Clone for kynos::middleware::rate_limit::key::ByRoute
 pub fn kynos::middleware::rate_limit::key::ByRoute::clone(&self) -> kynos::middleware::rate_limit::key::ByRoute
@@ -4994,6 +5012,8 @@ impl<C, A: kynos::middleware::rate_limit::key::RateLimitKey<C>, B: kynos::middle
 pub fn kynos::middleware::rate_limit::key::And<A, B>::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
 impl<C, F> kynos::middleware::rate_limit::key::RateLimitKey<C> for F where F: core::ops::function::Fn(&kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>> + core::marker::Send + core::marker::Sync + 'static
 pub fn F::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
+impl<C, G, F, R, E> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::ByPrincipal<G, F, E> where G: kynos::security::Guard<C>, F: core::ops::function::Fn(&G) -> R + core::marker::Send + core::marker::Sync + 'static, R: core::convert::Into<alloc::borrow::Cow<'static, str>>, E: kynos::middleware::rate_limit::key::RateLimitKey<C>
+pub fn kynos::middleware::rate_limit::key::ByPrincipal<G, F, E>::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
 impl<C> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::ByClientAddress
 pub fn kynos::middleware::rate_limit::key::ByClientAddress::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
 impl<C> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::ByHeader

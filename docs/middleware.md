@@ -636,6 +636,32 @@ hand beside its own `IntoResponse` — `Timeout::answer_with` takes one — wher
 that const would be a declaration written beside the behaviour rather than being
 it, which is the `contribution` method this document refuses.
 
+### Keying on the caller
+
+`key::ByPrincipal` keys on what the operation's guard admitted, read from the
+request after a scope's `guard_first` ran the guard ahead of the limiter — so
+`.guard_first()` comes before `.intercept(limit)`. Spending a per-account
+limit there, rather than in the handler, refuses before the body is read, and
+the guard still checks the credential once.
+
+- **A request no guard admitted shares one bucket.** It is reached by a
+  misplaced limiter, an operation with another guard or none, or an
+  interceptor handing on a copy of the request. Exempting it would make a
+  misconfigured limit silently absent, and keying it on the peer would make it
+  a per-IP limit nobody asked for; one `principal:none` bucket fails closed,
+  and shows itself. `otherwise(key)` names another key, in the type, for a
+  limiter covering public operations too.
+- **The guard type is the handler's, exactly.** `ByPrincipal<Auth<Bearer>, _>`
+  reads nothing a `Scoped` or `MaybeAuth` guard admitted. A `MaybeAuth` admits
+  anonymous callers, so its closure names their bucket; `otherwise` is only for
+  requests no guard ran on.
+- **The guard is borrowed, not taken.** The handler's guard argument receives
+  it as before; the closure runs while it is held, so it should only read.
+
+Which guard covers an operation is decided when the router is built, so a
+limiter that cannot see its guard is a build-time fact the router does not yet
+check; the shared bucket is the run-time half of that.
+
 ### Replacing the algorithm, and why no bucket ships
 
 `Quotas` is one implementation of `RateLimitPolicy`, not the trait's only

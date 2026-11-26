@@ -244,20 +244,36 @@ pub(crate) async fn guard_ahead<C, G: Guard<C>>(
 ) -> Option<crate::http::Response> {
     match G::guard(parts, context).await {
         Ok(guard) => {
-            parts
-                .extensions
-                .insert(Admitted(std::sync::Mutex::new(Some(guard))));
+            admit(&mut parts.extensions, guard);
             None
         }
         Err(rejection) => Some(rejection.__into_response_for(parts)),
     }
 }
 
+/// Keeps `guard` in `extensions` as what admitted the request.
+pub(crate) fn admit<G: Send + 'static>(extensions: &mut crate::http::Extensions, guard: G) {
+    extensions.insert(Admitted(std::sync::Mutex::new(Some(guard))));
+}
+
 /// The guard [`guard_ahead`] admitted this request with, taken off it.
 pub(crate) fn admitted<C, G: Guard<C>>(parts: &mut Parts) -> Option<G> {
     let Admitted(slot) = parts.extensions.remove::<Admitted<G>>()?;
-    // Nothing panics while the slot is held, so it is never poisoned.
+    // Only a `read` handed to `peek_admitted` can panic while the slot is
+    // held, and that unwinds the request before its handler takes the slot.
     slot.into_inner().ok().flatten()
+}
+
+/// What `read` makes of the guard [`guard_ahead`] admitted this request with,
+/// leaving it for the handler; `None` where no guard of type `G` ran ahead of
+/// the caller, or the request is a copy of the one it admitted.
+pub(crate) fn peek_admitted<G: Send + 'static, R>(
+    extensions: &crate::http::Extensions,
+    read: impl FnOnce(&G) -> R,
+) -> Option<R> {
+    let Admitted(slot) = extensions.get::<Admitted<G>>()?;
+    let guard = slot.lock().ok()?;
+    guard.as_ref().map(read)
 }
 
 /// Compares two secrets without returning on the first byte that differs.

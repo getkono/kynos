@@ -112,6 +112,14 @@ guard argument, so a request is checked once.
 - **A CORS preflight runs no guard**, since it runs no interceptor.
 - **An endpoint's own `catch_panics` still covers its guard**, wherever it
   runs.
+- **An interceptor after the call can key on the caller.** What the guard
+  admitted waits in the request for the handler, and the one reader Kynos
+  gives an interceptor is `RateLimit`'s `key::ByPrincipal`, so a per-account
+  limit is spent before the body is read without a second check. The guard's
+  value stays crate-private otherwise: an interceptor reading it would be an
+  authorization decision made outside the guard, which this section's first
+  bullet rules out. See
+  [`middleware.md`](middleware.md#keying-on-the-caller).
 
 Moving the guard into an interceptor of the application's own, which this
 replaces, checks twice and has to restate the guard's challenges to keep them
