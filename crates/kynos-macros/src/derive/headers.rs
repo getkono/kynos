@@ -121,10 +121,13 @@ fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
                     ::kynos::http::HeaderValue::from_static(#value),
                 ));
             };
+            // A required field is read as the `()` it is, as an optional one is
+            // through `is_some`, so a group that is only constructed and sent
+            // raises no `dead_code` warning for a field it cannot do without.
             return if param.optional().is_some() {
                 quote!(if ::core::option::Option::is_some(&self.#ident) { #field })
             } else {
-                field
+                quote!(let () = self.#ident; #field)
             };
         }
         let rendered = render(param);
