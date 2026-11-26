@@ -1019,12 +1019,15 @@ fn a_header_key_puts_every_request_without_a_readable_value_in_one_bucket() {
 
     assert_eq!(
         partition_of(&key, &[("x-tenant", b"acme")]).as_deref(),
-        Some("x-tenant:acme")
+        Some("header:x-tenant:acme")
     );
-    assert_eq!(partition_of(&key, &[]).as_deref(), Some("x-tenant:none"));
+    assert_eq!(
+        partition_of(&key, &[]).as_deref(),
+        Some("header:x-tenant:none")
+    );
     assert_eq!(
         partition_of(&key, &[("x-tenant", b"\xff")]).as_deref(),
-        Some("x-tenant:none")
+        Some("header:x-tenant:none")
     );
 }
 
@@ -1200,11 +1203,11 @@ fn a_request_no_guard_admitted_shares_one_bucket_unless_otherwise_names_a_key() 
 
     assert_eq!(
         principal_of::<Auth<Bearer>>(&key, None).as_deref(),
-        Some("principal:none")
+        Some("unadmitted")
     );
     assert_eq!(
         principal_of(&key, Some(MaybeAuth::<Bearer>(Some("alice".to_owned())))).as_deref(),
-        Some("principal:none"),
+        Some("unadmitted"),
         "a `MaybeAuth` is not the `Auth` the key reads"
     );
 
@@ -1219,7 +1222,7 @@ fn a_request_no_guard_admitted_shares_one_bucket_unless_otherwise_names_a_key() 
             &Accounts
         )
         .as_deref(),
-        Some("principal:none"),
+        Some("unadmitted"),
         "a copy of the request is not the one the guard admitted"
     );
 
@@ -1247,6 +1250,36 @@ fn an_anonymous_caller_a_maybe_guard_admitted_is_named_by_the_closure() {
         principal_of(&key, Some(MaybeAuth::<Bearer>(None))).as_deref(),
         Some("principal:anonymous")
     );
+}
+
+/// No caller's name puts an admitted caller in the bucket of the requests no
+/// guard admitted, and no header's name reaches a principal's, a
+/// handler-spent partition's or a peer's bucket in a shared store.
+#[test]
+fn no_closure_or_header_names_another_keys_bucket() {
+    let key = ByPrincipal::new(|Auth(token): &Auth<Bearer>| token.clone());
+    let unadmitted = principal_of::<Auth<Bearer>>(&key, None);
+    for name in ["none", "unadmitted", ""] {
+        let admitted = principal_of(&key, Some(Auth::<Bearer>(name.to_owned())));
+        assert_ne!(admitted, unadmitted, "a caller named {name:?}");
+    }
+
+    for (field, value) in [
+        ("principal", "alice"),
+        ("principal", "none"),
+        ("handler", "alice"),
+        ("peer", "none"),
+        ("unadmitted", "x"),
+    ] {
+        let header = super::key::ByHeader(
+            crate::http::HeaderName::from_bytes(field.as_bytes()).expect("a legal field name"),
+        );
+        let partition = partition_of(&header, &[(field, value.as_bytes())]);
+        assert_eq!(
+            partition.as_deref(),
+            Some(format!("header:{field}:{value}").as_str())
+        );
+    }
 }
 
 /// The peer key names the connection's IP and not its port, so a client's

@@ -105,6 +105,10 @@ impl<C> RateLimitKey<C> for ByClientAddress {
 ///
 /// A request without the field counts against one shared bucket, so removing
 /// the header is not a way past the limit.
+///
+/// The partition is `header:`, the field's name, `:` and its value, so no
+/// header's name, `peer` or `principal` included, names another shipped key's
+/// bucket in a shared store.
 #[derive(Clone, Debug)]
 pub struct ByHeader(pub http::HeaderName);
 
@@ -123,7 +127,7 @@ impl<C> RateLimitKey<C> for ByHeader {
             .and_then(|value| value.to_str().ok())
             .unwrap_or("none");
 
-        Some(Cow::Owned(format!("{}:{value}", self.0.as_str())))
+        Some(Cow::Owned(format!("header:{}:{value}", self.0.as_str())))
     }
 }
 
@@ -157,8 +161,8 @@ impl<C> RateLimitKey<C> for ByHeader {
 /// One reaches the limiter with no guard of type `G` run ahead of it where the
 /// scope never called `guard_first`, called it after this limiter, the
 /// operation takes another guard or none, or an interceptor between the two
-/// handed on a copy of the request. Every such request counts against one
-/// shared bucket, `principal:none`, rather than being exempted or quietly
+/// handed on a copy of the request. Every such request counts against
+/// [`Unadmitted`]'s one shared bucket rather than being exempted or quietly
 /// keyed on the peer: a limit is never silently absent, and a misplaced
 /// limiter shows itself as one bucket shared by everybody.
 ///
@@ -181,9 +185,10 @@ impl<C> RateLimitKey<C> for ByHeader {
 /// is only for requests no guard admitted.
 ///
 /// The partition is `principal:` followed by what `principal` returns, so it
-/// collides with no other shipped key's in a shared store, and its
-/// cardinality is the number of callers the guard admits.
-pub struct ByPrincipal<G, F, E = Shared> {
+/// collides with no other shipped key's in a shared store, [`Unadmitted`]'s
+/// included, whatever `principal` returns; its cardinality is the number of
+/// callers the guard admits.
+pub struct ByPrincipal<G, F, E = Unadmitted> {
     principal: F,
     otherwise: E,
     /// Carries the guard type; `fn(&G)` keeps the key `Send` and `Sync`.
@@ -201,7 +206,7 @@ impl<G, F> ByPrincipal<G, F> {
     {
         Self {
             principal,
-            otherwise: Shared(Cow::Borrowed("principal:none")),
+            otherwise: Unadmitted,
             guard: PhantomData,
         }
     }
@@ -258,6 +263,29 @@ impl<G, F, E: std::fmt::Debug> std::fmt::Debug for ByPrincipal<G, F, E> {
             .field("guard", &std::any::type_name::<G>())
             .field("otherwise", &self.otherwise)
             .finish_non_exhaustive()
+    }
+}
+
+/// Where a [`ByPrincipal`] keys a request no guard of its type admitted, until
+/// [`otherwise`](ByPrincipal::otherwise) names another key: one shared
+/// bucket.
+///
+/// Its partition, `unadmitted`, is one no other shipped key writes, and no
+/// closure a `ByPrincipal` holds can name it, since that key's partitions all
+/// begin `principal:`: an admitted caller never shares the bucket of the
+/// requests nobody admitted.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Unadmitted;
+
+impl<C> RateLimitKey<C> for Unadmitted {
+    fn partition(
+        &self,
+        request: &http::Request,
+        route: Route<'_>,
+        context: &C,
+    ) -> Option<Cow<'static, str>> {
+        let _ = (request, route, context);
+        Some(Cow::Borrowed("unadmitted"))
     }
 }
 

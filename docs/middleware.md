@@ -648,8 +648,10 @@ the guard still checks the credential once.
   misplaced limiter, an operation with another guard or none, or an
   interceptor handing on a copy of the request. Exempting it would make a
   misconfigured limit silently absent, and keying it on the peer would make it
-  a per-IP limit nobody asked for; one `principal:none` bucket fails closed,
-  and shows itself. `otherwise(key)` names another key, in the type, for a
+  a per-IP limit nobody asked for; one `unadmitted` bucket fails closed,
+  and shows itself. No closure output names it: a caller's partition is
+  always `principal:` and what the closure returned, and a header's is
+  `header:`, the field's name and its value. `otherwise(key)` names another key, in the type, for a
   limiter covering public operations too.
 - **The guard type is the handler's, exactly.** `ByPrincipal<Auth<Bearer>, _>`
   reads nothing a `Scoped` or `MaybeAuth` guard admitted. A `MaybeAuth` admits

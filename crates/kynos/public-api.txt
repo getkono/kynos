@@ -5021,6 +5021,23 @@ impl core::marker::Unpin for kynos::middleware::rate_limit::key::Shared
 impl core::marker::UnsafeUnpin for kynos::middleware::rate_limit::key::Shared
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::key::Shared
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::key::Shared
+pub struct kynos::middleware::rate_limit::key::Unadmitted
+impl core::clone::Clone for kynos::middleware::rate_limit::key::Unadmitted
+pub fn kynos::middleware::rate_limit::key::Unadmitted::clone(&self) -> kynos::middleware::rate_limit::key::Unadmitted
+impl core::default::Default for kynos::middleware::rate_limit::key::Unadmitted
+pub fn kynos::middleware::rate_limit::key::Unadmitted::default() -> kynos::middleware::rate_limit::key::Unadmitted
+impl core::fmt::Debug for kynos::middleware::rate_limit::key::Unadmitted
+pub fn kynos::middleware::rate_limit::key::Unadmitted::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::middleware::rate_limit::key::Unadmitted
+impl<C> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::Unadmitted
+pub fn kynos::middleware::rate_limit::key::Unadmitted::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
+impl core::marker::Freeze for kynos::middleware::rate_limit::key::Unadmitted
+impl core::marker::Send for kynos::middleware::rate_limit::key::Unadmitted
+impl core::marker::Sync for kynos::middleware::rate_limit::key::Unadmitted
+impl core::marker::Unpin for kynos::middleware::rate_limit::key::Unadmitted
+impl core::marker::UnsafeUnpin for kynos::middleware::rate_limit::key::Unadmitted
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::key::Unadmitted
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::key::Unadmitted
 pub trait kynos::middleware::rate_limit::key::RateLimitKey<C>: core::marker::Send + core::marker::Sync + 'static
 pub fn kynos::middleware::rate_limit::key::RateLimitKey::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
 impl<C, A: kynos::middleware::rate_limit::key::RateLimitKey<C>, B: kynos::middleware::rate_limit::key::RateLimitKey<C>> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::And<A, B>
@@ -5039,6 +5056,8 @@ impl<C> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middlewar
 pub fn kynos::middleware::rate_limit::key::ByRoute::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
 impl<C> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::Shared
 pub fn kynos::middleware::rate_limit::key::Shared::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
+impl<C> kynos::middleware::rate_limit::key::RateLimitKey<C> for kynos::middleware::rate_limit::key::Unadmitted
+pub fn kynos::middleware::rate_limit::key::Unadmitted::partition(&self, &kynos::http::Request, kynos::router::operation::Route<'_>, &C) -> core::option::Option<alloc::borrow::Cow<'static, str>>
 pub mod kynos::middleware::rate_limit::quota
 pub struct kynos::middleware::rate_limit::quota::Quota
 impl kynos::middleware::rate_limit::quota::Quota
