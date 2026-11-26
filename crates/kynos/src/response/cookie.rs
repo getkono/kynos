@@ -84,6 +84,11 @@ pub struct Cookie {
 
 impl Cookie {
     /// A cookie called `name` carrying `value`.
+    ///
+    /// Give it a [`Cookie::path`]: without one a user agent scopes it to the
+    /// directory of the request that set it (RFC 6265bis section 5.1.4), so a
+    /// cookie set by `POST /auth/login` is not sent to `/api`, and a removal
+    /// sent from another URL misses it.
     #[must_use]
     pub fn new(name: impl Into<Cow<'static, str>>, value: impl Into<Cow<'static, str>>) -> Self {
         Self {
@@ -119,15 +124,22 @@ impl Cookie {
     /// A cookie that deletes this one.
     ///
     /// Every attribute but the lifetime is kept, the value is emptied, and
-    /// `Max-Age=0` is sent, as [`Cookie::removal`] does. Keeping them all is
-    /// what makes the removal land wherever the original did, since a user
-    /// agent ignores a removal (RFC 6265bis section 5.7):
+    /// `Max-Age=0` is sent, as [`Cookie::removal`] does. They are kept because
+    /// a user agent ignores a removal (RFC 6265bis section 5.7):
     ///
     /// - whose name, `Domain` and `Path` differ, which replaces nothing;
     /// - without `Secure`, where its name prefix or `SameSite=None` demands it;
     /// - whose `SameSite` is not `None`, sent from a cross-site context;
     /// - without `Partitioned`, against a partitioned cookie, which is stored
     ///   apart from an unpartitioned one of the same name (CHIPS).
+    ///
+    /// Keeping an attribute the original never set keeps nothing. A user agent
+    /// fills a missing `Path` with the directory of the request it answers
+    /// (section 5.1.4) and a missing `Domain` with that request's host, so a
+    /// removal answering a request to another URL is filed elsewhere and
+    /// misses the original. An explicit [`Cookie::path`], and a
+    /// [`Cookie::domain`] where the cookie is shared across hosts, is what
+    /// makes the removal match from any URL.
     ///
     /// ```
     /// use kynos::response::cookie::{Cookie, SameSite};
