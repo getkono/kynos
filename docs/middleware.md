@@ -667,13 +667,28 @@ limiter that cannot see its guard is refused there: `Router::build` reports
 handler takes another guard or none, naming the operation, the limiter and
 both fixes. Only `otherwise` opts out, because it is the one place the type
 says where an unadmitted request goes. Interceptors declare what they read
-through a hidden `Interceptor` item that `RateLimit` forwards from its policy
-and `Quotas` from its key, so the check asks each interceptor rather than
-recognising a limiter by identity, as the router does `Cors`.
+through a hidden `Interceptor` item that `RateLimit` forwards from its policy,
+so the check asks each interceptor rather than recognising a limiter by
+identity, as the router does `Cors`.
+
+- **A wrapper forwards what it holds.** `RateLimitPolicy::reads_admitted` and
+  `RateLimitKey::reads_admitted` return the `AdmittedReads` of every guard
+  they key on, as `Quotas` returns its key's and `And` both halves'. A policy
+  or key wrapping another returns the inner one's, so a wrapper around
+  `Quotas` or `ByPrincipal` is checked as what it wraps is.
+- **Required, not defaulted.** A provided `none()` would let a wrapper drop
+  the check by saying nothing, so every policy and key states it, and one
+  keyed on nobody writes `AdmittedReads::none()`. Only Kynos makes an
+  `AdmittedReads` naming a guard, so an implementation can forward or join
+  them and never claim one it does not read.
 
 The `unadmitted` bucket stays behind the check as defence in depth, for what
-the router cannot see: a `route_unchecked` route, which takes no guard, and a
-request an interceptor handed on as a copy.
+the router cannot see: a `route_unchecked` route, which takes no guard; a
+request an interceptor handed on as a copy; and a key or policy that calls
+another's `partition` or `check` and returns `AdmittedReads::none()` rather
+than what that one reads, as a closure key calling one does, and an
+application interceptor wrapping a `RateLimit`, whose hidden item it cannot
+forward.
 
 ### Spending from a handler
 

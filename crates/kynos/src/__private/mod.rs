@@ -73,8 +73,8 @@ impl PartialEq for GuardType {
 impl Eq for GuardType {}
 
 /// An interceptor an endpoint holds itself that keys on what guard `guard`
-/// admitted, as [`Endpoint`](crate::router::endpoint::Endpoint)'s hidden
-/// `__admitted_reader` names it.
+/// admitted, one of those [`Endpoint`](crate::router::endpoint::Endpoint)'s
+/// hidden `__admitted_readers` names: one per guard it reads.
 #[derive(Clone, Copy, Debug)]
 pub struct AdmittedReader {
     /// The interceptor's type, as `std::any::type_name` spells it.

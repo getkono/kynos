@@ -17,12 +17,103 @@ pub trait RateLimitKey<C>: Send + Sync + 'static {
         context: &C,
     ) -> Option<Cow<'static, str>>;
 
-    /// Not part of the API: the guard whose admission this key reads with no
-    /// other key named for a request it did not admit, which the router
-    /// refuses to build unless a scope runs that guard ahead of the limiter.
-    #[doc(hidden)]
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        None
+    /// Every guard whose admission this key reads with no other key named for
+    /// a request it did not admit: what has
+    /// [`Router::build`](crate::Router::build) refuse, with
+    /// [`RouterError::GuardNotAhead`](crate::router::error::RouterError::GuardNotAhead),
+    /// a limiter keyed on it that no scope runs that guard ahead of.
+    ///
+    /// Only a [`ByPrincipal`] with no [`otherwise`](ByPrincipal::otherwise)
+    /// reads one itself. A key holding another key returns what that one
+    /// does, as [`And`] returns both halves', and every other key returns
+    /// [`AdmittedReads::none`]:
+    ///
+    /// ```
+    /// use std::borrow::Cow;
+    ///
+    /// use kynos::{
+    ///     http,
+    ///     middleware::rate_limit::key::{AdmittedReads, RateLimitKey},
+    ///     router::operation::Route,
+    /// };
+    ///
+    /// /// Another key's partition, lower-cased.
+    /// struct Folded<K>(K);
+    ///
+    /// impl<C, K: RateLimitKey<C>> RateLimitKey<C> for Folded<K> {
+    ///     fn partition(
+    ///         &self,
+    ///         request: &http::Request,
+    ///         route: Route<'_>,
+    ///         context: &C,
+    ///     ) -> Option<Cow<'static, str>> {
+    ///         let partition = self.0.partition(request, route, context)?;
+    ///         Some(Cow::Owned(partition.to_lowercase()))
+    ///     }
+    ///
+    ///     fn reads_admitted(&self) -> AdmittedReads {
+    ///         self.0.reads_admitted()
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Required rather than provided, so a key wrapping a [`ByPrincipal`]
+    /// cannot leave the check behind by saying nothing:
+    ///
+    /// ```compile_fail,E0046
+    /// # use std::borrow::Cow;
+    /// # use kynos::{http, middleware::rate_limit::key::RateLimitKey, router::operation::Route};
+    /// struct Folded<K>(K);
+    ///
+    /// impl<C, K: RateLimitKey<C>> RateLimitKey<C> for Folded<K> {
+    ///     fn partition(&self, request: &http::Request, route: Route<'_>, context: &C)
+    ///         -> Option<Cow<'static, str>> {
+    ///         self.0.partition(request, route, context)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// A closure key reports none, even one that calls a [`ByPrincipal`]'s
+    /// `partition`: a closure cannot forward what the key it calls reads, so
+    /// the router does not check that guard runs ahead of it.
+    fn reads_admitted(&self) -> AdmittedReads;
+}
+
+/// The guards whose admission a [`RateLimitKey`] or
+/// [`RateLimitPolicy`](super::decision::RateLimitPolicy) reads, which the
+/// router holds a limiter keyed on them to run inside.
+///
+/// Only a [`ByPrincipal`] names a guard, so an implementation outside Kynos
+/// can return what the keys and policies it holds read, joined with
+/// [`and`](Self::and), or [`none`](Self::none), and never claim a guard
+/// itself.
+#[derive(Clone, Debug)]
+#[must_use]
+pub struct AdmittedReads {
+    /// In the order the keys reading them were joined; repeats are kept,
+    /// since the router's check is a search over them.
+    pub(crate) guards: Vec<crate::__private::GuardType>,
+}
+
+impl AdmittedReads {
+    /// No guard's admission: what a key or policy holding no
+    /// [`ByPrincipal`] reads.
+    pub const fn none() -> Self {
+        Self { guards: Vec::new() }
+    }
+
+    /// What `self` reads and then what `other` does, as a key or policy
+    /// holding two returns.
+    pub fn and(mut self, other: Self) -> Self {
+        self.guards.extend(other.guards);
+        self
+    }
+
+    /// The guard type `G`.
+    fn of<G: 'static>() -> Self {
+        Self {
+            guards: vec![crate::__private::GuardType::of::<G>()],
+        }
     }
 }
 
@@ -65,6 +156,10 @@ impl<C> RateLimitKey<C> for ByPeerAddress {
                 ),
         ))
     }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
+    }
 }
 
 /// The client address, resolved through the router's trusted-proxy policy.
@@ -102,6 +197,10 @@ impl<C> RateLimitKey<C> for ByClientAddress {
                 ),
         ))
     }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
+    }
 }
 
 /// A request field's value.
@@ -136,6 +235,10 @@ impl<C> RateLimitKey<C> for ByHeader {
             .unwrap_or("none");
 
         Some(Cow::Owned(format!("header:{}:{value}", self.0.as_str())))
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 }
 
@@ -175,8 +278,13 @@ impl<C> RateLimitKey<C> for ByHeader {
 /// anybody.
 ///
 /// What the router cannot see still reaches the limiter unadmitted: an
-/// `unchecked` feature's `route_unchecked` route, which takes no guard, and a
-/// request an interceptor between the two handed on as a copy.
+/// `unchecked` feature's `route_unchecked` route, which takes no guard; a
+/// request an interceptor between the two handed on as a copy; a key or
+/// policy that calls this one's `partition`, or a policy's `check`, and
+/// returns [`AdmittedReads::none`] rather than what it reads, as a closure key
+/// calling it does; and an application interceptor wrapping a
+/// [`RateLimit`](super::RateLimit), which cannot forward what its policy
+/// reads.
 /// Each counts against [`Unadmitted`]'s one shared bucket rather than being
 /// exempted or quietly keyed on the peer, so a limit is never silently
 /// absent.
@@ -270,9 +378,12 @@ where
 
     // Only while no `otherwise` names a key: one that does keys the requests
     // no guard admitted as the application chose.
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        (std::any::TypeId::of::<E>() == std::any::TypeId::of::<Unadmitted>())
-            .then(crate::__private::GuardType::of::<G>)
+    fn reads_admitted(&self) -> AdmittedReads {
+        if std::any::TypeId::of::<E>() == std::any::TypeId::of::<Unadmitted>() {
+            AdmittedReads::of::<G>()
+        } else {
+            AdmittedReads::none()
+        }
     }
 }
 
@@ -313,6 +424,10 @@ impl<C> RateLimitKey<C> for Unadmitted {
     ) -> Option<Cow<'static, str>> {
         let _ = (request, route, context);
         Some(Cow::Borrowed("unadmitted"))
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 }
 
@@ -368,6 +483,10 @@ impl<C> RateLimitKey<C> for ByRoute {
             route.path()
         )))
     }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
+    }
 }
 
 /// One fixed bucket: everything the limiter covers shares a quota.
@@ -383,6 +502,10 @@ impl<C> RateLimitKey<C> for Shared {
     ) -> Option<Cow<'static, str>> {
         let _ = (request, route, context);
         Some(self.0.clone())
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 }
 
@@ -405,10 +528,10 @@ impl<C, A: RateLimitKey<C>, B: RateLimitKey<C>> RateLimitKey<C> for And<A, B> {
         Some(Cow::Owned(format!("{left}|{right}")))
     }
 
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        self.0
-            .__reads_admitted()
-            .or_else(|| self.1.__reads_admitted())
+    // Both halves' guards, not the first's: a request the second's guard did
+    // not admit shares one bucket as much as one the first's did not.
+    fn reads_admitted(&self) -> AdmittedReads {
+        self.0.reads_admitted().and(self.1.reads_admitted())
     }
 }
 
@@ -423,5 +546,10 @@ where
         context: &C,
     ) -> Option<Cow<'static, str>> {
         self(request, route, context)
+    }
+
+    // No closure can read a guard's admission, which is crate-private.
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 }

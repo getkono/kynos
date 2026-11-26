@@ -148,6 +148,7 @@ impl<T: ProblemType> RateLimitSpelling<T> for Structured {
 ///     middleware::rate_limit::{
 ///         RateLimit,
 ///         decision::{Decision, RateLimitPolicy, ServiceLimit},
+///         key::AdmittedReads,
 ///     },
 ///     router::operation::Route,
 /// };
@@ -156,6 +157,11 @@ impl<T: ProblemType> RateLimitSpelling<T> for Structured {
 /// struct PerClient;
 ///
 /// impl RateLimitPolicy<()> for PerClient {
+///     // Keyed on no guard's admission, so the router places it anywhere.
+///     fn reads_admitted(&self) -> AdmittedReads {
+///         AdmittedReads::none()
+///     }
+///
 ///     async fn check(&self, _: &http::Request, _: Route<'_>, _: &()) -> Decision {
 ///         Decision::allow(ServiceLimit::new("default", 100, 99, Duration::from_secs(30)))
 ///     }
@@ -211,10 +217,11 @@ impl<P, D> RateLimit<P, D, ()> {
     /// ```no_run
     /// # use std::time::Duration;
     /// # use kynos::{error::problem::ProblemType, http, middleware::rate_limit::{
-    /// #     RateLimit, decision::{Decision, RateLimitPolicy, ServiceLimit},
+    /// #     RateLimit, decision::{Decision, RateLimitPolicy, ServiceLimit}, key::AdmittedReads,
     /// # }, router::operation::Route};
     /// # #[derive(Clone, Debug)] struct PerClient;
     /// # impl RateLimitPolicy<()> for PerClient {
+    /// #     fn reads_admitted(&self) -> AdmittedReads { AdmittedReads::none() }
     /// #     async fn check(&self, _: &http::Request, _: Route<'_>, _: &()) -> Decision {
     /// #         Decision::allow(ServiceLimit::new("default", 100, 99, Duration::from_secs(30)))
     /// #     }
@@ -234,10 +241,11 @@ impl<P, D> RateLimit<P, D, ()> {
     /// ```compile_fail
     /// # use std::time::Duration;
     /// # use kynos::{error::problem::ProblemType, http, middleware::rate_limit::{
-    /// #     RateLimit, decision::{Decision, RateLimitPolicy, ServiceLimit},
+    /// #     RateLimit, decision::{Decision, RateLimitPolicy, ServiceLimit}, key::AdmittedReads,
     /// # }, router::operation::Route};
     /// # #[derive(Clone, Debug)] struct PerClient;
     /// # impl RateLimitPolicy<()> for PerClient {
+    /// #     fn reads_admitted(&self) -> AdmittedReads { AdmittedReads::none() }
     /// #     async fn check(&self, _: &http::Request, _: Route<'_>, _: &()) -> Decision {
     /// #         Decision::allow(ServiceLimit::new("default", 100, 99, Duration::from_secs(30)))
     /// #     }
@@ -343,8 +351,8 @@ where
 
     const READS_BODY: bool = false;
 
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        self.policy.__reads_admitted()
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
+        self.policy.reads_admitted().guards
     }
 
     async fn intercept(

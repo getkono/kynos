@@ -2,6 +2,7 @@
 
 use std::{borrow::Cow, time::Duration};
 
+use super::key::AdmittedReads;
 use crate::{http, router::operation::Route};
 
 /// The unit a quota counts in.
@@ -189,13 +190,62 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
         &[]
     }
 
-    /// Not part of the API: the guard whose admission this policy keys on,
-    /// which [`Quotas`](super::quota::Quotas) forwards from its key and
-    /// [`RateLimit`](super::RateLimit) from its policy.
-    #[doc(hidden)]
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        None
-    }
+    /// Every guard whose admission this policy keys on, which the router
+    /// holds a [`RateLimit`](super::RateLimit) over it to run inside, as
+    /// [`RateLimitKey::reads_admitted`](super::key::RateLimitKey::reads_admitted)
+    /// says.
+    ///
+    /// A policy holding a key or another policy returns what that one reads,
+    /// as [`Quotas`](super::quota::Quotas) returns its key's; one holding
+    /// neither returns [`AdmittedReads::none`]:
+    ///
+    /// ```
+    /// use kynos::{
+    ///     http,
+    ///     middleware::rate_limit::{
+    ///         decision::{Decision, QuotaPolicy, RateLimitPolicy},
+    ///         key::AdmittedReads,
+    ///     },
+    ///     router::operation::Route,
+    /// };
+    ///
+    /// /// Another policy, counting the requests it refuses.
+    /// struct Counted<P>(P, std::sync::atomic::AtomicU64);
+    ///
+    /// impl<C: Sync + 'static, P: RateLimitPolicy<C>> RateLimitPolicy<C> for Counted<P> {
+    ///     fn advertised(&self) -> &[QuotaPolicy] {
+    ///         self.0.advertised()
+    ///     }
+    ///
+    ///     fn reads_admitted(&self) -> AdmittedReads {
+    ///         self.0.reads_admitted()
+    ///     }
+    ///
+    ///     async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
+    ///         let decision = self.0.check(request, route, context).await;
+    ///         if matches!(decision, Decision::Deny(_)) {
+    ///             self.1.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    ///         }
+    ///         decision
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// Required rather than provided, so a policy wrapping one keyed on the
+    /// caller cannot leave the check behind by saying nothing:
+    ///
+    /// ```compile_fail,E0046
+    /// # use kynos::{http, middleware::rate_limit::decision::{Decision, RateLimitPolicy},
+    /// #     router::operation::Route};
+    /// struct Counted<P>(P);
+    ///
+    /// impl<C: Sync + 'static, P: RateLimitPolicy<C>> RateLimitPolicy<C> for Counted<P> {
+    ///     async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
+    ///         self.0.check(request, route, context).await
+    ///     }
+    /// }
+    /// ```
+    fn reads_admitted(&self) -> AdmittedReads;
 
     /// Decides whether this request may continue.
     ///

@@ -110,15 +110,18 @@ where
         H::__guard_type()
     }
 
-    fn __admitted_reader(&self) -> Option<crate::__private::AdmittedReader> {
-        self.interceptors.iter().find_map(|interceptor| {
-            interceptor
-                .reads_admitted()
-                .map(|guard| crate::__private::AdmittedReader {
-                    interceptor: interceptor.name(),
-                    guard,
+    fn __admitted_readers(&self) -> Vec<crate::__private::AdmittedReader> {
+        self.interceptors
+            .iter()
+            .flat_map(|interceptor| {
+                interceptor.reads_admitted().into_iter().map(|guard| {
+                    crate::__private::AdmittedReader {
+                        interceptor: interceptor.name(),
+                        guard,
+                    }
                 })
-        })
+            })
+            .collect()
     }
 
     fn __public(&self) -> bool {

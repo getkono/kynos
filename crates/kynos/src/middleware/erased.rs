@@ -38,9 +38,9 @@ pub(crate) trait ErasedInterceptor<C>: Send + Sync + 'static {
     /// [`Interceptor::READS_BODY`].
     fn reads_body(&self) -> bool;
 
-    /// The guard whose admission this interceptor keys on: its
+    /// Every guard whose admission this interceptor keys on: its
     /// [`Interceptor::__reads_admitted`].
-    fn reads_admitted(&self) -> Option<crate::__private::GuardType>;
+    fn reads_admitted(&self) -> Vec<crate::__private::GuardType>;
 
     /// This interceptor's type, as `std::any::type_name` spells it, for a
     /// refusal naming it.
@@ -178,7 +178,7 @@ where
         I::READS_BODY
     }
 
-    fn reads_admitted(&self) -> Option<crate::__private::GuardType> {
+    fn reads_admitted(&self) -> Vec<crate::__private::GuardType> {
         Interceptor::__reads_admitted(self)
     }
 
