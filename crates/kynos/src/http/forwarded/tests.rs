@@ -869,6 +869,26 @@ fn a_network_clears_the_bits_past_its_prefix() {
     assert_eq!(net("10.1.2.3/8").prefix(), 8);
 }
 
+/// A host network holds its one address and no neighbour, in either family,
+/// and a mapped address is its IPv4 host's.
+#[test]
+fn a_host_network_holds_exactly_its_address() {
+    let cases: &[(&str, &str)] = &[
+        ("203.0.113.7", "203.0.113.7/32"),
+        ("::ffff:203.0.113.7", "203.0.113.7/32"),
+        ("2001:db8::1", "2001:db8::1/128"),
+        ("0.0.0.0", "0.0.0.0/32"),
+        ("::", "::/128"),
+    ];
+    for (address, network) in cases {
+        let host = Network::host(ip(address));
+        assert_eq!(host, net(network), "{address}");
+        assert!(host.contains(ip(address)), "{address}");
+    }
+    assert!(!Network::host(ip("203.0.113.7")).contains(ip("203.0.113.6")));
+    assert!(!Network::host(ip("2001:db8::1")).contains(ip("2001:db8::")));
+}
+
 /// What a network is refused for, which is what a startup log shows.
 ///
 /// `/0` trusts every peer, so `Network` never holds one and

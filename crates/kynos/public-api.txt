@@ -3292,6 +3292,7 @@ pub struct kynos::http::forwarded::Network
 impl kynos::http::forwarded::Network
 pub fn kynos::http::forwarded::Network::address(&self) -> core::net::ip_addr::IpAddr
 pub fn kynos::http::forwarded::Network::contains(&self, core::net::ip_addr::IpAddr) -> bool
+pub fn kynos::http::forwarded::Network::host(core::net::ip_addr::IpAddr) -> Self
 pub fn kynos::http::forwarded::Network::new(core::net::ip_addr::IpAddr, u8) -> core::result::Result<Self, kynos::http::forwarded::InvalidNetwork>
 pub fn kynos::http::forwarded::Network::prefix(&self) -> u8
 impl core::clone::Clone for kynos::http::forwarded::Network

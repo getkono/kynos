@@ -417,6 +417,26 @@ impl Network {
         Ok(Self::masked(address, prefix))
     }
 
+    /// The block holding `address` alone: `/32` for IPv4 and `/128` for IPv6.
+    ///
+    /// An IPv4-mapped `address` is its IPv4 host, so this is that host's
+    /// `/32`.
+    ///
+    /// ```
+    /// use kynos::http::forwarded::Network;
+    ///
+    /// let host = Network::host("192.0.2.7".parse()?);
+    /// assert_eq!(host.to_string(), "192.0.2.7/32");
+    /// assert_eq!(Network::host("::ffff:192.0.2.7".parse()?), host);
+    /// # Ok::<(), std::net::AddrParseError>(())
+    /// ```
+    #[must_use]
+    pub fn host(address: IpAddr) -> Self {
+        let address = address.to_canonical();
+        let bits = if address.is_ipv4() { 32 } else { 128 };
+        Self::masked(address, bits)
+    }
+
     /// Every address of `address`'s family, which only
     /// [`TrustedProxies::everyone`] holds.
     fn every(address: IpAddr) -> Self {
