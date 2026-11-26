@@ -4488,18 +4488,25 @@ fn the_derived_header_decoder_reads_an_absent_optional_header_as_none() {
 
 // --- A fixed header value is sent, compared and described as one -----------
 //
-// The same recorded exception: a `()` field under `#[header(value = "...")]`
-// is written as that value, read only where it is that value, and described
-// with that value as its schema's `const`.
+// The same recorded exception: a `()` field under `#[header(value = "...")]`,
+// or a `value` naming a `&str` constant, is written as that value, read only
+// where it is that value, and described with that value as its schema's
+// `const`.
 
-/// A required fixed header, an optional one whose value has inner whitespace
-/// and delimiters, and a field carrying its own value beside them.
+/// The constant `Hardened`'s optional header names, reached by a path.
+mod policy {
+    pub(crate) const NO_STORE: &str = "no-store, max-age=0";
+}
+
+/// A required fixed header written as a literal, an optional one named by a
+/// constant whose value has inner whitespace and delimiters, and a field
+/// carrying its own value beside them.
 #[derive(Debug, HeaderParams)]
 struct Hardened {
     /// The response is not to be read as any type but its `Content-Type`.
     #[header(rename = "X-Content-Type-Options", value = "nosniff")]
     nosniff: (),
-    #[header(rename = "Cache-Control", value = "no-store, max-age=0")]
+    #[header(rename = "Cache-Control", value = policy::NO_STORE)]
     no_store: Option<()>,
     #[header(rename = "X-Request-Id")]
     request_id: String,

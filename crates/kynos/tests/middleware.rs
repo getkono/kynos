@@ -487,6 +487,239 @@ async fn an_unnamed_cross_site_refusal_publishes_about_blank_on_both_halves() {
     );
 }
 
+// --- A stamped group on every response beneath it --------------------------
+
+mod stamp {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use kynos::{
+        HeaderParams, Router,
+        extract::params::header::{EncodeHeaders, UnencodableHeader},
+        http::{HeaderName, HeaderValue, StatusCode},
+        middleware::{
+            Interceptor, MiddlewareError, Placement, limits::body_size::BodySize, stamp::Stamp,
+        },
+        openapi::{Method, PathTemplate},
+        response::{headers::WithHeaders, status::NoContent},
+        router::endpoint::builder::EndpointBuilder,
+    };
+
+    use super::support::{App, caught, get, post, router};
+
+    const API_VERSION: &str = "2026-11-01";
+
+    /// The group every response carries, its value named by a constant.
+    #[derive(HeaderParams)]
+    struct Versioned {
+        /// The version of the API that answered.
+        #[header(rename = "X-Api-Version", value = API_VERSION)]
+        version: (),
+    }
+
+    fn versioned() -> Stamp<Versioned> {
+        Stamp::new(Versioned { version: () }).expect("a fixed group always encodes")
+    }
+
+    /// The handler's own value for the stamped field.
+    #[derive(HeaderParams)]
+    struct OwnVersion {
+        #[header(rename = "X-Api-Version")]
+        version: String,
+    }
+
+    #[kynos::get("/own-version")]
+    async fn own_version() -> WithHeaders<NoContent, OwnVersion> {
+        WithHeaders::new(
+            NoContent,
+            OwnVersion {
+                version: "1999-01-01".to_owned(),
+            },
+        )
+    }
+
+    async fn panics() -> NoContent {
+        panic!("the handler gave up")
+    }
+
+    /// Where [`panics`] is served.
+    fn panics_at() -> PathTemplate {
+        PathTemplate::parse("/panics").expect("a valid path")
+    }
+
+    /// A body longer than the eight octets `BodySize::new(8)` admits.
+    fn long_user() -> super::support::User {
+        super::support::User {
+            id: 1,
+            name: "a name longer than the limit".to_owned(),
+        }
+    }
+
+    /// Mounted outermost, the group reaches what the handler answered, an
+    /// extractor's refusal, an inner interceptor's short circuit, a panic the
+    /// endpoint recovered and the router's own 404, and replaces a value the
+    /// handler set, so each response carries the one value the description
+    /// states.
+    #[test]
+    fn a_stamp_reaches_every_response_beneath_it() {
+        let service = router()
+            .mount(kynos::routes![own_version])
+            .mount(EndpointBuilder::new(Method::Get, panics_at(), panics).catch_panics())
+            .intercept(versioned())
+            .intercept(BodySize::new(8))
+            .build(App::new())
+            .expect("a describable router");
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let replies = [
+            (get(&service, "/users/1"), StatusCode::OK),
+            (get(&service, "/users/one"), StatusCode::BAD_REQUEST),
+            (
+                post(&service, "/users").json(&long_user()),
+                StatusCode::PAYLOAD_TOO_LARGE,
+            ),
+            (get(&service, "/nowhere"), StatusCode::NOT_FOUND),
+            (get(&service, "/own-version"), StatusCode::NO_CONTENT),
+        ];
+        for (pending, status) in replies {
+            let reply = runtime.block_on(pending.call());
+            assert_eq!(reply.status, status);
+            assert_eq!(reply.fields("x-api-version"), [API_VERSION], "{status}");
+        }
+
+        let recovered = caught(&service, "/panics").expect("the endpoint recovered its panic");
+        assert_eq!(recovered.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(recovered.fields("x-api-version"), [API_VERSION]);
+    }
+
+    /// A response answered outside the stamp never passes through it, so it
+    /// goes out without the group: an outer interceptor's refusal, and a panic
+    /// the router recovers, since router- and group-scope recovery wraps
+    /// every interceptor of both scopes.
+    #[test]
+    fn what_is_answered_outside_a_stamp_goes_without_it() {
+        let service = router()
+            .mount(EndpointBuilder::new(Method::Get, panics_at(), panics))
+            .catch_panics()
+            .intercept(BodySize::new(8))
+            .intercept(versioned())
+            .build(App::new())
+            .expect("a describable router");
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let refused = runtime.block_on(post(&service, "/users").json(&long_user()).call());
+        let answered = runtime.block_on(get(&service, "/users/1").call());
+        let recovered = caught(&service, "/panics").expect("the router recovered the panic");
+
+        assert_eq!(refused.status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(refused.field("x-api-version"), None);
+        assert_eq!(recovered.status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(recovered.field("x-api-version"), None);
+        assert_eq!(
+            answered.field("x-api-version").as_deref(),
+            Some(API_VERSION)
+        );
+    }
+
+    /// The stamped field is described on every response an operation declares
+    /// in place, as the one value it sends; a response it refers to, such as
+    /// the framework's shared refusal, is left as the reference it is, since a
+    /// placement never reaches into a `$ref`.
+    #[test]
+    fn a_stamped_group_is_described_on_every_response_as_its_value() {
+        let document = router()
+            .intercept(versioned())
+            .openapi()
+            .expect("a describable router");
+        let document = serde_json::to_value(&document).expect("the document serializes");
+
+        let responses = document["paths"]["/users/{id}"]["get"]["responses"]
+            .as_object()
+            .expect("the operation declares responses");
+        assert_eq!(
+            responses["400"],
+            serde_json::json!({"$ref": "#/components/responses/ProblemStatus400"})
+        );
+        let declared = responses
+            .iter()
+            .filter(|(_, response)| response.get("$ref").is_none());
+        let mut statuses = Vec::new();
+        for (status, response) in declared {
+            assert_eq!(
+                response["headers"]["X-Api-Version"],
+                serde_json::json!({
+                    "description": "The version of the API that answered.",
+                    "required": true,
+                    "schema": {"type": "string", "const": API_VERSION},
+                }),
+                "{status}"
+            );
+            statuses.push(status.as_str());
+        }
+        assert_eq!(statuses, ["200"]);
+
+        // Every response, not only a success: `tests/description.rs` holds
+        // where each placement files a header.
+        assert_eq!(
+            <Stamp<Versioned> as Interceptor<App>>::ADDS_ON,
+            Placement::Every
+        );
+    }
+
+    /// How many times `Counted` has been encoded in this process.
+    static ENCODED: AtomicUsize = AtomicUsize::new(0);
+
+    /// A group counting its encodes, holding the value it encodes as.
+    struct Counted(&'static str);
+
+    impl kynos::extract::params::header::HeaderParams for Counted {
+        const NAMES: &'static [&'static str] = &["x-counted"];
+    }
+
+    impl EncodeHeaders for Counted {
+        fn encode(&self) -> Result<Vec<(HeaderName, HeaderValue)>, UnencodableHeader> {
+            ENCODED.fetch_add(1, Ordering::Relaxed);
+            let name = HeaderName::from_static("x-counted");
+            match HeaderValue::from_str(self.0) {
+                Ok(value) => Ok(vec![(name, value)]),
+                Err(_) => Err(UnencodableHeader::new(name)),
+            }
+        }
+    }
+
+    /// The group is encoded once, when the stamp is constructed, however many
+    /// responses carry it; a group no response could carry is refused there,
+    /// before the router is built, rather than answered with a 500.
+    #[tokio::test]
+    async fn a_stamp_encodes_its_group_once() {
+        let refused = Stamp::new(Counted("a\nb")).map(drop);
+        assert!(
+            matches!(&refused, Err(MiddlewareError::UnencodableStamp(unencodable))
+                if unencodable.name() == "x-counted"),
+            "{refused:?}"
+        );
+
+        let service = Router::<App>::new()
+            .mount(kynos::routes![super::support::get_user])
+            .intercept(Stamp::new(Counted("one")).expect("a field value"))
+            .build(App::new())
+            .expect("a describable router");
+        let constructed = ENCODED.load(Ordering::Relaxed);
+
+        for _ in 0..3 {
+            let reply = get(&service, "/users/1").call().await;
+            assert_eq!(reply.field("x-counted").as_deref(), Some("one"));
+        }
+        assert_eq!(constructed, 2, "each construction encodes once");
+        assert_eq!(ENCODED.load(Ordering::Relaxed), constructed);
+    }
+}
+
 // --- HSTS over plain transport ----------------------------------------------
 
 mod security_headers {

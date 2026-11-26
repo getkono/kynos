@@ -1393,12 +1393,27 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// `value` is a string literal, or a path to a `&str` constant the application
+/// already defines, so the value is stated once:
+///
+/// ```ignore
+/// pub const API_VERSION: &str = "2026-11-01";
+///
+/// #[derive(HeaderParams)]
+/// struct Versioned {
+///     #[header(rename = "X-Api-Version", value = API_VERSION)]
+///     version: (),
+/// }
+/// ```
+///
 /// It is written as that value, read only where a request carries exactly that
 /// value, octet for octet, else refused as `HeaderRejection::Invalid`, and
 /// described as a string whose `const` is that value. The value is printable
-/// ASCII with no leading or trailing whitespace, checked at the derive; a
-/// `()` field without one, a `value` on any other type, and a
-/// `#[schema(...)]` bound beside one are refused.
+/// ASCII with no leading or trailing whitespace: a literal is checked at the
+/// derive, and a constant by a `const` assertion the derive emits, a compile
+/// error at the path either way. Any other expression, a `()` field without a
+/// `value`, a `value` on any other type, and a `#[schema(...)]` bound beside
+/// one are refused.
 ///
 /// # Undescribed groups
 ///

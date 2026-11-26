@@ -5,9 +5,11 @@
 //! a set the suites next door witness — so a macro added without a witness
 //! fails the build rather than expanding to whatever it likes, and a refusal
 //! the `Schema` derive documents, or a diagnostic its ledgers assert, without a
-//! snapshot fails it rather than going unchecked. A fifth compiles the
-//! `ApiError` derive's slug rule from its file, and holds the `const` port
-//! `kynos::problem_type!` checks its slug by to it.
+//! snapshot fails it rather than going unchecked. The rest compile two derive
+//! rules from their files and hold each `const` port to its rule: the
+//! `ApiError` derive's slug rule, which `kynos::problem_type!` checks its slug
+//! by, and the `HeaderParams` derive's fixed-value rule, which a `value`
+//! naming a constant is checked by.
 //!
 //! That is why they are not in the files whose witnesses they count.
 //! `crates/kynos/Cargo.toml` keeps this target out of the published archive:
@@ -23,9 +25,13 @@ mod literal;
 #[path = "../../kynos-macros/src/derive/api_error/slug.rs"]
 mod derive_slug;
 
+// The `HeaderParams` derive's fixed-value rule, compiled here as it is there.
+#[path = "../../kynos-macros/src/derive/headers/field_value.rs"]
+mod derive_field_value;
+
 use std::{collections::BTreeSet, fs, path::Path};
 
-use kynos::__private::problem::slug;
+use kynos::__private::{header, problem::slug};
 use literal::string_literal;
 
 /// The macro crate's entry points, as text.
@@ -473,6 +479,56 @@ fn problem_type_and_the_derive_agree_on_every_ascii_character() {
         admitted, 80,
         "both rules admit {admitted} characters inside a segment, not the 79 `pchar`s and `/`"
     );
+}
+
+/// A `#[header(value = ...)]` naming a constant is refused exactly where a
+/// literal is, and for the same reason.
+///
+/// The derive's rule is the oracle, compiled from its file, and
+/// `kynos::__private::header::refusal`, the `const` port the expansion asserts
+/// through, is held to it over every ASCII character and a few multi-byte
+/// ones, alone, between two letters and at either end of one, and over the
+/// empty value.
+#[test]
+fn a_constant_header_value_is_refused_where_a_literal_is() {
+    use derive_field_value::Refusal as Derive;
+    use header::Refusal as Port;
+
+    let characters = (0..=0x7F_u8)
+        .map(char::from)
+        .chain(['\u{80}', 'é', '€', '\u{1F600}']);
+    let candidates = std::iter::once(String::new()).chain(characters.flat_map(|character| {
+        [
+            format!("{character}"),
+            format!("a{character}b"),
+            format!("{character}a"),
+            format!("a{character}"),
+        ]
+    }));
+
+    let mut reasons = BTreeSet::new();
+    for candidate in candidates {
+        let derive = derive_field_value::refusal(&candidate);
+        let agreed = match (derive, header::refusal(&candidate)) {
+            (None, None) => "admitted",
+            (Some(Derive::Character(character)), Some(Port::Character)) => {
+                assert!(
+                    candidate.contains(character),
+                    "{candidate:?} is refused for {character:?}, which it does not hold"
+                );
+                "character"
+            }
+            (Some(Derive::OuterWhitespace), Some(Port::OuterWhitespace)) => "outer whitespace",
+            (derive, port) => panic!(
+                "the derive and a constant `value` disagree on {candidate:?}: {derive:?} and \
+                 {port:?}"
+            ),
+        };
+        reasons.insert(agreed);
+    }
+
+    // The control: the sweep reached a value and both refusals.
+    assert_eq!(reasons.len(), 3, "the sweep reached only {reasons:?}");
 }
 
 /// Every `tests.rs` under `directory`, where the macro crate keeps its ledgers.

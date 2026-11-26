@@ -62,6 +62,7 @@ use kynos::{
         },
         request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
         security_headers::{SecurityHeaders, StrictTransportSecurity},
+        stamp::Stamp,
         trace::{Level, Trace},
     },
     openapi::Method,
@@ -123,6 +124,21 @@ impl RequestIdSource for Monotonic {
     fn next_id(&self) -> http::HeaderValue {
         http::HeaderValue::from_static("00000000-0000-4000-8000-000000000000")
     }
+}
+
+/// The version every response names, defined once for the whole service.
+pub const API_VERSION: &str = "2026-11-01";
+
+/// What `Stamp` sends on every response.
+///
+/// A `()` field naming the constant, rather than a `String` filled from it:
+/// the description then states the one value sent instead of "any string",
+/// and the constant is the only place the value is written.
+#[derive(HeaderParams)]
+struct Versioned {
+    /// The version of the API that answered.
+    #[header(rename = "X-Api-Version", value = API_VERSION)]
+    version: (),
 }
 
 /// The credential `RequireSecret` looks for.
@@ -347,6 +363,10 @@ async fn main() -> kynos::Result<()> {
         .correlating(&request_id)
         .record_headers(&["x-correlation-id", "x-tenant"]);
     let router = Router::<()>::new()
+        // The API version, on every response. First, so nothing mounted
+        // outside it answers without it; encoded once, here, so a response
+        // pays only for inserting it.
+        .intercept(Stamp::new(Versioned { version: () })?)
         // The fields every API response should carry, each documented as the
         // one value it sends. Outermost, so a cache inside it still stores.
         // HSTS is withheld here, since this server listens on plain HTTP and

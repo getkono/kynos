@@ -8347,6 +8347,16 @@ mod headers {
                 "contains '\\n'",
             ),
             case(
+                "a fixed value computed rather than written or named",
+                quote::quote!(
+                    struct Versioned {
+                        #[header(rename = "X-Api-Version", value = concat!("v", "1"))]
+                        version: (),
+                    }
+                ),
+                "a string literal or a path to a `&str` constant",
+            ),
+            case(
                 "a bound on a fixed value",
                 quote::quote!(
                     struct Sniffing {

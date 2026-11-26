@@ -32,6 +32,7 @@ use kynos::{
         },
         request_id::{Random, RequestId},
         security_headers::SecurityHeaders,
+        stamp::Stamp,
     },
     response::cookie::Cookie,
 };
@@ -66,6 +67,25 @@ pub(crate) fn request_id_random() -> Box<dyn Served> {
 /// The table behind `SecurityHeaders`' defaults.
 pub(crate) fn security_headers() -> Box<dyn Served> {
     built(router().intercept(SecurityHeaders::new()))
+}
+
+/// The value [`stamp`]'s group sends, as an API names its version.
+const API_VERSION: &str = "2026-11-01";
+
+/// The group [`stamp`] sends on every response.
+#[derive(kynos::HeaderParams)]
+struct Versioned {
+    #[header(rename = "X-Api-Version", value = API_VERSION)]
+    version: (),
+}
+
+/// The table behind a `Stamp` of one fixed field.
+pub(crate) fn stamp() -> Box<dyn Served> {
+    built(
+        router().intercept(
+            Stamp::new(Versioned { version: () }).expect("a fixed group always encodes"),
+        ),
+    )
 }
 
 /// The table behind a one-mebibyte body bound.

@@ -111,8 +111,9 @@ pub(crate) fn status(
 pub(crate) struct FieldArgs {
     /// `rename = "..."`, which every location takes.
     pub(crate) rename: Option<LitStr>,
-    /// `value = "..."`, which `#[header]` alone takes.
-    pub(crate) value: Option<LitStr>,
+    /// `value = "..."` or `value = A_CONST`, which `#[header]` alone takes;
+    /// the header derive says which expressions it admits.
+    pub(crate) value: Option<Expr>,
     /// `style = "..."`, which `#[cookie]` alone takes.
     pub(crate) style: Option<LitStr>,
     /// `explode = true | false`, which `#[param]` takes and only a query

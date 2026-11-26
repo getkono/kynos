@@ -94,6 +94,8 @@ by task.
 | An enum mirroring `http::forwarded::ProxyHeader`, a `match` over its lowercase names, and a mapping back to Kynos's | `value.parse::<http::forwarded::ProxyHeader>()`, which reads `forwarded` or `x-forwarded-for` in any letter case | #1429 |
 | A `contains('/')` check widening a bare address with `Network::new(address, 32 \| 128)` before `http::forwarded::TrustedProxies::parse_networks` | `parse_networks(header, entries)` alone, which reads a bare address as its host, or `http::forwarded::Network::host(address)`; unlike before, `10.1.2.3/8` is refused, not widened to `10.0.0.0/8` | #1429 |
 | A configuration struct holding `Vec<Network>` and its own header enum, only so a test can compare it | the `http::forwarded::TrustedProxies` itself, which compares with `==` as configured, its networks in any order | #1429 |
+| `#[header(value = "v1")]` beside `const API_VERSION: &str = "v1"` | `#[header(value = API_VERSION)]` on the same `()` field, checked at compile time as the literal was | #1430 |
+| A `HeaderParams` group of `String` fields filled from constants by a hand-written `Interceptor` on every response, described as any string | `()` fields under `#[header(value = CONST)]`, and `.intercept(middleware::stamp::Stamp::new(group)?)` first: encoded once, described as each value, and it replaces a value a handler set | #1430 |
 
 ## 0.5 to 0.6
 

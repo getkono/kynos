@@ -1246,6 +1246,8 @@ head_only! {
         CsrfWhen => kynos::middleware::csrf::Csrf::new().when(|_: &App| true);
         RequestId => RequestId::new();
         SecurityHeaders => kynos::middleware::security_headers::SecurityHeaders::new();
+        Stamp => kynos::middleware::stamp::Stamp::new(Correlation(HeaderValue::from_static("1")))
+            .expect("a field value");
         TrustedHosts => kynos::middleware::trusted_hosts::TrustedHosts::new();
         TrustedHostsWhen => kynos::middleware::trusted_hosts::TrustedHosts::new()
             .when(|_: &App| true);
