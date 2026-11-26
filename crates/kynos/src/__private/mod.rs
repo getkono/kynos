@@ -9,8 +9,9 @@
 //!
 //! `fuzz` is the one module no expansion names: the `fuzz/` crate's way into
 //! parsers that have no public path, present only in a `cargo fuzz` build.
-//! [`Refusing`] is the one item no expansion names: the argument of a hidden
-//! `ShortCircuit` method, which a public trait's signature must name.
+//! [`Refusing`], [`GuardType`] and [`AdmittedReader`] are the items no
+//! expansion names: the argument or the answer of a hidden trait method, which
+//! a public trait's signature must name.
 
 pub mod constraints;
 pub mod endpoint;
@@ -35,6 +36,52 @@ pub use bytes::Bytes;
 /// [`ShortCircuit::__refused`](crate::response::ShortCircuit::__refused).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Refusing(pub(crate) Option<crate::error::members::Policy>);
+
+/// A guard's type, as a hidden `Handler`, `Endpoint` or `Interceptor` item
+/// names it, so the router can tell whether an interceptor keyed on what a
+/// guard admitted runs inside that guard.
+///
+/// Only this crate makes one, so no interceptor outside it can claim to read
+/// an admission.
+#[derive(Clone, Copy, Debug)]
+pub struct GuardType {
+    id: std::any::TypeId,
+    name: &'static str,
+}
+
+impl GuardType {
+    /// The guard type `G`.
+    pub(crate) fn of<G: 'static>() -> Self {
+        Self {
+            id: std::any::TypeId::of::<G>(),
+            name: std::any::type_name::<G>(),
+        }
+    }
+
+    /// The type's name, as `std::any::type_name` spells it.
+    pub(crate) fn name(self) -> &'static str {
+        self.name
+    }
+}
+
+impl PartialEq for GuardType {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for GuardType {}
+
+/// An interceptor an endpoint holds itself that keys on what guard `guard`
+/// admitted, as [`Endpoint`](crate::router::endpoint::Endpoint)'s hidden
+/// `__admitted_reader` names it.
+#[derive(Clone, Copy, Debug)]
+pub struct AdmittedReader {
+    /// The interceptor's type, as `std::any::type_name` spells it.
+    pub(crate) interceptor: &'static str,
+    /// The guard it reads.
+    pub(crate) guard: GuardType,
+}
 
 #[cfg(test)]
 mod tests;

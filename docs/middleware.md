@@ -636,6 +636,72 @@ hand beside its own `IntoResponse` — `Timeout::answer_with` takes one — wher
 that const would be a declaration written beside the behaviour rather than being
 it, which is the `contribution` method this document refuses.
 
+### Keying on the caller
+
+`key::ByPrincipal` keys on what the operation's guard admitted, read from the
+request after a scope's `guard_first` ran the guard ahead of the limiter — so
+`.guard_first()` comes before `.intercept(limit)`. Spending a per-account
+limit there, rather than in the handler, refuses before the body is read, and
+the guard still checks the credential once.
+
+- **A request no guard admitted shares one bucket.** The router refuses a
+  misplaced limiter and an operation with another guard or none, below, so
+  what reaches it is what the router cannot see. Exempting it would make a
+  misconfigured limit silently absent, and keying it on the peer would make it
+  a per-IP limit nobody asked for; one `unadmitted` bucket fails closed,
+  and shows itself. No closure output names it: a caller's partition is
+  always `principal:` and what the closure returned, and a header's is
+  `header:`, the field's name and its value. `otherwise(key)` names another
+  key, in the type, for a limiter covering public operations too.
+- **The guard type is the handler's, exactly.** `ByPrincipal<Auth<Bearer>, _>`
+  reads nothing a `Scoped` or `MaybeAuth` guard admitted. A `MaybeAuth` admits
+  anonymous callers, so its closure names their bucket; `otherwise` is only for
+  requests no guard ran on.
+- **The guard is borrowed, not taken.** The handler's guard argument receives
+  it as before; the closure runs while it is held, so it should only read.
+
+Which guard covers an operation is decided when the router is built, so a
+limiter that cannot see its guard is refused there: `Router::build` reports
+`RouterError::GuardNotAhead` for each operation a `ByPrincipal` limiter with no
+`otherwise` covers where no scope's `guard_first` comes before it, or whose
+handler takes another guard or none, naming the operation, the limiter and
+both fixes. Only `otherwise` opts out, because it is the one place the type
+says where an unadmitted request goes. Interceptors declare what they read
+through a hidden `Interceptor` item that `RateLimit` forwards from its policy
+and `Quotas` from its key, so the check asks each interceptor rather than
+recognising a limiter by identity, as the router does `Cors`.
+
+The `unadmitted` bucket stays behind the check as defence in depth, for what
+the router cannot see: a `route_unchecked` route, which takes no guard, and a
+request an interceptor handed on as a copy.
+
+### Spending from a handler
+
+A limit keyed on what only the decoded body says — a username in a sign-in —
+has no interceptor to run in. `RateLimit::spend(partition)` spends one
+request from the handler, on a limiter keyed `key::ByHandler`, which the
+application keeps in its context.
+
+- **One refusal, not a second 429.** `spend` returns the spelling's own
+  `Denied`, built by the code the interceptor refuses with, so its type,
+  `Retry-After` and rate-limit fields are the interceptor's. A
+  `#[problem(transparent)]` variant holding it is how the handler returns it,
+  and that variant's `Responses` declare the 429 and its headers on the
+  operation; nothing reaches the wire undeclared. Like every application
+  error, it is not rendered under `Router::problems`, which names only
+  problems Kynos renders itself; name the type with `problem_type` so both
+  limiters carry the same one.
+- **`ByHandler` is not a key.** It implements no `RateLimitKey`, so its
+  limiter cannot also be mounted, where its counters would be spent twice,
+  and `spend` exists only on it, so a mounted limiter is never spent by hand.
+- **A body field is unbounded.** Every distinct partition is counters the
+  store keeps for two windows, so a client inventing usernames grows the
+  store as fast as it is admitted. Kynos does not own the store and cannot
+  cap it; validate the field first, and put an interceptor limit keyed on the
+  client's address over the operation, which bounds how fast one client can
+  invent partitions. The partition is stored as `handler:` and the value, so a
+  value the client chose cannot name another key's bucket.
+
 ### Replacing the algorithm, and why no bucket ships
 
 `Quotas` is one implementation of `RateLimitPolicy`, not the trait's only

@@ -1,7 +1,7 @@
 //! Rate limiting.
 //!
 //! Kynos supplies the description, the 429, the headers and — through
-//! [`Quotas`](quota::Quotas) — a sliding-window algorithm over named quotas.
+//! [`Quotas`] — a sliding-window algorithm over named quotas.
 //! The application supplies *where the counters live*.
 //!
 //! # How this module is laid out
@@ -20,12 +20,18 @@ pub mod quota;
 pub mod refusal;
 pub mod store;
 
+mod estimate;
+
 use std::marker::PhantomData;
 
 use crate::middleware::rate_limit::{
+    clock::Clock,
     decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
     headers::{RateLimitFields, RateLimitHeaders},
+    key::ByHandler,
+    quota::Quotas,
     refusal::{RateLimited, RateLimitedFields},
+    store::RateLimitStore,
 };
 use crate::{
     error::problem::ProblemType,
@@ -259,6 +265,71 @@ impl<P, D> RateLimit<P, D, ()> {
     }
 }
 
+impl<S, Clk, D, T> RateLimit<Quotas<ByHandler, S, Clk>, D, T>
+where
+    S: RateLimitStore,
+    Clk: Clock,
+    D: RateLimitSpelling<T>,
+    T: ProblemType,
+{
+    /// Spends one request against `partition`, from a handler.
+    ///
+    /// For a limit keyed on what only the decoded request says, such as a
+    /// username in the body. The refusal is the one this limiter would answer
+    /// with as an interceptor — the same problem type, `Retry-After` and
+    /// rate-limit fields — so a handler returns it through a transparent
+    /// variant of its error, which declares the 429 and its headers on the
+    /// operation:
+    ///
+    /// ```
+    /// # #[cfg(feature = "macros")]
+    /// # {
+    /// use kynos::middleware::rate_limit::{RateLimit, key::ByHandler, quota::Quotas};
+    /// #[derive(Debug, thiserror::Error, kynos::ApiError)]
+    /// enum ChallengeError {
+    ///     #[error("too many challenges for this username")]
+    ///     #[problem(transparent, from)]
+    ///     Throttled(kynos::middleware::rate_limit::refusal::RateLimited),
+    /// }
+    ///
+    /// async fn challenge<S: kynos::middleware::rate_limit::store::RateLimitStore>(
+    ///     limit: &RateLimit<Quotas<ByHandler, S>>,
+    ///     username: &str,
+    /// ) -> Result<(), ChallengeError> {
+    ///     limit.spend(username).await?;
+    ///     Ok(())
+    /// }
+    /// # }
+    /// ```
+    ///
+    /// `examples/rate_limit.rs` keeps one in its context. `Ok` holds the fields an allowed response may carry, for a
+    /// [`WithHeaders`](crate::response::headers::WithHeaders).
+    ///
+    /// The partition is stored under a `handler:` prefix, so a value the
+    /// client chose cannot name another key's bucket in a shared store. Every
+    /// distinct value is a counter the store keeps for two windows, so a
+    /// partition read from the body is as many counters as clients can
+    /// invent: validate it first, and bound how fast one client can invent
+    /// them with an interceptor limit keyed on its address.
+    ///
+    /// # Errors
+    ///
+    /// The refusal, where any quota is spent for `partition`, or the store
+    /// cannot answer and [`StoreFailure::Deny`](store::StoreFailure::Deny)
+    /// was chosen.
+    pub async fn spend(&self, partition: &str) -> Result<D::Headers, D::Denied> {
+        let policies = &self.policy.policies;
+        match self
+            .policy
+            .count(Some(&format!("handler:{partition}")))
+            .await
+        {
+            Decision::Allow(allowance) => Ok(D::allow(&allowance.limits, policies)),
+            Decision::Deny(denial) => Err(D::deny(denial.retry_after, &denial.limits, policies)),
+        }
+    }
+}
+
 impl<C, P, D, T> Interceptor<C> for RateLimit<P, D, T>
 where
     C: Sync + 'static,
@@ -271,6 +342,10 @@ where
     type Short = D::Denied;
 
     const READS_BODY: bool = false;
+
+    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+        self.policy.__reads_admitted()
+    }
 
     async fn intercept(
         &self,

@@ -15,21 +15,34 @@ use std::{
 
 use kynos::{
     Router,
+    error::rejection::AuthRejection,
     http::StatusCode,
     http::forwarded::{ProxyHeader, TrustedProxies},
+    middleware::catch_panic::PanicPolicy,
     middleware::rate_limit::{
         RateLimit,
-        key::{And, ByClientAddress, ByHeader, ByPeerAddress, ByRoute, Shared},
+        key::{
+            And, ByClientAddress, ByHandler, ByHeader, ByPeerAddress, ByPrincipal, ByRoute, Shared,
+        },
         quota::{Quota, Quotas},
+        refusal::RateLimited,
         store::{RateLimitStore, StoreFailure},
     },
+    prelude::{Inject, Json},
     response::status::NoContent,
+    router::{endpoint::builder::EndpointBuilder, error::RouterError, group::Group},
+    security::{
+        Authenticates, Authenticator, Head,
+        auth::{Auth, MaybeAuth},
+        carrier::{BearerToken, presented::Presented},
+        schemes::Bearer,
+    },
 };
 
 #[path = "support/mod.rs"]
 mod support;
 
-use support::get;
+use support::{get, post};
 
 // --- A store, which is the half Kynos does not ship ----------------------
 
@@ -576,6 +589,328 @@ async fn two_keys_joined_partition_by_both() {
     assert_eq!(call("/other", "acme").await, StatusCode::NO_CONTENT);
     // The same route, different tenant.
     assert_eq!(call("/counted", "other").await, StatusCode::NO_CONTENT);
+}
+
+/// Accepts any bearer token as the account it names, counting every check.
+#[derive(Clone, Default)]
+struct Accounts(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Authenticator<Bearer, Accounts> for Accounts {
+    type Error = AuthRejection;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Accounts,
+    ) -> Result<String, AuthRejection> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(presented.require()?.as_str().to_owned())
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
+    }
+}
+
+#[kynos::post("/bundles")]
+async fn publish(Auth(account): Auth<Bearer>) -> NoContent {
+    assert!(
+        !account.is_empty(),
+        "the guard's credential reached the handler"
+    );
+    NoContent
+}
+
+/// Keyed on the caller the guard admitted ahead of the limiter, so two
+/// accounts do not share a bucket, a caller without a credential is refused
+/// by the guard before it is counted, and the credential is checked once per
+/// request whichever of the two reads it.
+#[tokio::test]
+async fn keying_by_principal_separates_two_accounts_checked_once() {
+    let accounts = Accounts::default();
+    let service = Router::<Accounts>::new()
+        .guard_first()
+        .intercept(RateLimit::new(
+            Quotas::new(
+                ByPrincipal::new(|Auth(account): &Auth<Bearer>| account.clone()),
+                Counters::default(),
+            )
+            .quota(Quota::new("publish", 1, Duration::from_secs(600))),
+        ))
+        .mount(kynos::routes![publish])
+        .build(accounts.clone())
+        .expect("a describable router");
+
+    let call = |token: &'static str| {
+        let request = post(&service, "/bundles");
+        async move {
+            if token.is_empty() {
+                request.call().await.status
+            } else {
+                request
+                    .header("authorization", &format!("Bearer {token}"))
+                    .call()
+                    .await
+                    .status
+            }
+        }
+    };
+
+    assert_eq!(call("alice").await, StatusCode::NO_CONTENT);
+    assert_eq!(call("alice").await, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        call("bob").await,
+        StatusCode::NO_CONTENT,
+        "one account's quota refused another's request"
+    );
+    assert_eq!(call("").await, StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        accounts.0.load(std::sync::atomic::Ordering::SeqCst),
+        3,
+        "each credential presented was checked once"
+    );
+}
+
+/// A per-account limit with no key named for a request no guard admitted.
+type PerAccount =
+    RateLimit<Quotas<ByPrincipal<Auth<Bearer>, fn(&Auth<Bearer>) -> String>, Counters>>;
+
+fn account_of(Auth(account): &Auth<Bearer>) -> String {
+    account.clone()
+}
+
+fn per_account() -> PerAccount {
+    RateLimit::new(
+        Quotas::new(
+            ByPrincipal::new(account_of as fn(&Auth<Bearer>) -> String),
+            Counters::default(),
+        )
+        .quota(Quota::new("publish", 1, Duration::from_secs(600))),
+    )
+}
+
+#[kynos::post("/drafts")]
+async fn draft(MaybeAuth(account): MaybeAuth<Bearer>) -> NoContent {
+    let _ = account;
+    NoContent
+}
+
+#[kynos::get("/status")]
+#[kynos::public]
+async fn status() -> NoContent {
+    NoContent
+}
+
+/// What `router` refuses because a limiter keyed on the caller does not run
+/// inside the guard it reads, each as its message says it.
+fn unseen_guards<P: PanicPolicy, I, S>(router: &Router<Accounts, P, I, S>) -> Vec<String> {
+    router
+        .validate()
+        .expect("a describable router")
+        .into_iter()
+        .filter(|violation| matches!(violation.error, RouterError::GuardNotAhead { .. }))
+        .map(|violation| format!("{} {}", violation.location, violation.error))
+        .collect()
+}
+
+/// A per-account limiter the guard does not run ahead of is refused when the
+/// router is built, naming the operation, the limiter and both fixes: where
+/// no scope calls `guard_first`, where the call comes after the limiter,
+/// where the operation takes another guard, and where it takes none.
+#[test]
+fn a_principal_keyed_limit_no_guard_runs_ahead_of_is_refused() {
+    let unguarded = Router::<Accounts>::new()
+        .intercept(per_account())
+        .mount(kynos::routes![publish]);
+    let refused = unseen_guards(&unguarded);
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    for said in [
+        "#/paths/~1bundles/post operation `POST /bundles` is covered by \
+         `kynos::middleware::rate_limit::RateLimit<",
+        "which keys on what the guard `kynos::security::auth::Auth<kynos::security::schemes::Bearer>` \
+         admitted, and that guard does not run ahead of it",
+        "call `guard_first()` before `.intercept(...)`",
+        "`ByPrincipal::otherwise(...)`",
+    ] {
+        assert!(refused[0].contains(said), "{:?} lacks {said:?}", refused[0]);
+    }
+    let Err(kynos::Error::Invalid { violations }) = unguarded.build(Accounts::default()) else {
+        panic!("a limiter its guard does not run ahead of must not build");
+    };
+    assert!(
+        violations
+            .iter()
+            .any(|violation| matches!(violation.error, RouterError::GuardNotAhead { .. }))
+    );
+
+    let late = Router::<Accounts>::new()
+        .intercept(per_account())
+        .guard_first()
+        .mount(kynos::routes![publish]);
+    assert_eq!(
+        unseen_guards(&late).len(),
+        1,
+        "guard_first after the limiter"
+    );
+
+    let other_guard = Router::<Accounts>::new()
+        .guard_first()
+        .intercept(per_account())
+        .mount(kynos::routes![draft]);
+    assert_eq!(
+        unseen_guards(&other_guard).len(),
+        1,
+        "an operation taking `MaybeAuth`"
+    );
+
+    let no_guard = Router::<Accounts>::new()
+        .guard_first()
+        .intercept(per_account())
+        .mount(kynos::routes![status]);
+    assert_eq!(
+        unseen_guards(&no_guard).len(),
+        1,
+        "an operation taking no guard"
+    );
+}
+
+/// An endpoint's own per-account limiter is inside every scope's chain, so
+/// it builds once an enclosing scope runs the guard first, and not before.
+#[test]
+fn an_endpoints_own_principal_keyed_limit_needs_a_scope_running_the_guard_first() {
+    async fn publish_bundle(caller: Auth<Bearer>) -> NoContent {
+        let _ = caller;
+        NoContent
+    }
+    let endpoint = || {
+        EndpointBuilder::new(
+            kynos::openapi::Method::Post,
+            kynos::openapi::PathTemplate::parse("/bundles").expect("a usable path template"),
+            publish_bundle,
+        )
+        .intercept(per_account())
+    };
+
+    assert_eq!(
+        unseen_guards(&Router::<Accounts>::new().mount(endpoint())).len(),
+        1
+    );
+    assert_eq!(
+        unseen_guards(
+            &Router::<Accounts>::new().group(Group::new("/v1").guard_first().mount(endpoint()))
+        ),
+        Vec::<String>::new()
+    );
+}
+
+/// The controls: the guard run first in the group covering the operation
+/// builds, and so does a limiter naming where an unadmitted request goes,
+/// whatever covers it.
+#[test]
+fn a_principal_keyed_limit_builds_inside_its_guard_or_with_otherwise() {
+    let grouped = Router::<Accounts>::new().group(
+        Group::new("/v1")
+            .guard_first()
+            .intercept(per_account())
+            .mount(kynos::routes![publish]),
+    );
+    assert_eq!(unseen_guards(&grouped), Vec::<String>::new());
+
+    let otherwise = Router::<Accounts>::new()
+        .intercept(RateLimit::new(
+            Quotas::new(
+                ByPrincipal::new(account_of as fn(&Auth<Bearer>) -> String)
+                    .otherwise(ByClientAddress),
+                Counters::default(),
+            )
+            .quota(Quota::new("publish", 1, Duration::from_secs(600))),
+        ))
+        .mount(kynos::routes![publish, draft, status]);
+    assert_eq!(unseen_guards(&otherwise), Vec::<String>::new());
+    otherwise
+        .build(Accounts::default())
+        .expect("a limiter naming its fallback builds");
+}
+
+/// The limit a handler spends, keyed on what only the body names.
+type ChallengeLimit = RateLimit<Quotas<ByHandler, Counters>>;
+
+#[derive(serde::Deserialize, kynos::Schema)]
+struct Challenge {
+    username: String,
+}
+
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+enum ChallengeError {
+    #[error("too many challenges for this username")]
+    #[problem(transparent, from)]
+    Throttled(RateLimited),
+}
+
+#[kynos::post("/auth/challenge")]
+#[kynos::public]
+async fn challenge(
+    Inject(limit): Inject<Arc<ChallengeLimit>>,
+    Json(body): Json<Challenge>,
+) -> Result<NoContent, ChallengeError> {
+    limit.spend(&body.username).await?;
+    Ok(NoContent)
+}
+
+/// A handler spending a limit keyed on a body field answers the 429 an
+/// interceptor would — `Retry-After` and the rate-limit fields with it — and
+/// its error type declares that 429 on the operation.
+#[tokio::test]
+async fn a_handler_spending_a_body_keyed_limit_answers_and_declares_the_429() {
+    let limit = Arc::new(ChallengeLimit::new(
+        Quotas::new(ByHandler, Counters::default()).quota(Quota::new(
+            "challenge",
+            1,
+            Duration::from_secs(600),
+        )),
+    ));
+    let router = || Router::<Arc<ChallengeLimit>>::new().mount(kynos::routes![challenge]);
+    let service = router()
+        .build(Arc::clone(&limit))
+        .expect("a describable router");
+
+    let call = |username: &'static str| {
+        post(&service, "/auth/challenge")
+            .header("content-type", "application/json")
+            .body(format!(r#"{{"username":"{username}"}}"#))
+            .call()
+    };
+
+    assert_eq!(call("alice").await.status, StatusCode::NO_CONTENT);
+    let refused = call("alice").await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        refused.field("retry-after").is_some(),
+        "{:?}",
+        refused.headers
+    );
+    assert_eq!(refused.field("x-ratelimit-limit").as_deref(), Some("1"));
+    assert_eq!(refused.field("x-ratelimit-remaining").as_deref(), Some("0"));
+    assert_eq!(
+        call("bob").await.status,
+        StatusCode::NO_CONTENT,
+        "one username's quota refused another's challenge"
+    );
+
+    let document = serde_json::to_value(router().openapi().expect("a describable router"))
+        .expect("a serializable document");
+    let declared = &document["paths"]["/auth/challenge"]["post"]["responses"]["429"];
+    for field in ["Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining"] {
+        assert!(
+            declared["headers"].get(field).is_some(),
+            "{field} undeclared: {declared}"
+        );
+    }
 }
 
 /// A key that exempts a request reads no counter and reports the full quota.

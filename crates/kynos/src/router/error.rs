@@ -88,6 +88,36 @@ pub enum RouterError {
         path: String,
     },
 
+    /// An interceptor covering an operation keys on what a guard admitted,
+    /// and that guard does not run ahead of it: no enclosing scope calls
+    /// `guard_first` before intercepting with it, or the operation takes
+    /// another guard or none.
+    ///
+    /// Reached by a [`RateLimit`](crate::middleware::rate_limit::RateLimit)
+    /// keyed [`ByPrincipal`](crate::middleware::rate_limit::key::ByPrincipal)
+    /// with no `otherwise`, which would otherwise count every request of the
+    /// operation against one shared bucket: a per-caller limit read as one,
+    /// and spent before the guard refuses anybody. Naming `otherwise` states
+    /// where a request no guard admitted goes, and builds.
+    ///
+    /// Reported once per such operation, located at it.
+    #[error(
+        "operation `{method} {path}` is covered by `{interceptor}`, which keys on what the guard \
+         `{guard}` admitted, and that guard does not run ahead of it; take `{guard}` and call \
+         `guard_first()` before `.intercept(...)` on a scope covering the operation, or name a \
+         key for requests no guard admitted with `ByPrincipal::otherwise(...)`"
+    )]
+    GuardNotAhead {
+        /// The operation's method.
+        method: kynos_openapi::Method,
+        /// The `paths` key it is at.
+        path: String,
+        /// The interceptor, as `std::any::type_name` spells it.
+        interceptor: &'static str,
+        /// The guard it keys on, as `std::any::type_name` spells it.
+        guard: &'static str,
+    },
+
     /// An interceptor's short circuit declared statuses its responses do not
     /// describe, or the reverse.
     ///

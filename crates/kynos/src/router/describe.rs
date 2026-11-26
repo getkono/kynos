@@ -287,7 +287,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 }
                 operation
             };
-            violations.extend(super::group::unguarded(mounted));
+            violations.extend(self.guard_refusals(mounted));
             violations.extend(super::install::refused_params(&mut registry, &key, method));
 
             heads.defer(mounted, method, &operation, self.id_case(), &mut violations);

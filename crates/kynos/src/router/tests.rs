@@ -1048,6 +1048,7 @@ mod router_errors {
             RouterError::HeadDescribedTwice { .. } => "HeadDescribedTwice",
             RouterError::HeadWithoutGet { .. } => "HeadWithoutGet",
             RouterError::UnguardedOperation { .. } => "UnguardedOperation",
+            RouterError::GuardNotAhead { .. } => "GuardNotAhead",
             RouterError::ShortCircuitMismatch { .. } => "ShortCircuitMismatch",
             RouterError::RouteConflict { .. } => "RouteConflict",
             RouterError::InvalidRoutePattern { .. } => "InvalidRoutePattern",
@@ -1104,6 +1105,19 @@ mod router_errors {
                 "operation `POST /v1/sessions` takes no guard while another operation in its \
                  group takes one; take the guard, or mark the operation `#[kynos::public]` if it \
                  is meant to be reached without a credential",
+            ),
+            (
+                RouterError::GuardNotAhead {
+                    method: Method::Post,
+                    path: "/bundles".to_owned(),
+                    interceptor: "app::PerAccount",
+                    guard: "Auth<Bearer>",
+                },
+                "operation `POST /bundles` is covered by `app::PerAccount`, which keys on what \
+                 the guard `Auth<Bearer>` admitted, and that guard does not run ahead of it; take \
+                 `Auth<Bearer>` and call `guard_first()` before `.intercept(...)` on a scope \
+                 covering the operation, or name a key for requests no guard admitted with \
+                 `ByPrincipal::otherwise(...)`",
             ),
             (
                 RouterError::ShortCircuitMismatch {
@@ -1247,6 +1261,7 @@ mod router_errors {
             "HeadDescribedTwice",
             "HeadWithoutGet",
             "UnguardedOperation",
+            "GuardNotAhead",
             "ShortCircuitMismatch",
             "RouteConflict",
             "InvalidRoutePattern",

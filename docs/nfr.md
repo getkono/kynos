@@ -623,6 +623,7 @@ resolves.
 | correctness | A 304 is minted only from a 200, never from another 2xx | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a 204 carrying a matching validator | `enforced` |
 | correctness | An `If-None-Match` on an unsafe method answers 412 rather than being ignored | — | `absent`, and recorded in [`middleware.md`](middleware.md): 412 is a status `NotModified` does not declare, and widening `Short` would add it to every covered operation |
 | correctness | A non-error response to an unsafe method drops what was stored for that target | [`tests/cache.rs`](../crates/kynos/tests/cache.rs) over a live store-then-write-then-read sequence, with a control asserting a refused write drops nothing, plus a unit case over the status classes section 4.4 defines | `enforced` |
+| security | A rate limit keyed on the caller is built only inside the guard it reads, or with a named key for the requests no guard admitted, and an admitted caller never shares a bucket with them | [`tests/rate_limit.rs`](../crates/kynos/tests/rate_limit.rs)'s `a_principal_keyed_limit_no_guard_runs_ahead_of_is_refused` over a missing and a late `guard_first`, another guard and none, `an_endpoints_own_principal_keyed_limit_needs_a_scope_running_the_guard_first`, and the controls in `a_principal_keyed_limit_builds_inside_its_guard_or_with_otherwise`; [`rate_limit/tests.rs`](../crates/kynos/src/middleware/rate_limit/tests.rs)'s `no_closure_or_header_names_another_keys_bucket` | `enforced` |
 | security | A forwarding field is believed only where the application named the hop that wrote it | [`http/forwarded/tests.rs`](../crates/kynos/src/http/forwarded/tests.rs) over the hop, address and network policies including a forged chain, plus [`tests/rate_limit.rs`](../crates/kynos/tests/rate_limit.rs) asserting an unconfigured service ignores a claimed address | `enforced` |
 | security | An unsafe request a browser says came from another site is refused | [`csrf/tests.rs`](../crates/kynos/src/middleware/csrf/tests.rs) over every rule in order, including a trusted `Origin` admitted over `Sec-Fetch-Site: cross-site`, plus a live exchange in [`tests/matrix.rs`](../crates/kynos/tests/matrix.rs) | `enforced` |
 | correctness | Content-coding negotiation follows section 12.5.3, including the wildcard form of an identity refusal | [`middleware/compression/`](../crates/kynos/src/middleware/compression/) over a table of every rule the section states | `enforced` |
@@ -1182,6 +1183,17 @@ declaration and its clash check would each still sit beside the one
 expansion that calls them, so the split would only move the file boundary.
 One concern, so one file.
 
+`middleware/rate_limit/key.rs` is `status.rs`'s shape. It declares
+`RateLimitKey` and the keys implementing it — `ByPeerAddress`,
+`ByClientAddress`, `ByHeader`, `ByPrincipal`, `Unadmitted`, `ByHandler`,
+`ByRoute`, `Shared` and `And` — so a split would turn `key::ByPrincipal`, the
+type an application's limiter names, into a longer path. What pushed it over
+was issue #1490's refusal: the hidden item a key answers with the guard it
+reads, which `ByPrincipal` answers only while its fallback is `Unadmitted`.
+Every key is one answer to the same question, which bucket a request counts
+against, and the partition prefixes that keep their buckets apart are only
+checkable side by side. One concern, so one file.
+
 The budget, which may only shrink:
 
 - `crates/kynos-macros/src/derive/schema/attributes.rs`
@@ -1208,6 +1220,7 @@ The budget, which may only shrink:
 - `crates/kynos/src/middleware/decompression/mod.rs`
 - `crates/kynos/src/middleware/limits/body_size.rs`
 - `crates/kynos/src/middleware/mod.rs`
+- `crates/kynos/src/middleware/rate_limit/key.rs`
 - `crates/kynos/src/middleware/request_id.rs`
 - `crates/kynos/src/middleware/security_headers.rs`
 - `crates/kynos/src/middleware/stack.rs`

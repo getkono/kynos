@@ -85,6 +85,8 @@ by task.
 | A `QueryParams` field `deleted: Option<bool>`, `.unwrap_or(false)` in each handler, and "(default false)" in its doc | `#[param(default = false)] deleted: bool`, or `#[param(default = DEFAULT_LIMIT)]` naming a `const`: the absent parameter binds it, and the description states it as the schema's `default` | #1412 |
 | The same paging fields, bounds and docs copied into every query group, and `PageParams { cursor: p.cursor, limit: p.limit }` rebuilt in each handler | `#[param(flatten)] page: PageParams` in each group, then `p.page` | #1412 |
 | `#[derive(Schema, PathParams)] struct SessionPath { id: Uuid }` and `Path(SessionPath { id }): Path<SessionPath>`, for a route of one variable | `Path(id): Path<Uuid>`, any `ParamValue`; a group's field doc comment is still where the parameter is described | #1413 |
+| A `governor` limiter checked at the top of each handler, keyed on the authenticated account | `.guard_first()`, then `.intercept(RateLimit::new(Quotas::new(middleware::rate_limit::key::ByPrincipal::new(\|Auth(account): &Auth<S>\| ..), store)))`, which is spent before the body is read | #1423 |
+| A hand-rolled 429 variant for a limit keyed on a body field | a `RateLimit` over `Quotas::new(middleware::rate_limit::key::ByHandler, store)` in the context, `limit.spend(&username).await?` in the handler, and a `#[problem(transparent, from)]` variant holding `middleware::rate_limit::refusal::RateLimited<T>` | #1423 |
 
 ## 0.5 to 0.6
 

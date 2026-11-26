@@ -189,6 +189,14 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
         &[]
     }
 
+    /// Not part of the API: the guard whose admission this policy keys on,
+    /// which [`Quotas`](super::quota::Quotas) forwards from its key and
+    /// [`RateLimit`](super::RateLimit) from its policy.
+    #[doc(hidden)]
+    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+        None
+    }
+
     /// Decides whether this request may continue.
     ///
     /// `route` is the `paths` key rather than the request path, so a policy

@@ -106,6 +106,21 @@ where
         H::__GUARDED
     }
 
+    fn __guard_type(&self) -> Option<crate::__private::GuardType> {
+        H::__guard_type()
+    }
+
+    fn __admitted_reader(&self) -> Option<crate::__private::AdmittedReader> {
+        self.interceptors.iter().find_map(|interceptor| {
+            interceptor
+                .reads_admitted()
+                .map(|guard| crate::__private::AdmittedReader {
+                    interceptor: interceptor.name(),
+                    guard,
+                })
+        })
+    }
+
     fn __public(&self) -> bool {
         self.public
     }
