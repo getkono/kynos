@@ -12,6 +12,7 @@ use kynos::{
     middleware::rate_limit::{
         RateLimit,
         decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
+        key::AdmittedReads,
     },
     router::operation::Route,
 };
@@ -50,6 +51,10 @@ impl RateLimitPolicy<App> for AlwaysAllows {
         &self.0
     }
 
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
+    }
+
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {
         Decision::allow(ServiceLimit::new(
             "default",
@@ -74,6 +79,10 @@ impl AlwaysDenies {
 impl RateLimitPolicy<App> for AlwaysDenies {
     fn advertised(&self) -> &[QuotaPolicy] {
         &self.0
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 
     async fn check(&self, _: &Request, _: Route<'_>, _: &App) -> Decision {

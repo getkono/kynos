@@ -58,6 +58,7 @@ use kynos::{
         rate_limit::{
             RateLimit,
             decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
+            key::AdmittedReads,
         },
         request_id::{CorrelationHeaders, Counter, RequestId, RequestIdSource},
         security_headers::{SecurityHeaders, StrictTransportSecurity},
@@ -277,6 +278,11 @@ impl PerProcess {
 impl RateLimitPolicy<()> for PerProcess {
     fn advertised(&self) -> &[QuotaPolicy] {
         &self.policies
+    }
+
+    // One process-wide count, keyed on nobody.
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 
     async fn check(&self, _: &http::Request, _: Route<'_>, (): &()) -> Decision {

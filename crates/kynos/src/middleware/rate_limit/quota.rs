@@ -220,8 +220,8 @@ where
         &self.policies
     }
 
-    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
-        self.key.__reads_admitted()
+    fn reads_admitted(&self) -> super::key::AdmittedReads {
+        self.key.reads_admitted()
     }
 
     async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {

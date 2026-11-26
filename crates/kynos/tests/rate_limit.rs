@@ -21,8 +21,10 @@ use kynos::{
     middleware::catch_panic::PanicPolicy,
     middleware::rate_limit::{
         RateLimit,
+        decision::{Decision, QuotaPolicy, RateLimitPolicy},
         key::{
-            And, ByClientAddress, ByHandler, ByHeader, ByPeerAddress, ByPrincipal, ByRoute, Shared,
+            AdmittedReads, And, ByClientAddress, ByHandler, ByHeader, ByPeerAddress, ByPrincipal,
+            ByRoute, RateLimitKey, Shared,
         },
         quota::{Quota, Quotas},
         refusal::RateLimited,
@@ -892,6 +894,105 @@ fn the_second_half_of_an_endpoints_own_principal_keyed_and_is_checked() {
     );
 }
 
+/// An application's policy around another, forwarding what it reads.
+struct Wrapped<P>(P);
+
+impl<P: RateLimitPolicy<Accounts>> RateLimitPolicy<Accounts> for Wrapped<P> {
+    fn advertised(&self) -> &[QuotaPolicy] {
+        self.0.advertised()
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        self.0.reads_admitted()
+    }
+
+    async fn check(
+        &self,
+        request: &kynos::http::Request,
+        route: kynos::router::operation::Route<'_>,
+        context: &Accounts,
+    ) -> Decision {
+        self.0.check(request, route, context).await
+    }
+}
+
+/// An application's key around another, forwarding what it reads.
+struct Prefixed<K>(K);
+
+impl<K: RateLimitKey<Accounts>> RateLimitKey<Accounts> for Prefixed<K> {
+    fn partition(
+        &self,
+        request: &kynos::http::Request,
+        route: kynos::router::operation::Route<'_>,
+        context: &Accounts,
+    ) -> Option<std::borrow::Cow<'static, str>> {
+        let partition = self.0.partition(request, route, context)?;
+        Some(format!("tenant:{partition}").into())
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        self.0.reads_admitted()
+    }
+}
+
+/// The refusals `limit` meets mounted over `publish` with no guard run first,
+/// and inside a group that runs it first.
+fn refused_outside_and_inside_the_guard<I>(limit: impl Fn() -> I) -> [Vec<String>; 2]
+where
+    I: kynos::middleware::Interceptor<Accounts>,
+{
+    [
+        unseen_guards(
+            &Router::<Accounts>::new()
+                .intercept(limit())
+                .mount(kynos::routes![publish]),
+        ),
+        unseen_guards(
+            &Router::<Accounts>::new().group(
+                Group::new("/v1")
+                    .guard_first()
+                    .intercept(limit())
+                    .mount(kynos::routes![publish]),
+            ),
+        ),
+    ]
+}
+
+/// A policy an application wraps around `Quotas` keyed on the caller is held
+/// to run inside the guard as `Quotas` itself is.
+#[test]
+fn a_wrapped_principal_keyed_policy_is_checked() {
+    let [outside, inside] = refused_outside_and_inside_the_guard(|| {
+        RateLimit::new(Wrapped(
+            Quotas::new(
+                ByPrincipal::new(account_of as fn(&Auth<Bearer>) -> String),
+                Counters::default(),
+            )
+            .quota(Quota::new("publish", 1, Duration::from_secs(600))),
+        ))
+    });
+    assert_eq!(outside.len(), 1, "{outside:?}");
+    assert!(outside[0].contains("Wrapped<"), "{:?}", outside[0]);
+    assert_eq!(inside, Vec::<String>::new());
+}
+
+/// So is a key an application wraps around `ByPrincipal`.
+#[test]
+fn a_wrapped_principal_key_is_checked() {
+    let [outside, inside] = refused_outside_and_inside_the_guard(|| {
+        RateLimit::new(
+            Quotas::new(
+                Prefixed(ByPrincipal::new(account_of as fn(&Auth<Bearer>) -> String)),
+                Counters::default(),
+            )
+            .quota(Quota::new("publish", 1, Duration::from_secs(600))),
+        )
+    });
+    assert_eq!(outside.len(), 1, "{outside:?}");
+    assert!(outside[0].contains("Prefixed<"), "{:?}", outside[0]);
+    assert_eq!(inside, Vec::<String>::new());
+}
+
 /// The controls: the guard run first in the group covering the operation
 /// builds, and so does a limiter naming where an unadmitted request goes,
 /// whatever covers it.
@@ -1256,6 +1357,10 @@ struct Scripted {
 impl<C: Sync + 'static> kynos::middleware::rate_limit::decision::RateLimitPolicy<C> for Scripted {
     fn advertised(&self) -> &[kynos::middleware::rate_limit::decision::QuotaPolicy] {
         &self.advertised
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 
     async fn check(

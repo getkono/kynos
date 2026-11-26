@@ -276,10 +276,11 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     /// keys on, each of which the router refuses to build unless a scope's
     /// `guard_first` runs that guard ahead of it.
     ///
-    /// Every interceptor but a [`RateLimit`](rate_limit::RateLimit) keyed
-    /// [`ByPrincipal`](rate_limit::key::ByPrincipal) with no `otherwise`
-    /// leaves it at its default, naming none. Read only while the router is
-    /// built, never per request.
+    /// Every interceptor but a [`RateLimit`](rate_limit::RateLimit), which
+    /// answers what its policy's
+    /// [`reads_admitted`](rate_limit::decision::RateLimitPolicy::reads_admitted)
+    /// does, leaves it at its default, naming none. Read only while the
+    /// router is built, never per request.
     #[doc(hidden)]
     fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
         Vec::new()

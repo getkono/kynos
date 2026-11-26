@@ -8,8 +8,8 @@
 //! [`rate_limit.rs`](rate_limit.rs) is the other half of this pair. There the
 //! algorithm is Kynos's — [`Quotas`] slides a window over a store an
 //! application supplies — and the file is about the store seam. Here the
-//! *algorithm* is the application's too: [`RateLimitPolicy`] is one method, and
-//! implementing it replaces the shipped policy wholesale.
+//! *algorithm* is the application's too: [`RateLimitPolicy`] is two methods,
+//! and implementing them replaces the shipped policy wholesale.
 //!
 //! # Why Kynos ships no bucket
 //!
@@ -69,7 +69,7 @@ use kynos::{
     middleware::rate_limit::{
         RateLimit,
         decision::{Decision, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
-        key::{And, ByClientAddress, ByRoute, RateLimitKey},
+        key::{AdmittedReads, And, ByClientAddress, ByRoute, RateLimitKey},
     },
     prelude::*,
     response::status::NoContent,
@@ -274,6 +274,12 @@ impl<Ctx: Sync + 'static, K: RateLimitKey<Ctx>, C: Clock> RateLimitPolicy<Ctx>
 {
     fn advertised(&self) -> &[QuotaPolicy] {
         &self.advertised
+    }
+
+    // Whatever the key reads: keyed `ByPrincipal`, the router then holds this
+    // bucket to run inside the guard, exactly as it holds `Quotas`.
+    fn reads_admitted(&self) -> AdmittedReads {
+        self.key.reads_admitted()
     }
 
     async fn check(

@@ -1264,7 +1264,7 @@ fn a_principal_key_names_its_guard_to_the_router_only_without_otherwise() {
 
     let named = |Auth(token): &Auth<Bearer>| token.clone();
     let maybe = |MaybeAuth(token): &MaybeAuth<Bearer>| token.clone().unwrap_or_default();
-    let reads = |key: &dyn RateLimitKey<Accounts>| key.__reads_admitted();
+    let reads = |key: &dyn RateLimitKey<Accounts>| key.reads_admitted().guards;
     let guard = vec![GuardType::of::<Auth<Bearer>>()];
 
     assert_eq!(reads(&ByPrincipal::new(named)), guard);

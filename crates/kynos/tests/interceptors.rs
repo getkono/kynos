@@ -1177,6 +1177,10 @@ macro_rules! head_only {
 struct Unlimited;
 
 impl kynos::middleware::rate_limit::decision::RateLimitPolicy<App> for Unlimited {
+    fn reads_admitted(&self) -> kynos::middleware::rate_limit::key::AdmittedReads {
+        kynos::middleware::rate_limit::key::AdmittedReads::none()
+    }
+
     async fn check(
         &self,
         _: &Request,
