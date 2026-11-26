@@ -460,8 +460,10 @@ class TheInstallCheck(unittest.TestCase):
     def test_ci_is_silent_over_a_missing_hook(self):
         self.assertEqual(self.check(CI="true"), "")
 
-    def test_ci_set_false_still_warns(self):
-        self.assertIn("no pre-push hook", self.check(CI="false"))
+    def test_ci_set_to_zero_or_any_case_of_false_still_warns(self):
+        for value in ("0", "false", "FALSE"):
+            with self.subTest(CI=value):
+                self.assertIn("no pre-push hook", self.check(CI=value))
 
     def test_outside_a_repository_is_silent(self):
         outside = self.directory / "outside"
