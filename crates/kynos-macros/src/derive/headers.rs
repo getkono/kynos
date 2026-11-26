@@ -1,9 +1,11 @@
 //! `#[derive(HeaderParams)]`.
 
+mod field_value;
+
 use kynos_openapi::model::parameter::header::is_ignored_header_parameter;
 use proc_macro2::TokenStream as TokenStream2;
-use quote::quote;
-use syn::{DeriveInput, Field, Type, spanned::Spanned};
+use quote::{quote, quote_spanned};
+use syn::{DeriveInput, Expr, ExprLit, ExprPath, Field, Lit, Type, spanned::Spanned};
 
 use crate::derive::{
     attribute::{field_args, group_args},
@@ -11,9 +13,11 @@ use crate::derive::{
         NameCase, named_fields, names_const, reject_duplicate_names, reject_non_token_names,
         wire_names,
     },
+    headers::field_value::Refusal,
     params::{
         Param, check_field, constraint_problems_body, construct, decode_field,
         describe::{parameters_body, response_headers_body},
+        fixed::Fixed,
         group_problem, render,
     },
 };
@@ -54,23 +58,32 @@ const MISSING: &str = "the header is required";
 /// Binds a fixed header's field: present means equal to `value`, octet for
 /// octet, as its schema's `const` says, and anything else is refused. `found`
 /// is the `Option<&str>` the header lookup produced.
-fn decode_fixed(param: &Param<'_>, value: &str, found: &TokenStream2) -> TokenStream2 {
+fn decode_fixed(param: &Param<'_>, value: &Fixed, found: &TokenStream2) -> TokenStream2 {
     let ident = param.ident();
     let ty = param.ty();
     let name = param.name();
-    let differs = format!("the value must be `{value}`");
+    // A constant's value is known to the compiler alone, so its refusal is
+    // formatted where it is made, as the literal's is at expansion.
+    let differs = match value {
+        Fixed::Literal(literal) => {
+            let detail = format!("the value must be `{}`", literal.value());
+            quote!(<::std::string::String as ::core::convert::From<_>>::from(#detail))
+        }
+        Fixed::Const(path) => quote!(::std::format!("the value must be `{}`", #path)),
+    };
 
-    let refuse = |detail: &str| {
+    let refuse = |detail: &TokenStream2| {
         quote! {
             return ::core::result::Result::Err(
                 ::kynos::error::rejection::HeaderRejection::Invalid {
                     name: <::std::string::String as ::core::convert::From<_>>::from(#name),
-                    detail: <::std::string::String as ::core::convert::From<_>>::from(#detail),
+                    detail: #detail,
                 },
             );
         }
     };
-    let (differs, missing) = (refuse(&differs), refuse(MISSING));
+    let missing = quote!(<::std::string::String as ::core::convert::From<_>>::from(#MISSING));
+    let (differs, missing) = (refuse(&differs), refuse(&missing));
     let absent = if param.optional().is_some() {
         quote!(::core::option::Option::None)
     } else {
@@ -95,8 +108,8 @@ fn decode_fixed(param: &Param<'_>, value: &str, found: &TokenStream2) -> TokenSt
 ///
 /// The name is lower-cased at expansion for `HeaderName::from_static`; a value
 /// that is not a valid field value refuses the whole group, since every field
-/// is one the description declares. A fixed value was checked at expansion, so
-/// it is written as it stands.
+/// is one the description declares. A fixed value was checked at expansion or
+/// by its `const` assertion, so it is written as it stands.
 fn encode_body(params: &[Param<'_>]) -> TokenStream2 {
     let entries = params.iter().map(|param| {
         let folded = param.name().to_ascii_lowercase();
@@ -146,17 +159,18 @@ fn carries_unit(param: &Param<'_>) -> bool {
     )
 }
 
-/// The field's `#[header(value = "...")]`, checked: a fixed value goes on a
+/// The field's `#[header(value = ...)]`, checked: a fixed value goes on a
 /// field carrying nothing else, and every such field names one.
 ///
 /// `unit` says whether the field is `()` or `Option<()>`.
-fn fixed_value(field: &Field, unit: bool) -> syn::Result<Option<String>> {
-    let Some(literal) = field_args(field, "header")?.value else {
+fn fixed_value(field: &Field, unit: bool) -> syn::Result<Option<Fixed>> {
+    let Some(value) = field_args(field, "header")?.value else {
         if unit {
             return Err(syn::Error::new(
                 field.ty.span(),
                 "`()` carries no value of its own, so this header needs the one it always \
-                 carries: `#[header(value = \"...\")]`",
+                 carries: `#[header(value = \"...\")]`, or `value = A_CONST` naming a `&str` \
+                 constant",
             ));
         }
         return Ok(None);
@@ -169,10 +183,28 @@ fn fixed_value(field: &Field, unit: bool) -> syn::Result<Option<String>> {
         ));
     }
 
-    let value = literal.value();
-    if let Some(message) = non_field_value_message(&value) {
-        return Err(syn::Error::new(literal.span(), message));
-    }
+    let fixed = match value {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(literal),
+            ..
+        }) => {
+            if let Some(message) = non_field_value_message(&literal.value()) {
+                return Err(syn::Error::new(literal.span(), message));
+            }
+            Fixed::Literal(literal)
+        }
+        Expr::Path(ExprPath {
+            qself: None, path, ..
+        }) => Fixed::Const(path),
+        other => {
+            return Err(syn::Error::new(
+                other.span(),
+                "a fixed `value` is a string literal or a path to a `&str` constant, such as \
+                 `\"v1\"` or `API_VERSION`: the value the description states is settled where \
+                 the field is declared",
+            ));
+        }
+    };
     if let Some(bounded) = field
         .attrs
         .iter()
@@ -184,31 +216,38 @@ fn fixed_value(field: &Field, unit: bool) -> syn::Result<Option<String>> {
              nothing left to bound",
         ));
     }
-    Ok(Some(value))
+    Ok(Some(fixed))
 }
 
-/// Says why `value` cannot be a fixed header value, or `None` where it can.
-///
-/// RFC 9110 §5.5's `field-value`, less `obs-text`, which the decoder refuses as
-/// not printable ASCII and so could never compare equal.
+/// Says why `value` cannot be a fixed header value, or `None` where it can,
+/// by [`field_value::refusal`]'s rule.
 fn non_field_value_message(value: &str) -> Option<String> {
-    if let Some(character) = value
-        .chars()
-        .find(|&character| !(character == ' ' || character == '\t' || character.is_ascii_graphic()))
-    {
-        return Some(format!(
+    match field_value::refusal(value)? {
+        Refusal::Character(character) => Some(format!(
             "the header value `{}` contains {character:?}, and a fixed value is printable \
              ASCII: a decoded header is compared as text",
             value.escape_debug()
-        ));
-    }
-    if value.starts_with([' ', '\t']) || value.ends_with([' ', '\t']) {
-        return Some(format!(
+        )),
+        Refusal::OuterWhitespace => Some(format!(
             "the header value {value:?} starts or ends with whitespace, which a recipient strips \
              (RFC 9110 §5.5), so no request could carry it"
-        ));
+        )),
     }
-    None
+}
+
+/// The `const` assertions holding each fixed value a path names to the rule a
+/// literal is held to at expansion, each spanned at its path so a refusal
+/// points at the attribute.
+fn const_checks(params: &[Param<'_>]) -> TokenStream2 {
+    let checks = params
+        .iter()
+        .filter_map(|param| match param.fixed_value()? {
+            Fixed::Const(path) => Some(quote_spanned! {path.span()=>
+                const _: &str = ::kynos::__private::header::fixed_value(#path);
+            }),
+            Fixed::Literal(_) => None,
+        });
+    quote!(#(#checks)*)
 }
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -254,8 +293,11 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let response_headers = response_headers_body(&params);
     let encode = encode_body(&params);
     let constraint_problems = constraint_problems_body(&params);
+    let const_checks = const_checks(&params);
 
     Ok(quote! {
+        #const_checks
+
         impl #impl_generics ::kynos::extract::params::header::DecodeHeaders
             for #name #ty_generics #where_clause
         {

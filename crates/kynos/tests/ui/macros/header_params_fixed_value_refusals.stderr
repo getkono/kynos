@@ -1,25 +1,31 @@
 error: a header with a fixed `value` carries nothing beside it, so its field is `()`, or `Option<()>` where it may be absent
-  --> tests/ui/macros/header_params_fixed_value_refusals.rs:11:14
+  --> tests/ui/macros/header_params_fixed_value_refusals.rs:13:14
    |
-11 |     nosniff: String,
+13 |     nosniff: String,
    |              ^^^^^^
 
 error: the header value `nosniff\n` contains '\n', and a fixed value is printable ASCII: a decoded header is compared as text
-  --> tests/ui/macros/header_params_fixed_value_refusals.rs:16:57
+  --> tests/ui/macros/header_params_fixed_value_refusals.rs:18:57
    |
-16 |     #[header(rename = "X-Content-Type-Options", value = "nosniff\n")]
+18 |     #[header(rename = "X-Content-Type-Options", value = "nosniff\n")]
    |                                                         ^^^^^^^^^^^
 
-error: a fixed `value` is the whole of this header's schema, so `#[schema(...)]` has nothing left to bound
-  --> tests/ui/macros/header_params_fixed_value_refusals.rs:24:5
+error: a fixed `value` is a string literal or a path to a `&str` constant, such as `"v1"` or `API_VERSION`: the value the description states is settled where the field is declared
+  --> tests/ui/macros/header_params_fixed_value_refusals.rs:24:48
    |
-24 |     #[schema(max_length = 4)]
+24 |     #[header(rename = "X-Api-Version", value = concat!("v", "1"))]
+   |                                                ^^^^^^
+
+error: a fixed `value` is the whole of this header's schema, so `#[schema(...)]` has nothing left to bound
+  --> tests/ui/macros/header_params_fixed_value_refusals.rs:32:5
+   |
+32 |     #[schema(max_length = 4)]
    |     ^
 
 error[E0277]: `()` is not a string, so a string bound cannot apply to it
-  --> tests/ui/macros/header_params_fixed_value_refusals.rs:26:14
+  --> tests/ui/macros/header_params_fixed_value_refusals.rs:34:14
    |
-26 |     nosniff: (),
+34 |     nosniff: (),
    |              ^^ not a string
    |
    = help: the trait `Textual` is not implemented for `()`

@@ -10,6 +10,7 @@
 
 pub(crate) mod default;
 pub(crate) mod describe;
+pub(crate) mod fixed;
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
@@ -52,7 +53,7 @@ pub(crate) struct Param<'a> {
     field: &'a Field,
     name: String,
     /// The one value a header's `()` field stands for, as its schema's `const`.
-    fixed: Option<String>,
+    fixed: Option<fixed::Fixed>,
     /// Where the group's problem for every field's broken bound comes from.
     group: Group<'a>,
     /// How a query group's `Vec<T>` field carries its items, where it is one.
@@ -110,19 +111,6 @@ impl<'a> Param<'a> {
     /// The field as written, for reading its attributes.
     pub(crate) fn field(&self) -> &Field {
         self.field
-    }
-
-    /// Makes this a parameter that only ever carries `value`, or leaves it be.
-    pub(crate) fn fixed(self, value: Option<String>) -> Self {
-        Self {
-            fixed: value,
-            ..self
-        }
-    }
-
-    /// The one value this parameter carries, where it is fixed.
-    pub(crate) fn fixed_value(&self) -> Option<&str> {
-        self.fixed.as_deref()
     }
 
     /// The name this parameter is carried under.
