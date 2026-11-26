@@ -79,7 +79,7 @@ use kynos::{
     router::service::Service,
     security::{
         Authenticator, Authorizer, Head, Scope,
-        auth::{Auth, MaybeAuth, Scoped, Scopes},
+        auth::{Auth, MaybeAuth, Scoped},
         carrier::{BearerToken, Credentials, presented::Presented},
         constant_time_eq,
         schemes::Basic,
@@ -171,13 +171,11 @@ enum Grant {
     ReadReports,
 }
 
-/// The scopes `/reports` demands.
+/// The scopes `/reports` demands; `Grant` is the set's scope type because its
+/// scopes are named under it.
+#[derive(kynos::Scopes)]
+#[scopes(Grant::ReadReports)]
 struct ReadReports;
-
-impl Scopes for ReadReports {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
-}
 
 // --- Verifying ------------------------------------------------------------
 

@@ -9421,6 +9421,86 @@ mod scope {
     }
 }
 
+mod scopes {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::scopes::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a bare scope, whose type the set cannot read",
+                quote::quote!(
+                    #[scopes(Audit)]
+                    struct Bare;
+                ),
+                "name each scope by its type, as `ScopeType::Audit`",
+            ),
+            case(
+                "a scope listed twice, demanded once",
+                quote::quote!(
+                    #[scopes(Grant::Admin, Grant::Admin)]
+                    struct Twice;
+                ),
+                "`Grant::Admin` is already required by this set",
+            ),
+            case(
+                "a set requiring nothing, which is a plain `Auth<S>`",
+                quote::quote!(
+                    #[scopes(forbidden = INSUFFICIENT_SCOPE)]
+                    struct Nothing;
+                ),
+                "a scope set requires at least one scope",
+            ),
+            case(
+                "`forbidden` written twice, the second replacing the first",
+                quote::quote!(
+                    #[scopes(Grant::Admin, forbidden = INSUFFICIENT_SCOPE)]
+                    #[scopes(forbidden = NOT_AN_ADMIN)]
+                    struct TwoTypes;
+                ),
+                "`forbidden` is already set",
+            ),
+        ]
+    }
+
+    /// The rows refusing a key outside the grammar, which
+    /// `attribute::unknown` raises, and a field-bearing struct, which
+    /// `common::unit_struct` does.
+    fn shared_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a misspelt `forbidden`, which would otherwise read as no key",
+                quote::quote!(
+                    #[scopes(Grant::Admin, fobidden = INSUFFICIENT_SCOPE)]
+                    struct Misspelt;
+                ),
+                "`fobidden` is not part of the `#[scopes(...)]` grammar",
+            ),
+            case(
+                "a struct with fields, which a set has no use for",
+                quote::quote!(
+                    #[scopes(Grant::Admin)]
+                    struct Admin {
+                        grant: Grant,
+                    }
+                ),
+                "`Scopes` marks a type that names a set of scopes, so it carries no fields",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(shared_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_scopes_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("scopes.rs", include_str!("scopes.rs"), ledger().len());
+    }
+}
+
 mod param_value {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::param_value::expand_inner;

@@ -502,12 +502,20 @@ the *scope set* an operation demands is a type, and that is the seam.
 `Scopes::FORBIDDEN_TYPE` is a defaulted associated const beside `REQUIRED`:
 
 ```rust
-impl Scopes for ReadReports {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
-    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
-}
+const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+
+#[derive(kynos::Scopes)]
+#[scopes(Grant::ReadReports, forbidden = INSUFFICIENT_SCOPE)]
+struct ReadReports;
 ```
+
+The derive writes `type Scope = Grant` from the path each scope is named
+under, so a scope is never written bare, and refuses a set requiring nothing,
+which is a plain `Auth<S>`. `forbidden` is a `&'static str`, the `const` an
+authorizer also passes to `forbidden_as`, rather than a `ProblemType` marker:
+the scope set is already the type the URI hangs on
+([`errors.md`](errors.md) says why a marker would be a second one), and
+`problem_type!` joins it from the crate's base in a `const`.
 
 A `Scoped<S, R>` argument whose `R` names one declares a 403 publishing **that
 URI or `about:blank`** — a `oneOf` of the two, each branch a `const`.

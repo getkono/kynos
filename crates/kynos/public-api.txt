@@ -11,6 +11,7 @@ pub use kynos::QueryParams
 pub use kynos::Reply
 pub use kynos::Schema
 pub use kynos::Scope
+pub use kynos::Scopes
 pub use kynos::SecurityScheme
 pub use kynos::Tag
 pub use kynos::assets

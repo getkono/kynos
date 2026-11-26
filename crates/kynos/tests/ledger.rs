@@ -68,6 +68,7 @@ fn every_derive_has_a_witness() {
         "Reply",
         "Schema",
         "Scope",
+        "Scopes",
         "SecurityScheme",
         "Tag",
     ];

@@ -1623,6 +1623,37 @@ pub fn derive_scope(item: TokenStream) -> TokenStream {
     derive::run(item, derive::scope::expand_inner)
 }
 
+/// Declares a unit struct as a `kynos::security::auth::Scopes` set.
+///
+/// ```ignore
+/// kynos::problem_base!("https://errors.example.com/");
+///
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+///
+/// #[derive(Scopes)]
+/// #[scopes(Grant::ReadReports, Grant::Audit)]
+/// struct Auditor;
+///
+/// #[derive(Scopes)]
+/// #[scopes(Grant::Admin, forbidden = INSUFFICIENT_SCOPE)]
+/// struct Admin;
+/// ```
+///
+/// Each scope is written as `Type::Variant`, or `Type::CONST`, and the set's
+/// `Scope` type is the path before the last segment, so every scope a set
+/// lists is of one type and a set over another than its scheme's does not
+/// compile. A bare name is refused, as is a set listing no scope (an
+/// operation demanding none takes `Auth<S>`) and a scope listed twice.
+///
+/// `forbidden` is the set's `FORBIDDEN_TYPE`: any `&'static str` expression,
+/// typically the `const` an authorizer also passes to
+/// `AuthRejection::forbidden_as`, so the 403 the set declares and the one the
+/// authorizer sends are named by one item. Without it the set names none.
+#[proc_macro_derive(Scopes, attributes(scopes))]
+pub fn derive_scopes(item: TokenStream) -> TokenStream {
+    derive::run(item, derive::scopes::expand_inner)
+}
+
 /// Declares an application context, emitting one `Provides` implementation per
 /// field.
 ///

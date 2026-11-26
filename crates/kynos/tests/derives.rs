@@ -299,6 +299,7 @@ fn implements_param_value<T: ParamValueTrait>() {}
 fn implements_unit_enum<T: UnitEnum>() {}
 fn implements_tag<T: TagTrait>() {}
 fn implements_scope<T: kynos::security::Scope>() {}
+fn implements_scopes<T: kynos::security::auth::Scopes>() {}
 fn implements_security_scheme<T: SecuritySchemeTrait>() {}
 fn implements_responses<T: IntoResponse + Responses>() {}
 #[cfg(feature = "multipart")]
@@ -335,6 +336,8 @@ fn every_derive_implements_its_trait() {
     implements_tag::<Admin>();
     implements_scope::<Phase>();
     implements_scope::<Permission>();
+    implements_scopes::<Auditing>();
+    implements_scopes::<AuditOnly>();
     implements_security_scheme::<BearerAuth>();
     implements_security_scheme::<SessionCookie>();
     implements_responses::<StoreError>();
@@ -1321,6 +1324,69 @@ fn a_derived_scope_is_named_as_serde_writes_it() {
         [Permission::ReadReports, Permission::Move, Permission::Admin].map(|grant| grant.name()),
         ["read-reports", "move", "admin:all"]
     );
+}
+
+/// The type a refusal of `AuditOnly` names, joined from the crate's base.
+const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+
+/// A scope set naming two scopes, and no 403 type of its own.
+#[derive(kynos::Scopes)]
+#[scopes(Grant::Audit, Grant::ReadReports)]
+struct Auditing;
+
+/// A scope set naming the 403 type its authorizer refuses with.
+#[derive(kynos::Scopes)]
+#[scopes(Grant::Audit, forbidden = INSUFFICIENT_SCOPE)]
+struct AuditOnly;
+
+/// A scheme of `Grant` scopes demanding none by default, so a `Scoped`
+/// requirement over it lists exactly its set's.
+#[derive(SecurityScheme)]
+#[security(bearer, scope = Grant)]
+struct GrantBearer;
+
+/// The operation a `Scoped<GrantBearer, R>` argument describes.
+fn scoped_operation<R: kynos::security::auth::Scopes<Scope = Grant>>() -> kynos::openapi::Operation
+{
+    let mut registry = kynos::schema::registry::Registry::new();
+    let mut operation = kynos::router::operation::OperationCx::new(&mut registry);
+    <kynos::security::auth::Scoped<GrantBearer, R> as kynos::extract::describe::Describe>::describe(
+        &mut operation,
+    );
+    operation.finish()
+}
+
+/// A derived `Scopes` demands the scopes it lists, in order, by the names
+/// `Scope::name` gives them, and its 403 publishes the type `forbidden`
+/// names, or none of its own.
+#[test]
+fn a_derived_scope_set_demands_what_it_lists_and_names_its_403() {
+    let auditing = scoped_operation::<Auditing>();
+    assert_eq!(
+        auditing.security,
+        Some(vec![kynos::openapi::SecurityRequirement::scoped(
+            "GrantBearer",
+            ["audit", "reports:read"],
+        )])
+    );
+    let declared = |operation: &kynos::openapi::Operation| {
+        serde_json::to_string(&operation.responses).expect("responses serialize")
+    };
+    assert!(!declared(&auditing).contains(INSUFFICIENT_SCOPE));
+
+    let audit_only = scoped_operation::<AuditOnly>();
+    assert_eq!(
+        audit_only.security,
+        Some(vec![kynos::openapi::SecurityRequirement::scoped(
+            "GrantBearer",
+            ["audit"],
+        )])
+    );
+    assert_eq!(
+        INSUFFICIENT_SCOPE,
+        "https://errors.example.com/insufficient-scope"
+    );
+    assert!(declared(&audit_only).contains(INSUFFICIENT_SCOPE));
 }
 
 /// An enum declaring its own `as_str` and `VARIANTS`, which the derive's

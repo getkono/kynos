@@ -242,6 +242,10 @@ where
 /// [`SecurityScheme::Scope`](crate::security::SecurityScheme::Scope) of every
 /// scheme `S` names: a set written against another type does not compile.
 ///
+/// `#[derive(kynos::Scopes)]` writes the implementation from
+/// `#[scopes(Grant::Admin, forbidden = URI)]`, the `Scope` type read from the
+/// path each scope is named under. Written by hand:
+///
 /// ```
 /// use kynos::security::{Scope, auth::Scopes};
 ///
