@@ -6884,7 +6884,7 @@ pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self
 pub async fn kynos::server::Server<C>::prepare(self) -> kynos::error::Result<kynos::server::BoundServer<C>>
 pub fn kynos::server::Server<C>::proxy_protocol(self, kynos::http::forwarded::TrustedProxies) -> Self
 pub fn kynos::server::Server<C>::request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
-pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<()>
+pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<kynos::server::lifecycle::Stopped>
 pub fn kynos::server::Server<C>::serve_io<I>(&self, I, kynos::extract::connection::Connection) -> kynos::error::Result<impl core::future::future::Future<Output = std::io::error::Result<()>> + core::marker::Send + 'static> where I: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + core::marker::Send + 'static
 pub fn kynos::server::Server<C>::shutdown_timeout(self, core::time::Duration) -> Self
 pub fn kynos::server::Server<C>::tcp_keepalive(self, core::option::Option<kynos::server::tcp::TcpKeepAlive>) -> Self
@@ -11313,14 +11313,10 @@ pub kynos::server::error::ServerError::NoListeners
 pub kynos::server::error::ServerError::Resolve
 pub kynos::server::error::ServerError::Resolve::address: kynos::server::address::BindAddress
 pub kynos::server::error::ServerError::Resolve::source: std::io::error::Error
-pub kynos::server::error::ServerError::ShutdownForced
-pub kynos::server::error::ServerError::ShutdownTimeout
-pub kynos::server::error::ServerError::ShutdownTimeout::timeout: core::time::Duration
 pub kynos::server::error::ServerError::Signal(std::io::error::Error)
 pub kynos::server::error::ServerError::Tls(kynos::server::tls::error::TlsError)
 impl kynos::server::error::ServerError
 pub const fn kynos::server::error::ServerError::io_error(&self) -> core::option::Option<&std::io::error::Error>
-pub const fn kynos::server::error::ServerError::is_requested_shutdown(&self) -> bool
 impl core::convert::From<kynos::server::error::ServerError> for kynos::error::Error
 pub fn kynos::error::Error::from(kynos::server::error::ServerError) -> Self
 impl core::convert::From<kynos::server::tls::error::TlsError> for kynos::server::error::ServerError
@@ -11339,6 +11335,26 @@ impl core::marker::UnsafeUnpin for kynos::server::error::ServerError
 impl !core::panic::unwind_safe::RefUnwindSafe for kynos::server::error::ServerError
 impl !core::panic::unwind_safe::UnwindSafe for kynos::server::error::ServerError
 pub mod kynos::server::lifecycle
+#[non_exhaustive] pub enum kynos::server::lifecycle::Stopped
+pub kynos::server::lifecycle::Stopped::Drained
+pub kynos::server::lifecycle::Stopped::Forced
+pub kynos::server::lifecycle::Stopped::TimedOut
+impl core::clone::Clone for kynos::server::lifecycle::Stopped
+pub fn kynos::server::lifecycle::Stopped::clone(&self) -> kynos::server::lifecycle::Stopped
+impl core::cmp::Eq for kynos::server::lifecycle::Stopped
+impl core::cmp::PartialEq for kynos::server::lifecycle::Stopped
+pub fn kynos::server::lifecycle::Stopped::eq(&self, &kynos::server::lifecycle::Stopped) -> bool
+impl core::fmt::Debug for kynos::server::lifecycle::Stopped
+pub fn kynos::server::lifecycle::Stopped::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::server::lifecycle::Stopped
+impl core::marker::StructuralPartialEq for kynos::server::lifecycle::Stopped
+impl core::marker::Freeze for kynos::server::lifecycle::Stopped
+impl core::marker::Send for kynos::server::lifecycle::Stopped
+impl core::marker::Sync for kynos::server::lifecycle::Stopped
+impl core::marker::Unpin for kynos::server::lifecycle::Stopped
+impl core::marker::UnsafeUnpin for kynos::server::lifecycle::Stopped
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::server::lifecycle::Stopped
+impl core::panic::unwind_safe::UnwindSafe for kynos::server::lifecycle::Stopped
 pub struct kynos::server::lifecycle::Draining(_)
 impl kynos::server::lifecycle::Draining
 pub fn kynos::server::lifecycle::Draining::is_draining(&self) -> bool
@@ -11655,7 +11671,7 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::server::tls::TlsConfig
 pub struct kynos::server::BoundServer<C>
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
-pub async fn kynos::server::BoundServer<C>::serve(self) -> kynos::error::Result<()>
+pub async fn kynos::server::BoundServer<C>::serve(self) -> kynos::error::Result<kynos::server::lifecycle::Stopped>
 pub fn kynos::server::BoundServer<C>::spawn(self) -> kynos::server::Running<C>
 impl<C: 'static> kynos::server::BoundServer<C>
 pub fn kynos::server::BoundServer<C>::openapi(&self) -> &kynos_openapi::model::document::Document
@@ -11673,7 +11689,7 @@ impl<C> kynos::server::Running<C>
 pub fn kynos::server::Running<C>::local_addr(&self) -> core::option::Option<core::net::socket_addr::SocketAddr>
 pub fn kynos::server::Running<C>::local_addrs(&self) -> &[core::net::socket_addr::SocketAddr]
 pub fn kynos::server::Running<C>::service(&self) -> &kynos::router::service::Service<C>
-pub async fn kynos::server::Running<C>::shutdown(self) -> kynos::error::Result<()>
+pub async fn kynos::server::Running<C>::shutdown(self) -> kynos::error::Result<kynos::server::lifecycle::Stopped>
 impl<C: core::fmt::Debug> core::fmt::Debug for kynos::server::Running<C>
 pub fn kynos::server::Running<C>::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl<C> core::marker::Freeze for kynos::server::Running<C>
@@ -11703,7 +11719,7 @@ pub fn kynos::server::Server<C>::new(kynos::router::service::Service<C>) -> Self
 pub async fn kynos::server::Server<C>::prepare(self) -> kynos::error::Result<kynos::server::BoundServer<C>>
 pub fn kynos::server::Server<C>::proxy_protocol(self, kynos::http::forwarded::TrustedProxies) -> Self
 pub fn kynos::server::Server<C>::request_body_idle_timeout(self, core::option::Option<core::time::Duration>) -> Self
-pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<()>
+pub async fn kynos::server::Server<C>::serve(self) -> kynos::error::Result<kynos::server::lifecycle::Stopped>
 pub fn kynos::server::Server<C>::serve_io<I>(&self, I, kynos::extract::connection::Connection) -> kynos::error::Result<impl core::future::future::Future<Output = std::io::error::Result<()>> + core::marker::Send + 'static> where I: tokio::io::async_read::AsyncRead + tokio::io::async_write::AsyncWrite + core::marker::Unpin + core::marker::Send + 'static
 pub fn kynos::server::Server<C>::shutdown_timeout(self, core::time::Duration) -> Self
 pub fn kynos::server::Server<C>::tcp_keepalive(self, core::option::Option<kynos::server::tcp::TcpKeepAlive>) -> Self

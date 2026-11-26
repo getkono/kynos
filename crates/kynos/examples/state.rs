@@ -133,5 +133,6 @@ async fn main() -> kynos::Result<()> {
     Server::new(service)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
-        .await
+        .await?;
+    Ok(())
 }

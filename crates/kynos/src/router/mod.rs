@@ -1032,7 +1032,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///     .request_body_idle_timeout(None)
     ///     .bind(("0.0.0.0", 3000))
     ///     .serve()
-    ///     .await
+    ///     .await?;
+    /// # Ok(())
     /// # }
     /// ```
     ///

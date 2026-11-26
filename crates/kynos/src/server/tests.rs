@@ -1283,10 +1283,6 @@ fn io_error_is_the_source_of_exactly_the_variants_holding_one() {
         ServerError::NoListeners,
         ServerError::InvalidConfiguration("invalid"),
         ServerError::AcceptLoop { panicked: true },
-        ServerError::ShutdownTimeout {
-            timeout: std::time::Duration::ZERO,
-        },
-        ServerError::ShutdownForced,
         #[cfg(feature = "tls")]
         ServerError::MutualTlsConflict,
         #[cfg(feature = "tls")]
@@ -1919,15 +1915,12 @@ async fn a_second_signal_forces_shutdown_during_the_deregistration_delay() {
     assert!(!server.is_finished(), "the delay holds the drain back");
     let _ = force_sender.send(());
 
-    let error = tokio::time::timeout(std::time::Duration::from_secs(10), server)
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(10), server)
         .await
         .expect("forced shutdown is prompt")
         .expect("server task joins")
-        .expect_err("the repeated trigger is reported");
-    assert!(matches!(
-        &error,
-        crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
-    ));
+        .expect("a forced drain is the stop that was asked for");
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Forced);
 }
 
 #[cfg(feature = "http1")]
@@ -2046,17 +2039,12 @@ async fn zero_shutdown_timeout_reports_an_incomplete_drain() {
         .await
         .expect("the request reaches the handler");
     let _ = shutdown_sender.send(());
-    let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(1), server)
         .await
         .expect("forced shutdown is prompt")
         .expect("server task joins")
-        .expect_err("an incomplete drain is reported");
-    assert!(matches!(
-        &error,
-        crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout })
-            if timeout.is_zero()
-    ));
-    assert!(matches!(&error, crate::Error::Server(error) if error.is_requested_shutdown()));
+        .expect("an incomplete drain is the stop that was asked for");
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::TimedOut);
     client.await.expect("client task joins");
 }
 
@@ -2091,38 +2079,85 @@ async fn repeated_shutdown_trigger_forces_an_incomplete_drain() {
     assert!(!server.is_finished(), "the request starts draining");
     let _ = force_sender.send(());
 
-    let error = tokio::time::timeout(std::time::Duration::from_secs(1), server)
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(1), server)
         .await
         .expect("forced shutdown is prompt")
         .expect("server task joins")
-        .expect_err("the repeated trigger is reported");
-    assert!(matches!(
-        &error,
-        crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
-    ));
-    assert!(matches!(&error, crate::Error::Server(error) if error.is_requested_shutdown()));
+        .expect("a forced drain is the stop that was asked for");
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Forced);
     client.await.expect("client task joins");
 }
 
-/// A zero drain deadline reports `ShutdownTimeout` even when nothing was in
-/// flight, as `shutdown_timeout` and `is_requested_shutdown` both say.
+/// A zero drain deadline reports `TimedOut` even when nothing was in flight,
+/// as `shutdown_timeout` and `Stopped::TimedOut` both say.
 #[tokio::test]
 async fn zero_shutdown_timeout_reports_a_timeout_with_nothing_in_flight() {
-    let error = crate::server::Server::new(test_service())
+    let (warnings, _subscriber) = Warnings::capture();
+    let stopped = crate::server::Server::new(test_service())
         .bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .shutdown_timeout(std::time::Duration::ZERO)
         .graceful_shutdown(crate::server::shutdown::Shutdown::on(async {}))
         .serve()
         .await
-        .expect_err("a zero drain deadline is reported");
+        .expect("a zero drain deadline is the stop that was asked for");
 
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::TimedOut);
+    let log = warnings.read();
     assert!(
-        matches!(
-            &error,
-            crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout })
-                if timeout.is_zero()
-        ),
-        "{error:?}"
+        log.contains("WARN") && log.contains("outcome=TimedOut") && log.contains("drained_for="),
+        "a cut-short drain warns even with nothing in flight: {log}"
+    );
+}
+
+/// A drain every connection finished is the expected stop, so it warns of
+/// nothing.
+#[tokio::test(flavor = "current_thread")]
+async fn a_completed_drain_warns_of_nothing() {
+    let (warnings, _subscriber) = Warnings::capture();
+    let stopped = crate::server::Server::new(test_service())
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .graceful_shutdown(crate::server::shutdown::Shutdown::on(async {}))
+        .serve()
+        .await
+        .expect("an idle server drains cleanly");
+
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Drained);
+    let log = warnings.read();
+    assert!(log.is_empty(), "a completed drain is silent: {log}");
+}
+
+/// A serving task the runtime cancelled never drained, so the handle reports
+/// it `Forced` and warns as a cut-short drain does.
+#[test]
+fn a_cancelled_serving_task_is_forced_and_warned_of() {
+    let (warnings, _subscriber) = Warnings::capture();
+    let serving_runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime builds");
+    let running = serving_runtime.block_on(async {
+        crate::server::Server::new(test_service())
+            .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .prepare()
+            .await
+            .expect("a loopback listener binds")
+            .spawn()
+    });
+    // Shutting the runtime down cancels every task it holds, the server's too.
+    drop(serving_runtime);
+
+    let stopped = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("a runtime builds")
+        .block_on(running.shutdown())
+        .expect("a cancelled task is a stop, not a failure");
+
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Forced);
+    let log = warnings.read();
+    assert!(
+        log.contains("WARN") && log.contains("outcome=Forced"),
+        "the warning names the outcome: {log}"
     );
 }
 
@@ -2151,7 +2186,6 @@ async fn a_failing_shutdown_trigger_ends_serving_with_its_error() {
         panic!("not a signal failure: {error:?}");
     };
     assert_eq!(source.to_string(), "no signal for you");
-    assert!(matches!(&error, crate::Error::Server(error) if !error.is_requested_shutdown()));
 }
 
 /// Clones of one trigger are one trigger: its begin reaches two servers and a
@@ -2210,18 +2244,12 @@ async fn one_trigger_begins_and_forces_every_clone() {
         .expect("the task sees the force")
         .expect("the trigger forced");
     for server in servers {
-        let error = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), server)
             .await
             .expect("the force ends the drain promptly")
             .expect("server task joins")
-            .expect_err("the forced drain is reported");
-        assert!(
-            matches!(
-                &error,
-                crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
-            ),
-            "{error:?}"
-        );
+            .expect("a forced drain is the stop that was asked for");
+        assert_eq!(stopped, crate::server::lifecycle::Stopped::Forced);
     }
     for (client, _release) in clients {
         client.await.expect("client task joins");
@@ -2542,18 +2570,12 @@ async fn a_second_termination_signal_forces_the_drain() {
     assert!(!server.is_finished(), "the request is still draining");
 
     kill_process(getpid(), Signal::TERM).expect("the second signal is sent");
-    let error = tokio::time::timeout(std::time::Duration::from_secs(5), server)
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), server)
         .await
         .expect("the second signal ends the drain promptly")
         .expect("server task joins")
-        .expect_err("the forced drain is reported");
-    assert!(
-        matches!(
-            &error,
-            crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
-        ),
-        "{error:?}"
-    );
+        .expect("a forced drain is the stop that was asked for");
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Forced);
     client.await.expect("client task joins");
 }
 
@@ -2637,18 +2659,11 @@ async fn a_spawned_server_reports_its_shutdown_timeout() {
     tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
         .await
         .expect("the request reaches the handler");
-    let error = tokio::time::timeout(std::time::Duration::from_secs(5), running.shutdown())
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), running.shutdown())
         .await
         .expect("the drain deadline ends the shutdown")
-        .expect_err("an incomplete drain is reported");
-    assert!(
-        matches!(
-            &error,
-            crate::Error::Server(crate::server::error::ServerError::ShutdownTimeout { timeout: reported })
-                if *reported == timeout
-        ),
-        "{error:?}"
-    );
+        .expect("an incomplete drain is the stop that was asked for");
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::TimedOut);
     client.await.expect("client task joins");
 }
 
@@ -2767,18 +2782,12 @@ async fn a_configured_force_still_forces_a_drain_the_handle_began() {
     );
 
     let _ = force_sender.send(());
-    let error = tokio::time::timeout(std::time::Duration::from_secs(5), stopping)
+    let stopped = tokio::time::timeout(std::time::Duration::from_secs(5), stopping)
         .await
         .expect("the force ends the drain promptly")
         .expect("the shutdown task joins")
-        .expect_err("the forced drain is reported");
-    assert!(
-        matches!(
-            &error,
-            crate::Error::Server(crate::server::error::ServerError::ShutdownForced)
-        ),
-        "{error:?}"
-    );
+        .expect("a forced drain is the stop that was asked for");
+    assert_eq!(stopped, crate::server::lifecycle::Stopped::Forced);
     client.await.expect("client task joins");
 }
 
@@ -2830,6 +2839,46 @@ async fn a_spawned_unix_only_server_has_no_local_addr() {
         .expect("an idle server drains cleanly");
 }
 
+/// Every warning logged on this thread while its guard lives, kept for the
+/// case to read.
+#[derive(Clone, Default)]
+struct Warnings(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl Warnings {
+    /// Installs a thread-local subscriber writing every warning here. A
+    /// current-thread runtime, or a future polled on the test's own task,
+    /// logs on this thread; a task spawned onto a worker does not.
+    fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let warnings = Self::default();
+        let writer = warnings.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        (warnings, tracing::subscriber::set_default(subscriber))
+    }
+
+    fn read(&self) -> String {
+        let log = self.0.lock().expect("log unpoisoned").clone();
+        String::from_utf8(log).expect("the log is UTF-8")
+    }
+}
+
+impl std::io::Write for Warnings {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .expect("log unpoisoned")
+            .extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// The open-file limit `prepare` fits to the connection cap. The cases that
 /// set a limit do so in-process, which is sound only because nextest runs
 /// every test in its own process.
@@ -2844,33 +2893,12 @@ async fn a_spawned_unix_only_server_has_no_local_addr() {
     ))
 ))]
 mod descriptor_limit {
-    use std::{
-        io,
-        num::NonZeroUsize,
-        sync::{Arc, Mutex},
-    };
+    use std::num::NonZeroUsize;
 
     use rustix::process::{Resource, Rlimit, getrlimit, setrlimit};
 
+    use super::Warnings;
     use crate::server::descriptors::{RESERVED_DESCRIPTORS, raised, required};
-
-    /// What `prepare` writes to a log, kept for the case to read.
-    #[derive(Clone, Default)]
-    struct Captured(Arc<Mutex<Vec<u8>>>);
-
-    impl io::Write for Captured {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            self.0
-                .lock()
-                .expect("log unpoisoned")
-                .extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
 
     const fn limit(current: Option<u64>, maximum: Option<u64>) -> Rlimit {
         Rlimit { current, maximum }
@@ -2879,15 +2907,8 @@ mod descriptor_limit {
     /// Prepares a loopback server capped at `max_connections`, under a
     /// subscriber capturing every warning, and returns what it logged.
     async fn prepare(max_connections: usize) -> String {
-        let captured = Captured::default();
-        let writer = captured.clone();
-        let subscriber = tracing_subscriber::fmt()
-            .with_ansi(false)
-            .with_max_level(tracing::Level::WARN)
-            .with_writer(move || writer.clone())
-            .finish();
         // Thread-local, and the current-thread runtime prepares on this thread.
-        let _subscriber = tracing::subscriber::set_default(subscriber);
+        let (warnings, _subscriber) = Warnings::capture();
         let service = crate::Router::<()>::new()
             .build(())
             .expect("an empty router builds");
@@ -2897,8 +2918,7 @@ mod descriptor_limit {
             .prepare()
             .await
             .expect("a loopback listener binds");
-        let log = captured.0.lock().expect("log unpoisoned").clone();
-        String::from_utf8(log).expect("the log is UTF-8")
+        warnings.read()
     }
 
     #[test]
@@ -2969,103 +2989,6 @@ mod descriptor_limit {
     }
 }
 
-/// Only the two incomplete-drain variants are a requested shutdown; every
-/// other one is a server that stopped on its own or never started.
-///
-/// [`server_error_variant`] names every variant in an exhaustive match, so a
-/// variant added to `ServerError` stops this compiling until it is named;
-/// the list below is what catches one named and given no value.
-#[test]
-fn only_an_incomplete_drain_is_a_requested_shutdown() {
-    use std::{io, net::Ipv4Addr};
-
-    use crate::server::error::ServerError;
-
-    let io_error = || io::Error::other("failure");
-    let address = (Ipv4Addr::LOCALHOST, 0).into();
-    let every = [
-        ServerError::NoListeners,
-        ServerError::InvalidConfiguration("setting"),
-        ServerError::Resolve {
-            address: crate::server::address::BindAddress::from(address),
-            source: io_error(),
-        },
-        ServerError::Bind {
-            address,
-            source: io_error(),
-        },
-        ServerError::Listener(io_error()),
-        ServerError::Accept {
-            address: address.into(),
-            source: io_error(),
-        },
-        ServerError::AcceptLoop { panicked: true },
-        ServerError::Signal(io_error()),
-        ServerError::ShutdownTimeout {
-            timeout: std::time::Duration::ZERO,
-        },
-        ServerError::ShutdownForced,
-        #[cfg(feature = "tls")]
-        ServerError::MutualTlsConflict,
-        #[cfg(feature = "tls")]
-        ServerError::Tls(crate::server::tls::error::TlsError::ZeroHandshakeTimeout),
-    ];
-
-    let witnessed = every.iter().map(server_error_variant).collect::<Vec<_>>();
-    assert_eq!(
-        witnessed,
-        [
-            "NoListeners",
-            "InvalidConfiguration",
-            "Resolve",
-            "Bind",
-            "Listener",
-            "Accept",
-            "AcceptLoop",
-            "Signal",
-            "ShutdownTimeout",
-            "ShutdownForced",
-            #[cfg(feature = "tls")]
-            "MutualTlsConflict",
-            #[cfg(feature = "tls")]
-            "Tls",
-        ],
-        "a variant has no value"
-    );
-    for error in &every {
-        assert_eq!(
-            error.is_requested_shutdown(),
-            matches!(
-                server_error_variant(error),
-                "ShutdownTimeout" | "ShutdownForced"
-            ),
-            "{error:?}"
-        );
-    }
-}
-
-/// The name of `error`'s variant, with no wildcard arm.
-fn server_error_variant(error: &crate::server::error::ServerError) -> &'static str {
-    use crate::server::error::ServerError;
-
-    match error {
-        ServerError::NoListeners => "NoListeners",
-        ServerError::InvalidConfiguration(_) => "InvalidConfiguration",
-        ServerError::Resolve { .. } => "Resolve",
-        ServerError::Bind { .. } => "Bind",
-        ServerError::Listener(_) => "Listener",
-        ServerError::Accept { .. } => "Accept",
-        ServerError::AcceptLoop { .. } => "AcceptLoop",
-        ServerError::Signal(_) => "Signal",
-        ServerError::ShutdownTimeout { .. } => "ShutdownTimeout",
-        ServerError::ShutdownForced => "ShutdownForced",
-        #[cfg(feature = "tls")]
-        ServerError::MutualTlsConflict => "MutualTlsConflict",
-        #[cfg(feature = "tls")]
-        ServerError::Tls(_) => "Tls",
-    }
-}
-
 /// Makes every later `accept` on `listener` fail the way that ends its loop:
 /// on Linux, shutting a listening socket down for reading leaves it refusing
 /// `accept` with `EINVAL`, an error the backoff gives up on at once.
@@ -3086,7 +3009,7 @@ async fn breakable_server(
 ) -> (
     std::net::SocketAddr,
     std::net::TcpListener,
-    tokio::task::JoinHandle<crate::Result<()>>,
+    tokio::task::JoinHandle<crate::Result<crate::server::lifecycle::Stopped>>,
 ) {
     let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .expect("loopback listener binds");
@@ -3509,7 +3432,7 @@ fn a_counted_body_reports_its_inner_end_and_size() {
 async fn head_timed_server() -> (
     std::net::SocketAddr,
     tokio::sync::oneshot::Sender<()>,
-    tokio::task::JoinHandle<crate::error::Result<()>>,
+    tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
 ) {
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let bound = crate::server::Server::new(test_service())
@@ -3740,7 +3663,7 @@ async fn idle_timed_server(
 ) -> (
     std::net::SocketAddr,
     tokio::sync::oneshot::Sender<()>,
-    tokio::task::JoinHandle<crate::error::Result<()>>,
+    tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
 ) {
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let bound = crate::server::Server::new(service)
@@ -4108,7 +4031,7 @@ async fn shutdown_cancels_an_incomplete_tls_handshake() {
 /// `src/proto/h2/server.rs`) -- so a connection pinned to `h2` the moment its
 /// handshake ended stays `Pending`, the accept loop's drain never finishes,
 /// `serve` waits out its whole shutdown timeout and returns
-/// `ShutdownTimeout`. Deriving the protocol from the first bytes had no such
+/// `Stopped::TimedOut`. Deriving the protocol from the first bytes had no such
 /// window: the driver owned the wait and cancelled its own read.
 ///
 /// The client stream is held open across the assertion on purpose. Dropping it
@@ -5019,7 +4942,7 @@ async fn tls_server(
     std::net::SocketAddr,
     String,
     tokio::sync::oneshot::Sender<()>,
-    tokio::task::JoinHandle<crate::error::Result<()>>,
+    tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
 ) {
     tls_server_with(service, |server| server).await
 }
@@ -5033,7 +4956,7 @@ async fn tls_server_with(
     std::net::SocketAddr,
     String,
     tokio::sync::oneshot::Sender<()>,
-    tokio::task::JoinHandle<crate::error::Result<()>>,
+    tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
 ) {
     let issued = authority();
     let tls = crate::server::tls::TlsConfig::from_pem(
@@ -5164,7 +5087,7 @@ async fn resumption_server(
     std::net::SocketAddr,
     Authority,
     tokio::sync::oneshot::Sender<()>,
-    tokio::task::JoinHandle<crate::error::Result<()>>,
+    tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
 ) {
     let issued = authority();
     let (address, shutdown_sender, server) = resumption_replica(&issued, resumption, mutual).await;
@@ -5183,7 +5106,7 @@ async fn resumption_replica(
 ) -> (
     std::net::SocketAddr,
     tokio::sync::oneshot::Sender<()>,
-    tokio::task::JoinHandle<crate::error::Result<()>>,
+    tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
 ) {
     let mut tls = crate::server::tls::TlsConfig::from_pem(
         issued.server.certificate.as_bytes(),
@@ -7120,7 +7043,7 @@ async fn configured_server(
 ) -> (
     std::net::SocketAddr,
     tokio::sync::oneshot::Sender<()>,
-    tokio::task::JoinHandle<crate::error::Result<()>>,
+    tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
 ) {
     let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
     let bound = configure(crate::server::Server::new(test_service()))
@@ -7835,7 +7758,7 @@ mod request_body_idle {
     ) -> (
         std::net::SocketAddr,
         tokio::sync::oneshot::Sender<()>,
-        tokio::task::JoinHandle<crate::error::Result<()>>,
+        tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
     ) {
         idle_timed_server_over(reading_service(), idle).await
     }
@@ -7848,7 +7771,7 @@ mod request_body_idle {
     ) -> (
         std::net::SocketAddr,
         tokio::sync::oneshot::Sender<()>,
-        tokio::task::JoinHandle<crate::error::Result<()>>,
+        tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
     ) {
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         // Declaring the stall exactly where the timer sends it.
@@ -8619,7 +8542,7 @@ mod proxy_protocol {
     ) -> (
         SocketAddr,
         tokio::sync::oneshot::Sender<()>,
-        tokio::task::JoinHandle<crate::error::Result<()>>,
+        tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
     ) {
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let bound = configure(crate::server::Server::new(peer_service()))
@@ -8670,7 +8593,7 @@ mod proxy_protocol {
     #[cfg(feature = "http1")]
     async fn stop(
         shutdown: tokio::sync::oneshot::Sender<()>,
-        server: tokio::task::JoinHandle<crate::error::Result<()>>,
+        server: tokio::task::JoinHandle<crate::error::Result<crate::server::lifecycle::Stopped>>,
     ) {
         let _ = shutdown.send(());
         server

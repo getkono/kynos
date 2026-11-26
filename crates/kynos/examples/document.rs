@@ -195,5 +195,6 @@ async fn main() -> kynos::Result<()> {
     Server::new(router.build(App { description })?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
-        .await
+        .await?;
+    Ok(())
 }

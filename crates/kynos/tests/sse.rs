@@ -29,7 +29,11 @@ use kynos::{
     middleware::{Exchange, Observer},
     response::stream::sse::{Event, KeepAlive, Sse},
     router::operation::Route,
-    server::{Server, error::ServerError, lifecycle::Draining, shutdown::Shutdown},
+    server::{
+        Server,
+        lifecycle::{Draining, Stopped},
+        shutdown::Shutdown,
+    },
 };
 
 /// A stream that yields one event and then never again, so what arrives after
@@ -465,7 +469,7 @@ async fn busy_until_shutdown(draining: Draining) -> Sse<Busy> {
 async fn shut_down_during(
     path: &'static str,
     shutdown_timeout: Duration,
-) -> (String, kynos::Result<()>) {
+) -> (String, kynos::Result<Stopped>) {
     let (shutdown, receiver) = tokio::sync::oneshot::channel();
     let (event_read, event_arrived) = tokio::sync::oneshot::channel();
 
@@ -540,7 +544,7 @@ async fn a_stream_ended_on_shutdown_ends_when_the_drain_begins() {
         rest, "\n\r\n0\r\n\r\n",
         "the body did not end cleanly after its event"
     );
-    served.expect("the drain completes");
+    assert_eq!(served.expect("serving stops"), Stopped::Drained);
 }
 
 /// A stream whose events never stop arriving still ends once the drain begins:
@@ -556,7 +560,7 @@ async fn a_busy_stream_ended_on_shutdown_ends_when_the_drain_begins() {
         "the body did not end on a whole record: {:?}",
         &rest[rest.len().saturating_sub(64)..]
     );
-    served.expect("the drain completes");
+    assert_eq!(served.expect("serving stops"), Stopped::Drained);
 }
 
 /// The pass control, differing only in `end_on_shutdown`: the same silent
@@ -569,11 +573,9 @@ async fn a_stream_not_ended_on_shutdown_holds_the_drain_to_its_timeout() {
         !rest.ends_with("0\r\n\r\n"),
         "the body ended though nothing ended it: {rest:?}"
     );
-    assert!(
-        matches!(
-            served.expect_err("the drain times out"),
-            kynos::Error::Server(ServerError::ShutdownTimeout { .. })
-        ),
+    assert_eq!(
+        served.expect("a timed-out drain is the stop that was asked for"),
+        Stopped::TimedOut,
         "the drain did not end on its timeout"
     );
 }

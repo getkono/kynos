@@ -7,7 +7,8 @@
 //! `Draining` stops accepting and lets in-flight work finish; `Forced`
 //! abandons it. The transition is broadcast on a watch channel so every accept
 //! loop and connection observes the same state. [`Readiness`] and
-//! [`Draining`] are a handler's two reads of it.
+//! [`Draining`] are a handler's two reads of it, and [`Stopped`] is how the
+//! drain ended.
 
 use core::convert::Infallible;
 #[cfg(feature = "openapi32")]
@@ -37,10 +38,26 @@ impl Lifecycle {
     }
 }
 
+/// How a server that was asked to stop ended its drain: what
+/// [`BoundServer::serve`](crate::server::BoundServer::serve) and
+/// [`Running::shutdown`](crate::server::Running::shutdown) return once a
+/// requested shutdown ends serving.
+///
+/// Every variant is the stop that was asked for, not a failure, so `?` on
+/// `serve` exits cleanly whichever it is; a failure is an `Err`. Match it only
+/// to report how much in-flight work the drain let finish.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::server) enum Drain {
-    Complete,
+#[non_exhaustive]
+pub enum Stopped {
+    /// Every connection finished within the
+    /// [`shutdown_timeout`](crate::server::Server::shutdown_timeout).
+    Drained,
+    /// The `shutdown_timeout` elapsed first, and the connections still open
+    /// were closed. A zero `shutdown_timeout` reports this even when no
+    /// request was in flight.
     TimedOut,
+    /// A repeated operating-system signal ended the drain early, or the
+    /// runtime cancelled the serving task as it shut down.
     Forced,
 }
 

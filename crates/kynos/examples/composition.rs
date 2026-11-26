@@ -235,5 +235,6 @@ async fn main() -> kynos::Result<()> {
         .deregistration_delay(Duration::from_secs(5))
         .shutdown_timeout(Duration::from_secs(20))
         .serve()
-        .await
+        .await?;
+    Ok(())
 }

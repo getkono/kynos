@@ -36,8 +36,15 @@ Server::new(service)
     .bind(address)
     .graceful_shutdown(Shutdown::signals())
     .serve()
-    .await
+    .await?;
 ```
+
+A shutdown it asked for is `Ok` however the drain ended, so `?` exits zero
+and a supervisor restarting on failure leaves the process stopped; the
+`server::lifecycle::Stopped` it carries says whether the deadline or a second
+signal cut in-flight work short. A drain cut short also logs a `WARN` naming
+the outcome, how long it drained and the deadline, so
+`serve().await?` discarding the `Stopped` still leaves it in the log.
 
 `server::shutdown::Shutdown::signals` listens for `SIGINT` and `SIGTERM` on
 Unix and the console events on Windows. On the first, the server stops
@@ -194,7 +201,8 @@ let internal = Server::new(ops)
     .prepare()
     .await?;
 let (public, internal) = tokio::join!(public.serve(), internal.serve());
-public.and(internal)
+public?;
+internal?;
 ```
 
 Where the deployment exposes one port only, mount the operation on the public
