@@ -451,8 +451,10 @@ pub trait SecurityScheme: Send + Sync + 'static {
 /// for the description and for comparing against what a token carries.
 ///
 /// `#[derive(kynos::Scope)]` writes `name` from the name serde writes each
-/// variant under, so the scopes a configuration parses are the ones a token
-/// carries. Written by hand:
+/// variant under, so on an enum deriving serde the scopes a configuration
+/// parses are the ones a token carries. A keyless enum whose serde is written
+/// by hand derives its variant identifiers instead, which nothing compares
+/// with its serde names; such an enum implements `Scope` by hand, as here:
 ///
 /// ```
 /// use kynos::security::Scope;

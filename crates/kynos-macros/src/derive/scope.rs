@@ -6,11 +6,13 @@
 //! ```
 //!
 //! A variant's scope is the name serde writes it under, read by the rule the
-//! `Schema` and `ParamValue` derives read it by, so the enum a configuration
-//! parses and the scopes a description and a token carry are one set of
-//! strings. `#[scope(...)]` names an enum serde does not: each key is refused
-//! beside a serde key naming the same scope, and, by a probe the type checker
-//! resolves, on an enum implementing `Serialize` or `DeserializeOwned`, since
+//! `Schema` and `ParamValue` derives read it by, so on an enum deriving serde
+//! the enum a configuration parses and the scopes a description and a token
+//! carry are one set of strings. The probe runs only where a key is written,
+//! so a keyless enum with hand-written serde derives its variant identifiers,
+//! unchecked against its serde names. `#[scope(...)]` names an enum serde
+//! does not: each key is refused beside a serde key naming the same scope,
+//! and, by a probe the type checker resolves, on an enum implementing `Serialize` or `DeserializeOwned`, since
 //! two names for one scope are the drift the derive exists to remove. A
 //! generic enum, on which the probe cannot resolve, a name that is not an
 //! RFC 6749 section 3.3 `scope-token`, and two variants naming one scope, are
