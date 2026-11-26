@@ -366,6 +366,23 @@ class ThePrePushHook(RangeTestCase):
         self.assertEqual(self.remote_head("topic"), own)
         self.assertEqual(self.ran(), [(gate, own) for gate in GATE_NAMES])
 
+    def test_an_update_with_no_remote_tracking_branch_still_checks_only_its_own(self):
+        # Pushed to the remote's `file://` URL, which git does not match to
+        # `origin` as it would the path `origin` is configured with, so no
+        # remote-tracking branch records the remote commit.
+        self.topic("green topic\n", "feat: green topic")
+        self.git("push", "-q", "--no-verify", self.remote.as_uri(), "topic")
+        self.assertEqual(self.git("branch", "-r", "--list", "origin/topic").stdout, "")
+        self.commit("crates/b.rs", "green master\n", "feat: green master")
+        self.git("push", "-q", "--no-verify", "origin", "master")
+        self.git("switch", "-q", "topic")
+        self.git("merge", "-q", "--no-edit", "--no-verify", "master")
+        own = self.commit(SOURCE, "green topic again\n", "feat: green topic again")
+        push = self.push("topic")
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertEqual(self.remote_head("topic"), own)
+        self.assertEqual(self.ran(), [(gate, own) for gate in GATE_NAMES])
+
     def test_a_delete_publishes_nothing_to_check(self):
         self.git("push", "-q", "--no-verify", "origin", "master:topic")
         self.commit(SOURCE, "red lint\n", "wip: red head")
