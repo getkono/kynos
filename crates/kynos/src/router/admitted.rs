@@ -27,7 +27,7 @@ impl<C: 'static, P, I, S> Router<C, P, I, S> {
 /// The refusal of `mounted` where an interceptor covering it keys on what a
 /// guard admitted and `covering` places no such guard ahead of it, located
 /// at the operation: its first such interceptor, outermost first, the
-/// endpoint's own last.
+/// endpoint's own last, and that one's first such guard.
 #[must_use]
 fn guard_not_ahead<C: 'static>(
     router: &[Arc<dyn ErasedInterceptor<C>>],
@@ -57,17 +57,24 @@ fn guard_not_ahead<C: 'static>(
         .enumerate()
         .map(|(index, interceptor)| Placed(index, interceptor))
         .collect();
+    // Every guard each interceptor reads, not only its first.
     let unseen = super::covered(placed, endpoint.reads_body())
         .into_iter()
         .find_map(|Placed(index, interceptor)| {
-            let guard = interceptor.reads_admitted()?;
-            (!ahead(guard, index)).then(|| (interceptor.name(), guard))
+            let guard = interceptor
+                .reads_admitted()
+                .into_iter()
+                .find(|&guard| !ahead(guard, index))?;
+            Some((interceptor.name(), guard))
         })
         .or_else(|| {
             // Inside every scope's chain, so after any point one chose.
-            let own = endpoint.admitted_reader()?;
             let inside = router.len() + mounted.interceptors.len();
-            (!ahead(own.guard, inside)).then_some((own.interceptor, own.guard))
+            let own = endpoint
+                .admitted_readers()
+                .into_iter()
+                .find(|own| !ahead(own.guard, inside))?;
+            Some((own.interceptor, own.guard))
         });
 
     let (interceptor, guard) = unseen?;

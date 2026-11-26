@@ -272,16 +272,17 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     #[doc(hidden)]
     const __METHODS: Methods = Methods::EVERY;
 
-    /// Not part of the API: the guard whose admission this interceptor keys
-    /// on, which the router refuses to build unless a scope's `guard_first`
-    /// runs that guard ahead of it.
+    /// Not part of the API: every guard whose admission this interceptor
+    /// keys on, each of which the router refuses to build unless a scope's
+    /// `guard_first` runs that guard ahead of it.
     ///
     /// Every interceptor but a [`RateLimit`](rate_limit::RateLimit) keyed
     /// [`ByPrincipal`](rate_limit::key::ByPrincipal) with no `otherwise`
-    /// leaves it at its default.
+    /// leaves it at its default, naming none. Read only while the router is
+    /// built, never per request.
     #[doc(hidden)]
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        None
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
+        Vec::new()
     }
 
     /// Handles a request, calling `next` to continue.

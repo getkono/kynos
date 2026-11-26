@@ -79,15 +79,16 @@ pub trait Endpoint<C>: Send + Sync + 'static {
         None
     }
 
-    /// The first interceptor this operation holds itself that keys on what a
-    /// guard admitted, which the router refuses to build unless a scope runs
-    /// that guard ahead of it.
+    /// Every guard read by an interceptor this operation holds itself, each
+    /// of which the router refuses to build unless a scope runs that guard
+    /// ahead of it, outermost interceptor first.
     ///
     /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
-    /// answers it from what `intercept` added.
+    /// answers it from what `intercept` added. Read only while the router is
+    /// built.
     #[doc(hidden)]
-    fn __admitted_reader(&self) -> Option<crate::__private::AdmittedReader> {
-        None
+    fn __admitted_readers(&self) -> Vec<crate::__private::AdmittedReader> {
+        Vec::new()
     }
 
     /// Whether this operation takes no guard deliberately, which a group
@@ -229,7 +230,7 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn guard_type(&self) -> Option<crate::__private::GuardType>;
 
-    fn admitted_reader(&self) -> Option<crate::__private::AdmittedReader>;
+    fn admitted_readers(&self) -> Vec<crate::__private::AdmittedReader>;
 
     fn public(&self) -> bool;
 
@@ -274,8 +275,8 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
         Endpoint::__guard_type(self)
     }
 
-    fn admitted_reader(&self) -> Option<crate::__private::AdmittedReader> {
-        Endpoint::__admitted_reader(self)
+    fn admitted_readers(&self) -> Vec<crate::__private::AdmittedReader> {
+        Endpoint::__admitted_readers(self)
     }
 
     fn public(&self) -> bool {

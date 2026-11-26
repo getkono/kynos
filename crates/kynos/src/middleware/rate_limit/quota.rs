@@ -220,7 +220,7 @@ where
         &self.policies
     }
 
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
         self.key.__reads_admitted()
     }
 

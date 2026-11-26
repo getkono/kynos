@@ -17,12 +17,13 @@ pub trait RateLimitKey<C>: Send + Sync + 'static {
         context: &C,
     ) -> Option<Cow<'static, str>>;
 
-    /// Not part of the API: the guard whose admission this key reads with no
-    /// other key named for a request it did not admit, which the router
-    /// refuses to build unless a scope runs that guard ahead of the limiter.
+    /// Not part of the API: every guard whose admission this key reads with
+    /// no other key named for a request it did not admit, each of which the
+    /// router refuses to build unless a scope runs that guard ahead of the
+    /// limiter.
     #[doc(hidden)]
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        None
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
+        Vec::new()
     }
 }
 
@@ -270,9 +271,11 @@ where
 
     // Only while no `otherwise` names a key: one that does keys the requests
     // no guard admitted as the application chose.
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
         (std::any::TypeId::of::<E>() == std::any::TypeId::of::<Unadmitted>())
             .then(crate::__private::GuardType::of::<G>)
+            .into_iter()
+            .collect()
     }
 }
 
@@ -405,10 +408,12 @@ impl<C, A: RateLimitKey<C>, B: RateLimitKey<C>> RateLimitKey<C> for And<A, B> {
         Some(Cow::Owned(format!("{left}|{right}")))
     }
 
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        self.0
-            .__reads_admitted()
-            .or_else(|| self.1.__reads_admitted())
+    // Both halves' guards, not the first's: a request the second's guard did
+    // not admit shares one bucket as much as one the first's did not.
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
+        let mut reads = self.0.__reads_admitted();
+        reads.extend(self.1.__reads_admitted());
+        reads
     }
 }
 

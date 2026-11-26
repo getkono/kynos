@@ -343,7 +343,7 @@ where
 
     const READS_BODY: bool = false;
 
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
         self.policy.__reads_admitted()
     }
 

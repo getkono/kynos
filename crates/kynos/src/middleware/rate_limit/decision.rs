@@ -189,12 +189,12 @@ pub trait RateLimitPolicy<C>: Send + Sync + 'static {
         &[]
     }
 
-    /// Not part of the API: the guard whose admission this policy keys on,
+    /// Not part of the API: every guard whose admission this policy keys on,
     /// which [`Quotas`](super::quota::Quotas) forwards from its key and
     /// [`RateLimit`](super::RateLimit) from its policy.
     #[doc(hidden)]
-    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
-        None
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
+        Vec::new()
     }
 
     /// Decides whether this request may continue.
