@@ -789,6 +789,7 @@ run = [
   { task = "cost:test" },
   { task = "profile:test" },
   { task = "commits:test" },
+  { task = "commits:gates:test" },
   { task = "deps:test" },
   { task = "docs:check" },
   { task = "panic:check" },
@@ -800,8 +801,9 @@ run = [
 
 [tasks.ci]
 description = "Run every check CI runs on master and on pull requests"
-# `check` plus what only `ci.yml`'s `commits` and `msrv` jobs and `full.yml`
-# run, so one command answers what CI would. `check` comes last, keeping
+# `check` plus what only `ci.yml`'s `commits`, `commit-gates` and `msrv` jobs
+# and `full.yml` run, so one command answers what CI would; `commits:gates`
+# here checks what a push would publish. `check` comes last, keeping
 # `features:*` last.
 # `semver:check` is advisory here as on master and pull requests; only a
 # release branch blocks on it. `cost:features` and `profile:requests` measure
@@ -812,6 +814,7 @@ description = "Run every check CI runs on master and on pull requests"
 # `ci:full` pull request.
 run = [
   { task = "commits:check" },
+  { task = "commits:gates" },
   { task = "coverage:ci" },
   { task = "msrv:check" },
   "mise run semver:check --advisory",
@@ -862,3 +865,26 @@ description = "Test that both halves of the commit rule agree about a merge"
 # to both over real repositories, including a merge through hk's hook.
 tools = { python = "3.11.16" }
 run = "python3 scripts/commits_test.py"
+
+[tasks."commits:gates"]
+description = "Run lint, docs:check, api:check and msrv:check over each commit of an explicit or outgoing range"
+# A series lands commit by commit, so a commit red mid-series stays red in
+# history; every other run of these gates sees only a tip. Bare, the commits no
+# remote-tracking branch has; `-- range OLD NEW` what NEW has that OLD has not.
+# The `pre-push` hook and CI's `commit-gates` job run it;
+# `scripts/commit_gates.py` says what it skips.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates.py"
+
+[tasks."commits:gates:test"]
+description = "Test that the per-commit gates check each commit's own tree, and that the pre-push hook runs them"
+# Over throwaway repositories with stub gates, so it compiles nothing.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates_test.py"
+
+[tasks."hooks:install"]
+description = "Install the commit-msg, pre-commit and pre-push hooks"
+# hk owns the first two. The `pre-push` hook is `commit_gates.py`'s, since hk
+# hands a step none of the refs a push names.
+tools = { python = "3.11.16" }
+run = ["hk install --mise", "python3 scripts/commit_gates.py install"]

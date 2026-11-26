@@ -65,6 +65,9 @@ jobs:
       - name: Test that the commit rule's two halves agree
         run: mise run commits:test
 
+      - name: Test that the per-commit gates check each commit's own tree
+        run: mise run commits:gates:test
+
   test:
     name: Tests
     runs-on: ubuntu-latest
@@ -141,6 +144,32 @@ jobs:
           cargo-cache-key: msrv
       - name: Build every feature on the declared MSRV, resolved as a user's crate resolves it
         run: mise run msrv:check
+
+  # Every other job sees only the tip, and a series lands commit by commit, so
+  # this one checks each non-merge commit out on its own through the gates
+  # `scripts/commit_gates.py` names, skipping a gate on a commit that changes
+  # none of its inputs. On master too, where a branch merged without a pull
+  # request is first checked. One cache for all four toolchains' builds, which
+  # is what lets one commit's dependencies serve the next.
+  commit-gates:
+    name: Per-commit gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up
+        uses: ./.github/actions/setup
+        with:
+          cargo-cache-key: commit-gates
+      # Only the event's two commits here; `commit_gates.py range` decides what
+      # lies between them, a forced push's missing `before` included.
+      - name: Run lint, docs:check, api:check and msrv:check over each commit
+        env:
+          OLD: ${{ github.event.pull_request.base.sha || github.event.before }}
+          NEW: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: mise run commits:gates -- range "$OLD" "$NEW"
 
   commits:
     name: Conventional commits
