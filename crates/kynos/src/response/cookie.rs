@@ -104,12 +104,59 @@ impl Cookie {
     /// a non-positive `Max-Age` as the earliest representable date.
     ///
     /// The `path` and `domain` have to match the cookie being deleted, because
-    /// a browser keys on all three.
+    /// a browser keys on all three. Where the cookie being deleted is at hand,
+    /// [`Cookie::to_removal`] matches it without restating them.
     #[must_use]
     pub fn removal(name: impl Into<Cow<'static, str>>) -> Self {
         Self {
             max_age: Some(Duration::ZERO),
             ..Self::new(name, "")
+        }
+    }
+
+    /// A cookie that deletes this one.
+    ///
+    /// Every attribute but the lifetime is kept, the value is emptied, and
+    /// `Max-Age=0` is sent, as [`Cookie::removal`] does. Keeping them all is
+    /// what makes the removal land wherever the original did, since a user
+    /// agent ignores a removal (RFC 6265bis section 5.7):
+    ///
+    /// - whose name, `Domain` and `Path` differ, which replaces nothing;
+    /// - without `Secure`, where its name prefix or `SameSite=None` demands it;
+    /// - whose `SameSite` is not `None`, sent from a cross-site context;
+    /// - without `Partitioned`, against a partitioned cookie, which is stored
+    ///   apart from an unpartitioned one of the same name (CHIPS).
+    ///
+    /// ```
+    /// use kynos::response::cookie::{Cookie, SameSite};
+    ///
+    /// fn session(token: &str) -> Cookie {
+    ///     Cookie::new("sid", token.to_owned())
+    ///         .path("/app")
+    ///         .secure()
+    ///         .http_only()
+    ///         .same_site(SameSite::Strict)
+    /// }
+    ///
+    /// let logout = session("").to_removal();
+    ///
+    /// assert_eq!(
+    ///     logout.encode().expect("a representable cookie").to_str().unwrap(),
+    ///     "sid=; Path=/app; Max-Age=0; Secure; HttpOnly; SameSite=Strict",
+    /// );
+    /// ```
+    #[must_use]
+    pub fn to_removal(&self) -> Self {
+        Self {
+            name: self.name.clone(),
+            value: Cow::Borrowed(""),
+            path: self.path.clone(),
+            domain: self.domain.clone(),
+            max_age: Some(Duration::ZERO),
+            secure: self.secure,
+            http_only: self.http_only,
+            same_site: self.same_site,
+            partitioned: self.partitioned,
         }
     }
 
