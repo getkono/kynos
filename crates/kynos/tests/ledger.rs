@@ -67,6 +67,7 @@ fn every_derive_has_a_witness() {
         "QueryParams",
         "Reply",
         "Schema",
+        "Scope",
         "SecurityScheme",
         "Tag",
     ];

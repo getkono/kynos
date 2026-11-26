@@ -1582,6 +1582,47 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
     derive::run(item, derive::security_scheme::expand_inner)
 }
 
+/// Names each variant of a field-less enum as one
+/// `kynos::security::Scope`.
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Serialize, Deserialize, Scope)]
+/// #[serde(rename_all = "snake_case")]
+/// enum Grant {
+///     ReadReports, // "read_reports"
+///     #[serde(rename = "admin:all")]
+///     Admin,
+/// }
+/// ```
+///
+/// A scope's name is the one serde writes the variant under, read as the
+/// `Schema` and `ParamValue` derives read it, so the scopes a configuration
+/// parses are the ones a description and a token carry. Without a serde
+/// attribute that is the variant's identifier, `r#` stripped, as serde's is.
+/// An enum serde does not name says the same with its own attribute:
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Scope)]
+/// #[scope(rename_all = "snake_case")]
+/// enum Grant {
+///     ReadReports, // "read_reports"
+///     #[scope(rename = "admin:all")]
+///     Admin,
+/// }
+/// ```
+///
+/// `rename_all` takes the styles serde's does. Each key is refused beside its
+/// serde counterpart, since a second name for a scope would be one serde does
+/// not read. Refused too: a struct or a union, a variant with fields, a name
+/// that is not an RFC 6749 section 3.3 `scope-token` (empty, or holding a
+/// space, `"` or `\`, which a token's space-separated `scope` list cannot
+/// carry), and two variants naming one scope. `Clone`, `Send` and `Sync` are
+/// the enum's to derive, as the trait requires them.
+#[proc_macro_derive(Scope, attributes(scope))]
+pub fn derive_scope(item: TokenStream) -> TokenStream {
+    derive::run(item, derive::scope::expand_inner)
+}
+
 /// Declares an application context, emitting one `Provides` implementation per
 /// field.
 ///

@@ -362,6 +362,16 @@ against another type does not compile. `Authorizer::authorize` receives
 `&[S::Scope]`: a scope it does not handle is a non-exhaustive `match`, not a
 string a `filter_map` silently drops.
 
+`#[derive(Scope)]` writes `name` from the name serde writes each variant
+under, by the rule the `Schema` and `ParamValue` derives read, so the scope a
+configuration parses and the one a token carries cannot drift apart. An enum
+serde does not name says it with `#[scope(rename_all)]` and `#[scope(rename)]`
+instead; each is refused beside its serde counterpart, which would be a second
+name for one scope. Without either the name is the variant's identifier, as
+serde's is, rather than a casing serde would not read. A name a token's
+space-separated `scope` list cannot carry (RFC 6749 section 3.3) and two
+variants naming one scope are compile errors.
+
 | Where | Scope type |
 | --- | --- |
 | `#[derive(SecurityScheme)]` | `scope = Type`; `Unscoped` when omitted |

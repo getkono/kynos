@@ -40,7 +40,8 @@
 //!   `Scoped<AccessToken, ReadReports>` writes `reports:read` into the
 //!   operation's security requirement *and* hands `Grant::ReadReports` to the
 //!   check. A misspelling is an unknown variant, a compile error rather than a
-//!   silent grant, and `Grant::name` is the one place a scope is a string.
+//!   silent grant, and `Grant::name`, derived from the variant, is the one
+//!   place a scope is a string.
 //! * **`MaybeAuth` is a description, not a flag.** `/feed` declares
 //!   `[{}, {AccessToken: []}]`, so a reader learns the credential is honoured
 //!   rather than demanded. A token that is present and *wrong* is still a 401
@@ -160,19 +161,14 @@ struct AccessToken;
 /// Every scope an `AccessToken` can carry.
 ///
 /// An enum rather than string literals, so a misspelling is a compile error and
-/// renaming one is a single edit; `name` is how the token and the description
-/// spell it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// renaming one is a single edit; the derived `name` is how the token and the
+/// description spell it. An enum serde also reads, from a configuration, says
+/// `#[serde(rename = "...")]` instead, and the derive names its scopes the
+/// same.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, kynos::Scope)]
 enum Grant {
+    #[scope(rename = "reports:read")]
     ReadReports,
-}
-
-impl Scope for Grant {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::ReadReports => "reports:read",
-        }
-    }
 }
 
 /// The scopes `/reports` demands.

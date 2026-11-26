@@ -166,7 +166,7 @@ fn rename_field(field: &str, style: &str) -> String {
 /// A variant's identifier under a `rename_all` style: `serde_derive` 1.0.229's
 /// `RenameRule::apply_to_variant` (`internals/case.rs`), transcribed.
 /// The identifier is read as `PascalCase`, split before each uppercase letter.
-fn rename_variant(variant: &str, style: &str) -> String {
+pub(crate) fn rename_variant(variant: &str, style: &str) -> String {
     let snake = || {
         let mut snake = String::new();
         for (index, character) in variant.char_indices() {

@@ -9272,6 +9272,155 @@ mod tag {
     }
 }
 
+mod scope {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::scope::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a struct, which has no variants to name",
+                quote::quote!(
+                    struct Grant;
+                ),
+                "derive it on a field-less enum",
+            ),
+            case(
+                "a variant carrying data",
+                quote::quote!(
+                    enum Grant {
+                        Read(u8),
+                    }
+                ),
+                "make every variant a unit",
+            ),
+            case(
+                "a `rename_all` style serde does not take",
+                quote::quote!(
+                    #[scope(rename_all = "snake-case")]
+                    enum Grant {
+                        ReadReports,
+                    }
+                ),
+                "`rename_all` takes a style serde's does",
+            ),
+            case(
+                "a `rename_all` beside serde's, a second source of every name",
+                quote::quote!(
+                    #[serde(rename_all = "kebab-case")]
+                    #[scope(rename_all = "snake_case")]
+                    enum Grant {
+                        ReadReports,
+                    }
+                ),
+                "already names its scopes",
+            ),
+            case(
+                "a `rename` beside serde's, a second name for one scope",
+                quote::quote!(
+                    enum Grant {
+                        #[serde(rename = "read")]
+                        #[scope(rename = "reports:read")]
+                        ReadReports,
+                    }
+                ),
+                "already names its scope",
+            ),
+            case(
+                "a name holding a space, which splits it in a token's scope list",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "reports read")]
+                        ReadReports,
+                    }
+                ),
+                "is an RFC 6749 `scope-token`",
+            ),
+            case(
+                "two variants naming one scope",
+                quote::quote!(
+                    #[scope(rename_all = "lowercase")]
+                    enum Grant {
+                        Admin,
+                        #[scope(rename = "admin")]
+                        Root,
+                    }
+                ),
+                "two variants name the scope `admin`",
+            ),
+        ]
+    }
+
+    /// The rows refusing a key outside the grammar, on the enum and on a
+    /// variant, and a key written twice, which `attribute::unknown` and
+    /// `attribute::Keys::read` raise, so `scope.rs` holds none of their sites.
+    fn keys_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a variant's key on the enum",
+                quote::quote!(
+                    #[scope(rename = "grant")]
+                    enum Grant {
+                        Admin,
+                    }
+                ),
+                "is not part of the `#[scope(...)]` grammar on an enum",
+            ),
+            case(
+                "the enum's key on a variant",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename_all = "lowercase")]
+                        Admin,
+                    }
+                ),
+                "is not part of the `#[scope(...)]` grammar on a variant",
+            ),
+            case(
+                "`rename` written twice, the second replacing the first",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "admin")]
+                        #[scope(rename = "root")]
+                        Admin,
+                    }
+                ),
+                "`rename` is already set",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(keys_ledger(), expand_inner);
+    }
+
+    /// An empty name is refused at the site a non-`NQCHAR` is, naming what
+    /// it is rather than a character it holds.
+    #[test]
+    fn an_empty_name_is_no_scope_token() {
+        each_case_is_refused(
+            vec![case(
+                "an empty name",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "")]
+                        Admin,
+                    }
+                ),
+                "this scope is empty",
+            )],
+            expand_inner,
+        );
+    }
+
+    #[test]
+    fn every_scope_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("scope.rs", include_str!("scope.rs"), ledger().len());
+    }
+}
+
 mod param_value {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::param_value::expand_inner;

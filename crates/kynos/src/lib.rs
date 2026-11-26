@@ -146,7 +146,7 @@ pub use crate::{
 
 #[cfg(feature = "macros")]
 pub use kynos_macros::{
-    ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
+    ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema, Scope,
     SecurityScheme, Tag, delete, get, head, name_instantiation, operation, options, patch, path,
     post, public, put, routes, trace,
 };

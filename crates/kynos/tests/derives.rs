@@ -18,7 +18,8 @@
 //! ASCII, its reading of an absent optional header as `None`, the value a
 //! fixed header is written, compared and described as, and the 500 a value
 //! that is no field value is refused with; the text a derived `ParamValue`
-//! reads and writes; the octets a derived `ProtobufMessage` reads and writes,
+//! reads and writes; the scope a derived `Scope` names each variant; the
+//! octets a derived `ProtobufMessage` reads and writes,
 //! and the syntax error it makes of a body `prost` refuses; the response a
 //! derived `Reply` or `ApiError` writes, and the type URI an `ApiError`
 //! publishes beside it; and a derived carrier's reading of
@@ -238,7 +239,15 @@ enum StoreError {
 /// Each source of a variant name the `Schema` derive reads: the container's
 /// `rename_all`, a variant's own `rename`, and an `alias` serde reads alone.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Schema,
+    ParamValue,
+    kynos::Scope,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 enum Phase {
@@ -289,6 +298,7 @@ fn implements_cookie_params<T: kynos::extract::params::cookie::CookieParams>() {
 fn implements_param_value<T: ParamValueTrait>() {}
 fn implements_unit_enum<T: UnitEnum>() {}
 fn implements_tag<T: TagTrait>() {}
+fn implements_scope<T: kynos::security::Scope>() {}
 fn implements_security_scheme<T: SecuritySchemeTrait>() {}
 fn implements_responses<T: IntoResponse + Responses>() {}
 #[cfg(feature = "multipart")]
@@ -323,6 +333,8 @@ fn every_derive_implements_its_trait() {
     implements_protobuf_message::<ReexportedSample>();
     implements_tag::<Users>();
     implements_tag::<Admin>();
+    implements_scope::<Phase>();
+    implements_scope::<Permission>();
     implements_security_scheme::<BearerAuth>();
     implements_security_scheme::<SessionCookie>();
     implements_responses::<StoreError>();
@@ -1277,6 +1289,38 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
     assert_eq!(format!("{:>10}", Phase::Checking), "  checking");
     assert_eq!(format!("{:*<10}", Phase::Seeding), "SEEDING***");
     assert_eq!(format!("{:.3}", Phase::Checking), "che");
+}
+
+/// Scopes serde does not name, so the derive's own attribute does.
+#[derive(Clone, Copy, kynos::Scope)]
+#[scope(rename_all = "kebab-case")]
+enum Permission {
+    ReadReports,
+    r#Move,
+    #[scope(rename = "admin:all")]
+    Admin,
+}
+
+/// A derived `Scope` names each variant as serde writes it, held to serde as
+/// the oracle, so the scopes a configuration parses are the ones a token and
+/// the description carry; and, for an enum serde does not name, as its own
+/// attribute says, `r#` stripped. A recorded exception to a derive being a
+/// type-level surface, since the names are what an authorizer compares.
+#[test]
+fn a_derived_scope_is_named_as_serde_writes_it() {
+    use kynos::security::Scope as _;
+
+    for &variant in Phase::VARIANTS {
+        assert_eq!(
+            serde_json::Value::from(variant.name()),
+            serde_json::to_value(variant).expect("a unit variant serializes"),
+        );
+    }
+
+    assert_eq!(
+        [Permission::ReadReports, Permission::Move, Permission::Admin].map(|grant| grant.name()),
+        ["read-reports", "move", "admin:all"]
+    );
 }
 
 /// An enum declaring its own `as_str` and `VARIANTS`, which the derive's

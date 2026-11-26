@@ -1,0 +1,35 @@
+error: `rename_all` takes a style serde's does: lowercase, UPPERCASE, PascalCase, camelCase, snake_case, SCREAMING_SNAKE_CASE, kebab-case, SCREAMING-KEBAB-CASE
+ --> tests/ui/macros/scope_naming_refusals.rs:6:22
+  |
+6 | #[scope(rename_all = "snake-case")]
+  |                      ^^^^^^^^^^^^
+
+error: the enum's `#[serde(rename_all)]` already names its scopes, and a second style would give each scope a name serde does not read; drop one
+  --> tests/ui/macros/scope_naming_refusals.rs:13:9
+   |
+13 | #[scope(rename_all = "snake_case")]
+   |         ^^^^^^^^^^
+
+error: the variant's `#[serde(rename)]` already names its scope, and a second name would be one serde does not read; drop one
+  --> tests/ui/macros/scope_naming_refusals.rs:21:13
+   |
+21 |     #[scope(rename = "reports:read")]
+   |             ^^^^^^
+
+error: this scope `reports read` contains ' ', and a scope is an RFC 6749 `scope-token`: one or more printable ASCII characters other than space, `"` and `\`; name it with `#[scope(rename = "...")]`
+  --> tests/ui/macros/scope_naming_refusals.rs:28:5
+   |
+28 |     ReadReports,
+   |     ^^^^^^^^^^^
+
+error: this scope is empty, and a scope is an RFC 6749 `scope-token`: one or more printable ASCII characters other than space, `"` and `\`; name it with `#[scope(rename = "...")]`
+  --> tests/ui/macros/scope_naming_refusals.rs:34:5
+   |
+34 |     Admin,
+   |     ^^^^^
+
+error: two variants name the scope `admin`; the first is `Admin`
+  --> tests/ui/macros/scope_naming_refusals.rs:42:5
+   |
+42 |     Root,
+   |     ^^^^
