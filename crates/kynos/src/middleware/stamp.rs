@@ -61,9 +61,13 @@ use crate::{
 ///
 /// Each field replaces whatever value the chain set, as
 /// [`SecurityHeaders`](crate::middleware::security_headers::SecurityHeaders)'
-/// fields do, so the value the description states is the value sent; a field
-/// of a [`REPEATABLE`](crate::extract::params::header::HeaderParams::REPEATABLE)
-/// group is appended instead.
+/// fields do, so a handler's own value never survives beside the one the
+/// description states; a field of a
+/// [`REPEATABLE`](crate::extract::params::header::HeaderParams::REPEATABLE)
+/// group is appended instead. A response whose handler declares the same
+/// name is the exception: a placement never overwrites a header a response
+/// already declares, so that response keeps the handler's schema in the
+/// description while it carries the stamp's value.
 ///
 /// The fields are those `headers` encoded when the stamp was constructed. A
 /// value that differs between requests is not a stamp's to send: an
