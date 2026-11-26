@@ -1,16 +1,16 @@
-error[E0599]: no variant, associated function, or constant named `__KYNOS_PROBLEM_STATUSES_Gone` found for enum `ProfileProblem` in the current scope
+error[E0599]: no variant, associated function, or constant named `__KYNOS_PROBLEM_VARIANT_Gone` found for enum `ProfileProblem` in the current scope
   --> tests/ui/macros/api_error_variant_of_not_in_wide.rs:19:44
    |
 10 | enum ProfileProblem {
-   | ------------------- variant, associated function, or constant `__KYNOS_PROBLEM_STATUSES_Gone` not found for this enum
+   | ------------------- variant, associated function, or constant `__KYNOS_PROBLEM_VARIANT_Gone` not found for this enum
 ...
 19 |     #[problem(variant_of = ProfileProblem::Gone)]
    |                                            ^^^^ variant, associated function, or constant not found in `ProfileProblem`
    |
-help: there is an associated constant `__KYNOS_PROBLEM_STATUSES_Unavailable` with a similar name
+help: there is an associated constant `__KYNOS_PROBLEM_VARIANT_Unavailable` with a similar name
    |
 19 -     #[problem(variant_of = ProfileProblem::Gone)]
-19 +     #[problem(variant_of = ProfileProblem::__KYNOS_PROBLEM_STATUSES_Unavailable)]
+19 +     #[problem(variant_of = ProfileProblem::__KYNOS_PROBLEM_VARIANT_Unavailable)]
    |
 
 error[E0599]: no variant named `Gone` found for enum `ProfileProblem`

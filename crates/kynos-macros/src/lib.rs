@@ -1031,6 +1031,23 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// other wider value back unchanged; two variants taking one wider variant
 /// are refused.
 ///
+/// The type URI each failure carries is published, so nothing retypes it. A
+/// struct naming one, through `type` or `base`, implements
+/// `kynos::error::problem::ProblemType` with it, for a test and an
+/// interceptor's refusal alike:
+///
+/// ```ignore
+/// assert_eq!(body["type"], QuotaExceeded::TYPE_URI.unwrap());
+/// let limit = BodySize::new(MAX_BYTES).problem_type::<PayloadTooLarge>();
+/// ```
+///
+/// A struct naming none sends `about:blank` and implements no `ProblemType`.
+/// An enum has `const fn type_uri(&self) -> Option<&'static str>`: the
+/// variant's URI, `about:blank` for one naming none, `None` for a transparent
+/// variant, whose held error names it, and the wider variant's for a subset
+/// or a `variant_of` variant. A hand-written `ProblemType` or `type_uri`
+/// beside the derived one conflicts with it.
+///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.
 /// It is the only supported way to implement `IntoProblem`.

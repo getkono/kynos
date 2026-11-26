@@ -421,6 +421,21 @@ pub(crate) fn problem_response(
 /// A type rather than a value because an
 /// [`Interceptor`](crate::middleware::Interceptor)'s declaration is read from
 /// its types, so the same `const` reaches both the body and the description.
+///
+/// A struct deriving `ApiError` is one wherever it names a type URI, through
+/// a `type` or a `base`, so a refusal and the application's own error share
+/// it, and a test names it rather than retyping it. One naming neither sends `about:blank`, which identifies no
+/// problem type (RFC 9457 section 4.2.1), so it is not one. A hand-written
+/// implementation beside the derived one is the conflicting-implementation
+/// error coherence raises. An enum's variants are not types; its
+/// `type_uri(&self)` names each value's.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` names no problem type",
+    label = "not a `ProblemType`",
+    note = "name one with `impl ProblemType for {Self}` on a marker, or derive `ApiError` on a \
+            struct naming a `type` or a `base`; one naming neither sends `about:blank`, which \
+            names no type"
+)]
 pub trait ProblemType: 'static {
     /// The URI identifying the problem type, or `None` to leave it to the
     /// policy [`Router::problems`](crate::router::Router::problems) installs,

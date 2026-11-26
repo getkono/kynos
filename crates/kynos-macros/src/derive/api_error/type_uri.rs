@@ -8,17 +8,17 @@
 //! refusal to the problem policy, which never rewrites an `ApiError`'s, and
 //! `Some("about:blank")` would declare a refusal the policy then renames.
 //!
-//! An enum's variants are no types, so each publishes its URI as a hidden
-//! `const` among the enum's handles, which `type_uri` reads per value and a
+//! An enum's variants are no types, so each publishes its URI beside its
+//! statuses, in the hidden `const` among the enum's handles, which `type_uri` reads per value and a
 //! subset or a `variant_of` variant reads through the wider enum. A variant
 //! handing over the error it holds publishes `None`: that error's URI may be
 //! chosen at run time, as an `AuthRejection`'s is.
 
 use proc_macro2::TokenStream as TokenStream2;
-use quote::{ToTokens, format_ident, quote, quote_spanned};
+use quote::{ToTokens, quote, quote_spanned};
 use syn::{Data, DeriveInput, ExprPath, Ident, parse_quote, spanned::Spanned};
 
-use super::{Failure, Transparent};
+use super::{Failure, Transparent, subset::handle_of};
 
 /// The URI a declared failure's problem carries, as a `&'static str`
 /// expression: its own, or `about:blank`.
@@ -26,42 +26,32 @@ pub(super) fn carried(uri: Option<&TypeUri>) -> TokenStream2 {
     uri.map_or_else(|| quote!("about:blank"), |uri| quote!(#uri))
 }
 
-/// The hidden `const` holding the type URI `variant` answers with, spanned
-/// to the variant, as its statuses' is.
-pub(super) fn type_uri_of(variant: &Ident) -> Ident {
-    format_ident!(
-        "__KYNOS_PROBLEM_TYPE_URI_{}",
-        variant,
-        span = variant.span()
-    )
-}
-
-/// A declared failure's entry for [`type_uri_of`]: the URI it carries.
+/// A declared failure's type URI in its [`handle_of`]: the URI it carries.
 pub(super) fn declared(failure: &Failure) -> TokenStream2 {
     let uri = carried(failure.type_uri.as_ref());
     quote!(::core::option::Option::Some(#uri))
 }
 
 impl Transparent {
-    /// Its entry for [`type_uri_of`]: the wider variant's, or `None` for a
+    /// Its type URI in its [`handle_of`]: the wider variant's, or `None` for a
     /// field, whose URI is the held error's to say.
     pub(super) fn type_uri(&self) -> TokenStream2 {
         match &self.of {
             None => quote!(::core::option::Option::None),
             Some(of) => {
                 let ty = &self.ty;
-                let item = type_uri_of(of);
-                quote!(<#ty>::#item)
+                let item = handle_of(of);
+                quote!(<#ty>::#item.1)
             }
         }
     }
 }
 
-/// The enum's `type_uri`, reading each variant's [`type_uri_of`].
+/// The enum's `type_uri`, reading each variant's [`handle_of`].
 pub(super) fn method<'a>(variants: impl Iterator<Item = &'a Ident>) -> TokenStream2 {
     let arms = variants.map(|variant| {
-        let item = type_uri_of(variant);
-        quote!(Self::#variant { .. } => Self::#item,)
+        let item = handle_of(variant);
+        quote!(Self::#variant { .. } => Self::#item.1,)
     });
     quote! {
         /// The RFC 9457 `type` this value's problem carries, `about:blank`

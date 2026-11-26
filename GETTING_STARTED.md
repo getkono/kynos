@@ -48,6 +48,7 @@ by the release that shipped each, for code written before it.
 | The same header or cookie on every request a test sends | `test::TestClient::with_default_header` or `with_default_cookie` |
 | `get`/`post` wrappers prepending a mount prefix and a token minted mid-test | `test::TestClient::at(prefix)` or `view()`, then `bearer(&token)`: a `test::view::ClientView` whose requests the client still records |
 | A helper checking a problem response's status, type URI and members | `test::TestResponse::assert_problem`, with the base set once by `test::TestClient::with_problem_base`, then `assert_problem_extension`, or `test::TestProblem::extension` to read one |
+| A derived `ApiError`'s type URI typed out again in a test or an interceptor marker | `error::problem::ProblemType::TYPE_URI`, which a struct naming a `type` or `base` implements, or an enum's `type_uri(&self)` |
 | `assert!(resp.header(name).is_none())`, or `is_some()` | `test::TestResponse::assert_no_header`, or `assert_has_header` |
 | A substring search of a comma-separated field such as `Vary` or `Access-Control-Allow-Headers` | `test::TestResponse::assert_header_lists` |
 | `starts_with` on a `Content-Type` to skip its parameters | `test::TestResponse::assert_content_type` |

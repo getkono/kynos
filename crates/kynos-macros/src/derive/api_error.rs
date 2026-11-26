@@ -43,6 +43,9 @@
 //! items. A `slug` with no `base` to hang under is refused rather than dropped:
 //! `base = default` is written out, so its absence is known here. `detail` comes from `Display`.
 //!
+//! A struct naming a type URI implements `ProblemType` with it, and an enum
+//! publishes each value's through `type_uri`, as [`type_uri`] says.
+//!
 //! `describe` writes a status's description as [`written`] says.
 //!
 //! An `extension` field is sent through `kynos::__private::problem::to_member`,

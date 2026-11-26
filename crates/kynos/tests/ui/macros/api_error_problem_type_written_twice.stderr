@@ -1,0 +1,10 @@
+error[E0119]: conflicting implementations of trait `ProblemType` for type `QuotaExceeded`
+  --> tests/ui/macros/api_error_problem_type_written_twice.rs:6:35
+   |
+ 6 | #[derive(Debug, thiserror::Error, ApiError)]
+   |                                   ^^^^^^^^ conflicting implementation for `QuotaExceeded`
+...
+11 | impl ProblemType for QuotaExceeded {
+   | ---------------------------------- first implementation here
+   |
+   = note: this error originates in the derive macro `ApiError` (in Nightly builds, run with -Z macro-backtrace for more info)
