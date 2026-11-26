@@ -118,7 +118,11 @@ says what it measures.
   do, and `networks` or `addresses` where they are known. Name the
   `ProxyHeader` the proxy appends to, since the other passes through whatever
   the client sent. `everyone` is right only where nothing but the proxies can
-  reach the service. A balancer that relays TCP rather than HTTP names the
+  reach the service. Read both from configuration as they are written:
+  `ProxyHeader` parses from its field's name, and `parse_networks` from a list
+  such as `10.0.0.0/8,192.0.2.7`, an address alone naming one host. An entry
+  written as an interface is, `192.0.2.7/24`, is refused rather than widened
+  to its block. A balancer that relays TCP rather than HTTP names the
   client only through `server::Server::proxy_protocol`.
 - Set the proxy's upstream idle timeout below 30 seconds. Kynos closes an idle
   HTTP/1 connection 30 seconds after its last response, and an idle HTTP/2

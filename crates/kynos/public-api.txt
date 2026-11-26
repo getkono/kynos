@@ -3168,7 +3168,8 @@ pub mod kynos::http::forwarded
 #[non_exhaustive] pub enum kynos::http::forwarded::InvalidNetwork
 pub kynos::http::forwarded::InvalidNetwork::Address
 pub kynos::http::forwarded::InvalidNetwork::EveryAddress
-pub kynos::http::forwarded::InvalidNetwork::NoPrefix
+pub kynos::http::forwarded::InvalidNetwork::HostBits
+pub kynos::http::forwarded::InvalidNetwork::HostBits::network: kynos::http::forwarded::Network
 pub kynos::http::forwarded::InvalidNetwork::Prefix
 pub kynos::http::forwarded::InvalidNetwork::PrefixTooLong
 pub kynos::http::forwarded::InvalidNetwork::PrefixTooLong::bits: u8
@@ -3201,10 +3202,15 @@ impl core::cmp::PartialEq for kynos::http::forwarded::ProxyHeader
 pub fn kynos::http::forwarded::ProxyHeader::eq(&self, &kynos::http::forwarded::ProxyHeader) -> bool
 impl core::fmt::Debug for kynos::http::forwarded::ProxyHeader
 pub fn kynos::http::forwarded::ProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::http::forwarded::ProxyHeader
+pub fn kynos::http::forwarded::ProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
 impl core::hash::Hash for kynos::http::forwarded::ProxyHeader
 pub fn kynos::http::forwarded::ProxyHeader::hash<__H: core::hash::Hasher>(&self, &mut __H)
 impl core::marker::Copy for kynos::http::forwarded::ProxyHeader
 impl core::marker::StructuralPartialEq for kynos::http::forwarded::ProxyHeader
+impl core::str::traits::FromStr for kynos::http::forwarded::ProxyHeader
+pub type kynos::http::forwarded::ProxyHeader::Err = kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::ProxyHeader::from_str(&str) -> core::result::Result<Self, Self::Err>
 impl core::marker::Freeze for kynos::http::forwarded::ProxyHeader
 impl core::marker::Send for kynos::http::forwarded::ProxyHeader
 impl core::marker::Sync for kynos::http::forwarded::ProxyHeader
@@ -3262,10 +3268,32 @@ impl core::marker::Unpin for kynos::http::forwarded::InvalidNetworkEntry
 impl core::marker::UnsafeUnpin for kynos::http::forwarded::InvalidNetworkEntry
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::http::forwarded::InvalidNetworkEntry
 impl core::panic::unwind_safe::UnwindSafe for kynos::http::forwarded::InvalidNetworkEntry
+pub struct kynos::http::forwarded::InvalidProxyHeader
+impl kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::text(&self) -> &str
+impl core::clone::Clone for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::clone(&self) -> kynos::http::forwarded::InvalidProxyHeader
+impl core::cmp::Eq for kynos::http::forwarded::InvalidProxyHeader
+impl core::cmp::PartialEq for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::eq(&self, &kynos::http::forwarded::InvalidProxyHeader) -> bool
+impl core::error::Error for kynos::http::forwarded::InvalidProxyHeader
+impl core::fmt::Debug for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::fmt::Display for kynos::http::forwarded::InvalidProxyHeader
+pub fn kynos::http::forwarded::InvalidProxyHeader::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::StructuralPartialEq for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Freeze for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Send for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Sync for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::Unpin for kynos::http::forwarded::InvalidProxyHeader
+impl core::marker::UnsafeUnpin for kynos::http::forwarded::InvalidProxyHeader
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::http::forwarded::InvalidProxyHeader
+impl core::panic::unwind_safe::UnwindSafe for kynos::http::forwarded::InvalidProxyHeader
 pub struct kynos::http::forwarded::Network
 impl kynos::http::forwarded::Network
 pub fn kynos::http::forwarded::Network::address(&self) -> core::net::ip_addr::IpAddr
 pub fn kynos::http::forwarded::Network::contains(&self, core::net::ip_addr::IpAddr) -> bool
+pub fn kynos::http::forwarded::Network::host(core::net::ip_addr::IpAddr) -> Self
 pub fn kynos::http::forwarded::Network::new(core::net::ip_addr::IpAddr, u8) -> core::result::Result<Self, kynos::http::forwarded::InvalidNetwork>
 pub fn kynos::http::forwarded::Network::prefix(&self) -> u8
 impl core::clone::Clone for kynos::http::forwarded::Network
@@ -3304,6 +3332,9 @@ pub fn kynos::http::forwarded::TrustedProxies::parse_networks<I>(kynos::http::fo
 pub fn kynos::http::forwarded::TrustedProxies::trusts_nobody(&self) -> bool
 impl core::clone::Clone for kynos::http::forwarded::TrustedProxies
 pub fn kynos::http::forwarded::TrustedProxies::clone(&self) -> kynos::http::forwarded::TrustedProxies
+impl core::cmp::Eq for kynos::http::forwarded::TrustedProxies
+impl core::cmp::PartialEq for kynos::http::forwarded::TrustedProxies
+pub fn kynos::http::forwarded::TrustedProxies::eq(&self, &Self) -> bool
 impl core::default::Default for kynos::http::forwarded::TrustedProxies
 pub fn kynos::http::forwarded::TrustedProxies::default() -> kynos::http::forwarded::TrustedProxies
 impl core::fmt::Debug for kynos::http::forwarded::TrustedProxies

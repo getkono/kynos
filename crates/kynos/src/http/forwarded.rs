@@ -35,6 +35,66 @@ pub enum ProxyHeader {
     XForwarded,
 }
 
+impl ProxyHeader {
+    /// The field the client address is read from, as RFC 7239 and the de-facto
+    /// pair spell it.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Forwarded => "Forwarded",
+            Self::XForwarded => "X-Forwarded-For",
+        }
+    }
+}
+
+/// Reads the field's name, `Forwarded` or `X-Forwarded-For`, in any case
+/// (RFC 9110 section 5.1), and with no surrounding whitespace.
+///
+/// ```
+/// use kynos::http::forwarded::ProxyHeader;
+///
+/// assert_eq!("x-forwarded-for".parse(), Ok(ProxyHeader::XForwarded));
+/// assert_eq!(ProxyHeader::Forwarded.to_string().parse(), Ok(ProxyHeader::Forwarded));
+///
+/// let refused = "X-Forwarded-Proto".parse::<ProxyHeader>().unwrap_err();
+/// assert_eq!(refused.text(), "X-Forwarded-Proto");
+/// ```
+impl FromStr for ProxyHeader {
+    type Err = InvalidProxyHeader;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        [Self::Forwarded, Self::XForwarded]
+            .into_iter()
+            .find(|header| header.name().eq_ignore_ascii_case(text))
+            .ok_or_else(|| InvalidProxyHeader {
+                text: text.to_owned(),
+            })
+    }
+}
+
+/// The field's name, `Forwarded` or `X-Forwarded-For`, which
+/// [`FromStr`] reads back.
+impl fmt::Display for ProxyHeader {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// Text [`ProxyHeader`]'s [`FromStr`] refused: neither field's name.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{text:?} is not a forwarding field: write `Forwarded` or `X-Forwarded-For`")]
+pub struct InvalidProxyHeader {
+    /// The text as given.
+    text: String,
+}
+
+impl InvalidProxyHeader {
+    /// The text as given.
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 /// Which hops may be believed when they describe the client, and through which
 /// field.
 ///
@@ -137,7 +197,8 @@ impl TrustedProxies {
     }
 
     /// Trusts every address in the networks `entries` write as
-    /// `address/prefix`, which write `header`.
+    /// `address/prefix`, or as an address alone for one host, which write
+    /// `header`.
     ///
     /// For a list read from configuration. Each entry is read as [`Network`]
     /// reads it, so `/0` is refused here too: say
@@ -146,13 +207,17 @@ impl TrustedProxies {
     /// ```
     /// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
     ///
-    /// let configured = ["10.0.0.0/8", "2001:db8::/32"];
-    /// let trusted = TrustedProxies::parse_networks(ProxyHeader::XForwarded, configured)?;
-    /// assert_eq!(trusted.to_string(), "X-Forwarded-For from 10.0.0.0/8, 2001:db8::/32");
+    /// let configured = "10.0.0.0/8,192.0.2.7,2001:db8::/32";
+    /// let header = "x-forwarded-for".parse()?;
+    /// let trusted = TrustedProxies::parse_networks(header, configured.split(','))?;
+    /// assert_eq!(
+    ///     trusted.to_string(),
+    ///     "X-Forwarded-For from 10.0.0.0/8, 192.0.2.7/32, 2001:db8::/32",
+    /// );
     ///
     /// let refused = TrustedProxies::parse_networks(ProxyHeader::XForwarded, ["0.0.0.0/0"]);
     /// assert_eq!(refused.unwrap_err().entry(), "0.0.0.0/0");
-    /// # Ok::<(), kynos::http::forwarded::InvalidNetworkEntry>(())
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     ///
     /// # Errors
@@ -256,7 +321,7 @@ impl TrustedProxies {
 ///
 /// let trusted = TrustedProxies::hops(ProxyHeader::Forwarded, 2)
 ///     .and_addresses(["192.0.2.1".parse()?])
-///     .and_networks(["10.9.9.9/8".parse()?]);
+///     .and_networks(["10.0.0.0/8".parse()?]);
 /// assert_eq!(
 ///     trusted.to_string(),
 ///     "Forwarded from the 2 nearest hops, 192.0.2.1, 10.0.0.0/8",
@@ -269,10 +334,7 @@ impl fmt::Display for TrustedProxies {
         let Some(header) = self.header() else {
             return f.write_str("nobody");
         };
-        f.write_str(match header {
-            ProxyHeader::Forwarded => "Forwarded from ",
-            ProxyHeader::XForwarded => "X-Forwarded-For from ",
-        })?;
+        write!(f, "{header} from ")?;
 
         match self.hops {
             0 => {}
@@ -297,14 +359,58 @@ impl fmt::Display for TrustedProxies {
     }
 }
 
+/// Two policies are equal when they were configured alike: the same field,
+/// the same count of nearest hops, and the same exact addresses and networks,
+/// in any order and however often each was named. Every policy that believes
+/// nobody equals every other, whatever field it names or was widened by, as
+/// [`Display`](fmt::Display) prints each as `nobody`.
+///
+/// An address and the network holding only it are not compared as one, nor
+/// are networks that together cover another: equality is of the policy as
+/// written, not of every peer it would believe.
+///
+/// ```
+/// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+///
+/// let configured = TrustedProxies::parse_networks(ProxyHeader::Forwarded, ["10.0.0.0/8", "::1"])?;
+/// let reordered = TrustedProxies::parse_networks(ProxyHeader::Forwarded, ["::1", "10.0.0.0/8"])?;
+/// assert_eq!(configured, reordered);
+/// assert_eq!(TrustedProxies::hops(ProxyHeader::Forwarded, 0), TrustedProxies::none());
+/// # Ok::<(), kynos::http::forwarded::InvalidNetworkEntry>(())
+/// ```
+impl PartialEq for TrustedProxies {
+    fn eq(&self, other: &Self) -> bool {
+        /// Whether `a` and `b` hold the same items, repeats aside.
+        fn same<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+            a.iter().all(|item| b.contains(item)) && b.iter().all(|item| a.contains(item))
+        }
+
+        match (self.header(), other.header()) {
+            (None, None) => true,
+            (Some(header), Some(other_header)) => {
+                header == other_header
+                    && self.hops == other.hops
+                    && same(&self.addresses, &other.addresses)
+                    && same(&self.networks, &other.networks)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for TrustedProxies {}
+
 /// A block of addresses sharing their leading `prefix` bits, written
-/// `address/prefix` (RFC 4632 section 3.1, RFC 4291 section 2.3).
+/// `address/prefix` (RFC 4632 section 3.1, RFC 4291 section 2.3), or the
+/// address alone for its one host, `/32` or `/128`.
 ///
 /// Never `/0`, and never a prefix longer than its address: the first trusts
 /// every peer there is, which [`TrustedProxies::everyone`] says outright, and
-/// the second matches nothing. Bits past the prefix are cleared, so
-/// `10.1.2.3/8` is `10.0.0.0/8`, and that is what [`Display`](fmt::Display)
-/// prints.
+/// the second matches nothing. Written text sets no bit past its prefix:
+/// `192.0.2.7/24` is how an interface is written, and could mean the host or
+/// its block, so it is refused as [`InvalidNetwork::HostBits`], naming
+/// `192.0.2.0/24`. [`new`](Self::new) clears those bits instead, since it is
+/// asked for the block holding an address.
 ///
 /// An IPv4-mapped address is its IPv4 form, on either side: `::ffff:10.0.0.1`
 /// is in `10.0.0.0/8`, and `::ffff:10.0.0.0/104` *is* `10.0.0.0/8`, so
@@ -315,11 +421,16 @@ impl fmt::Display for TrustedProxies {
 /// ```
 /// use kynos::http::forwarded::{InvalidNetwork, Network};
 ///
-/// let network: Network = "10.1.2.3/8".parse()?;
-/// assert_eq!(network.to_string(), "10.0.0.0/8");
+/// let network: Network = "10.0.0.0/8".parse()?;
 /// assert!(network.contains("10.200.0.1".parse()?));
 ///
+/// let host: Network = "192.0.2.7".parse()?;
+/// assert_eq!(host.to_string(), "192.0.2.7/32");
+///
 /// assert_eq!("0.0.0.0/0".parse::<Network>(), Err(InvalidNetwork::EveryAddress));
+/// let refused = "10.1.2.3/8".parse::<Network>().unwrap_err();
+/// assert_eq!(refused, InvalidNetwork::HostBits { network });
+/// assert_eq!(Network::new("10.1.2.3".parse()?, 8)?, network);
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -332,6 +443,9 @@ pub struct Network {
 
 impl Network {
     /// The block of addresses sharing `address`'s leading `prefix` bits.
+    ///
+    /// Any address in the block names it: the bits past `prefix` are cleared,
+    /// so `10.1.2.3` with `8` is `10.0.0.0/8`.
     ///
     /// An IPv4-mapped `address` with a `prefix` of at least `96` is the IPv4
     /// block its last `prefix - 96` bits name.
@@ -358,6 +472,26 @@ impl Network {
             return Err(InvalidNetwork::EveryAddress);
         }
         Ok(Self::masked(address, prefix))
+    }
+
+    /// The block holding `address` alone: `/32` for IPv4 and `/128` for IPv6.
+    ///
+    /// An IPv4-mapped `address` is its IPv4 host, so this is that host's
+    /// `/32`.
+    ///
+    /// ```
+    /// use kynos::http::forwarded::Network;
+    ///
+    /// let host = Network::host("192.0.2.7".parse()?);
+    /// assert_eq!(host.to_string(), "192.0.2.7/32");
+    /// assert_eq!(Network::host("::ffff:192.0.2.7".parse()?), host);
+    /// # Ok::<(), std::net::AddrParseError>(())
+    /// ```
+    #[must_use]
+    pub fn host(address: IpAddr) -> Self {
+        let address = address.to_canonical();
+        let bits = if address.is_ipv4() { 32 } else { 128 };
+        Self::masked(address, bits)
     }
 
     /// Every address of `address`'s family, which only
@@ -409,12 +543,18 @@ impl FromStr for Network {
     type Err = InvalidNetwork;
 
     /// Reads `address/prefix`, with no surrounding whitespace, the prefix in
-    /// decimal digits and no leading zero.
+    /// decimal digits and no leading zero, or an address alone as its
+    /// [`host`](Self::host) network.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let (address, prefix) = text.split_once('/').ok_or(InvalidNetwork::NoPrefix)?;
+        let (address, prefix) = text
+            .split_once('/')
+            .map_or((text, None), |(address, prefix)| (address, Some(prefix)));
         let address = address
             .parse::<IpAddr>()
             .map_err(|_| InvalidNetwork::Address)?;
+        let Some(prefix) = prefix else {
+            return Ok(Self::host(address));
+        };
 
         let digits = prefix.bytes().all(|byte| byte.is_ascii_digit());
         if prefix.is_empty() || !digits || (prefix.len() > 1 && prefix.starts_with('0')) {
@@ -422,7 +562,17 @@ impl FromStr for Network {
         }
         let prefix = prefix.parse::<u8>().unwrap_or(u8::MAX);
 
-        Self::new(address, prefix)
+        let network = Self::new(address, prefix)?;
+        // `new` folds only a mapped address, so the written one is compared in
+        // the family it was folded to.
+        let written = match (network.address, address) {
+            (IpAddr::V4(_), IpAddr::V6(v6)) => v6.to_ipv4_mapped().map(IpAddr::V4),
+            (_, address) => Some(address),
+        };
+        if written != Some(network.address) {
+            return Err(InvalidNetwork::HostBits { network });
+        }
+        Ok(network)
     }
 }
 
@@ -436,11 +586,8 @@ impl fmt::Display for Network {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum InvalidNetwork {
-    /// No `/prefix` follows the address.
-    #[error("no `/prefix` follows the address")]
-    NoPrefix,
-    /// The text before `/` is not an IPv4 or IPv6 address.
-    #[error("the text before `/` is not an IPv4 or IPv6 address")]
+    /// The address, alone or before `/`, is not an IPv4 or IPv6 address.
+    #[error("the address is not an IPv4 or IPv6 address")]
     Address,
     /// The text after `/` is not a decimal number without a leading zero.
     #[error("the text after `/` is not a decimal number without a leading zero")]
@@ -457,6 +604,17 @@ pub enum InvalidNetwork {
          every peer explicitly"
     )]
     EveryAddress,
+    /// The address has bits set past the prefix, as an interface's
+    /// `address/prefix` does, so whether one host or its whole block is meant
+    /// is unsaid.
+    #[error(
+        "the address has bits set past the prefix: write `{network}` for the network, or the \
+         address alone for one host"
+    )]
+    HostBits {
+        /// The block the address falls in.
+        network: Network,
+    },
 }
 
 /// An entry [`TrustedProxies::parse_networks`] refused, and why.

@@ -785,7 +785,7 @@ fn a_mapped_address_is_its_ipv4_host_and_families_never_cross_otherwise() {
 #[test]
 fn a_mapped_network_is_the_ipv4_block_it_names() {
     let cases: &[(&str, &str)] = &[
-        ("::ffff:10.1.2.3/104", "10.0.0.0/8"),
+        ("::ffff:10.0.0.0/104", "10.0.0.0/8"),
         ("::ffff:203.0.113.7/128", "203.0.113.7/32"),
         ("::ffff:128.0.0.0/97", "128.0.0.0/1"),
     ];
@@ -804,7 +804,10 @@ fn a_mapped_network_is_the_ipv4_block_it_names() {
         Err(InvalidNetwork::PrefixTooLong { bits: 128 })
     );
     // Short of `/96` the mapped bits are not all in the prefix: still IPv6.
-    assert_eq!(net("::ffff:0.0.0.0/95").to_string(), "::fffe:0:0/95");
+    assert_eq!(
+        Network::new(ip("::ffff:0.0.0.0"), 95).map(|network| network.to_string()),
+        Ok(String::from("::fffe:0:0/95"))
+    );
 }
 
 /// A dual-stack listener reports an IPv4 proxy as `::ffff:a.b.c.d`, and the
@@ -849,24 +852,90 @@ fn every_address_is_read_in_its_ipv4_form() {
     assert_eq!(resolved.client(), Some(ip("192.0.2.5")));
 }
 
-/// A network is the block, whichever of its addresses it was written with.
+/// `Network::new` is asked for the block holding an address, so it clears the
+/// bits past the prefix. Text setting them is written the way an interface is,
+/// `192.0.2.7/24`, which could mean the host or its block: that is refused,
+/// naming the block, since trusting 256 hosts where one was meant is silent.
 #[test]
-fn a_network_clears_the_bits_past_its_prefix() {
-    let cases: &[(&str, &str)] = &[
-        ("10.1.2.3/8", "10.0.0.0/8"),
-        ("10.255.255.255/9", "10.128.0.0/9"),
-        ("203.0.113.7/32", "203.0.113.7/32"),
-        ("2001:db8:ffff::1/32", "2001:db8::/32"),
-        ("2001:db8::1/128", "2001:db8::1/128"),
+fn a_network_is_never_written_with_bits_past_its_prefix() {
+    let cases: &[(&str, u8, &str)] = &[
+        ("10.1.2.3", 8, "10.0.0.0/8"),
+        ("10.255.255.255", 9, "10.128.0.0/9"),
+        ("10.0.0.1", 31, "10.0.0.0/31"),
+        ("2001:db8:ffff::1", 32, "2001:db8::/32"),
+        ("2001:db8::1", 127, "2001:db8::/127"),
+        ("::ffff:10.1.2.3", 104, "10.0.0.0/8"),
+        ("::ffff:0.0.0.0", 95, "::fffe:0:0/95"),
     ];
 
-    for (written, normalised) in cases {
-        let network = net(written);
-        assert_eq!(network.to_string(), *normalised, "{written}");
-        assert_eq!(network, net(normalised), "{written}");
+    for (address, prefix, block) in cases {
+        let written = format!("{address}/{prefix}");
+        let network = Network::new(ip(address), *prefix).expect("a block");
+        assert_eq!(network.to_string(), *block, "{written}");
+        assert_eq!(
+            written.parse::<Network>(),
+            Err(InvalidNetwork::HostBits { network }),
+            "{written}"
+        );
+        assert_eq!(net(block), network, "{written}");
     }
-    assert_eq!(net("10.1.2.3/8").address(), ip("10.0.0.0"));
-    assert_eq!(net("10.1.2.3/8").prefix(), 8);
+
+    let network = Network::new(ip("10.1.2.3"), 8).expect("a block");
+    assert_eq!((network.address(), network.prefix()), (ip("10.0.0.0"), 8));
+    assert_eq!(
+        "192.0.2.7/24"
+            .parse::<Network>()
+            .expect_err("host bits")
+            .to_string(),
+        "the address has bits set past the prefix: write `192.0.2.0/24` for the network, or \
+         the address alone for one host"
+    );
+}
+
+/// A host network holds its one address and no neighbour, in either family,
+/// and a mapped address is its IPv4 host's.
+#[test]
+fn a_host_network_holds_exactly_its_address() {
+    let cases: &[(&str, &str)] = &[
+        ("203.0.113.7", "203.0.113.7/32"),
+        ("::ffff:203.0.113.7", "203.0.113.7/32"),
+        ("2001:db8::1", "2001:db8::1/128"),
+        ("0.0.0.0", "0.0.0.0/32"),
+        ("::", "::/128"),
+    ];
+    for (address, network) in cases {
+        let host = Network::host(ip(address));
+        assert_eq!(host, net(network), "{address}");
+        assert!(host.contains(ip(address)), "{address}");
+    }
+    assert!(!Network::host(ip("203.0.113.7")).contains(ip("203.0.113.6")));
+    assert!(!Network::host(ip("2001:db8::1")).contains(ip("2001:db8::")));
+}
+
+/// An address written alone is its host network, the way a reader of a
+/// trusted-proxy list reads `192.0.2.7`, and never a `/0` or a block wider
+/// than the one host.
+#[test]
+fn an_address_alone_reads_as_its_host_network() {
+    let cases: &[(&str, &str)] = &[
+        ("192.0.2.7", "192.0.2.7/32"),
+        ("0.0.0.0", "0.0.0.0/32"),
+        ("::1", "::1/128"),
+        ("::", "::/128"),
+        ("::ffff:192.0.2.7", "192.0.2.7/32"),
+    ];
+    for (written, network) in cases {
+        assert_eq!(net(written), Network::host(ip(written)), "{written}");
+        assert_eq!(net(written).to_string(), *network, "{written}");
+    }
+
+    let trusted =
+        TrustedProxies::parse_networks(ProxyHeader::XForwarded, ["192.0.2.7"]).expect("one host");
+    let headers = map(&[("x-forwarded-for", "203.0.113.9")]);
+    let resolved = Forwarded::resolve(&headers, Some(peer("192.0.2.7")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("203.0.113.9")));
+    let resolved = Forwarded::resolve(&headers, Some(peer("192.0.2.8")), &trusted);
+    assert_eq!(resolved.client(), Some(ip("192.0.2.8")));
 }
 
 /// What a network is refused for, which is what a startup log shows.
@@ -888,8 +957,11 @@ fn a_network_refuses_what_could_only_be_a_mistake() {
             InvalidNetwork::PrefixTooLong { bits: 32 },
         ),
         ("::/129", InvalidNetwork::PrefixTooLong { bits: 128 }),
-        ("10.0.0.1", InvalidNetwork::NoPrefix),
-        ("", InvalidNetwork::NoPrefix),
+        ("", InvalidNetwork::Address),
+        ("10.0.0", InvalidNetwork::Address),
+        ("[::1]", InvalidNetwork::Address),
+        (" 10.0.0.1", InvalidNetwork::Address),
+        ("10.0.0.1 ", InvalidNetwork::Address),
         ("10.0.0/8", InvalidNetwork::Address),
         ("[::1]/128", InvalidNetwork::Address),
         (" 10.0.0.0/8", InvalidNetwork::Address),
@@ -920,7 +992,7 @@ fn a_network_refuses_what_could_only_be_a_mistake() {
 /// entry, so a startup failure says which line of the configuration is wrong.
 #[test]
 fn a_configured_network_list_is_parsed_or_refused_by_entry() {
-    let entries = vec![String::from("10.1.2.3/8"), String::from("2001:db8::/32")];
+    let entries = vec![String::from("10.0.0.0/8"), String::from("2001:db8::/32")];
     let trusted =
         TrustedProxies::parse_networks(ProxyHeader::Forwarded, &entries).expect("two networks");
     let headers = map(&[("forwarded", "for=203.0.113.7")]);
@@ -965,7 +1037,7 @@ fn a_policy_prints_whom_it_believes() {
         ),
         (
             TrustedProxies::addresses(ProxyHeader::XForwarded, [ip("10.0.0.1"), ip("::1")])
-                .and_networks([net("2001:db8::1/32")]),
+                .and_networks([net("2001:db8::/32")]),
             "X-Forwarded-For from 10.0.0.1, ::1, 2001:db8::/32",
         ),
         (
@@ -981,6 +1053,141 @@ fn a_policy_prints_whom_it_believes() {
     for (trusted, printed) in cases {
         assert_eq!(trusted.to_string(), *printed, "{trusted:?}");
     }
+}
+
+/// Policies compare as configured: order and repeats of what they name do not
+/// matter, everything that changes whom they believe does, and every policy
+/// believing nobody is one policy.
+#[test]
+fn policies_are_equal_when_configured_alike() {
+    let (forwarded, x_forwarded) = (ProxyHeader::Forwarded, ProxyHeader::XForwarded);
+    let ten = net("10.0.0.0/8");
+    let doc = net("2001:db8::/32");
+    let equal: &[(TrustedProxies, TrustedProxies)] = &[
+        (TrustedProxies::none(), TrustedProxies::default()),
+        (TrustedProxies::none(), TrustedProxies::hops(forwarded, 0)),
+        (
+            TrustedProxies::hops(forwarded, 0),
+            TrustedProxies::networks(x_forwarded, []),
+        ),
+        (
+            TrustedProxies::none().and_networks([ten]),
+            TrustedProxies::none(),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [ten, doc]),
+            TrustedProxies::networks(forwarded, [doc, ten, doc]),
+        ),
+        (
+            TrustedProxies::addresses(forwarded, [ip("::ffff:10.0.0.1"), ip("::1")]),
+            TrustedProxies::addresses(forwarded, [ip("::1"), ip("10.0.0.1")]),
+        ),
+        (
+            TrustedProxies::hops(forwarded, 1).and_networks([ten]),
+            TrustedProxies::hops(forwarded, 1).and_networks([ten]),
+        ),
+    ];
+    for (a, b) in equal {
+        assert_eq!(a, b);
+        assert_eq!(b, a);
+    }
+
+    let unequal: &[(TrustedProxies, TrustedProxies)] = &[
+        (TrustedProxies::none(), TrustedProxies::hops(forwarded, 1)),
+        (
+            TrustedProxies::hops(forwarded, 1),
+            TrustedProxies::hops(x_forwarded, 1),
+        ),
+        (
+            TrustedProxies::hops(forwarded, 1),
+            TrustedProxies::hops(forwarded, 2),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [ten]),
+            TrustedProxies::networks(forwarded, [ten, doc]),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [ten]),
+            TrustedProxies::hops(forwarded, 1).and_networks([ten]),
+        ),
+        (
+            TrustedProxies::addresses(forwarded, [ip("10.0.0.1")]),
+            TrustedProxies::networks(forwarded, [Network::host(ip("10.0.0.1"))]),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [net("10.0.0.0/9"), net("10.128.0.0/9")]),
+            TrustedProxies::networks(forwarded, [ten]),
+        ),
+    ];
+    for (a, b) in unequal {
+        assert_ne!(a, b);
+        assert_ne!(b, a);
+    }
+}
+
+/// Each field reads back from the name it prints, in every arrangement of
+/// letter case a configuration might write it in (RFC 9110 section 5.1).
+///
+/// The `match` is the table's closure: a new field fails to compile here until
+/// its name is added.
+#[test]
+fn a_proxy_header_reads_back_from_its_name_in_any_case() {
+    for header in [ProxyHeader::Forwarded, ProxyHeader::XForwarded] {
+        let name = match header {
+            ProxyHeader::Forwarded => "Forwarded",
+            ProxyHeader::XForwarded => "X-Forwarded-For",
+        };
+        assert_eq!(header.to_string(), name);
+
+        let letters = name.bytes().filter(u8::is_ascii_alphabetic).count();
+        for arrangement in 0..1_u32 << letters {
+            let mut letter = 0;
+            let written: String = name
+                .chars()
+                .map(|c| {
+                    if !c.is_ascii_alphabetic() {
+                        return c;
+                    }
+                    letter += 1;
+                    if arrangement & (1 << (letter - 1)) == 0 {
+                        c.to_ascii_lowercase()
+                    } else {
+                        c.to_ascii_uppercase()
+                    }
+                })
+                .collect();
+            assert_eq!(written.parse(), Ok(header), "{written:?}");
+        }
+    }
+}
+
+/// What is not one field's exact name is refused, naming the text, so a
+/// startup failure says what the configuration held.
+///
+/// `X-Forwarded-Proto` and `X-Forwarded` name no field a client address is
+/// read from, and whitespace is refused as `Network` refuses it.
+#[test]
+fn a_proxy_header_refuses_anything_but_a_fields_name() {
+    for text in [
+        "",
+        "X-Forwarded",
+        "X-Forwarded-Proto",
+        "XForwarded",
+        " Forwarded",
+        "Forwarded ",
+        "forwarded-for",
+        "Forwarded,X-Forwarded-For",
+    ] {
+        let refused = text.parse::<ProxyHeader>().expect_err(text);
+        assert_eq!(refused.text(), text);
+    }
+    assert_eq!(
+        "X-Real-IP"
+            .parse::<ProxyHeader>()
+            .expect_err("no such field")
+            .to_string(),
+        "\"X-Real-IP\" is not a forwarding field: write `Forwarded` or `X-Forwarded-For`"
+    );
 }
 
 /// Trusting everyone is said outright, and it believes the leftmost element of
