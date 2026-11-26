@@ -20,6 +20,8 @@ pub mod quota;
 pub mod refusal;
 pub mod store;
 
+mod estimate;
+
 use std::marker::PhantomData;
 
 use crate::middleware::rate_limit::{

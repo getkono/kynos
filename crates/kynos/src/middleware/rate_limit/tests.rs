@@ -4,9 +4,10 @@ use super::{
     Legacy, RateLimit, RateLimitSpelling, Structured,
     clock::Clock,
     decision::{Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
+    estimate::{estimate, recovers_in},
     headers::{RateLimitFields, RateLimitHeaders, SF_INTEGER_MAX},
     key::{ByPrincipal, RateLimitKey, Shared},
-    quota::{Quota, Quotas, estimate, recovers_in},
+    quota::{Quota, Quotas},
     refusal::{RateLimited, RateLimitedFields},
     store::{RateLimitStore, StoreFailure},
 };
