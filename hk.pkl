@@ -55,6 +55,19 @@ hooks {
             }
         }
     }
+    // What `pre-commit` leaves out to stay fast, over each commit the push
+    // publishes, each checked out on its own: `scripts/commit_gates.py` picks
+    // the commits and, per commit, the gates its paths reach, so no glob here.
+    // It also covers what `pre-commit` cannot: hk's stash keeps untracked files
+    // in the tree whenever a tracked file has unstaged changes, so a step there
+    // can pass over a tree the commit does not record.
+    ["pre-push"] {
+        steps {
+            ["commit-gates"] {
+                check = "mise run commits:gates"
+            }
+        }
+    }
     ["commit-msg"] {
         steps {
             // The task exempts a merge in progress; a `step_condition` cannot,

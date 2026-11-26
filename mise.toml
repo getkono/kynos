@@ -789,6 +789,7 @@ run = [
   { task = "cost:test" },
   { task = "profile:test" },
   { task = "commits:test" },
+  { task = "commits:gates:test" },
   { task = "deps:test" },
   { task = "docs:check" },
   { task = "panic:check" },
@@ -862,3 +863,18 @@ description = "Test that both halves of the commit rule agree about a merge"
 # to both over real repositories, including a merge through hk's hook.
 tools = { python = "3.11.16" }
 run = "python3 scripts/commits_test.py"
+
+[tasks."commits:gates"]
+description = "Run lint, docs:check, api:check and msrv:check over each commit of an explicit or outgoing range"
+# A series lands commit by commit, so a commit red mid-series stays red in
+# history; every other run of these gates sees only a tip. `KYNOS_COMMIT_RANGE`,
+# or the commits no remote-tracking branch has. The `pre-push` hook and CI's
+# `commit-gates` job run it; `scripts/commit_gates.py` says what it skips.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates.py"
+
+[tasks."commits:gates:test"]
+description = "Test that the per-commit gates check each commit's own tree, and that the pre-push hook runs them"
+# Over throwaway repositories with stub gates, so it compiles nothing.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates_test.py"
