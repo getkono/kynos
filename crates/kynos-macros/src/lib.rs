@@ -1045,8 +1045,11 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// An enum has `const fn type_uri(&self) -> Option<&'static str>`: the
 /// variant's URI, `about:blank` for one naming none, `None` for a transparent
 /// variant, whose held error names it, and the wider variant's for a subset
-/// or a `variant_of` variant. A hand-written `ProblemType` or `type_uri`
-/// beside the derived one conflicts with it.
+/// or a `variant_of` variant. The derive owns both, so the URI has one
+/// source: a hand-written `ProblemType` on a struct naming a `type` or
+/// `base` conflicts with the derived impl, and an inherent `type_uri` on a
+/// derived enum with the derived method. Delete the impl, or rename the
+/// method.
 ///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.

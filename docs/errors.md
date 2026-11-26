@@ -309,10 +309,14 @@ An enum's variants are not types, so a derived enum has
 `about:blank` for one naming none, and `None` for a variant handing over the
 error it holds, whose URI can be chosen at run time, as an
 `AuthRejection::forbidden_as` is; a `subset_of` enum and a `variant_of`
-variant answer with the wider variant's. The derive owns both names, so the
-URI has one source: a `ProblemType` written beside the derived one is the
-conflicting-implementation error coherence raises at the derive, and a
-`type_uri` written on a derived enum a duplicate definition.
+variant answer with the wider variant's.
+
+**The derive owns `ProblemType` and `type_uri`.** The URI has one source, so a
+`ProblemType` written by hand on a struct naming a `type` or a `base` is the
+conflicting-implementation error coherence raises at the derive, and an
+inherent `type_uri` on a derived enum a duplicate definition. Code that did
+either before the derive took these names no longer compiles: delete the
+hand-written impl, whose URI the derive now states, or rename the method.
 
 A type URI named outside a derive — a
 `Scopes::FORBIDDEN_TYPE`, or an `AuthRejection::forbidden_as` — is
