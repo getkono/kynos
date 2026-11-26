@@ -801,8 +801,9 @@ run = [
 
 [tasks.ci]
 description = "Run every check CI runs on master and on pull requests"
-# `check` plus what only `ci.yml`'s `commits` and `msrv` jobs and `full.yml`
-# run, so one command answers what CI would. `check` comes last, keeping
+# `check` plus what only `ci.yml`'s `commits`, `commit-gates` and `msrv` jobs
+# and `full.yml` run, so one command answers what CI would; `commits:gates`
+# here checks what a push would publish. `check` comes last, keeping
 # `features:*` last.
 # `semver:check` is advisory here as on master and pull requests; only a
 # release branch blocks on it. `cost:features` and `profile:requests` measure
@@ -813,6 +814,7 @@ description = "Run every check CI runs on master and on pull requests"
 # `ci:full` pull request.
 run = [
   { task = "commits:check" },
+  { task = "commits:gates" },
   { task = "coverage:ci" },
   { task = "msrv:check" },
   "mise run semver:check --advisory",
