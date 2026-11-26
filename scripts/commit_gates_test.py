@@ -9,8 +9,8 @@ and in which tree, so a gate that silently checked the tip, the checkout or
 nothing fails here. `AfterAPushEvent` passes the range the way CI's job does,
 in a clone, over a forced push and a new ref. `ThePrePushHook` installs the
 hooks through `mise run hooks:install` and asks a real `git push` -- of the
-current branch, of another one, and of a delete -- whether the gate is armed
-over the refs pushed. `TheInstallCheck` asks `check-install` about a hook
+current branch, of another one, of an update merging in published master
+commits, and of a delete -- whether the gate is armed over the refs pushed. `TheInstallCheck` asks `check-install` about a hook
 missing, foreign, unexecutable and installed, through a linked worktree and
 `core.hooksPath`, and under CI.
 
@@ -352,6 +352,19 @@ class ThePrePushHook(RangeTestCase):
         self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
         self.assertEqual(self.remote_head("topic"), green)
         self.assertEqual(self.ran(), [(gate, green) for gate in GATE_NAMES])
+
+    def test_an_update_merging_in_published_master_commits_checks_only_its_own(self):
+        self.topic("green topic\n", "feat: green topic")
+        self.git("push", "-q", "--no-verify", "origin", "topic")
+        self.commit("crates/b.rs", "green master\n", "feat: green master")
+        self.git("push", "-q", "--no-verify", "origin", "master")
+        self.git("switch", "-q", "topic")
+        self.git("merge", "-q", "--no-edit", "--no-verify", "master")
+        own = self.commit(SOURCE, "green topic again\n", "feat: green topic again")
+        push = self.push("topic")
+        self.assertEqual(push.returncode, 0, push.stdout + push.stderr)
+        self.assertEqual(self.remote_head("topic"), own)
+        self.assertEqual(self.ran(), [(gate, own) for gate in GATE_NAMES])
 
     def test_a_delete_publishes_nothing_to_check(self):
         self.git("push", "-q", "--no-verify", "origin", "master:topic")
