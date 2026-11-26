@@ -215,5 +215,6 @@ async fn main() -> kynos::Result<()> {
         client_key.display(),
     );
 
-    bound.serve().await
+    bound.serve().await?;
+    Ok(())
 }

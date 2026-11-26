@@ -64,7 +64,8 @@ pub(in crate::server) type ShutdownFuture =
 ///     .graceful_shutdown(shutdown)
 ///     .serve()
 ///     .await?;
-/// operator.shutdown().await
+/// operator.shutdown().await?;
+/// # Ok(())
 /// # }
 /// ```
 #[derive(Clone)]

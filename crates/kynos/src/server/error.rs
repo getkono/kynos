@@ -1,6 +1,6 @@
 //! What can go wrong configuring or running a server.
 
-use std::{io, net::SocketAddr, time::Duration};
+use std::{io, net::SocketAddr};
 
 use crate::{
     extract::connection::TransportAddress,
@@ -11,6 +11,9 @@ use crate::{
 use crate::server::tls::error::TlsError;
 
 /// A server configuration or transport failure.
+///
+/// A requested shutdown is never one, however its drain ended: serving
+/// returns it as [`Stopped`](crate::server::lifecycle::Stopped) instead.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum ServerError {
@@ -64,15 +67,6 @@ pub enum ServerError {
     /// An operating-system shutdown signal could not be registered.
     #[error("could not register a shutdown signal")]
     Signal(#[source] io::Error),
-    /// Graceful shutdown exceeded its drain deadline.
-    #[error("graceful shutdown timed out after {timeout:?}")]
-    ShutdownTimeout {
-        /// The configured drain deadline.
-        timeout: Duration,
-    },
-    /// A repeated operating-system signal forced shutdown.
-    #[error("graceful shutdown was forced by a repeated termination signal")]
-    ShutdownForced,
     /// Mutual TLS conflicts with the existing description.
     #[cfg(feature = "tls")]
     #[error("the OpenAPI component `MutualTls` conflicts with mandatory client authentication")]
@@ -84,23 +78,6 @@ pub enum ServerError {
 }
 
 impl ServerError {
-    /// Whether serving ended because shutdown was requested and the drain was
-    /// then not allowed to complete: [`ShutdownTimeout`](Self::ShutdownTimeout)
-    /// or [`ShutdownForced`](Self::ShutdownForced).
-    ///
-    /// Neither says work was abandoned: a zero `shutdown_timeout` reports
-    /// `ShutdownTimeout` even when no request was in flight.
-    ///
-    /// Such an error is the end a process asked for, not a server failure, so a
-    /// caller that maps errors to a failing exit status should exempt it; a
-    /// supervisor restarting on failure would otherwise restart a service that
-    /// was told to stop. Every other variant means the server stopped on its
-    /// own or never started.
-    #[must_use]
-    pub const fn is_requested_shutdown(&self) -> bool {
-        matches!(self, Self::ShutdownTimeout { .. } | Self::ShutdownForced)
-    }
-
     /// The I/O failure this error carries, where it carries one: the
     /// [`Resolve`](Self::Resolve), [`Bind`](Self::Bind),
     /// [`Listener`](Self::Listener), [`Accept`](Self::Accept) and
@@ -120,11 +97,7 @@ impl ServerError {
             | Self::Signal(source) => Some(source),
             // Named rather than `_`, so a new variant has to say which side
             // it is on.
-            Self::NoListeners
-            | Self::InvalidConfiguration(_)
-            | Self::AcceptLoop { .. }
-            | Self::ShutdownTimeout { .. }
-            | Self::ShutdownForced => None,
+            Self::NoListeners | Self::InvalidConfiguration(_) | Self::AcceptLoop { .. } => None,
             #[cfg(feature = "tls")]
             Self::MutualTlsConflict | Self::Tls(_) => None,
         }

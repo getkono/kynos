@@ -17,7 +17,7 @@ use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
     Router,
-    server::{Server, shutdown::Shutdown},
+    server::{Server, lifecycle::Stopped, shutdown::Shutdown},
 };
 use tokio::{
     io::{AsyncReadExt as _, AsyncWriteExt as _},
@@ -52,7 +52,7 @@ async fn serve(
 ) -> (
     std::net::SocketAddr,
     oneshot::Sender<()>,
-    JoinHandle<kynos::error::Result<()>>,
+    JoinHandle<kynos::error::Result<Stopped>>,
 ) {
     let (shutdown, receiver) = oneshot::channel();
     let bound = server
