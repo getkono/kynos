@@ -88,7 +88,8 @@ impl Cookie {
     /// Give it a [`Cookie::path`]: without one a user agent scopes it to the
     /// directory of the request that set it (RFC 6265bis section 5.1.4), so a
     /// cookie set by `POST /auth/login` is not sent to `/api`, and a removal
-    /// sent from another directory or host misses it.
+    /// sent from another directory misses it. Without a [`Cookie::domain`] it
+    /// is host-only, so a removal sent from another host misses it too.
     #[must_use]
     pub fn new(name: impl Into<Cow<'static, str>>, value: impl Into<Cow<'static, str>>) -> Self {
         Self {
