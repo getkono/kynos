@@ -1055,6 +1055,76 @@ fn a_policy_prints_whom_it_believes() {
     }
 }
 
+/// Policies compare as configured: order and repeats of what they name do not
+/// matter, everything that changes whom they believe does, and every policy
+/// believing nobody is one policy.
+#[test]
+fn policies_are_equal_when_configured_alike() {
+    let (forwarded, x_forwarded) = (ProxyHeader::Forwarded, ProxyHeader::XForwarded);
+    let ten = net("10.0.0.0/8");
+    let doc = net("2001:db8::/32");
+    let equal: &[(TrustedProxies, TrustedProxies)] = &[
+        (TrustedProxies::none(), TrustedProxies::default()),
+        (TrustedProxies::none(), TrustedProxies::hops(forwarded, 0)),
+        (
+            TrustedProxies::hops(forwarded, 0),
+            TrustedProxies::networks(x_forwarded, []),
+        ),
+        (
+            TrustedProxies::none().and_networks([ten]),
+            TrustedProxies::none(),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [ten, doc]),
+            TrustedProxies::networks(forwarded, [doc, ten, doc]),
+        ),
+        (
+            TrustedProxies::addresses(forwarded, [ip("::ffff:10.0.0.1"), ip("::1")]),
+            TrustedProxies::addresses(forwarded, [ip("::1"), ip("10.0.0.1")]),
+        ),
+        (
+            TrustedProxies::hops(forwarded, 1).and_networks([ten]),
+            TrustedProxies::hops(forwarded, 1).and_networks([ten]),
+        ),
+    ];
+    for (a, b) in equal {
+        assert_eq!(a, b);
+        assert_eq!(b, a);
+    }
+
+    let unequal: &[(TrustedProxies, TrustedProxies)] = &[
+        (TrustedProxies::none(), TrustedProxies::hops(forwarded, 1)),
+        (
+            TrustedProxies::hops(forwarded, 1),
+            TrustedProxies::hops(x_forwarded, 1),
+        ),
+        (
+            TrustedProxies::hops(forwarded, 1),
+            TrustedProxies::hops(forwarded, 2),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [ten]),
+            TrustedProxies::networks(forwarded, [ten, doc]),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [ten]),
+            TrustedProxies::hops(forwarded, 1).and_networks([ten]),
+        ),
+        (
+            TrustedProxies::addresses(forwarded, [ip("10.0.0.1")]),
+            TrustedProxies::networks(forwarded, [Network::host(ip("10.0.0.1"))]),
+        ),
+        (
+            TrustedProxies::networks(forwarded, [net("10.0.0.0/9"), net("10.128.0.0/9")]),
+            TrustedProxies::networks(forwarded, [ten]),
+        ),
+    ];
+    for (a, b) in unequal {
+        assert_ne!(a, b);
+        assert_ne!(b, a);
+    }
+}
+
 /// Each field reads back from the name it prints, in every arrangement of
 /// letter case a configuration might write it in (RFC 9110 section 5.1).
 ///

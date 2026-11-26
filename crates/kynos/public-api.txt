@@ -3332,6 +3332,9 @@ pub fn kynos::http::forwarded::TrustedProxies::parse_networks<I>(kynos::http::fo
 pub fn kynos::http::forwarded::TrustedProxies::trusts_nobody(&self) -> bool
 impl core::clone::Clone for kynos::http::forwarded::TrustedProxies
 pub fn kynos::http::forwarded::TrustedProxies::clone(&self) -> kynos::http::forwarded::TrustedProxies
+impl core::cmp::Eq for kynos::http::forwarded::TrustedProxies
+impl core::cmp::PartialEq for kynos::http::forwarded::TrustedProxies
+pub fn kynos::http::forwarded::TrustedProxies::eq(&self, &Self) -> bool
 impl core::default::Default for kynos::http::forwarded::TrustedProxies
 pub fn kynos::http::forwarded::TrustedProxies::default() -> kynos::http::forwarded::TrustedProxies
 impl core::fmt::Debug for kynos::http::forwarded::TrustedProxies

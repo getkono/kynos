@@ -359,6 +359,47 @@ impl fmt::Display for TrustedProxies {
     }
 }
 
+/// Two policies are equal when they were configured alike: the same field,
+/// the same count of nearest hops, and the same exact addresses and networks,
+/// in any order and however often each was named. Every policy that believes
+/// nobody equals every other, whatever field it names or was widened by, as
+/// [`Display`](fmt::Display) prints each as `nobody`.
+///
+/// An address and the network holding only it are not compared as one, nor
+/// are networks that together cover another: equality is of the policy as
+/// written, not of every peer it would believe.
+///
+/// ```
+/// use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+///
+/// let configured = TrustedProxies::parse_networks(ProxyHeader::Forwarded, ["10.0.0.0/8", "::1"])?;
+/// let reordered = TrustedProxies::parse_networks(ProxyHeader::Forwarded, ["::1", "10.0.0.0/8"])?;
+/// assert_eq!(configured, reordered);
+/// assert_eq!(TrustedProxies::hops(ProxyHeader::Forwarded, 0), TrustedProxies::none());
+/// # Ok::<(), kynos::http::forwarded::InvalidNetworkEntry>(())
+/// ```
+impl PartialEq for TrustedProxies {
+    fn eq(&self, other: &Self) -> bool {
+        /// Whether `a` and `b` hold the same items, repeats aside.
+        fn same<T: PartialEq>(a: &[T], b: &[T]) -> bool {
+            a.iter().all(|item| b.contains(item)) && b.iter().all(|item| a.contains(item))
+        }
+
+        match (self.header(), other.header()) {
+            (None, None) => true,
+            (Some(header), Some(other_header)) => {
+                header == other_header
+                    && self.hops == other.hops
+                    && same(&self.addresses, &other.addresses)
+                    && same(&self.networks, &other.networks)
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Eq for TrustedProxies {}
+
 /// A block of addresses sharing their leading `prefix` bits, written
 /// `address/prefix` (RFC 4632 section 3.1, RFC 4291 section 2.3), or the
 /// address alone for its one host, `/32` or `/128`.
