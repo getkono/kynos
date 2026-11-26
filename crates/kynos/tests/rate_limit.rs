@@ -812,19 +812,16 @@ fn maybe_account_of(MaybeAuth(account): &MaybeAuth<Bearer>) -> String {
     account.clone().unwrap_or_default()
 }
 
+/// A key on the account `Auth` admitted joined with one on what guard `G`
+/// admitted.
+type AccountAnd<G> =
+    And<ByPrincipal<Auth<Bearer>, fn(&Auth<Bearer>) -> String>, ByPrincipal<G, fn(&G) -> String>>;
+
 /// A per-account limit joined with what `second` makes of the guard it
 /// reads: two guards' admissions in one key.
 fn per_account_and<G: Send + Sync + 'static>(
     second: fn(&G) -> String,
-) -> RateLimit<
-    Quotas<
-        And<
-            ByPrincipal<Auth<Bearer>, fn(&Auth<Bearer>) -> String>,
-            ByPrincipal<G, fn(&G) -> String>,
-        >,
-        Counters,
-    >,
-> {
+) -> RateLimit<Quotas<AccountAnd<G>, Counters>> {
     RateLimit::new(
         Quotas::new(
             And(
