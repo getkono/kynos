@@ -1,0 +1,65 @@
+error: `Scope` checks its names against serde's on one concrete enum, which a generic one is not; derive it on an enum without generic parameters
+  --> tests/ui/macros/scope_named_by_serde.rs:31:14
+   |
+31 | enum Generic<const N: usize> {
+   |              ^^^^^
+
+error[E0277]: serde names this enum's variants, so `#[scope(...)]` would name a scope by a name serde neither writes nor reads
+ --> tests/ui/macros/scope_named_by_serde.rs:7:9
+  |
+7 | #[scope(rename_all = "snake_case")]
+  |         ^^^^^^^^^^ a second name for a scope serde names
+  |
+  = help: the trait `kynos::__private::scope::NamedOnce` is not implemented for `kynos::__private::scope::NamedBySerde`
+  = note: `Scope` reads serde's names: write `#[serde(rename_all = "...")]` or `#[serde(rename = "...")]` in place of `#[scope(...)]`
+  = note: a hand-written `Serialize` or `Deserialize` is refused too, since the derive cannot read the names it writes: derive serde instead, or drop `#[derive(Scope)]` and implement `Scope` by hand
+help: the trait `kynos::__private::scope::NamedOnce` is implemented for `kynos::__private::scope::UnnamedBySerde`
+ --> src/__private/scope.rs
+  |
+  | impl NamedOnce for UnnamedBySerde {}
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `kynos::__private::scope::named_once`
+ --> src/__private/scope.rs
+  |
+  | pub fn named_once<P: NamedOnce>(probe: &P) {
+  |                      ^^^^^^^^^ required by this bound in `named_once`
+
+error[E0277]: serde names this enum's variants, so `#[scope(...)]` would name a scope by a name serde neither writes nor reads
+  --> tests/ui/macros/scope_named_by_serde.rs:14:13
+   |
+14 |     #[scope(rename = "reports:read")]
+   |             ^^^^^^ a second name for a scope serde names
+   |
+   = help: the trait `kynos::__private::scope::NamedOnce` is not implemented for `kynos::__private::scope::NamedBySerde`
+   = note: `Scope` reads serde's names: write `#[serde(rename_all = "...")]` or `#[serde(rename = "...")]` in place of `#[scope(...)]`
+   = note: a hand-written `Serialize` or `Deserialize` is refused too, since the derive cannot read the names it writes: derive serde instead, or drop `#[derive(Scope)]` and implement `Scope` by hand
+help: the trait `kynos::__private::scope::NamedOnce` is implemented for `kynos::__private::scope::UnnamedBySerde`
+  --> src/__private/scope.rs
+   |
+   | impl NamedOnce for UnnamedBySerde {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `kynos::__private::scope::named_once`
+  --> src/__private/scope.rs
+   |
+   | pub fn named_once<P: NamedOnce>(probe: &P) {
+   |                      ^^^^^^^^^ required by this bound in `named_once`
+
+error[E0277]: serde names this enum's variants, so `#[scope(...)]` would name a scope by a name serde neither writes nor reads
+  --> tests/ui/macros/scope_named_by_serde.rs:19:9
+   |
+19 | #[scope(rename_all = "snake_case")]
+   |         ^^^^^^^^^^ a second name for a scope serde names
+   |
+   = help: the trait `kynos::__private::scope::NamedOnce` is not implemented for `kynos::__private::scope::NamedBySerde`
+   = note: `Scope` reads serde's names: write `#[serde(rename_all = "...")]` or `#[serde(rename = "...")]` in place of `#[scope(...)]`
+   = note: a hand-written `Serialize` or `Deserialize` is refused too, since the derive cannot read the names it writes: derive serde instead, or drop `#[derive(Scope)]` and implement `Scope` by hand
+help: the trait `kynos::__private::scope::NamedOnce` is implemented for `kynos::__private::scope::UnnamedBySerde`
+  --> src/__private/scope.rs
+   |
+   | impl NamedOnce for UnnamedBySerde {}
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `kynos::__private::scope::named_once`
+  --> src/__private/scope.rs
+   |
+   | pub fn named_once<P: NamedOnce>(probe: &P) {
+   |                      ^^^^^^^^^ required by this bound in `named_once`

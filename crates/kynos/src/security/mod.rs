@@ -450,6 +450,10 @@ pub trait SecurityScheme: Send + Sync + 'static {
 /// recognises; [`name`](Scope::name) is the one place it becomes a string,
 /// for the description and for comparing against what a token carries.
 ///
+/// `#[derive(kynos::Scope)]` writes `name` from the name serde writes each
+/// variant under, so the scopes a configuration parses are the ones a token
+/// carries. Written by hand:
+///
 /// ```
 /// use kynos::security::Scope;
 ///

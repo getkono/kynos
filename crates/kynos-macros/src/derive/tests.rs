@@ -9272,6 +9272,297 @@ mod tag {
     }
 }
 
+mod scope {
+    use super::{Case, TokenStream2, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::scope::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a struct, which has no variants to name",
+                quote::quote!(
+                    struct Grant;
+                ),
+                "derive it on a field-less enum",
+            ),
+            case(
+                "a variant carrying data",
+                quote::quote!(
+                    enum Grant {
+                        Read(u8),
+                    }
+                ),
+                "make every variant a unit",
+            ),
+            case(
+                "a generic enum, on which the serde probe cannot resolve",
+                quote::quote!(
+                    enum Grant<const N: usize> {
+                        Admin,
+                    }
+                ),
+                "derive it on an enum without generic parameters",
+            ),
+            case(
+                "a `rename_all` style serde does not take",
+                quote::quote!(
+                    #[scope(rename_all = "snake-case")]
+                    enum Grant {
+                        ReadReports,
+                    }
+                ),
+                "`rename_all` takes a style serde's does",
+            ),
+            case(
+                "a `rename_all` beside serde's, a second source of every name",
+                quote::quote!(
+                    #[serde(rename_all = "kebab-case")]
+                    #[scope(rename_all = "snake_case")]
+                    enum Grant {
+                        ReadReports,
+                    }
+                ),
+                "already names its scopes",
+            ),
+            case(
+                "a `rename` beside serde's, a second name for one scope",
+                quote::quote!(
+                    enum Grant {
+                        #[serde(rename = "read")]
+                        #[scope(rename = "reports:read")]
+                        ReadReports,
+                    }
+                ),
+                "already names its scope",
+            ),
+            case(
+                "a `rename` under serde's `rename_all`, a name serde does not read",
+                quote::quote!(
+                    #[serde(rename_all = "kebab-case")]
+                    enum Grant {
+                        #[scope(rename = "reports:read")]
+                        ReadReports,
+                    }
+                ),
+                "write `#[serde(rename)]` instead",
+            ),
+            case(
+                "a name holding a space, which splits it in a token's scope list",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "reports read")]
+                        ReadReports,
+                    }
+                ),
+                "is an RFC 6749 `scope-token`",
+            ),
+            case(
+                "two variants naming one scope",
+                quote::quote!(
+                    #[scope(rename_all = "lowercase")]
+                    enum Grant {
+                        Admin,
+                        #[scope(rename = "admin")]
+                        Root,
+                    }
+                ),
+                "two variants name the scope `admin`",
+            ),
+        ]
+    }
+
+    /// The rows refusing a key outside the grammar, on the enum and on a
+    /// variant, and a key written twice, which `attribute::unknown` and
+    /// `attribute::Keys::read` raise, so `scope.rs` holds none of their sites.
+    fn keys_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a variant's key on the enum",
+                quote::quote!(
+                    #[scope(rename = "grant")]
+                    enum Grant {
+                        Admin,
+                    }
+                ),
+                "is not part of the `#[scope(...)]` grammar on an enum",
+            ),
+            case(
+                "the enum's key on a variant",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename_all = "lowercase")]
+                        Admin,
+                    }
+                ),
+                "is not part of the `#[scope(...)]` grammar on a variant",
+            ),
+            case(
+                "`rename` written twice, the second replacing the first",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "admin")]
+                        #[scope(rename = "root")]
+                        Admin,
+                    }
+                ),
+                "`rename` is already set",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(keys_ledger(), expand_inner);
+    }
+
+    /// An empty name is refused at the site a non-`NQCHAR` is, naming what
+    /// it is rather than a character it holds.
+    #[test]
+    fn an_empty_name_is_no_scope_token() {
+        each_case_is_refused(
+            vec![case(
+                "an empty name",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "")]
+                        Admin,
+                    }
+                ),
+                "this scope is empty",
+            )],
+            expand_inner,
+        );
+    }
+
+    /// How many `#[scope(...)]` keys `expand_inner` probes serde at.
+    fn probes(input: TokenStream2) -> usize {
+        let input = syn::parse2(input).expect("the case itself must parse");
+        expand_inner(&input)
+            .expect("a key on an enum serde names is the type checker's to refuse")
+            .to_string()
+            .matches("named_once")
+            .count()
+    }
+
+    /// Each `#[scope(...)]` key is probed, for the type checker to refuse
+    /// where serde names the enum, which no derive input shows; an enum
+    /// carrying none is not.
+    #[test]
+    fn each_scope_key_is_probed() {
+        for (description, input, expected) in [
+            (
+                "no key, the name serde's",
+                quote::quote!(
+                    enum Grant {
+                        Admin,
+                    }
+                ),
+                0,
+            ),
+            (
+                "`rename_all` on the enum and `rename` on a variant",
+                quote::quote!(
+                    #[scope(rename_all = "lowercase")]
+                    enum Grant {
+                        Admin,
+                        #[scope(rename = "root")]
+                        Root,
+                    }
+                ),
+                2,
+            ),
+        ] {
+            assert_eq!(probes(input), expected, "{description}");
+        }
+    }
+
+    #[test]
+    fn every_scope_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("scope.rs", include_str!("scope.rs"), ledger().len());
+    }
+}
+
+mod scopes {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::scopes::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a bare scope, whose type the set cannot read",
+                quote::quote!(
+                    #[scopes(Audit)]
+                    struct Bare;
+                ),
+                "name each scope by its type, as `ScopeType::Audit`",
+            ),
+            case(
+                "a scope listed twice, demanded once",
+                quote::quote!(
+                    #[scopes(Grant::Admin, Grant::Admin)]
+                    struct Twice;
+                ),
+                "`Grant::Admin` is already required by this set",
+            ),
+            case(
+                "a set requiring nothing, which is a plain `Auth<S>`",
+                quote::quote!(
+                    #[scopes(forbidden = INSUFFICIENT_SCOPE)]
+                    struct Nothing;
+                ),
+                "a scope set requires at least one scope",
+            ),
+            case(
+                "`forbidden` written twice, the second replacing the first",
+                quote::quote!(
+                    #[scopes(Grant::Admin, forbidden = INSUFFICIENT_SCOPE)]
+                    #[scopes(forbidden = NOT_AN_ADMIN)]
+                    struct TwoTypes;
+                ),
+                "`forbidden` is already set",
+            ),
+        ]
+    }
+
+    /// The rows refusing a key outside the grammar, which
+    /// `attribute::unknown` raises, and a field-bearing struct, which
+    /// `common::unit_struct` does.
+    fn shared_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a misspelt `forbidden`, which would otherwise read as no key",
+                quote::quote!(
+                    #[scopes(Grant::Admin, fobidden = INSUFFICIENT_SCOPE)]
+                    struct Misspelt;
+                ),
+                "`fobidden` is not part of the `#[scopes(...)]` grammar",
+            ),
+            case(
+                "a struct with fields, which a set has no use for",
+                quote::quote!(
+                    #[scopes(Grant::Admin)]
+                    struct Admin {
+                        grant: Grant,
+                    }
+                ),
+                "`Scopes` marks a type that names a set of scopes, so it carries no fields",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(shared_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_scopes_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("scopes.rs", include_str!("scopes.rs"), ledger().len());
+    }
+}
+
 mod param_value {
     use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
     use crate::derive::param_value::expand_inner;

@@ -64,6 +64,8 @@ by the release that shipped each, for code written before it.
 | A test comparing a committed `openapi.json` with the router's document, and regenerating it behind an environment variable | `test::document::assert_file_matches`, over `openapi::Document::to_canonical_json` |
 | A declared response no test can produce, such as a panic's 500, deleted from the document before asserting coverage | `test::Exemptions`, given to `test::Coverage::assert_declared_responses_covered_except` or `assert_covered_except` |
 | A 403 deleted from the document before asserting coverage | `#[security(forbids = false)]` on a scheme whose credential grants nothing beyond itself |
+| A scope enum's `security::Scope::name` matching on each variant to restate its serde name | `#[derive(kynos::Scope)]` |
+| A unit struct and an `impl security::auth::Scopes` per scope set | `#[derive(kynos::Scopes)]` with `#[scopes(Grant::Read, forbidden = URI)]`, the URI a `const` from `problem_type!` that the authorizer's `error::rejection::AuthRejection::forbidden_as` names too |
 | A credential carrying a store failure into every handler | `#[security(unavailable)]` on the scheme, and `error::rejection::AuthRejection::unavailable` from its authenticator, for a 503; for the application's own 500, `type Error` on the `security::Authenticator`, and `?` inside `authenticate` |
 | A `code` field and a constructor on every failure | `#[problem(extension(code = CONST))]` |
 | A `type` literal restating a `const` base, so two failures share one type URI | `#[problem(slug = "...")]` under that `base` |

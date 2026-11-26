@@ -159,6 +159,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("MapKey", "traits/map_key.stderr"),
         ("Message", "traits/protobuf_message.stderr"),
         ("NamedInstantiation", "traits/named_instantiation.stderr"),
+        ("NamedOnce", "macros/scope_named_by_serde.stderr"),
         (
             "NumberBound",
             "macros/schema_constraint_const_of_the_wrong_type.stderr",

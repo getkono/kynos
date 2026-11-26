@@ -362,6 +362,21 @@ against another type does not compile. `Authorizer::authorize` receives
 `&[S::Scope]`: a scope it does not handle is a non-exhaustive `match`, not a
 string a `filter_map` silently drops.
 
+`#[derive(Scope)]` writes `name` from the name serde writes each variant
+under, by the rule the `Schema` and `ParamValue` derives read, so the scope a
+configuration parses and the one a token carries cannot drift apart. An enum
+serde does not name says it with `#[scope(rename_all)]` and `#[scope(rename)]`
+instead, and only such an enum: either key on an enum implementing `Serialize`
+or `DeserializeOwned` is a compile error, as a `#[scope(rename)]` under
+`#[serde(rename_all)]` is, since each would be a second name for one scope.
+The check probes the traits, so it refuses a hand-written serde
+implementation too, whose names the derive cannot read either; such an enum
+implements `Scope` by hand. A generic enum is refused, the probe resolving only
+on a concrete type. Without either key the name is the variant's identifier, as
+serde's is, rather than a casing serde would not read. A name a token's
+space-separated `scope` list cannot carry (RFC 6749 section 3.3) and two
+variants naming one scope are compile errors.
+
 | Where | Scope type |
 | --- | --- |
 | `#[derive(SecurityScheme)]` | `scope = Type`; `Unscoped` when omitted |
@@ -492,12 +507,20 @@ the *scope set* an operation demands is a type, and that is the seam.
 `Scopes::FORBIDDEN_TYPE` is a defaulted associated const beside `REQUIRED`:
 
 ```rust
-impl Scopes for ReadReports {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
-    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
-}
+const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+
+#[derive(kynos::Scopes)]
+#[scopes(Grant::ReadReports, forbidden = INSUFFICIENT_SCOPE)]
+struct ReadReports;
 ```
+
+The derive writes `type Scope = Grant` from the path each scope is named
+under, so a scope is never written bare, and refuses a set requiring nothing,
+which is a plain `Auth<S>`. `forbidden` is a `&'static str`, the `const` an
+authorizer also passes to `forbidden_as`, rather than a `ProblemType` marker:
+the scope set is already the type the URI hangs on
+([`errors.md`](errors.md) says why a marker would be a second one), and
+`problem_type!` joins it from the crate's base in a `const`.
 
 A `Scoped<S, R>` argument whose `R` names one declares a 403 publishing **that
 URI or `about:blank`** — a `oneOf` of the two, each branch a `const`.

@@ -1582,6 +1582,81 @@ pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
     derive::run(item, derive::security_scheme::expand_inner)
 }
 
+/// Names each variant of a field-less enum as one
+/// `kynos::security::Scope`.
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Serialize, Deserialize, Scope)]
+/// #[serde(rename_all = "snake_case")]
+/// enum Grant {
+///     ReadReports, // "read_reports"
+///     #[serde(rename = "admin:all")]
+///     Admin,
+/// }
+/// ```
+///
+/// A scope's name is the one serde writes the variant under, read as the
+/// `Schema` and `ParamValue` derives read it, so the scopes a configuration
+/// parses are the ones a description and a token carry. Without a serde
+/// attribute that is the variant's identifier, `r#` stripped, as serde's is.
+/// An enum serde does not name says the same with its own attribute:
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Scope)]
+/// #[scope(rename_all = "snake_case")]
+/// enum Grant {
+///     ReadReports, // "read_reports"
+///     #[scope(rename = "admin:all")]
+///     Admin,
+/// }
+/// ```
+///
+/// `rename_all` takes the styles serde's does. Either key is refused on an
+/// enum implementing `Serialize` or `DeserializeOwned`, derived or written by
+/// hand, as `rename` is under `#[serde(rename_all)]`, since a second name for a
+/// scope would be one serde does not read; an enum with a hand-written serde
+/// implements `Scope` by hand. Refused too: a struct or a union, a generic
+/// enum, on which that check cannot resolve, a variant with fields, a name
+/// that is not an RFC 6749 section 3.3 `scope-token` (empty, or holding a
+/// space, `"` or `\`, which a token's space-separated `scope` list cannot
+/// carry), and two variants naming one scope. `Clone`, `Send` and `Sync` are
+/// the enum's to derive, as the trait requires them.
+#[proc_macro_derive(Scope, attributes(scope))]
+pub fn derive_scope(item: TokenStream) -> TokenStream {
+    derive::run(item, derive::scope::expand_inner)
+}
+
+/// Declares a unit struct as a `kynos::security::auth::Scopes` set.
+///
+/// ```ignore
+/// kynos::problem_base!("https://errors.example.com/");
+///
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+///
+/// #[derive(Scopes)]
+/// #[scopes(Grant::ReadReports, Grant::Audit)]
+/// struct Auditor;
+///
+/// #[derive(Scopes)]
+/// #[scopes(Grant::Admin, forbidden = INSUFFICIENT_SCOPE)]
+/// struct Admin;
+/// ```
+///
+/// Each scope is written as `Type::Variant`, or `Type::CONST`, and the set's
+/// `Scope` type is the path before the last segment, so every scope a set
+/// lists is of one type and a set over another than its scheme's does not
+/// compile. A bare name is refused, as is a set listing no scope (an
+/// operation demanding none takes `Auth<S>`) and a scope listed twice.
+///
+/// `forbidden` is the set's `FORBIDDEN_TYPE`: any `&'static str` expression,
+/// typically the `const` an authorizer also passes to
+/// `AuthRejection::forbidden_as`, so the 403 the set declares and the one the
+/// authorizer sends are named by one item. Without it the set names none.
+#[proc_macro_derive(Scopes, attributes(scopes))]
+pub fn derive_scopes(item: TokenStream) -> TokenStream {
+    derive::run(item, derive::scopes::expand_inner)
+}
+
 /// Declares an application context, emitting one `Provides` implementation per
 /// field.
 ///

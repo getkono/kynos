@@ -146,9 +146,9 @@ pub use crate::{
 
 #[cfg(feature = "macros")]
 pub use kynos_macros::{
-    ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
-    SecurityScheme, Tag, delete, get, head, name_instantiation, operation, options, patch, path,
-    post, public, put, routes, trace,
+    ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema, Scope,
+    Scopes, SecurityScheme, Tag, delete, get, head, name_instantiation, operation, options, patch,
+    path, post, public, put, routes, trace,
 };
 
 // Gated with the trait each derives, so a missing feature reports a missing
@@ -333,8 +333,8 @@ pub mod prelude {
     #[cfg(feature = "macros")]
     pub use crate::{
         ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
-        SecurityScheme, Tag, delete, get, head, operation, options, patch, path, post, put, routes,
-        trace,
+        Scope, Scopes, SecurityScheme, Tag, delete, get, head, operation, options, patch, path,
+        post, put, routes, trace,
     };
 
     #[cfg(feature = "cookie")]

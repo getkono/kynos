@@ -88,7 +88,7 @@ use kynos::{
     prelude::*,
     security::{
         Authenticates, Authenticator, Authorizer, Head, Scope,
-        auth::{Auth, MaybeAuth, Scoped, Scopes},
+        auth::{Auth, MaybeAuth, Scoped},
         carrier::{ApiKey, BearerToken, Carries, Credentials, presented::Presented},
         requirement::{AllOf, AnyOf, Either2},
     },
@@ -572,20 +572,16 @@ async fn peer_sync(auth: Auth<PeerToken>) -> NoContent {
 /// operation guarded by that scheme demands, these are what this endpoint
 /// insists on besides. A `Scoped` guard on a scheme with default scopes
 /// demands both.
+///
+/// `forbidden` is the same URI `Tokens::authorize` refuses with, said once
+/// more where a description can read it. `/reports` therefore declares a 403
+/// publishing this type *or* `about:blank` -- both, because a plain
+/// `AuthRejection::forbidden()` is still something an authorizer may return,
+/// and a document naming only this URI would promise less than the operation
+/// sends.
+#[derive(kynos::Scopes)]
+#[scopes(Grant::ReadReports, forbidden = INSUFFICIENT_SCOPE)]
 struct ReadReports;
-
-impl Scopes for ReadReports {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
-
-    // The same URI `Tokens::authorize` refuses with, said once more where a
-    // description can read it. `/reports` therefore declares a 403 publishing
-    // this type *or* `about:blank` -- both, because a plain
-    // `AuthRejection::forbidden()` is still something an authorizer may return,
-    // and a document naming only this URI would promise less than the operation
-    // sends.
-    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
-}
 
 /// Only a caller holding `reports:read` may see this.
 ///

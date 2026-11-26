@@ -24,6 +24,8 @@ pub(crate) mod provider;
 pub(crate) mod query_params;
 pub(crate) mod reply;
 pub(crate) mod schema;
+pub(crate) mod scope;
+pub(crate) mod scopes;
 pub(crate) mod security_scheme;
 pub(crate) mod tag;
 

@@ -1,0 +1,38 @@
+error: name each scope by its type, as `ScopeType::Audit`: the set's scope type is read from that path
+  --> tests/ui/macros/scopes_refusals.rs:12:10
+   |
+12 | #[scopes(Audit)]
+   |          ^^^^^
+
+error: `Grant::Admin` is already required by this set
+  --> tests/ui/macros/scopes_refusals.rs:16:24
+   |
+16 | #[scopes(Grant::Admin, Grant::Admin)]
+   |                        ^^^^^
+
+error: a scope set requires at least one scope, listed as `#[scopes(ScopeType::Variant)]`; an operation demanding none takes `Auth<S>`
+  --> tests/ui/macros/scopes_refusals.rs:21:8
+   |
+21 | struct Nothing;
+   |        ^^^^^^^
+
+error: `forbidden` is already set, and a scope set's 403 names one type
+  --> tests/ui/macros/scopes_refusals.rs:25:10
+   |
+25 | #[scopes(forbidden = "https://errors.example.com/not-an-admin")]
+   |          ^^^^^^^^^
+
+error: `fobidden` is not part of the `#[scopes(...)]` grammar, which takes the scopes required, each as `Type::Variant`, and `forbidden = ...`
+  --> tests/ui/macros/scopes_refusals.rs:29:24
+   |
+29 | #[scopes(Grant::Admin, fobidden = "https://errors.example.com/insufficient-scope")]
+   |                        ^^^^^^^^
+
+error: `Scopes` marks a type that names a set of scopes, so it carries no fields
+  --> tests/ui/macros/scopes_refusals.rs:34:19
+   |
+34 |   struct WithFields {
+   |  ___________________^
+35 | |     grant: Grant,
+36 | | }
+   | |_^
