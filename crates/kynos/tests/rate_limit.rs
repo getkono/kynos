@@ -808,6 +808,93 @@ fn an_endpoints_own_principal_keyed_limit_needs_a_scope_running_the_guard_first(
     );
 }
 
+fn maybe_account_of(MaybeAuth(account): &MaybeAuth<Bearer>) -> String {
+    account.clone().unwrap_or_default()
+}
+
+/// A per-account limit joined with what `second` makes of the guard it
+/// reads: two guards' admissions in one key.
+fn per_account_and<G: Send + Sync + 'static>(
+    second: fn(&G) -> String,
+) -> RateLimit<
+    Quotas<
+        And<
+            ByPrincipal<Auth<Bearer>, fn(&Auth<Bearer>) -> String>,
+            ByPrincipal<G, fn(&G) -> String>,
+        >,
+        Counters,
+    >,
+> {
+    RateLimit::new(
+        Quotas::new(
+            And(
+                ByPrincipal::new(account_of as fn(&Auth<Bearer>) -> String),
+                ByPrincipal::new(second),
+            ),
+            Counters::default(),
+        )
+        .quota(Quota::new("publish", 1, Duration::from_secs(600))),
+    )
+}
+
+/// The second half of an `And` is checked too: keyed on a guard the
+/// operation does not take, the limiter is refused naming that guard, though
+/// the first half's guard runs ahead of it.
+#[test]
+fn the_second_half_of_a_principal_keyed_and_is_checked() {
+    let both = Router::<Accounts>::new()
+        .guard_first()
+        .intercept(per_account_and(
+            maybe_account_of as fn(&MaybeAuth<Bearer>) -> String,
+        ))
+        .mount(kynos::routes![publish]);
+
+    let refused = unseen_guards(&both);
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].contains("the guard `kynos::security::auth::MaybeAuth<"),
+        "{:?}",
+        refused[0]
+    );
+}
+
+/// So is the second half of an `And` an endpoint holds itself, while one
+/// whose halves both read the guard its operation takes builds.
+#[test]
+fn the_second_half_of_an_endpoints_own_principal_keyed_and_is_checked() {
+    async fn publish_bundle(caller: Auth<Bearer>) -> NoContent {
+        let _ = caller;
+        NoContent
+    }
+    let endpoint = || {
+        EndpointBuilder::new(
+            kynos::openapi::Method::Post,
+            kynos::openapi::PathTemplate::parse("/bundles").expect("a usable path template"),
+            publish_bundle,
+        )
+    };
+    let group = || Group::new("/v1").guard_first();
+
+    let refused = unseen_guards(&Router::<Accounts>::new().group(group().mount(
+        endpoint().intercept(per_account_and(
+            maybe_account_of as fn(&MaybeAuth<Bearer>) -> String,
+        )),
+    )));
+    assert_eq!(refused.len(), 1, "{refused:?}");
+    assert!(
+        refused[0].contains("the guard `kynos::security::auth::MaybeAuth<"),
+        "{:?}",
+        refused[0]
+    );
+
+    assert_eq!(
+        unseen_guards(&Router::<Accounts>::new().group(group().mount(
+            endpoint().intercept(per_account_and(account_of as fn(&Auth<Bearer>) -> String)),
+        ))),
+        Vec::<String>::new()
+    );
+}
+
 /// The controls: the guard run first in the group covering the operation
 /// builds, and so does a limiter naming where an unadmitted request goes,
 /// whatever covers it.
