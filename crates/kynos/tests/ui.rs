@@ -167,6 +167,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("OpenMap", "traits/open_map.stderr"),
         ("ParamValue", "macros/query_params_object_field.stderr"),
         ("PathInput", "traits/path_input.stderr"),
+        ("ProblemType", "traits/problem_type.stderr"),
         ("Provides", "antipattern/inject_without_provider.stderr"),
         ("Rangeable", "traits/rangeable.stderr"),
         ("RequestContent", "traits/request_content.stderr"),

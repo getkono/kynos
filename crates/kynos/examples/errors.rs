@@ -49,6 +49,7 @@
 use std::{net::Ipv4Addr, time::Duration};
 
 use kynos::{
+    error::problem::ProblemType,
     http,
     middleware::{Continued, Interceptor, Next},
     prelude::*,
@@ -408,6 +409,15 @@ async fn main() -> kynos::Result<()> {
     // recovery boundary on `list_users`.
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
+
+    // The derive publishes each type URI it computed, so a test names the
+    // error rather than retyping its URI: `Draining` is the `ProblemType` of
+    // its own, and an enum answers per value.
+    eprintln!(
+        "503 while draining: {:?}; 409 on a taken email: {:?}",
+        Draining::TYPE_URI,
+        StoreError::EmailTaken.type_uri(),
+    );
 
     Server::new(router.build(())?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))

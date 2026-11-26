@@ -292,6 +292,32 @@ router-level default was rejected for the same reason, and because it would make
 the type URI a run-time value. `base = default` in a crate declaring none is a
 compile error at `default`.
 
+**A derived error's type URI is named, not retyped.** A struct deriving
+`ApiError` that names a `type` or a `base` implements `ProblemType` with the
+URI the derive computed, so a test asserts `QuotaExceeded::TYPE_URI` and a
+renamed error fails to compile rather than to match, and
+`BodySize::problem_type::<PayloadTooLarge>()` refuses under the application's
+own type. A struct naming neither sends `about:blank`, which identifies
+nothing beyond the status (RFC 9457 section 4.2.1), so it implements none,
+and naming it as one is a compile error saying so. Either `Option` would
+mislead there: `None` leaves an interceptor's refusal to the problem policy,
+which renames it while never renaming the error itself, and
+`Some("about:blank")` declares a refusal the policy then renames on the wire.
+
+An enum's variants are not types, so a derived enum has
+`const fn type_uri(&self) -> Option<&'static str>`: the variant's URI,
+`about:blank` for one naming none, and `None` for a variant handing over the
+error it holds, whose URI can be chosen at run time, as an
+`AuthRejection::forbidden_as` is; a `subset_of` enum and a `variant_of`
+variant answer with the wider variant's.
+
+**The derive owns `ProblemType` and `type_uri`.** The URI has one source, so a
+`ProblemType` written by hand on a struct naming a `type` or a `base` is the
+conflicting-implementation error coherence raises at the derive, and an
+inherent `type_uri` on a derived enum a duplicate definition. Code that did
+either before the derive took these names no longer compiles: delete the
+hand-written impl, whose URI the derive now states, or rename the method.
+
 A type URI named outside a derive — a
 `Scopes::FORBIDDEN_TYPE`, or an `AuthRejection::forbidden_as` — is
 `kynos::problem_type!("insufficient-scope")`: the same base joined with that

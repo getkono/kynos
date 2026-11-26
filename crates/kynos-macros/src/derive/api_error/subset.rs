@@ -4,11 +4,12 @@
 //! A derive sees one item, so the subset cannot read the wider enum's
 //! declarations. Every derived enum therefore publishes them as hidden
 //! inherent items — its [`handles`] — which a subset names through the type it
-//! was given: one `const` per variant holding the statuses it answers with,
-//! and a function describing only the variants a caller keeps. The subset
-//! generates `From<Self> for Wide` by moving each variant's fields into the
-//! wider variant of the same name, so a variant or a field the wider enum
-//! lacks, or one it has and the subset lacks, is a compile error there; then
+//! was given: one `const` per variant holding the statuses and the type URI
+//! it answers with, and a function describing only the variants a caller
+//! keeps. The subset generates `From<Self> for Wide` by moving each variant's
+//! fields into the wider variant of the same name, so a variant or a field
+//! the wider enum lacks, or one it has and the subset lacks, is a compile
+//! error there; then
 //! it answers by converting, and declares the union of its variants'
 //! statuses. A subset publishes handles too, so a subset of a subset holds.
 
@@ -18,38 +19,39 @@ use syn::{
     Data, DeriveInput, Fields, Ident, PathArguments, Token, Type, TypePath, spanned::Spanned,
 };
 
-use super::{args::ProblemArgs, emit::union, impls, outcomes::generic_named_in};
+use super::{args::ProblemArgs, emit::union, impls, outcomes::generic_named_in, type_uri::method};
 use crate::derive::attribute::compact;
 
 /// The function a derived enum describes the variants a caller keeps with.
 pub(super) const RESPONSES: &str = "__kynos_problem_responses";
 
-/// The `const` holding the statuses `variant` answers with, spanned to the
-/// variant, so a subset naming one the wider enum lacks is told so there.
-pub(super) fn statuses_of(variant: &Ident) -> Ident {
-    format_ident!(
-        "__KYNOS_PROBLEM_STATUSES_{}",
-        variant,
-        span = variant.span()
-    )
+/// The `const` holding what `variant` answers with, its statuses then its
+/// type URI, spanned to the variant, so a subset naming one the wider enum
+/// lacks is told so there, once.
+pub(super) fn handle_of(variant: &Ident) -> Ident {
+    format_ident!("__KYNOS_PROBLEM_VARIANT_{}", variant, span = variant.span())
 }
 
-/// The hidden inherent items a subset reads: each variant's statuses, and the
-/// responses function over `body`, which reads `registry` and `keep`.
+/// The hidden inherent items a subset reads: each variant's statuses and type
+/// URI, and the responses function over `body`, which reads `registry` and
+/// `keep`; beside them, the enum's public `type_uri`, over the same URIs.
 pub(super) fn handles(
     input: &DeriveInput,
-    variants: impl Iterator<Item = (Ident, TokenStream2)>,
+    variants: impl Iterator<Item = (Ident, TokenStream2, TokenStream2)>,
     body: &TokenStream2,
 ) -> TokenStream2 {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-    let consts = variants.map(|(variant, statuses)| {
-        let item = statuses_of(&variant);
+    let variants: Vec<(Ident, TokenStream2, TokenStream2)> = variants.collect();
+    let consts = variants.iter().map(|(variant, statuses, uri)| {
+        let item = handle_of(variant);
         quote! {
             #[doc(hidden)]
-            pub const #item: &'static [u16] = #statuses;
+            pub const #item: (&'static [u16], ::core::option::Option<&'static str>) =
+                (#statuses, #uri);
         }
     });
+    let type_uri = method(variants.iter().map(|(variant, _, _)| variant));
     let responses = Ident::new(RESPONSES, Span::call_site());
 
     quote! {
@@ -57,6 +59,8 @@ pub(super) fn handles(
         #[allow(dead_code, non_upper_case_globals, unreachable_pub)]
         impl #impl_generics #name #ty_generics #where_clause {
             #(#consts)*
+
+            #type_uri
 
             #[doc(hidden)]
             pub fn #responses(
@@ -129,7 +133,7 @@ pub(super) fn expand(
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let idents: Vec<&Ident> = data.variants.iter().map(|variant| &variant.ident).collect();
-    let consts: Vec<Ident> = idents.iter().map(|variant| statuses_of(variant)).collect();
+    let consts: Vec<Ident> = idents.iter().map(|variant| handle_of(variant)).collect();
     let responses = Ident::new(RESPONSES, Span::call_site());
 
     let conversions = wides.iter().map(|wide| {
@@ -158,14 +162,17 @@ pub(super) fn expand(
     };
     let handles = handles(
         input,
-        idents
-            .iter()
-            .zip(&consts)
-            .map(|(variant, item)| ((*variant).clone(), quote!(<#wide>::#item))),
+        idents.iter().zip(&consts).map(|(variant, item)| {
+            (
+                (*variant).clone(),
+                quote!(<#wide>::#item.0),
+                quote!(<#wide>::#item.1),
+            )
+        }),
         &body,
     );
 
-    let codes = union(consts.iter().map(|item| quote!(<#wide>::#item)));
+    let codes = union(consts.iter().map(|item| quote!(<#wide>::#item.0)));
     let convert = quote!(<#wide as ::core::convert::From<Self>>::from(self));
     let impls = impls(
         input,
@@ -234,7 +241,7 @@ fn agreements(input: &DeriveInput, wides: &[Type], variants: &[&Ident]) -> Token
     let name = &input.ident;
     let checks = others.iter().flat_map(|other| {
         variants.iter().map(move |variant| {
-            let item = statuses_of(variant);
+            let item = handle_of(variant);
             let message = format!(
                 "`{name}::{variant}` answers with other statuses as `{}` than as `{}`, which it \
                  answers as; a subset of several enums is one failure in each",
@@ -243,7 +250,7 @@ fn agreements(input: &DeriveInput, wides: &[Type], variants: &[&Ident]) -> Token
             );
             quote_spanned! {other.span()=>
                 ::core::assert!(
-                    __kynos_problem_agree(<#first>::#item, <#other>::#item),
+                    __kynos_problem_agree(<#first>::#item.0, <#other>::#item.0),
                     #message
                 );
             }

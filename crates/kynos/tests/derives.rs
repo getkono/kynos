@@ -20,7 +20,8 @@
 //! that is no field value is refused with; the text a derived `ParamValue`
 //! reads and writes; the octets a derived `ProtobufMessage` reads and writes,
 //! and the syntax error it makes of a body `prost` refuses; the response a
-//! derived `Reply` or `ApiError` writes; and a derived carrier's reading of
+//! derived `Reply` or `ApiError` writes, and the type URI an `ApiError`
+//! publishes beside it; and a derived carrier's reading of
 //! its `reads` group beside the credential.
 //! Their tests call the derived code directly, with no server. What *is*
 //! checked beyond compiling is the description a derive emits.
@@ -6311,6 +6312,109 @@ enum ReadError {
 #[error("the store is unavailable")]
 #[problem(status = 503)]
 struct StoreUnavailable;
+
+/// A struct under a `const` base, whose type URI is joined in `const` items.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the quota is spent")]
+#[problem(base = PROBLEM_BASE, status = 429)]
+struct QuotaExceeded;
+
+/// `QuotaExceeded` under the crate's `problem_base!`, and generic, so its
+/// `ProblemType` holds only where the parameter is `'static`.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the quota is spent")]
+#[problem(base = default, status = 429)]
+struct DefaultQuotaExceeded<T: std::fmt::Debug>(std::marker::PhantomData<T>);
+
+/// Whether `uri` is the type URI `problem` carries.
+fn carries(uri: Option<&str>, problem: &kynos::Problem) -> bool {
+    uri == Some(&*problem.type_uri)
+}
+
+/// A struct naming a type URI is the `ProblemType` of the URI its problem
+/// carries, written out, joined from a `const` or from the crate's default
+/// alike, and read in a `const`; an interceptor's refusal under it carries
+/// the same URI.
+#[test]
+fn a_struct_naming_a_type_uri_is_that_problem_type() {
+    use kynos::error::problem::{IntoProblem, ProblemType, refusal_problem};
+
+    const QUOTA: Option<&str> = QuotaExceeded::TYPE_URI;
+    assert_eq!(QUOTA, Some("https://errors.example.com/quota-exceeded"));
+    assert!(carries(QUOTA, &QuotaExceeded.into_problem()));
+    assert!(carries(
+        DefaultQuotaExceeded::<u8>::TYPE_URI,
+        &DefaultQuotaExceeded::<u8>(std::marker::PhantomData).into_problem()
+    ));
+    assert!(carries(
+        SluggedStruct::TYPE_URI,
+        &SluggedStruct.into_problem()
+    ));
+    assert!(carries(
+        ValidationFailed::TYPE_URI,
+        &ValidationFailed {
+            field: "name".to_owned()
+        }
+        .into_problem()
+    ));
+
+    let refusal = refusal_problem::<QuotaExceeded>(kynos::http::StatusCode::TOO_MANY_REQUESTS);
+    assert!(carries(QUOTA, &refusal));
+}
+
+/// An enum names each value's type URI: its variant's, `about:blank` for one
+/// naming none, the wider variant's for a subset and a `variant_of` variant,
+/// and none for a variant answering as the error it holds. Read in a `const`.
+#[test]
+fn an_enum_names_the_type_uri_each_value_carries() {
+    use kynos::error::problem::IntoProblem;
+
+    const USER: Option<&str> = LookupError::UserUnknown.type_uri();
+    const SHARED: Option<&str> = SharedLookupError::<u8>::TenantUnknown.type_uri();
+    assert_eq!(USER, Some("https://errors.example.com/user-unknown"));
+    assert!(carries(USER, &LookupError::UserUnknown.into_problem()));
+
+    let tenant = LookupError::TenantUnknown.type_uri();
+    assert_eq!(tenant, Some("https://errors.example.com/tenant-unknown"));
+    assert!(carries(tenant, &LookupError::TenantUnknown.into_problem()));
+    assert_eq!(SHARED, tenant);
+    assert_eq!(DefaultLookupError::<u8>::TenantUnknown.type_uri(), tenant);
+    assert_eq!(SluggedLookupError::Missing.type_uri(), USER);
+
+    assert_eq!(ReadError::FileNotFound.type_uri(), Some("about:blank"));
+    assert!(carries(
+        ReadError::FileNotFound.type_uri(),
+        &ReadError::FileNotFound.into_problem()
+    ));
+    assert_eq!(PauseError::AlreadyPaused.type_uri(), Some("about:blank"));
+
+    assert_eq!(
+        PauseError::Lookup(LookupError::UserUnknown).type_uri(),
+        None
+    );
+    assert_eq!(
+        HeadRejection::Lookup(LookupError::UserUnknown).type_uri(),
+        None
+    );
+
+    let wider = ChunkRejection::NotFound { id: 7 }.type_uri();
+    assert_eq!(wider, Some("https://errors.example.com/not-found"));
+    assert_eq!(HeadRejection::NotFound { id: 7 }.type_uri(), wider);
+    assert_eq!(MissingChunk::NotFound { id: 7 }.type_uri(), wider);
+    assert!(carries(
+        wider,
+        &MissingChunk::NotFound { id: 7 }.into_problem()
+    ));
+    assert_eq!(ChunkOrQuota::Missing { id: 7 }.type_uri(), wider);
+    assert!(carries(
+        wider,
+        &ChunkOrQuota::Missing { id: 7 }.into_problem()
+    ));
+    assert_eq!(
+        ChunkOrQuota::Gone(std::marker::PhantomData).type_uri(),
+        Some("about:blank")
+    );
+}
 
 /// The responses `T` declares, as JSON.
 fn emitted_responses<T: Responses>() -> serde_json::Value {
