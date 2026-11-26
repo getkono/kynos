@@ -6208,6 +6208,8 @@ pub use kynos::prelude::Provider
 pub use kynos::prelude::QueryParams
 pub use kynos::prelude::Reply
 pub use kynos::prelude::Schema
+pub use kynos::prelude::Scope
+pub use kynos::prelude::Scopes
 pub use kynos::prelude::SecurityScheme
 pub use kynos::prelude::Tag
 pub use kynos::prelude::delete
