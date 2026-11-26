@@ -1785,6 +1785,56 @@ and stores while the client is told `no-store`. Inside a `Cache` it is not
 wrong, merely useless to the cache — every response it sees says `no-store`, and
 RFC 9111 §3 forbids storing one. `tests/cache.rs` holds both orders.
 
+## Stamped headers
+
+`Stamp<H>` sends a header group on every response, for a value the whole API
+shares, such as its version. A group of `()` fields under
+`#[header(value = API_VERSION)]` names the constant the application already
+has, so the value is written once and described as that value's `const`:
+
+```rust,ignore
+Router::new().intercept(Stamp::new(Versioned { version: () })?)
+```
+
+**It is an interceptor, not a router setting.** A `Router::response_headers`
+would be a second way to add a header beside `Adds`, and the checks every
+interceptor gets would have to be written again for it: the collision check
+against another interceptor adding the same field, a group scope and an
+endpoint scope, and the order below. As an interceptor it gets them all, and it
+is described as every interceptor is.
+
+**It is encoded once.** `Stamp::new` encodes the group and keeps the fields,
+so a response pays for inserting them and never for encoding them. That is
+also where a group that cannot be sent is refused, with
+`MiddlewareError::UnencodableStamp`, rather than on every response as a 500.
+A value that differs between requests is not a stamp's: an interceptor of its
+own computes it.
+
+**Each field replaces what the chain set**, for the reason
+[security headers](#security-headers) give: a handler's own value surviving
+beside a described `const` is a description the wire contradicts. A handler
+declaring the same name keeps its own entry in the description, since a
+placement never overwrites a header a response already declares, so the
+description of that one response understates what is sent; a handler has no
+reason to send a field a stamp owns.
+
+**It is declared with `Placement::Every`, and sits outermost.** It writes
+everything that passes through it, so every response beneath it carries the
+group: the handler's, an extractor's or guard's refusal, an inner
+interceptor's short circuit, the 500 of a panic an endpoint's own
+`catch_panics` recovered, and the router's own 404. What is answered outside
+it goes without: an interceptor mounted before it, and a panic recovered by a
+router's or group's `catch_panics`, whose recovery wraps every interceptor of
+both scopes. So mount it with the first `intercept` call. `tests/middleware.rs`
+holds both sides.
+
+The description says the same as far as a placement reaches: the group, with
+each fixed field's `const`, on every response an operation declares in place.
+A response it refers to, such as the shared `components/responses` entry a
+Kynos refusal or a recovered panic is declared by, is left alone, since no
+placement reaches into a `$ref`: that entry is shared with operations the
+stamp may not cover.
+
 ## Opaque
 
 The vocabulary is

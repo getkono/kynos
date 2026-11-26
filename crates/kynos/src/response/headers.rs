@@ -143,10 +143,11 @@ pub(crate) fn write<G: EncodeHeaders>(
 }
 
 /// Writes what group `G` already [`encode`](EncodeHeaders::encode)d onto
-/// `fields`, as [`write`] does, for a writer that encoded it once to use twice.
+/// `fields`, as [`write`] does, for a writer that encoded it once to use twice,
+/// or once for every response.
 pub(crate) fn write_encoded<G: EncodeHeaders>(
     fields: &mut HeaderMap,
-    encoded: Vec<(HeaderName, HeaderValue)>,
+    encoded: impl IntoIterator<Item = (HeaderName, HeaderValue)>,
 ) {
     for (name, value) in encoded {
         // Encoded fields must be a subset of `NAMES`, which the conflict check

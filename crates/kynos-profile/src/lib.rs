@@ -782,6 +782,14 @@ pub(crate) const INTERCEPTORS: &[Scenario] = &[
         Some("json-small")
     ),
     row!(
+        "stamp",
+        interceptors::stamp,
+        || get("/json/small"),
+        OK,
+        Poll,
+        Some("json-small")
+    ),
+    row!(
         "body-size",
         interceptors::body_size,
         || get("/json/small"),

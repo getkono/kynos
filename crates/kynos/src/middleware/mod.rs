@@ -162,6 +162,7 @@ pub mod rate_limit;
 pub mod request_id;
 pub mod security_headers;
 pub mod stack;
+pub mod stamp;
 pub mod trusted_hosts;
 
 // Never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
@@ -381,7 +382,8 @@ impl Covers {
 
 /// An interceptor configured with a combination it cannot honour.
 ///
-/// Checked once, while the router is assembled, and never per request.
+/// Checked once, where the interceptor is constructed or while the router is
+/// assembled, and never per request.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum MiddlewareError {
@@ -409,6 +411,15 @@ pub enum MiddlewareError {
          `expose_headers` should expose, or drop `allow_credentials`"
     )]
     CredentialedWildcardExposure,
+
+    /// A [`Stamp`](stamp::Stamp) was given a header group holding a value
+    /// that is not a field value (RFC 9110 section 5.5), so no response could
+    /// carry the group it declares.
+    ///
+    /// Boxed, so the field name it holds widens neither this error nor
+    /// every `kynos::Result`.
+    #[error("a `Stamp` was given a header group that no response can carry")]
+    UnencodableStamp(#[source] Box<crate::extract::params::header::UnencodableHeader>),
 }
 
 /// A response that came back through the rest of the chain.
@@ -459,10 +470,11 @@ impl Continued<()> {
 
     /// Attaches group `G` from the fields it already encoded, as
     /// [`with_headers`](Continued::with_headers) does, for an interceptor that
-    /// set the same fields on the request.
+    /// set the same fields on the request, or encoded them once for every
+    /// response.
     pub(crate) fn with_encoded<G: EncodeHeaders>(
         mut self,
-        encoded: Vec<(crate::http::HeaderName, crate::http::HeaderValue)>,
+        encoded: impl IntoIterator<Item = (crate::http::HeaderName, crate::http::HeaderValue)>,
     ) -> Continued<G> {
         crate::response::headers::write_encoded::<G>(self.response.headers_mut(), encoded);
         self.retag()

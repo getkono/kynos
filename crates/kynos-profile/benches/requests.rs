@@ -350,6 +350,7 @@ fn responded(prepared: Prepared) -> Answered {
 #[bench::csrf("csrf")]
 #[bench::request_id_counter("request-id-counter")]
 #[bench::security_headers("security-headers")]
+#[bench::stamp("stamp")]
 #[bench::body_size("body-size")]
 #[bench::concurrency("concurrency")]
 #[bench::timeout("timeout")]
