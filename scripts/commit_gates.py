@@ -13,22 +13,39 @@ the commit before it already passed it over the same inputs. Merge commits are
 not checked; the tip a merge produces is what CI's own jobs check. `test` is not
 a gate here: a bug fix's red-test commit fails it by design (CONTRIBUTING.md).
 
-The range is `KYNOS_COMMIT_RANGE`, as `git log` reads it, or by default every
-commit `HEAD` reaches that no remote-tracking branch does -- what a push is
-about to publish. Run as `mise run commits:gates`; the `pre-push` hook and CI's
-`Per-commit gates` job run it.
+Which commits it checks is the command line's (`USAGE`):
+
+- no argument: every commit `HEAD` reaches that no remote-tracking branch does,
+  what `git push` of the current branch would publish;
+- `range OLD NEW`: what `NEW` has that `OLD` has not, as CI's `Per-commit
+  gates` job passes a pull request's base and head or a push's before and
+  after (`OLD` is fetched when absent; see `between`);
+- `pre-push REMOTE URL`: the refs git names on stdin, as the hook passes them
+  (`pushed`), so `git push origin other-branch` checks `other-branch` and not
+  `HEAD`;
+- `install`: writes that hook; `mise run hooks:install` runs it.
 """
 
 import fnmatch
 import os
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
-RANGE_VARIABLE = "KYNOS_COMMIT_RANGE"
+USAGE = "usage: commit_gates.py [range OLD NEW | pre-push REMOTE URL | install]"
 #: What a push publishes from `HEAD`: nothing a remote already has.
 DEFAULT_RANGE = ("HEAD", "--not", "--remotes")
+#: A full object name, SHA-1 or SHA-256; git spells "no object" as all zeros.
+OBJECT_NAME = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+#: What marks the `pre-push` hook as `install`'s, so a rerun may replace it.
+HOOK_MARKER = "# Installed by `mise run hooks:install`"
+HOOK = f"""#!/bin/sh
+{HOOK_MARKER}: every commit the push publishes,
+# checked out on its own through the per-commit gates (scripts/commit_gates.py).
+exec mise run --quiet commits:gates -- pre-push "$@"
+"""
 
 #: What every Cargo build reads, and the task definitions and tool pins behind
 #: each gate. Over-inclusion only costs a run; omission passes a red commit.
@@ -82,26 +99,120 @@ def git(root, *args, environment):
     return run.stdout
 
 
-def revision_range(environment):
-    """The `git log` arguments naming the commits to check.
+def is_null(name):
+    """Whether `name` is git's all-zero object name: no commit at all."""
+    return set(name) == {"0"}
 
-    An exported but empty `KYNOS_COMMIT_RANGE` is refused rather than read as
-    the default: in CI that is a workflow expression gone wrong, and the default
-    there names no commit, which would pass having checked nothing.
+
+def present(root, revision, environment):
+    """Whether `revision` names a commit this repository holds."""
+    probe = subprocess.run(
+        ["git", "-C", str(root), "cat-file", "-e", f"{revision}^{{commit}}"],
+        env=environment,
+        capture_output=True,
+    )
+    return probe.returncode == 0
+
+
+def pushed(lines, held):
+    """The `git log` specs a push publishes, one per ref it updates.
+
+    `lines` is the pre-push hook's stdin, `<local ref> <local sha> <remote ref>
+    <remote sha>` per ref, and `held(sha)` says whether a commit is here. A
+    delete (an all-zero local sha) publishes nothing. An update publishes
+    `remote..local`; a new ref, or one whose remote commit is not here (a
+    forced push over commits never fetched), publishes what no remote-tracking
+    branch has, the same as the default range.
     """
-    spelled = environment.get(RANGE_VARIABLE)
-    if spelled is None:
-        return list(DEFAULT_RANGE)
-    if not spelled.split():
-        raise SystemExit(f"commit_gates: {RANGE_VARIABLE} is set and names no range")
-    return spelled.split()
+    specs = []
+    for line in lines:
+        fields = line.split()
+        if not fields:
+            continue
+        if len(fields) != 4:
+            raise SystemExit(f"commit_gates: `{line}` is not a pre-push ref line")
+        _, local, _, remote = fields
+        if is_null(local):
+            continue
+        if is_null(remote) or not held(remote):
+            specs.append([local, "--not", "--remotes"])
+        else:
+            specs.append([f"{remote}..{local}"])
+    return specs
 
 
-def commits(root, spec, environment):
-    """`(sha, subject)` for each non-merge commit in `spec`, oldest first."""
-    arguments = ("log", "--reverse", "--no-merges", "--format=%H%x09%s", *spec, "--")
-    listed = git(root, *arguments, environment=environment)
-    return [tuple(line.split("\t", 1)) for line in listed.splitlines() if line]
+def between(old, new, held, fetch):
+    """The `git log` spec for what `new` has that `old` has not.
+
+    `old` is what CI's event names as already checked: a pull request's base,
+    or the commit a push replaced. A push's may be all zeros, where the ref is
+    new, or missing from the checkout, where the push was forced over it; a
+    missing object name is fetched once with `fetch(old)`, since a host keeps a
+    replaced commit for a while. Where neither yields it, only `new`'s own tip
+    is checked, rather than nothing or every commit `new` reaches, and a notice
+    says so.
+    """
+    if not is_null(old):
+        if held(old):
+            return [f"{old}..{new}"]
+        if not OBJECT_NAME.fullmatch(old):
+            # A revision typed wrong, not a commit a push replaced.
+            raise SystemExit(f"commit_gates: `{old}` names no commit here")
+        if fetch(old) and held(old):
+            return [f"{old}..{new}"]
+    print(f"commit_gates: `{old}` is not here, so only `{new}` itself is checked", flush=True)
+    return [f"{new}^!"]
+
+
+def commits(root, specs, environment):
+    """`(sha, subject)` for each non-merge commit in any of `specs`, oldest
+    first within each, and each commit once."""
+    series, seen = [], set()
+    for spec in specs:
+        arguments = ("log", "--reverse", "--no-merges", "--format=%H%x09%s", *spec, "--")
+        for line in git(root, *arguments, environment=environment).splitlines():
+            sha, subject = line.split("\t", 1)
+            if sha not in seen:
+                seen.add(sha)
+                series.append((sha, subject))
+    return series
+
+
+def install(root, environment):
+    """Write the `pre-push` hook, refusing to replace one it did not write.
+
+    Where git reads hooks, `core.hooksPath` included. Not left to hk: hk's own
+    `pre-push` reads the pushed refs itself and hands its steps none of them.
+    """
+    path = git(root, "rev-parse", "--git-path", "hooks/pre-push", environment=environment)
+    hook = root / path.strip()
+    if hook.exists() and HOOK_MARKER not in hook.read_text(errors="replace"):
+        raise SystemExit(f"commit_gates: {hook} is not this repository's hook; move it aside first")
+    hook.parent.mkdir(parents=True, exist_ok=True)
+    hook.write_text(HOOK)
+    hook.chmod(0o755)
+    print(f"commit_gates: installed {hook}")
+
+
+def selection(root, arguments, stdin, environment):
+    """The `git log` specs `arguments` name, per `USAGE`."""
+
+    def held(revision):
+        return present(root, revision, environment)
+
+    def fetch(sha):
+        command = ["git", "-C", str(root), "fetch", "--quiet", "--no-tags", "origin", sha]
+        return subprocess.run(command, env=environment).returncode == 0
+
+    match arguments:
+        case []:
+            return [list(DEFAULT_RANGE)]
+        case ["range", old, new] if old.strip() and new.strip():
+            return [between(old, new, held, fetch)]
+        case ["pre-push", _remote, _url]:
+            return pushed(stdin.read().splitlines(), held)
+        case _:
+            raise SystemExit(USAGE)
 
 
 def changed(root, sha, environment):
@@ -147,10 +258,15 @@ def main():
             ["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True
         ).stdout.strip()
     )
-    spec = revision_range(os.environ)
-    series = commits(root, spec, environment)
+    arguments = sys.argv[1:]
+    if arguments == ["install"]:
+        install(root, environment)
+        return 0
+    specs = selection(root, arguments, sys.stdin, environment)
+    series = commits(root, specs, environment)
     if not series:
-        print(f"commit_gates: no commit in `{' '.join(spec)}` to check")
+        named = "; ".join(" ".join(spec) for spec in specs) or "the push"
+        print(f"commit_gates: no commit in `{named}` to check")
         return 0
 
     tree = root / "target" / "commit-gates" / "tree"

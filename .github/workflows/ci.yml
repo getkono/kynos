@@ -163,13 +163,13 @@ jobs:
         uses: ./.github/actions/setup
         with:
           cargo-cache-key: commit-gates
+      # Only the event's two commits here; `commit_gates.py range` decides what
+      # lies between them, a forced push's missing `before` included.
       - name: Run lint, docs:check, api:check and msrv:check over each commit
         env:
-          KYNOS_COMMIT_RANGE: >-
-            ${{ github.event_name == 'pull_request'
-            && format('{0}..{1}', github.event.pull_request.base.sha, github.event.pull_request.head.sha)
-            || format('{0}..{1}', github.event.before, github.sha) }}
-        run: mise run commits:gates
+          OLD: ${{ github.event.pull_request.base.sha || github.event.before }}
+          NEW: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: mise run commits:gates -- range "$OLD" "$NEW"
 
   commits:
     name: Conventional commits
