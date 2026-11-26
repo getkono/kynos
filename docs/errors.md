@@ -299,10 +299,10 @@ renamed error fails to compile rather than to match, and
 `BodySize::problem_type::<PayloadTooLarge>()` refuses under the application's
 own type. A struct naming neither sends `about:blank`, which identifies
 nothing beyond the status (RFC 9457 section 4.2.1), so it implements none,
-and naming it as one is a compile error saying so. Either `Option` would
-mislead there: `None` leaves an interceptor's refusal to the problem policy,
-which renames it while never renaming the error itself, and
-`Some("about:blank")` declares a refusal the policy then renames on the wire.
+and naming it as one is a compile error saying so. Its only answer would be
+`None`, since `Some("about:blank")` reads as `None`, and `None` misleads there:
+it leaves an interceptor's refusal to the problem policy, which renames it
+while never renaming the error itself.
 
 An enum's variants are not types, so a derived enum has
 `const fn type_uri(&self) -> Option<&'static str>`: the variant's URI,

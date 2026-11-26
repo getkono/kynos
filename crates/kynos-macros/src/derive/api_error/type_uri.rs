@@ -4,9 +4,9 @@
 //! A struct naming one is a `ProblemType`, so an interceptor's refusal can
 //! name the type the application's own error does. A struct naming none
 //! sends `about:blank`, which RFC 9457 section 4.2.1 says carries no meaning
-//! beyond the status, so it is no `ProblemType`: `None` there leaves a
-//! refusal to the problem policy, which never rewrites an `ApiError`'s, and
-//! `Some("about:blank")` would declare a refusal the policy then renames.
+//! beyond the status, so it is no `ProblemType`: its only answer would be
+//! `None`, as `Some("about:blank")` reads, and `None` leaves a refusal to the
+//! problem policy, which never rewrites an `ApiError`'s.
 //!
 //! An enum's variants are no types, so each publishes its URI beside its
 //! statuses, in the hidden `const` among the enum's handles, which `type_uri` reads per value and a
