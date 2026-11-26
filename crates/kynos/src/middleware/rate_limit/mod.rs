@@ -343,6 +343,10 @@ where
 
     const READS_BODY: bool = false;
 
+    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+        self.policy.__reads_admitted()
+    }
+
     async fn intercept(
         &self,
         request: http::Request,

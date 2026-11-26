@@ -9,6 +9,7 @@
 //! the same names, `assets` the files a router serves and `docs` the API
 //! reference page it publishes.
 
+mod admitted;
 mod build;
 mod describe;
 mod head;

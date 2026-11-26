@@ -97,6 +97,16 @@ pub trait Handler<C, A>: Clone + Send + Sync + 'static {
     #[doc(hidden)]
     const __GUARDED: bool = false;
 
+    /// The guard the handler takes, which an interceptor keyed on what it
+    /// admitted must run inside.
+    ///
+    /// Not part of the stable API, as [`__GUARDED`](Handler::__GUARDED).
+    #[doc(hidden)]
+    #[must_use]
+    fn __guard_type() -> Option<crate::__private::GuardType> {
+        None
+    }
+
     /// Whether the handler reads the request body: whether its last argument
     /// is a [`FromRequest`](crate::extract::FromRequest) extractor, which an
     /// interceptor covering [`Covers::BodyReading`] is run and declared on.

@@ -9040,6 +9040,11 @@ pub kynos::router::error::RouterError::DuplicateOperation::path: alloc::string::
 pub kynos::router::error::RouterError::DuplicateQueryParameter
 pub kynos::router::error::RouterError::DuplicateQueryParameter::group: &'static str
 pub kynos::router::error::RouterError::DuplicateQueryParameter::parameter: alloc::string::String
+pub kynos::router::error::RouterError::GuardNotAhead
+pub kynos::router::error::RouterError::GuardNotAhead::guard: &'static str
+pub kynos::router::error::RouterError::GuardNotAhead::interceptor: &'static str
+pub kynos::router::error::RouterError::GuardNotAhead::method: kynos_openapi::model::paths::method::Method
+pub kynos::router::error::RouterError::GuardNotAhead::path: alloc::string::String
 pub kynos::router::error::RouterError::HeadDescribedTwice
 pub kynos::router::error::RouterError::HeadDescribedTwice::path: alloc::string::String
 pub kynos::router::error::RouterError::HeadWithoutGet

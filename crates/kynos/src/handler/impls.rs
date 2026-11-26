@@ -37,11 +37,15 @@ macro_rules! guard {
     };
 }
 
-/// The two hidden [`Handler`] items a guarded implementation answers, which
+/// The three hidden [`Handler`] items a guarded implementation answers, which
 /// run guard `$guard` ahead of the interceptors covering the operation.
 macro_rules! guard_ahead {
     ($guard:ident) => {
         const __GUARDED: bool = true;
+
+        fn __guard_type() -> Option<crate::__private::GuardType> {
+            Some(crate::__private::GuardType::of::<$guard>())
+        }
 
         fn __guard_ahead(
             parts: &mut Parts,

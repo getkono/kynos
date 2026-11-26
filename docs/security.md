@@ -115,7 +115,8 @@ guard argument, so a request is checked once.
 - **An interceptor after the call can key on the caller.** What the guard
   admitted waits in the request for the handler, and the one reader Kynos
   gives an interceptor is `RateLimit`'s `key::ByPrincipal`, so a per-account
-  limit is spent before the body is read without a second check. The guard's
+  limit is spent before the body is read without a second check, and
+  `Router::build` refuses one the guard does not run ahead of. The guard's
   value stays crate-private otherwise: an interceptor reading it would be an
   authorization decision made outside the guard, which this section's first
   bullet rules out. See

@@ -1253,6 +1253,31 @@ fn an_anonymous_caller_a_maybe_guard_admitted_is_named_by_the_closure() {
     );
 }
 
+/// A principal key names the guard it reads to the router, which then holds
+/// that guard to run ahead of it, only while no `otherwise` names a key for
+/// the requests it did not admit; an `And` holding one names it too.
+#[test]
+fn a_principal_key_names_its_guard_to_the_router_only_without_otherwise() {
+    use super::key::{And, ByPeerAddress, ByRoute};
+    use crate::__private::GuardType;
+
+    let named = |Auth(token): &Auth<Bearer>| token.clone();
+    let reads = |key: &dyn RateLimitKey<Accounts>| key.__reads_admitted();
+    let guard = Some(GuardType::of::<Auth<Bearer>>());
+
+    assert_eq!(reads(&ByPrincipal::new(named)), guard);
+    assert_eq!(reads(&And(ByRoute, ByPrincipal::new(named))), guard);
+    assert_eq!(
+        reads(&ByPrincipal::new(named).otherwise(ByPeerAddress)),
+        None
+    );
+    assert_eq!(
+        reads(&ByPrincipal::new(named).otherwise(Shared("unadmitted".into()))),
+        None
+    );
+    assert_eq!(reads(&ByRoute), None);
+}
+
 /// No caller's name puts an admitted caller in the bucket of the requests no
 /// guard admitted, and no header's name reaches a principal's, a
 /// handler-spent partition's or a peer's bucket in a shared store.

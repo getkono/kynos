@@ -220,6 +220,10 @@ where
         &self.policies
     }
 
+    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+        self.key.__reads_admitted()
+    }
+
     async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
         let partition = self.key.partition(request, route, context);
         self.count(partition.as_deref()).await

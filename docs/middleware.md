@@ -644,15 +644,15 @@ request after a scope's `guard_first` ran the guard ahead of the limiter — so
 limit there, rather than in the handler, refuses before the body is read, and
 the guard still checks the credential once.
 
-- **A request no guard admitted shares one bucket.** It is reached by a
-  misplaced limiter, an operation with another guard or none, or an
-  interceptor handing on a copy of the request. Exempting it would make a
+- **A request no guard admitted shares one bucket.** The router refuses a
+  misplaced limiter and an operation with another guard or none, below, so
+  what reaches it is what the router cannot see. Exempting it would make a
   misconfigured limit silently absent, and keying it on the peer would make it
   a per-IP limit nobody asked for; one `unadmitted` bucket fails closed,
   and shows itself. No closure output names it: a caller's partition is
   always `principal:` and what the closure returned, and a header's is
-  `header:`, the field's name and its value. `otherwise(key)` names another key, in the type, for a
-  limiter covering public operations too.
+  `header:`, the field's name and its value. `otherwise(key)` names another
+  key, in the type, for a limiter covering public operations too.
 - **The guard type is the handler's, exactly.** `ByPrincipal<Auth<Bearer>, _>`
   reads nothing a `Scoped` or `MaybeAuth` guard admitted. A `MaybeAuth` admits
   anonymous callers, so its closure names their bucket; `otherwise` is only for
@@ -661,8 +661,19 @@ the guard still checks the credential once.
   it as before; the closure runs while it is held, so it should only read.
 
 Which guard covers an operation is decided when the router is built, so a
-limiter that cannot see its guard is a build-time fact the router does not yet
-check; the shared bucket is the run-time half of that.
+limiter that cannot see its guard is refused there: `Router::build` reports
+`RouterError::GuardNotAhead` for each operation a `ByPrincipal` limiter with no
+`otherwise` covers where no scope's `guard_first` comes before it, or whose
+handler takes another guard or none, naming the operation, the limiter and
+both fixes. Only `otherwise` opts out, because it is the one place the type
+says where an unadmitted request goes. Interceptors declare what they read
+through a hidden `Interceptor` item that `RateLimit` forwards from its policy
+and `Quotas` from its key, so the check asks each interceptor rather than
+recognising a limiter by identity, as the router does `Cors`.
+
+The `unadmitted` bucket stays behind the check as defence in depth, for what
+the router cannot see: a `route_unchecked` route, which takes no guard, and a
+request an interceptor handed on as a copy.
 
 ### Spending from a handler
 

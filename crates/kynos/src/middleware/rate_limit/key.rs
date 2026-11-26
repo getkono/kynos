@@ -16,6 +16,14 @@ pub trait RateLimitKey<C>: Send + Sync + 'static {
         route: Route<'_>,
         context: &C,
     ) -> Option<Cow<'static, str>>;
+
+    /// Not part of the API: the guard whose admission this key reads with no
+    /// other key named for a request it did not admit, which the router
+    /// refuses to build unless a scope runs that guard ahead of the limiter.
+    #[doc(hidden)]
+    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+        None
+    }
 }
 
 /// The peer address of the connection.
@@ -158,16 +166,24 @@ impl<C> RateLimitKey<C> for ByHeader {
 ///
 /// # A request no guard admitted
 ///
-/// One reaches the limiter with no guard of type `G` run ahead of it where the
-/// scope never called `guard_first`, called it after this limiter, the
-/// operation takes another guard or none, or an interceptor between the two
-/// handed on a copy of the request. Every such request counts against
-/// [`Unadmitted`]'s one shared bucket rather than being exempted or quietly
-/// keyed on the peer: a limit is never silently absent, and a misplaced
-/// limiter shows itself as one bucket shared by everybody.
+/// [`Router::build`](crate::Router::build) refuses, with
+/// [`RouterError::GuardNotAhead`](crate::router::error::RouterError::GuardNotAhead),
+/// an operation this limiter covers whose guard of type `G` does not run
+/// ahead of it: no scope calls `guard_first` before intercepting with it, or
+/// the operation takes another guard or none. Read as a per-caller limit,
+/// such a limiter would be one bucket, spent before the guard refused
+/// anybody.
 ///
-/// [`otherwise`](Self::otherwise) names another key for them, and the type
-/// says which:
+/// What the router cannot see still reaches the limiter unadmitted: an
+/// `unchecked` feature's `route_unchecked` route, which takes no guard, and a
+/// request an interceptor between the two handed on as a copy.
+/// Each counts against [`Unadmitted`]'s one shared bucket rather than being
+/// exempted or quietly keyed on the peer, so a limit is never silently
+/// absent.
+///
+/// [`otherwise`](Self::otherwise) names another key for them, which also
+/// lets the limiter cover operations without its guard, and the type says
+/// which:
 ///
 /// ```
 /// use kynos::{
@@ -217,7 +233,8 @@ impl<G, F, E> ByPrincipal<G, F, E> {
     ///
     /// Changes the type, so a limiter keyed on the caller states where an
     /// unadmitted request goes rather than leaving it to be read off the
-    /// configuration.
+    /// configuration. Any `key` but [`Unadmitted`] also lets the router build
+    /// the limiter over an operation its guard does not run ahead of.
     #[must_use]
     pub fn otherwise<K>(self, key: K) -> ByPrincipal<G, F, K> {
         ByPrincipal {
@@ -250,6 +267,13 @@ where
             None => self.otherwise.partition(request, route, context),
         }
     }
+
+    // Only while no `otherwise` names a key: one that does keys the requests
+    // no guard admitted as the application chose.
+    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+        (std::any::TypeId::of::<E>() == std::any::TypeId::of::<Unadmitted>())
+            .then(crate::__private::GuardType::of::<G>)
+    }
 }
 
 // Written out because `#[derive]` would bound the phantom `G`.
@@ -274,6 +298,9 @@ impl<G, F, E: std::fmt::Debug> std::fmt::Debug for ByPrincipal<G, F, E> {
 /// closure a `ByPrincipal` holds can name it, since that key's partitions all
 /// begin `principal:`: an admitted caller never shares the bucket of the
 /// requests nobody admitted.
+///
+/// Left as a `ByPrincipal`'s fallback, it is what has the router hold the
+/// limiter to run inside its guard; naming any other key opts out.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Unadmitted;
 
@@ -376,6 +403,12 @@ impl<C, A: RateLimitKey<C>, B: RateLimitKey<C>> RateLimitKey<C> for And<A, B> {
         let left = self.0.partition(request, route, context)?;
         let right = self.1.partition(request, route, context)?;
         Some(Cow::Owned(format!("{left}|{right}")))
+    }
+
+    fn __reads_admitted(&self) -> Option<crate::__private::GuardType> {
+        self.0
+            .__reads_admitted()
+            .or_else(|| self.1.__reads_admitted())
     }
 }
 

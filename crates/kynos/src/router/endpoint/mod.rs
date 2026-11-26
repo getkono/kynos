@@ -70,6 +70,26 @@ pub trait Endpoint<C>: Send + Sync + 'static {
         false
     }
 
+    /// The guard this operation's handler takes, which an interceptor keyed
+    /// on what it admitted must run inside.
+    ///
+    /// Not part of the stable API, as [`__guarded`](Endpoint::__guarded).
+    #[doc(hidden)]
+    fn __guard_type(&self) -> Option<crate::__private::GuardType> {
+        None
+    }
+
+    /// The first interceptor this operation holds itself that keys on what a
+    /// guard admitted, which the router refuses to build unless a scope runs
+    /// that guard ahead of it.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from what `intercept` added.
+    #[doc(hidden)]
+    fn __admitted_reader(&self) -> Option<crate::__private::AdmittedReader> {
+        None
+    }
+
     /// Whether this operation takes no guard deliberately, which a group
     /// whose other operations take one requires of it.
     ///
@@ -207,6 +227,10 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn guarded(&self) -> bool;
 
+    fn guard_type(&self) -> Option<crate::__private::GuardType>;
+
+    fn admitted_reader(&self) -> Option<crate::__private::AdmittedReader>;
+
     fn public(&self) -> bool;
 
     fn reads_body(&self) -> bool;
@@ -244,6 +268,14 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
 
     fn guarded(&self) -> bool {
         Endpoint::__guarded(self)
+    }
+
+    fn guard_type(&self) -> Option<crate::__private::GuardType> {
+        Endpoint::__guard_type(self)
+    }
+
+    fn admitted_reader(&self) -> Option<crate::__private::AdmittedReader> {
+        Endpoint::__admitted_reader(self)
     }
 
     fn public(&self) -> bool {
