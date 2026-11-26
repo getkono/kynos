@@ -7267,6 +7267,7 @@ impl core::panic::unwind_safe::UnwindSafe for kynos::response::cookie::SameSite
 pub struct kynos::response::cookie::Cookie
 impl kynos::response::cookie::Cookie
 pub fn kynos::response::cookie::Cookie::domain(self, impl core::convert::Into<alloc::borrow::Cow<'static, str>>) -> Self
+pub fn kynos::response::cookie::Cookie::encode(&self) -> core::option::Option<http::header::value::HeaderValue>
 pub fn kynos::response::cookie::Cookie::http_only(self) -> Self
 pub fn kynos::response::cookie::Cookie::max_age(self, core::time::Duration) -> Self
 pub fn kynos::response::cookie::Cookie::name(&self) -> &str
@@ -7278,8 +7279,6 @@ pub fn kynos::response::cookie::Cookie::same_site(self, kynos::response::cookie:
 pub fn kynos::response::cookie::Cookie::secure(self) -> Self
 pub fn kynos::response::cookie::Cookie::secure_if(self, bool) -> Self
 pub fn kynos::response::cookie::Cookie::to_removal(&self) -> Self
-impl kynos::response::cookie::Cookie
-pub fn kynos::response::cookie::Cookie::encode(&self) -> core::option::Option<http::header::value::HeaderValue>
 impl core::clone::Clone for kynos::response::cookie::Cookie
 pub fn kynos::response::cookie::Cookie::clone(&self) -> kynos::response::cookie::Cookie
 impl core::cmp::Eq for kynos::response::cookie::Cookie

@@ -5,22 +5,8 @@ use super::{Cookie, SameSite};
 use crate::http::HeaderValue;
 
 impl Cookie {
-    /// Renders the field value.
-    ///
-    /// `None` where the name or the value is outside RFC 6265 section 4.1.1's
-    /// grammar (the grammar defines no escaping, so nothing is escaped), where
-    /// the value is wrapped in `"`, which the grammar admits but this refuses
-    /// deliberately, since the reading half unwraps the quotes and the value
-    /// would not read back as written, where the name and the value exceed 4096
-    /// octets together, where an attribute is unrepresentable, or where a
-    /// `__Host-` cookie names a `Domain` or a `Path` other than `/`. Both
-    /// prefixes are matched in any case, as a user agent matches them.
-    ///
-    /// A handler need not call this to send the cookie: a
-    /// [`SetCookieHeaders`](super::SetCookieHeaders) does, and answers 500
-    /// where it returns `None`.
-    #[must_use]
-    pub fn encode(&self) -> Option<HeaderValue> {
+    /// [`Cookie::encode`]'s body, kept beside the grammar it checks.
+    pub(super) fn render(&self) -> Option<HeaderValue> {
         if !crate::http::is_token(self.name.as_bytes()) || !is_cookie_value(&self.value) {
             return None;
         }

@@ -379,10 +379,10 @@ fn every_refusal_has_a_case() {
 
     let source = include_str!("encode.rs");
     let encode = source
-        .split_once("pub fn encode(")
+        .split_once("fn render(")
         .and_then(|(_, rest)| rest.split_once("\n    }\n"))
         .map(|(body, _)| body)
-        .expect("`encode` is declared in `cookie/encode.rs`");
+        .expect("`encode`'s body, `render`, is declared in `cookie/encode.rs`");
     assert_eq!(
         encode.matches("return None").count(),
         REFUSALS.len(),
