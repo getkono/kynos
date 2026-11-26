@@ -1814,9 +1814,9 @@ own computes it.
 [security headers](#security-headers) give: a handler's own value surviving
 beside a described `const` is a description the wire contradicts. A handler
 declaring the same name keeps its own entry in the description, since a
-placement never overwrites a header a response already declares, so the
-description of that one response understates what is sent; a handler has no
-reason to send a field a stamp owns.
+placement never overwrites a header a response already declares, so that one
+response is described by the handler's schema while it carries the stamp's
+value; a handler has no reason to send a field a stamp owns.
 
 **It is declared with `Placement::Every`, and sits outermost.** It writes
 everything that passes through it, so every response beneath it carries the
@@ -1833,7 +1833,8 @@ each fixed field's `const`, on every response an operation declares in place.
 A response it refers to, such as the shared `components/responses` entry a
 Kynos refusal or a recovered panic is declared by, is left alone, since no
 placement reaches into a `$ref`: that entry is shared with operations the
-stamp may not cover.
+stamp may not cover. [#1500](https://github.com/getkono/kynos/issues/1500)
+tracks describing it there.
 
 ## Opaque
 
