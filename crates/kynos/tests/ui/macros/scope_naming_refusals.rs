@@ -22,6 +22,13 @@ enum TwoNames {
     ReadReports,
 }
 
+#[derive(Clone, Copy, serde::Serialize, kynos::Scope)]
+#[serde(rename_all = "kebab-case")]
+enum NameUnderSerdeStyle {
+    #[scope(rename = "reports:read")]
+    ReadReports,
+}
+
 #[derive(Clone, Copy, kynos::Scope)]
 enum Spaced {
     #[scope(rename = "reports read")]

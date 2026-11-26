@@ -16,20 +16,26 @@ error: the variant's `#[serde(rename)]` already names its scope, and a second na
 21 |     #[scope(rename = "reports:read")]
    |             ^^^^^^
 
-error: this scope `reports read` contains ' ', and a scope is an RFC 6749 `scope-token`: one or more printable ASCII characters other than space, `"` and `\`; name it with `#[scope(rename = "...")]`
-  --> tests/ui/macros/scope_naming_refusals.rs:28:5
+error: the enum's `#[serde(rename_all)]` already names this scope, and a `#[scope(rename)]` would name it where serde does not read it; write `#[serde(rename)]` instead
+  --> tests/ui/macros/scope_naming_refusals.rs:28:13
    |
-28 |     ReadReports,
+28 |     #[scope(rename = "reports:read")]
+   |             ^^^^^^
+
+error: this scope `reports read` contains ' ', and a scope is an RFC 6749 `scope-token`: one or more printable ASCII characters other than space, `"` and `\`; name it with `#[scope(rename = "...")]`
+  --> tests/ui/macros/scope_naming_refusals.rs:35:5
+   |
+35 |     ReadReports,
    |     ^^^^^^^^^^^
 
 error: this scope is empty, and a scope is an RFC 6749 `scope-token`: one or more printable ASCII characters other than space, `"` and `\`; name it with `#[scope(rename = "...")]`
-  --> tests/ui/macros/scope_naming_refusals.rs:34:5
+  --> tests/ui/macros/scope_naming_refusals.rs:41:5
    |
-34 |     Admin,
+41 |     Admin,
    |     ^^^^^
 
 error: two variants name the scope `admin`; the first is `Admin`
-  --> tests/ui/macros/scope_naming_refusals.rs:42:5
+  --> tests/ui/macros/scope_naming_refusals.rs:49:5
    |
-42 |     Root,
+49 |     Root,
    |     ^^^^

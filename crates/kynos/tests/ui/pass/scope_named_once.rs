@@ -19,6 +19,13 @@ enum SerdeName {
     ReadReports,
 }
 
+#[derive(Clone, Copy, serde::Serialize, kynos::Scope)]
+#[serde(rename_all = "kebab-case")]
+enum SerdeNameUnderSerdeStyle {
+    #[serde(rename = "reports:read")]
+    ReadReports,
+}
+
 #[derive(Clone, Copy, kynos::Scope)]
 #[scope(rename_all = "lowercase")]
 enum Distinct {
@@ -33,5 +40,6 @@ fn main() {
     scope::<OwnStyle>();
     scope::<SerdeStyle>();
     scope::<SerdeName>();
+    scope::<SerdeNameUnderSerdeStyle>();
     scope::<Distinct>();
 }

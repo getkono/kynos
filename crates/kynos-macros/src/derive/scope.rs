@@ -57,10 +57,11 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     }
 
     let rename_all = rename_all(input)?;
+    let serde_rename_all = serde_key_span(&input.attrs, &["rename_all"]).is_some();
     let variants: Vec<_> = data.variants.iter().collect();
     let mut names = Vec::with_capacity(variants.len());
     for (variant, wire, _) in variant_wire_names(input, &variants)? {
-        let name = name(variant, wire, rename_all.as_ref())?;
+        let name = name(variant, wire, rename_all.as_ref(), serde_rename_all)?;
         check_name(variant, &name, &names)?;
         names.push((variant, name));
     }
@@ -139,8 +140,14 @@ fn rename_all(input: &DeriveInput) -> syn::Result<Option<String>> {
 }
 
 /// A variant's scope: its `#[scope(rename)]`, else the name serde writes it
-/// under, else `rename_all`'s style over its identifier.
-fn name(variant: &Variant, wire: String, rename_all: Option<&String>) -> syn::Result<String> {
+/// under, else `rename_all`'s style over its identifier. `serde_rename_all`
+/// is whether the enum's `#[serde(rename_all)]` names every variant.
+fn name(
+    variant: &Variant,
+    wire: String,
+    rename_all: Option<&String>,
+    serde_rename_all: bool,
+) -> syn::Result<String> {
     let mut renamed = None;
     let mut keys = Keys::new("is already set, and `#[scope(...)]` takes each key once");
     for attr in &variant.attrs {
@@ -163,6 +170,14 @@ fn name(variant: &Variant, wire: String, rename_all: Option<&String>) -> syn::Re
                     meta.path.span(),
                     "the variant's `#[serde(rename)]` already names its scope, and a second \
                      name would be one serde does not read; drop one",
+                ));
+            }
+            if serde_rename_all {
+                return Err(syn::Error::new(
+                    meta.path.span(),
+                    "the enum's `#[serde(rename_all)]` already names this scope, and a \
+                     `#[scope(rename)]` would name it where serde does not read it; write \
+                     `#[serde(rename)]` instead",
                 ));
             }
             renamed = Some(value.value());

@@ -9327,6 +9327,17 @@ mod scope {
                 "already names its scope",
             ),
             case(
+                "a `rename` under serde's `rename_all`, a name serde does not read",
+                quote::quote!(
+                    #[serde(rename_all = "kebab-case")]
+                    enum Grant {
+                        #[scope(rename = "reports:read")]
+                        ReadReports,
+                    }
+                ),
+                "write `#[serde(rename)]` instead",
+            ),
+            case(
                 "a name holding a space, which splits it in a token's scope list",
                 quote::quote!(
                     enum Grant {
