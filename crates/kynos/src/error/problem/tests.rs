@@ -12,7 +12,9 @@
 //! failure answering it -- which no caller can emit and this refuses.
 //!
 //! One case is about the wire rather than a declaration: an extension keyed
-//! like a registered member, which the hand-written `Serialize` drops.
+//! like a registered member, which the hand-written `Serialize` drops. Another
+//! sets a refusal's declaration beside what it sends: a `ProblemType` naming
+//! `about:blank` under a policy that names the refusal's identity.
 
 use serde_json::Value;
 
@@ -519,4 +521,81 @@ fn the_one_of_rests_on_problem_requiring_its_type() {
          matches every `oneOf` branch at once and the narrowing refuses a \
          document Problem calls valid"
     );
+}
+
+/// A marker naming `about:blank`, the type RFC 9457 section 4.2.1 says names
+/// no type.
+struct Blank;
+
+impl crate::error::problem::ProblemType for Blank {
+    const TYPE_URI: Option<&'static str> = Some(crate::error::problem::ABOUT_BLANK);
+}
+
+/// A policy naming the identity of an interceptor's 413.
+struct Oversized;
+
+impl crate::error::members::ProblemPolicy for Oversized {
+    type Members = ();
+
+    fn identity(
+        origin: crate::error::members::ProblemOrigin,
+        status: crate::http::StatusCode,
+    ) -> Option<crate::error::members::ProblemIdentity> {
+        (origin == crate::error::members::ProblemOrigin::Refusal
+            && status == crate::http::StatusCode::PAYLOAD_TOO_LARGE)
+            .then(|| crate::error::members::ProblemIdentity::new("urn:test:oversized", "Send less"))
+    }
+
+    fn members(_: &crate::error::members::ProblemCx<'_>) {}
+}
+
+/// A refusal naming `about:blank` is sent under the policy's identity, as one
+/// naming no type is, so it declares that identity too: a body whose `type`
+/// the declared `const` refuses is the drift RFC 9457 section 3.2 rules out.
+#[tokio::test]
+async fn an_about_blank_refusal_declares_the_identity_it_is_sent_with() {
+    use http_body_util::BodyExt;
+
+    use crate::{
+        error::{
+            members::{Hook, refused},
+            problem::{refusal_problem, served_refusal_response},
+        },
+        http::StatusCode,
+        schema::registry::Registry,
+    };
+
+    let mut registry = Registry::new();
+    Hook::declare(Some(Hook::of::<Oversized>()), &mut registry);
+    let status = StatusCode::PAYLOAD_TOO_LARGE;
+    let blank = served_refusal_response::<Blank>(&mut registry, status, "too large", true);
+    let blank = serde_json::to_value(blank).expect("a response serializes");
+    let untyped = served_refusal_response::<()>(&mut registry, status, "too large", true);
+    let untyped = serde_json::to_value(untyped).expect("a response serializes");
+
+    let sent = refused(
+        refusal_problem::<Blank>(status),
+        Some(Hook::of::<Oversized>().policy),
+        |_| {},
+    );
+    let bytes = sent
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    let sent: Value = serde_json::from_slice(&bytes).expect("a JSON body");
+
+    let schema = "/content/application~1problem+json/schema";
+    assert_eq!(sent["type"], "urn:test:oversized");
+    assert_eq!(
+        blank.pointer(&format!("{schema}/allOf/1/properties/type/const")),
+        Some(&sent["type"]),
+        "declared {blank:#}"
+    );
+    assert_eq!(
+        blank.pointer(&format!("{schema}/title")),
+        Some(&sent["title"])
+    );
+    assert_eq!(blank, untyped);
 }
