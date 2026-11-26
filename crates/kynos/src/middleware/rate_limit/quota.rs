@@ -208,7 +208,7 @@ pub struct Quotas<K, S, Clk = SystemClock> {
     store: S,
     clock: Clk,
     enforced: Vec<Quota>,
-    policies: Vec<QuotaPolicy>,
+    pub(super) policies: Vec<QuotaPolicy>,
     on_store_failure: StoreFailure,
 }
 
@@ -257,7 +257,24 @@ impl<K, S, Clk> Quotas<K, S, Clk> {
     }
 }
 
-impl<K, S: RateLimitStore, Clk> Quotas<K, S, Clk> {
+impl<C, K, S, Clk> RateLimitPolicy<C> for Quotas<K, S, Clk>
+where
+    C: Sync + 'static,
+    K: RateLimitKey<C>,
+    S: RateLimitStore,
+    Clk: Clock,
+{
+    fn advertised(&self) -> &[QuotaPolicy] {
+        &self.policies
+    }
+
+    async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
+        let partition = self.key.partition(request, route, context);
+        self.count(partition.as_deref()).await
+    }
+}
+
+impl<K, S: RateLimitStore, Clk: Clock> Quotas<K, S, Clk> {
     /// What `quota` decides for `partition` at `now`, spending nothing.
     async fn decide(&self, quota: &Quota, partition: &str, now: Duration) -> Outcome {
         let window_ms = quota.window.as_millis().max(1);
@@ -298,35 +315,21 @@ impl<K, S: RateLimitStore, Clk> Quotas<K, S, Clk> {
             current_key,
         }
     }
-}
 
-impl<C, K, S, Clk> RateLimitPolicy<C> for Quotas<K, S, Clk>
-where
-    C: Sync + 'static,
-    K: RateLimitKey<C>,
-    S: RateLimitStore,
-    Clk: Clock,
-{
-    fn advertised(&self) -> &[QuotaPolicy] {
-        &self.policies
-    }
-
-    async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
-        let Some(partition) = self.key.partition(request, route, context) else {
+    /// Decides one request against `partition`, spending it where every
+    /// quota admits it; `None` exempts it.
+    pub(super) async fn count(&self, partition: Option<&str>) -> Decision {
+        let Some(partition) = partition else {
             // Exempt: no counter touched, and the full quota reported.
-            return Decision::Allow(Allowance::new(
-                self.enforced
-                    .iter()
-                    .map(|quota| {
-                        ServiceLimit::new(
-                            quota.name.clone(),
-                            quota.ceiling(),
-                            quota.ceiling(),
-                            quota.window,
-                        )
-                    })
-                    .collect(),
-            ));
+            let full = self.enforced.iter().map(|quota| {
+                ServiceLimit::new(
+                    quota.name.clone(),
+                    quota.ceiling(),
+                    quota.ceiling(),
+                    quota.window,
+                )
+            });
+            return Decision::Allow(Allowance::new(full.collect()));
         };
 
         let now = self.clock.now();
@@ -338,7 +341,7 @@ where
         let mut denial: Option<Duration> = None;
 
         for quota in &self.enforced {
-            let outcome = self.decide(quota, &partition, now).await;
+            let outcome = self.decide(quota, partition, now).await;
             // The longest wait, since only after it would every quota admit the
             // request; a store failure denies on the same terms as a refusal.
             if let Outcome::Refused { wait } | Outcome::Unreachable { wait } = outcome {

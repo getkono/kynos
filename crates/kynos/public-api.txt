@@ -4926,6 +4926,21 @@ impl core::marker::Unpin for kynos::middleware::rate_limit::key::ByClientAddress
 impl core::marker::UnsafeUnpin for kynos::middleware::rate_limit::key::ByClientAddress
 impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::key::ByClientAddress
 impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::key::ByClientAddress
+pub struct kynos::middleware::rate_limit::key::ByHandler
+impl core::clone::Clone for kynos::middleware::rate_limit::key::ByHandler
+pub fn kynos::middleware::rate_limit::key::ByHandler::clone(&self) -> kynos::middleware::rate_limit::key::ByHandler
+impl core::default::Default for kynos::middleware::rate_limit::key::ByHandler
+pub fn kynos::middleware::rate_limit::key::ByHandler::default() -> kynos::middleware::rate_limit::key::ByHandler
+impl core::fmt::Debug for kynos::middleware::rate_limit::key::ByHandler
+pub fn kynos::middleware::rate_limit::key::ByHandler::fmt(&self, &mut core::fmt::Formatter<'_>) -> core::fmt::Result
+impl core::marker::Copy for kynos::middleware::rate_limit::key::ByHandler
+impl core::marker::Freeze for kynos::middleware::rate_limit::key::ByHandler
+impl core::marker::Send for kynos::middleware::rate_limit::key::ByHandler
+impl core::marker::Sync for kynos::middleware::rate_limit::key::ByHandler
+impl core::marker::Unpin for kynos::middleware::rate_limit::key::ByHandler
+impl core::marker::UnsafeUnpin for kynos::middleware::rate_limit::key::ByHandler
+impl core::panic::unwind_safe::RefUnwindSafe for kynos::middleware::rate_limit::key::ByHandler
+impl core::panic::unwind_safe::UnwindSafe for kynos::middleware::rate_limit::key::ByHandler
 pub struct kynos::middleware::rate_limit::key::ByHeader(pub http::header::name::HeaderName)
 impl core::clone::Clone for kynos::middleware::rate_limit::key::ByHeader
 pub fn kynos::middleware::rate_limit::key::ByHeader::clone(&self) -> kynos::middleware::rate_limit::key::ByHeader
@@ -5180,6 +5195,8 @@ impl<P, T> kynos::middleware::rate_limit::RateLimit<P, kynos::middleware::rate_l
 pub fn kynos::middleware::rate_limit::RateLimit<P, kynos::middleware::rate_limit::Legacy, T>::standard_fields(self) -> kynos::middleware::rate_limit::RateLimit<P, kynos::middleware::rate_limit::Structured, T>
 impl<P> kynos::middleware::rate_limit::RateLimit<P, kynos::middleware::rate_limit::Legacy, ()>
 pub fn kynos::middleware::rate_limit::RateLimit<P, kynos::middleware::rate_limit::Legacy, ()>::new(P) -> Self
+impl<S, Clk, D, T> kynos::middleware::rate_limit::RateLimit<kynos::middleware::rate_limit::quota::Quotas<kynos::middleware::rate_limit::key::ByHandler, S, Clk>, D, T> where S: kynos::middleware::rate_limit::store::RateLimitStore, Clk: kynos::middleware::rate_limit::clock::Clock, D: kynos::middleware::rate_limit::RateLimitSpelling<T>, T: kynos::error::problem::ProblemType
+pub async fn kynos::middleware::rate_limit::RateLimit<kynos::middleware::rate_limit::quota::Quotas<kynos::middleware::rate_limit::key::ByHandler, S, Clk>, D, T>::spend(&self, &str) -> core::result::Result<<D as kynos::middleware::rate_limit::RateLimitSpelling>::Headers, <D as kynos::middleware::rate_limit::RateLimitSpelling>::Denied>
 impl<C, P, D, T> kynos::middleware::Interceptor<C> for kynos::middleware::rate_limit::RateLimit<P, D, T> where C: core::marker::Sync + 'static, P: kynos::middleware::rate_limit::decision::RateLimitPolicy<C>, D: kynos::middleware::rate_limit::RateLimitSpelling<T>, T: kynos::error::problem::ProblemType
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Adds = <D as kynos::middleware::rate_limit::RateLimitSpelling<T>>::Headers
 pub type kynos::middleware::rate_limit::RateLimit<P, D, T>::Reads = ()

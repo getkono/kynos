@@ -20,10 +20,14 @@ use kynos::{
     http::forwarded::{ProxyHeader, TrustedProxies},
     middleware::rate_limit::{
         RateLimit,
-        key::{And, ByClientAddress, ByHeader, ByPeerAddress, ByPrincipal, ByRoute, Shared},
+        key::{
+            And, ByClientAddress, ByHandler, ByHeader, ByPeerAddress, ByPrincipal, ByRoute, Shared,
+        },
         quota::{Quota, Quotas},
+        refusal::RateLimited,
         store::{RateLimitStore, StoreFailure},
     },
+    prelude::{Inject, Json},
     response::status::NoContent,
     security::{
         Authenticates, Authenticator, Head,
@@ -668,6 +672,82 @@ async fn keying_by_principal_separates_two_accounts_checked_once() {
         3,
         "each credential presented was checked once"
     );
+}
+
+/// The limit a handler spends, keyed on what only the body names.
+type ChallengeLimit = RateLimit<Quotas<ByHandler, Counters>>;
+
+#[derive(serde::Deserialize, kynos::Schema)]
+struct Challenge {
+    username: String,
+}
+
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+enum ChallengeError {
+    #[error("too many challenges for this username")]
+    #[problem(transparent, from)]
+    Throttled(RateLimited),
+}
+
+#[kynos::post("/auth/challenge")]
+#[kynos::public]
+async fn challenge(
+    Inject(limit): Inject<Arc<ChallengeLimit>>,
+    Json(body): Json<Challenge>,
+) -> Result<NoContent, ChallengeError> {
+    limit.spend(&body.username).await?;
+    Ok(NoContent)
+}
+
+/// A handler spending a limit keyed on a body field answers the 429 an
+/// interceptor would — `Retry-After` and the rate-limit fields with it — and
+/// its error type declares that 429 on the operation.
+#[tokio::test]
+async fn a_handler_spending_a_body_keyed_limit_answers_and_declares_the_429() {
+    let limit = Arc::new(ChallengeLimit::new(
+        Quotas::new(ByHandler, Counters::default()).quota(Quota::new(
+            "challenge",
+            1,
+            Duration::from_secs(600),
+        )),
+    ));
+    let router = || Router::<Arc<ChallengeLimit>>::new().mount(kynos::routes![challenge]);
+    let service = router()
+        .build(Arc::clone(&limit))
+        .expect("a describable router");
+
+    let call = |username: &'static str| {
+        post(&service, "/auth/challenge")
+            .header("content-type", "application/json")
+            .body(format!(r#"{{"username":"{username}"}}"#))
+            .call()
+    };
+
+    assert_eq!(call("alice").await.status, StatusCode::NO_CONTENT);
+    let refused = call("alice").await;
+    assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        refused.field("retry-after").is_some(),
+        "{:?}",
+        refused.headers
+    );
+    assert_eq!(refused.field("x-ratelimit-limit").as_deref(), Some("1"));
+    assert_eq!(refused.field("x-ratelimit-remaining").as_deref(), Some("0"));
+    assert_eq!(
+        call("bob").await.status,
+        StatusCode::NO_CONTENT,
+        "one username's quota refused another's challenge"
+    );
+
+    let document = serde_json::to_value(router().openapi().expect("a describable router"))
+        .expect("a serializable document");
+    let declared = &document["paths"]["/auth/challenge"]["post"]["responses"]["429"];
+    for field in ["Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining"] {
+        assert!(
+            declared["headers"].get(field).is_some(),
+            "{field} undeclared: {declared}"
+        );
+    }
 }
 
 /// A key that exempts a request reads no counter and reports the full quota.

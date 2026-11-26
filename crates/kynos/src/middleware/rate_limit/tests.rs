@@ -912,6 +912,82 @@ async fn a_spent_window_refills_once_the_clock_passes_its_retry_after() {
     );
 }
 
+// --- Spending from a handler -----------------------------------------------
+
+/// A [`Counting`] the test reads back after a limiter took it.
+#[derive(Clone, Debug, Default)]
+struct Kept(std::sync::Arc<Counting>);
+
+impl RateLimitStore for Kept {
+    type Error = Unavailable;
+
+    async fn read(&self, key: &str) -> Result<u64, Self::Error> {
+        self.0.read(key).await
+    }
+
+    async fn increment(&self, key: &str, by: u64, ttl: Duration) -> Result<u64, Self::Error> {
+        self.0.increment(key, by, ttl).await
+    }
+}
+
+/// A handler's spend counts against the partition it names, under a prefix a
+/// client-chosen value cannot escape, and refuses with exactly the value the
+/// limiter's spelling denies with as an interceptor.
+#[tokio::test]
+async fn a_handler_spend_refuses_as_the_interceptor_would() {
+    const START: u64 = 1_700_000_000_000;
+
+    let clock = std::sync::Arc::new(Manual::default());
+    clock.set(START);
+    let store = Kept::default();
+    let quotas = || {
+        Quotas::new(super::key::ByHandler, store.clone())
+            .quota(Quota::new("challenge", 1, WINDOW))
+            .with_clock(std::sync::Arc::clone(&clock))
+    };
+
+    let legacy = RateLimit::new(quotas()).problem_type::<Throttled>();
+    let allowed = legacy.spend("alice").await.expect("the first is admitted");
+    assert_eq!(
+        (allowed.limit, allowed.remaining),
+        (1, 0),
+        "the fields an allowed response may carry"
+    );
+    assert!(
+        store
+            .0
+            .0
+            .lock()
+            .expect("no test panics while holding this")
+            .keys()
+            .all(|key| key.starts_with("handler:alice|challenge|")),
+        "{store:?}"
+    );
+
+    let refused = legacy.spend("alice").await.expect_err("the second is not");
+    // The rest of the window, then the one after it for the spent request to
+    // leave the sliding estimate.
+    let wait = recovers_in(1, 0, Duration::ZERO, WINDOW);
+    assert_eq!(refused, RateLimited::<Throttled>::new(wait, 1));
+    assert!(
+        legacy.spend("bob").await.is_ok(),
+        "one partition's quota refused another's"
+    );
+
+    let structured = RateLimit::new(quotas())
+        .standard_fields()
+        .problem_type::<Throttled>();
+    let refused = structured.spend("alice").await.expect_err("still spent");
+    assert_eq!(
+        refused,
+        RateLimitedFields::<Throttled>::new(
+            wait,
+            vec![ServiceLimit::new("challenge", 1, 0, wait)],
+            vec![Quota::new("challenge", 1, WINDOW).policy()],
+        )
+    );
+}
+
 // --- What the shipped keys and quotas state --------------------------------
 
 /// The partition `key` gives a request carrying `fields`.

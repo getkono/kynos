@@ -261,6 +261,36 @@ impl<G, F, E: std::fmt::Debug> std::fmt::Debug for ByPrincipal<G, F, E> {
     }
 }
 
+/// No key: the handler names each partition, through
+/// [`RateLimit::spend`](super::RateLimit::spend).
+///
+/// For a limit keyed on what only the body says, such as a username in a
+/// sign-in request, which no interceptor can read before the handler
+/// decodes it. Implements no [`RateLimitKey`], so a limiter keyed on it is
+/// spent only by the handler and cannot be mounted as an interceptor:
+///
+/// ```compile_fail
+/// # use std::time::Duration;
+/// use kynos::{
+///     Router,
+///     middleware::rate_limit::{RateLimit, key::ByHandler, quota::{Quota, Quotas}},
+/// };
+/// # use kynos::middleware::rate_limit::store::RateLimitStore;
+/// # struct MyStore;
+/// # impl RateLimitStore for MyStore {
+/// #     type Error = std::io::Error;
+/// #     async fn read(&self, _: &str) -> Result<u64, Self::Error> { Ok(0) }
+/// #     async fn increment(&self, _: &str, _: u64, _: Duration) -> Result<u64, Self::Error> {
+/// #         Ok(1)
+/// #     }
+/// # }
+///
+/// let limit = RateLimit::new(Quotas::new(ByHandler, MyStore).quota(Quota::per_minute("x", 1)));
+/// let router = Router::<()>::new().intercept(limit);
+/// ```
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ByHandler;
+
 /// The matched operation.
 ///
 /// "Per endpoint" when one limiter covers several. Keyed on the `paths` key, so

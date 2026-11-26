@@ -79,6 +79,8 @@ by the release that shipped each, for code written before it.
 | An `Option` query parameter and `.unwrap_or(DEFAULT)` in the handler | `#[param(default = DEFAULT)]` on the plain field, which the description states |
 | The same paging fields copied into every query group | one `QueryParams` group, and `#[param(flatten)]` on a field holding it in each |
 | A one-field `PathParams` group for a route of one variable | `Path<T>` over the `ParamValue` itself, such as `Path<Uuid>` |
+| A rate limiter keyed on the authenticated account, checked in each handler | `middleware::rate_limit::key::ByPrincipal`, behind `guard_first` |
+| A 429 of your own for a limit keyed on a body field | `RateLimit::spend` on a `middleware::rate_limit::key::ByHandler` limiter, returning its `RateLimited` through a transparent variant |
 | An enum's wire names restated in an `as_str` or an `ALL` list | `#[derive(kynos::ParamValue)]`, then `schema::UnitEnum::as_str` (not `const`) and `T::VARIANTS` with the trait imported, or `s.parse()` |
 
 ## Getting data from middleware to a handler

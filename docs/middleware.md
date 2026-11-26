@@ -662,6 +662,33 @@ Which guard covers an operation is decided when the router is built, so a
 limiter that cannot see its guard is a build-time fact the router does not yet
 check; the shared bucket is the run-time half of that.
 
+### Spending from a handler
+
+A limit keyed on what only the decoded body says — a username in a sign-in —
+has no interceptor to run in. `RateLimit::spend(partition)` spends one
+request from the handler, on a limiter keyed `key::ByHandler`, which the
+application keeps in its context.
+
+- **One refusal, not a second 429.** `spend` returns the spelling's own
+  `Denied`, built by the code the interceptor refuses with, so its type,
+  `Retry-After` and rate-limit fields are the interceptor's. A
+  `#[problem(transparent)]` variant holding it is how the handler returns it,
+  and that variant's `Responses` declare the 429 and its headers on the
+  operation; nothing reaches the wire undeclared. Like every application
+  error, it is not rendered under `Router::problems`, which names only
+  problems Kynos renders itself; name the type with `problem_type` so both
+  limiters carry the same one.
+- **`ByHandler` is not a key.** It implements no `RateLimitKey`, so its
+  limiter cannot also be mounted, where its counters would be spent twice,
+  and `spend` exists only on it, so a mounted limiter is never spent by hand.
+- **A body field is unbounded.** Every distinct partition is counters the
+  store keeps for two windows, so a client inventing usernames grows the
+  store as fast as it is admitted. Kynos does not own the store and cannot
+  cap it; validate the field first, and put an interceptor limit keyed on the
+  client's address over the operation, which bounds how fast one client can
+  invent partitions. The partition is stored as `handler:` and the value, so a
+  value the client chose cannot name another key's bucket.
+
 ### Replacing the algorithm, and why no bucket ships
 
 `Quotas` is one implementation of `RateLimitPolicy`, not the trait's only
