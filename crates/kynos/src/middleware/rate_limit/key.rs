@@ -58,8 +58,24 @@ pub trait RateLimitKey<C>: Send + Sync + 'static {
     /// ```
     ///
     /// Required rather than provided, so a key wrapping a [`ByPrincipal`]
-    /// cannot leave the check behind by saying nothing. A closure key reads
-    /// none: no closure can read a guard's admission.
+    /// cannot leave the check behind by saying nothing:
+    ///
+    /// ```compile_fail,E0046
+    /// # use std::borrow::Cow;
+    /// # use kynos::{http, middleware::rate_limit::key::RateLimitKey, router::operation::Route};
+    /// struct Folded<K>(K);
+    ///
+    /// impl<C, K: RateLimitKey<C>> RateLimitKey<C> for Folded<K> {
+    ///     fn partition(&self, request: &http::Request, route: Route<'_>, context: &C)
+    ///         -> Option<Cow<'static, str>> {
+    ///         self.0.partition(request, route, context)
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// A closure key reports none, even one that calls a [`ByPrincipal`]'s
+    /// `partition`: a closure cannot forward what the key it calls reads, so
+    /// the router does not check that guard runs ahead of it.
     fn reads_admitted(&self) -> AdmittedReads;
 }
 
@@ -262,8 +278,13 @@ impl<C> RateLimitKey<C> for ByHeader {
 /// anybody.
 ///
 /// What the router cannot see still reaches the limiter unadmitted: an
-/// `unchecked` feature's `route_unchecked` route, which takes no guard, and a
-/// request an interceptor between the two handed on as a copy.
+/// `unchecked` feature's `route_unchecked` route, which takes no guard; a
+/// request an interceptor between the two handed on as a copy; a key or
+/// policy that calls this one's `partition`, or a policy's `check`, and
+/// returns [`AdmittedReads::none`] rather than what it reads, as a closure key
+/// calling it does; and an application interceptor wrapping a
+/// [`RateLimit`](super::RateLimit), which cannot forward what its policy
+/// reads.
 /// Each counts against [`Unadmitted`]'s one shared bucket rather than being
 /// exempted or quietly keyed on the peer, so a limit is never silently
 /// absent.
