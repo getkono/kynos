@@ -440,7 +440,20 @@ pub trait ProblemType: 'static {
     /// The URI identifying the problem type, or `None` to leave it to the
     /// policy [`Router::problems`](crate::router::Router::problems) installs,
     /// and to `about:blank` without one.
+    ///
+    /// `Some("about:blank")` is `None`: RFC 9457 section 4.2.1 says it names
+    /// no type, so the policy identifies the refusal either way, and its
+    /// declaration says so.
     const TYPE_URI: Option<&'static str>;
+}
+
+/// The type `T` names, where it names one other than `about:blank`.
+///
+/// Every refusal built or declared here reads [`ProblemType::TYPE_URI`]
+/// through this, so the body and the declaration agree on which refusals the
+/// policy identifies.
+fn named_type<T: ProblemType>() -> Option<&'static str> {
+    T::TYPE_URI.filter(|uri| *uri != ABOUT_BLANK)
 }
 
 /// The default: a refusal whose status code is the whole story.
@@ -480,7 +493,7 @@ impl ProblemType for () {
 pub fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
     let mut problem = Problem::new(status);
 
-    if let Some(uri) = T::TYPE_URI {
+    if let Some(uri) = named_type::<T>() {
         problem.type_uri = uri.into();
     }
 
@@ -522,7 +535,7 @@ pub fn refusal_response<T: ProblemType>(
     described_response(
         &problem,
         summary.to_owned(),
-        &[(T::TYPE_URI, Some(summary), &[])],
+        &[(named_type::<T>(), Some(summary), &[])],
         false,
     )
 }
@@ -538,13 +551,14 @@ pub(crate) fn served_refusal_response<T: ProblemType>(
     served: bool,
 ) -> Response {
     let problem = registry.resolve::<Problem>();
-    let identity = match T::TYPE_URI {
+    let named = named_type::<T>();
+    let identity = match named {
         Some(_) => (None, None),
         None => declared_identity(registry, ProblemOrigin::Refusal, status, served),
     };
     let (uri, title) = match identity {
         (Some(uri), title) => (Some(uri), title),
-        (None, _) => (T::TYPE_URI, Some(summary)),
+        (None, _) => (named, Some(summary)),
     };
     let members = with_installed(registry, &[], served);
 
