@@ -313,7 +313,16 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
 /// Each placement files the header on the declared responses it reaches, under
 /// whatever key each is already declared at, and never mints an entry, a range
 /// included. It leaves a response held as a `$ref` and a header that response
-/// already declares alone.
+/// already declares alone. A Kynos refusal is no `$ref` here: it is declared
+/// in place, and shared under `components/responses` only once described.
+///
+/// The 500 of a panic recovered around the interceptor never passes through
+/// it, so no placement files the header on that 500: a router's or group's
+/// `catch_panics` wraps every interceptor of both scopes, and an endpoint's
+/// wraps its own and, for a guard a scope's `guard_first` runs ahead, every
+/// interceptor mounted after that point. Where something else answering the
+/// operation's 500 does pass through, the header is declared on it without
+/// `required`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Placement {
@@ -325,7 +334,7 @@ pub enum Placement {
 
     /// Every response the finished operation declares, whatever contributed
     /// it: the handler, an extractor, any interceptor's short circuit this one
-    /// included, and panic recovery's 500.
+    /// included, and the 500 of a panic recovered inside this interceptor.
     ///
     /// For a header written onto every response, as a request identifier is.
     Every,

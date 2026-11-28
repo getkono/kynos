@@ -1045,7 +1045,7 @@ struct Backoff {
 /// Declares `Stamp` on every response.
 struct Stamping;
 
-impl kynos::middleware::Interceptor<()> for Stamping {
+impl<C: Sync + 'static> kynos::middleware::Interceptor<C> for Stamping {
     type Reads = ();
     type Adds = Stamp;
     type Short = std::convert::Infallible;
@@ -1056,8 +1056,8 @@ impl kynos::middleware::Interceptor<()> for Stamping {
         &self,
         request: kynos::http::Request,
         (): (),
-        (): &(),
-        next: kynos::middleware::Next<'_, ()>,
+        _: &C,
+        next: kynos::middleware::Next<'_, C>,
     ) -> Result<kynos::middleware::Continued<Stamp>, std::convert::Infallible> {
         Ok(next.run(request).await.with_headers(Stamp {
             deployment: "eu-1".to_owned(),
@@ -1068,7 +1068,7 @@ impl kynos::middleware::Interceptor<()> for Stamping {
 /// Declares `Backoff` on problem responses.
 struct BackingOff;
 
-impl kynos::middleware::Interceptor<()> for BackingOff {
+impl<C: Sync + 'static> kynos::middleware::Interceptor<C> for BackingOff {
     type Reads = ();
     type Adds = Backoff;
     type Short = std::convert::Infallible;
@@ -1079,8 +1079,8 @@ impl kynos::middleware::Interceptor<()> for BackingOff {
         &self,
         request: kynos::http::Request,
         (): (),
-        (): &(),
-        next: kynos::middleware::Next<'_, ()>,
+        _: &C,
+        next: kynos::middleware::Next<'_, C>,
     ) -> Result<kynos::middleware::Continued<Backoff>, std::convert::Infallible> {
         Ok(next.run(request).await.with_headers(Backoff { seconds: 1 }))
     }
@@ -1116,17 +1116,25 @@ fn placed<I: kynos::middleware::Interceptor<()>>(interceptor: I) -> kynos::opena
     operation
 }
 
+/// Every response but the router's recovered 500, which
+/// `a_placement_leaves_the_500_a_recovery_around_it_answers` holds.
 #[test]
 fn an_interceptor_adding_on_every_response_is_declared_on_each_one() {
     let operation = placed(Stamping);
 
-    for status in operation.responses.responses.keys() {
-        let declared = declared_headers(&operation, status).expect("a declared status");
-        assert!(
-            declared.contains(&"X-Stamp".to_owned()),
-            "{status} declares {declared:?}"
-        );
-    }
+    let declaring: BTreeSet<&str> = operation
+        .responses
+        .responses
+        .keys()
+        .filter(|status| {
+            declared_headers(&operation, status)
+                .expect("a declared status")
+                .contains(&"X-Stamp".to_owned())
+        })
+        .map(String::as_str)
+        .collect();
+
+    assert_eq!(declaring, BTreeSet::from(["204", "400", "408"]));
 }
 
 #[test]
@@ -1145,8 +1153,187 @@ fn an_interceptor_adding_on_problems_is_declared_on_problem_responses_alone() {
         .map(String::as_str)
         .collect();
 
-    // 204 carries no body, so no problem document either.
-    assert_eq!(declaring, BTreeSet::from(["400", "408", "500"]));
+    // 204 carries no body, so no problem document either; the recovered 500
+    // is answered around the interceptor.
+    assert_eq!(declaring, BTreeSet::from(["400", "408"]));
+}
+
+/// A panic the router or a group recovers is answered around every
+/// interceptor of both scopes, so the 500 that recovery declares goes out
+/// without any header one of them adds, and a deferred placement leaves it
+/// alone rather than describing a header the wire never carries.
+#[test]
+fn a_placement_leaves_the_500_a_recovery_around_it_answers() {
+    for operation in [placed(Stamping), placed(BackingOff)] {
+        assert_eq!(declared_headers(&operation, "500"), Some(Vec::new()));
+    }
+}
+
+async fn gives_up() -> NoContent {
+    panic!("the handler gave up")
+}
+
+/// An endpoint's own recovery sits inside the router's and groups'
+/// interceptors and around its own, so its 500 carries the first and not the
+/// second, and is described so.
+#[test]
+fn a_placement_reaches_the_500_an_endpoint_inside_it_recovers() {
+    let document = Router::<()>::new()
+        .intercept(Stamping)
+        .mount(
+            EndpointBuilder::new(
+                kynos::openapi::Method::Get,
+                kynos::openapi::PathTemplate::parse("/recovering").expect("a valid path"),
+                gives_up,
+            )
+            .intercept(BackingOff)
+            .catch_panics(),
+        )
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/recovering");
+
+    assert_eq!(
+        declared_headers(&operation, "500"),
+        Some(vec!["X-Stamp".to_owned()])
+    );
+}
+
+/// Under both an endpoint's recovery and the router's, the router's header
+/// rides the 500 of a panic in the handler and not one in an interceptor, so
+/// it is declared without being required; the endpoint's own rides neither.
+#[test]
+fn a_placement_declares_a_500_two_recoveries_answer_by_what_each_carries() {
+    let document = Router::<()>::new()
+        .catch_panics()
+        .intercept(Stamping)
+        .mount(
+            EndpointBuilder::new(
+                kynos::openapi::Method::Get,
+                kynos::openapi::PathTemplate::parse("/recovering").expect("a valid path"),
+                gives_up,
+            )
+            .intercept(BackingOff)
+            .catch_panics(),
+        )
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/recovering");
+
+    let Some(kynos::openapi::RefOr::Item(response)) = operation.responses.responses.get("500")
+    else {
+        panic!("the 500 is declared in place");
+    };
+    let declared: Vec<_> = response.headers.keys().collect();
+    assert_eq!(declared, ["X-Stamp"]);
+    let Some(kynos::openapi::RefOr::Item(header)) = response.headers.get("X-Stamp") else {
+        panic!("`X-Stamp` is declared in place");
+    };
+    assert_ne!(header.required, Some(true));
+}
+
+/// Under a group's `guard_first`, an endpoint's recovery also answers a panic
+/// in its guard, at the guard's point: outside every interceptor mounted after
+/// `guard_first()`. So a header the router adds rides each 500 and stays
+/// required, and one the group adds after that point rides the handler's 500
+/// and not the guard's, so it is declared without being required.
+#[test]
+fn a_placement_declares_the_500_a_guard_run_first_recovers_by_its_point() {
+    let document = Router::<Guarded>::new()
+        .intercept(Stamping)
+        .group(
+            Group::new("/api")
+                .guard_first()
+                .intercept(BackingOff)
+                .mount(
+                    EndpointBuilder::new(
+                        kynos::openapi::Method::Get,
+                        kynos::openapi::PathTemplate::parse("/me").expect("a valid path"),
+                        me,
+                    )
+                    .catch_panics(),
+                ),
+        )
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/api/me");
+
+    let Some(kynos::openapi::RefOr::Item(response)) = operation.responses.responses.get("500")
+    else {
+        panic!("the 500 is declared in place");
+    };
+    let required = |name: &str| {
+        let Some(kynos::openapi::RefOr::Item(header)) = response.headers.get(name) else {
+            panic!("the 500 declares `{name}` in place");
+        };
+        header.required == Some(true)
+    };
+    assert!(required("X-Stamp"), "the router's header rides every 500");
+    assert!(
+        !required("X-Backoff"),
+        "the group's header misses the guard's 500"
+    );
+}
+
+/// An extractor declaring a 500 of its own, which passes through every
+/// interceptor.
+struct Failing;
+
+impl kynos::extract::describe::Describe for Failing {
+    fn describe(operation: &mut kynos::router::operation::OperationCx<'_>) {
+        operation.add_responses(
+            &kynos::openapi::Responses::new()
+                .with(500, kynos::openapi::Response::new("the store failed")),
+        );
+    }
+}
+
+impl<C: Sync> kynos::extract::FromRequestParts<C> for Failing {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut kynos::http::Parts,
+        context: &C,
+    ) -> Result<Self, Self::Rejection> {
+        let _ = (parts, context);
+        Ok(Self)
+    }
+}
+
+#[kynos::get("/failing")]
+async fn failing(checked: Failing) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// A 500 the operation declares itself and a recovery around the interceptor
+/// also answers carries the header on some responses and not others, so it
+/// is declared there but not required.
+#[test]
+fn a_placement_declares_a_500_a_recovery_shares_as_optional() {
+    let document = Router::<()>::new()
+        .catch_panics()
+        .intercept(Stamping)
+        .mount(kynos::routes![failing])
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/failing");
+
+    let header = |status: &str| {
+        let Some(kynos::openapi::RefOr::Item(response)) = operation.responses.responses.get(status)
+        else {
+            panic!("{status} is declared in place");
+        };
+        let Some(kynos::openapi::RefOr::Item(header)) = response.headers.get("X-Stamp") else {
+            panic!("{status} declares `X-Stamp` in place");
+        };
+        header.clone()
+    };
+    assert_eq!(header("204").required, Some(true));
+    let mut shared = header("500");
+    assert_ne!(shared.required, Some(true));
+    shared.required = Some(true);
+    assert_eq!(shared, header("204"), "only `required` differs");
 }
 
 /// An extractor declaring a 422 whose problem document is keyed in another

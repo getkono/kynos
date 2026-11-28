@@ -320,7 +320,10 @@ impl<C, P: PanicPolicy, I, S> Group<C, P, I, S> {
     ///
     /// Only *when* the guard runs moves. It is declared by the handler's
     /// argument exactly as before, so the description is unchanged, and an
-    /// operation taking no guard is left as it was. A CORS preflight runs no
+    /// operation taking no guard is left as it was. One exception: under the
+    /// endpoint's own `catch_panics`, a panic in the guard is answered here,
+    /// outside every interceptor applied after this call, so a header one of
+    /// them places on the operation's 500 is declared without `required`. A CORS preflight runs no
     /// interceptor and so no guard; a `Cors` meant to cover the guard's
     /// refusal is applied before this call.
     ///

@@ -51,13 +51,16 @@ use crate::{
 /// extractor's or guard's refusal, the short circuit of an interceptor mounted
 /// inside this one, a panic an endpoint's own `catch_panics` recovered, and,
 /// mounted on the router, its answer where no operation matched. A response answered
-/// outside it never reaches it: an interceptor's mounted before it, and a
-/// panic a router's or group's `catch_panics` recovers, around every
-/// interceptor of both scopes. Mount it first, outermost.
+/// outside it never reaches it: an interceptor's mounted before it, a panic a
+/// router's or group's `catch_panics` recovers, around every interceptor of
+/// both scopes, and a guard's refusal or recovered panic where a
+/// `guard_first()` called before this is mounted runs that guard outside it.
+/// Mount it first, outermost.
 ///
-/// The description files the group on every response an operation declares
-/// in place, and leaves a shared `$ref` response, such as a Kynos refusal's,
-/// as the reference it is.
+/// The description says the same: the group is filed on every response a
+/// covered operation declares, a Kynos refusal's included, and on none of
+/// the 500s a panic recovered around it is answered with. A response the
+/// application declares as a `$ref` is left as the reference it is.
 ///
 /// Each field replaces whatever value the chain set, as
 /// [`SecurityHeaders`](crate::middleware::security_headers::SecurityHeaders)'

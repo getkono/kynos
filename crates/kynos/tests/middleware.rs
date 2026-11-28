@@ -501,7 +501,7 @@ mod stamp {
         },
         openapi::{Method, PathTemplate},
         response::{headers::WithHeaders, status::NoContent},
-        router::endpoint::builder::EndpointBuilder,
+        router::{endpoint::builder::EndpointBuilder, group::Group},
     };
 
     use super::support::{App, caught, get, post, router};
@@ -626,10 +626,35 @@ mod stamp {
         );
     }
 
-    /// The stamped field is described on every response an operation declares
-    /// in place, as the one value it sends; a response it refers to, such as
-    /// the framework's shared refusal, is left as the reference it is, since a
-    /// placement never reaches into a `$ref`.
+    /// What `X-Api-Version` is described as, wherever it is.
+    fn described_version() -> serde_json::Value {
+        serde_json::json!({
+            "description": "The version of the API that answered.",
+            "required": true,
+            "schema": {"type": "string", "const": API_VERSION},
+        })
+    }
+
+    /// `response`, or the `components/responses` entry its `$ref` names.
+    fn resolved<'d>(
+        document: &'d serde_json::Value,
+        response: &'d serde_json::Value,
+    ) -> &'d serde_json::Value {
+        match response["$ref"].as_str() {
+            Some(location) => {
+                let name = location
+                    .strip_prefix("#/components/responses/")
+                    .expect("a response component");
+                &document["components"]["responses"][name]
+            }
+            None => response,
+        }
+    }
+
+    /// The stamped field is described on every response an operation
+    /// declares, as the one value it sends: a framework refusal is described
+    /// in place like any other response and only then shared under
+    /// `components/responses`, so the shared entry carries the field.
     #[test]
     fn a_stamped_group_is_described_on_every_response_as_its_value() {
         let document = router()
@@ -645,23 +670,16 @@ mod stamp {
             responses["400"],
             serde_json::json!({"$ref": "#/components/responses/ProblemStatus400"})
         );
-        let declared = responses
-            .iter()
-            .filter(|(_, response)| response.get("$ref").is_none());
         let mut statuses = Vec::new();
-        for (status, response) in declared {
+        for (status, response) in responses {
             assert_eq!(
-                response["headers"]["X-Api-Version"],
-                serde_json::json!({
-                    "description": "The version of the API that answered.",
-                    "required": true,
-                    "schema": {"type": "string", "const": API_VERSION},
-                }),
+                resolved(&document, response)["headers"]["X-Api-Version"],
+                described_version(),
                 "{status}"
             );
             statuses.push(status.as_str());
         }
-        assert_eq!(statuses, ["200"]);
+        assert_eq!(statuses, ["200", "400"]);
 
         // Every response, not only a success: `tests/description.rs` holds
         // where each placement files a header.
@@ -669,6 +687,53 @@ mod stamp {
             <Stamp<Versioned> as Interceptor<App>>::ADDS_ON,
             Placement::Every
         );
+    }
+
+    /// Refuses a path as `get_user` does, outside the stamped group.
+    #[kynos::get("/plain/{id}")]
+    async fn plain_user(path: kynos::prelude::Path<super::support::UserPath>) -> NoContent {
+        let _ = path;
+        NoContent
+    }
+
+    /// A refusal the stamped operations share is a component of its own,
+    /// apart from the one the unstamped operations share, so neither claims
+    /// the field for an operation that does not send it.
+    #[test]
+    fn a_refusal_shared_beyond_a_stamp_is_named_apart() {
+        let document = Router::<App>::new()
+            .mount(kynos::routes![super::support::list_users, plain_user])
+            .group(
+                Group::<App>::new("/stamped")
+                    .intercept(versioned())
+                    .mount(kynos::routes![
+                        super::support::get_user,
+                        super::support::delete_user
+                    ]),
+            )
+            .openapi()
+            .expect("a describable router");
+        let document = serde_json::to_value(&document).expect("the document serializes");
+
+        let refusal = |path: &str, method: &str| {
+            let reference = &document["paths"][path][method]["responses"]["400"]["$ref"];
+            reference
+                .as_str()
+                .unwrap_or_else(|| panic!("{method} {path}'s 400 is shared"))
+                .to_owned()
+        };
+        let stamped = refusal("/stamped/users/{id}", "get");
+        let plain = refusal("/users", "get");
+        assert_eq!(refusal("/stamped/users/{id}", "delete"), stamped);
+        assert_eq!(refusal("/plain/{id}", "get"), plain);
+        assert_ne!(stamped, plain);
+
+        let field = |location: &str| {
+            let reference = serde_json::json!({ "$ref": location });
+            resolved(&document, &reference)["headers"]["X-Api-Version"].clone()
+        };
+        assert_eq!(field(&stamped), described_version());
+        assert_eq!(field(&plain), serde_json::Value::Null);
     }
 
     /// How many times `Counted` has been encoded in this process.

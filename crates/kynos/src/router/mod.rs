@@ -100,15 +100,52 @@ pub(crate) struct Mounted<C> {
 impl<C: 'static> Mounted<C> {
     /// What of `router`'s interceptors and the enclosing scopes' covers this
     /// operation, outermost first, as [`covered`] keeps them: what `describe`
-    /// declares and `build` runs.
-    fn covered_by<'a>(
-        &'a self,
-        router: &'a [Arc<dyn ErasedInterceptor<C>>],
-    ) -> Vec<&'a Arc<dyn ErasedInterceptor<C>>> {
-        covered(
-            router.iter().chain(&self.interceptors).collect(),
-            self.endpoint.reads_body(),
-        )
+    /// declares and `build` runs. `guard`, the endpoint's guard as an
+    /// interceptor, stands where `router_guard` or an enclosing scope's
+    /// `guard_first` runs it, if either does.
+    fn covered_by(
+        &self,
+        router: &[Arc<dyn ErasedInterceptor<C>>],
+        router_guard: Option<usize>,
+        guard: Option<Arc<dyn ErasedInterceptor<C>>>,
+    ) -> Vec<Arc<dyn ErasedInterceptor<C>>> {
+        let mut chain = router.to_vec();
+        chain.extend(self.interceptors.iter().cloned());
+
+        // The guard's point counts every interceptor, so it is placed first.
+        if let (Some(at), Some(guard)) = (
+            guard_point(router_guard, router.len(), self.guard_at),
+            guard,
+        ) {
+            chain.insert(at, guard);
+        }
+
+        covered(chain, self.endpoint.reads_body())
+    }
+
+    /// Describes on `operation` every interceptor [`covered_by`] runs,
+    /// outermost first, marking where the endpoint's guard runs among them,
+    /// since a panic the endpoint's recovery catches there is answered at that
+    /// point.
+    ///
+    /// [`covered_by`]: Self::covered_by
+    fn describe_covered(
+        &self,
+        router: &[Arc<dyn ErasedInterceptor<C>>],
+        router_guard: Option<usize>,
+        operation: &mut OperationCx<'_>,
+    ) {
+        let guard = Arc::clone(&self.endpoint).guard_ahead();
+        for interceptor in self.covered_by(router, router_guard, guard.clone()) {
+            if guard
+                .as_ref()
+                .is_some_and(|guard| Arc::ptr_eq(guard, &interceptor))
+            {
+                operation.recover_guard_here();
+            } else {
+                interceptor.describe(operation);
+            }
+        }
     }
 }
 
