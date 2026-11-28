@@ -21,10 +21,15 @@ hk = "1.53.0"
 python = "3.11.16"
 
 [env]
-# The nightly every task needing one installs and runs: `fuzz` and
-# `minimal-versions:check`. Dated, since an undated nightly moves under a job
-# between two nights, and a failure should be Kynos's own.
-KYNOS_NIGHTLY = "nightly-2026-06-10"
+# The nightly `fuzz` and `minimal-versions:check` install and run. Floating,
+# as the stable toolchain is: neither records anything a newer nightly would
+# change, so a break one brings is fixed here when it lands.
+KYNOS_NIGHTLY = "nightly"
+# The nightly `api:check` runs `cargo public-api` over. Dated, unlike
+# `KYNOS_NIGHTLY`: rustdoc's JSON format changes between nightlies, and each
+# `cargo-public-api` line reads only the formats it was released against, so
+# this moves together with that tool's pin.
+KYNOS_API_NIGHTLY = "nightly-2026-06-10"
 # The Valgrind the request-path profile runs under, which `profile:valgrind`
 # builds and `full.yml` installs, and where `profile:valgrind` puts it unless
 # the caller exported one.
@@ -316,14 +321,14 @@ run = "python3 scripts/containment_test.py"
 
 [tasks."api:check"]
 description = "Hold the public API to its snapshots and its foreign crates to the allowance"
-# `cargo public-api` over `KYNOS_NIGHTLY`'s rustdoc JSON, which its 0.52 line
+# `cargo public-api` over `KYNOS_API_NIGHTLY`'s rustdoc JSON, which its 0.52 line
 # reads; it publishes no release binaries, so the pin is task-scoped, as
 # `cost:features`'s `cargo-llvm-lines` is. The snapshots are
 # `crates/*/public-api.txt`; the allowance is architecture.md's.
 tools = { "cargo:cargo-public-api" = "0.52.0", python = "3.11.16" }
 run = '''
 set -eu
-rustup toolchain install "$KYNOS_NIGHTLY" --profile minimal --no-self-update >&2
+rustup toolchain install "$KYNOS_API_NIGHTLY" --profile minimal --no-self-update >&2
 python3 scripts/public_api.py
 '''
 

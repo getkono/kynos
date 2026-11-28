@@ -14,7 +14,7 @@ these are asked to enforce; this document is about the mechanics.
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | in use |
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | in use |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | against a running service, that each observed status is declared, its body validates against the declared schema or is absent where none is declared, and every declared required header was sent — undeclared headers are not reported | in use |
-| Fuzz | [`fuzz/fuzz_targets/`](../fuzz/fuzz_targets/), over a committed corpus | `cargo fuzz`, on a pinned nightly | that a parser of untrusted input neither panics nor breaks its round trip or oracle on inputs nobody wrote — see [Fuzzing](#fuzzing) | in use |
+| Fuzz | [`fuzz/fuzz_targets/`](../fuzz/fuzz_targets/), over a committed corpus | `cargo fuzz`, on the latest nightly | that a parser of untrusted input neither panics nor breaks its round trip or oracle on inputs nobody wrote — see [Fuzzing](#fuzzing) | in use |
 
 Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
 not that module also becomes a directory — the two halves of the layout rule are
@@ -759,8 +759,8 @@ finds the input a hand-written parser of request fields was never shown.
 | `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | [`full.yml`](../.github/workflows/full.yml): the release pull request, one labelled `ci:full`, and master |
 
 [`fuzz/`](../fuzz/) is a workspace of its own: `cargo fuzz` needs a nightly
-toolchain, pinned by date in both tasks, and a member would break every stable
-`--workspace` gate. A parser with a public path is fuzzed through it; the rest
+toolchain, the floating `KYNOS_NIGHTLY` in both tasks, and a member would
+break every stable `--workspace` gate. A parser with a public path is fuzzed through it; the rest
 are reached through `kynos::__private::fuzz`, which exists only under the
 `cfg(fuzzing)` `cargo fuzz` sets.
 
