@@ -3,8 +3,10 @@
 //! [`assertions`], how each `TestResponse::assert_*` helper fails, in
 //! [`shared_conformance`], what a shared `Coverage` holds a response to, in
 //! [`strict`], what a strict client checks as each response arrives, in
-//! [`view`], what a `ClientView` adds to its client's defaults, and in
-//! `connected`, what a client built `connect` reaches and refuses.
+//! [`view`], what a `ClientView` adds to its client's defaults, in
+//! `connected`, what a client built `connect` reaches and refuses, and in
+//! [`body_rejections`], which requests `assert_body_rejections` plans off a
+//! description.
 //!
 //! `tests/client.rs` holds what a service reads from it; the end and length
 //! signals are read by a body's consumer rather than by the frames, so they
@@ -2961,5 +2963,222 @@ mod connected {
             .spawn();
         let _ = std::fs::remove_dir_all(&directory);
         let _ = TestClient::connect(&running);
+    }
+}
+
+/// What `TestClient::assert_body_rejections` sends, read off the served
+/// description. `tests/client.rs` holds that each is answered as declared.
+mod body_rejections {
+    use bytes::Bytes;
+    use kynos_openapi::{Document, RefOr, Schema};
+    use serde_json::{Value, json};
+
+    use crate::{
+        Router,
+        extract::body::text::Text,
+        http::{Method as HttpMethod, StatusCode, Uri},
+        openapi::{Method, PathTemplate},
+        response::status::NoContent,
+        router::endpoint::builder::EndpointBuilder,
+        test::rejections::{Refusal, plan, sendable},
+    };
+
+    async fn text(_: Text) -> NoContent {
+        NoContent
+    }
+
+    #[cfg(feature = "json")]
+    async fn json_string(_: crate::extract::body::json::Json<String>) -> NoContent {
+        NoContent
+    }
+
+    #[cfg(feature = "json")]
+    async fn json_bool(_: crate::extract::body::json::Json<bool>) -> NoContent {
+        NoContent
+    }
+
+    async fn bodiless() -> NoContent {
+        NoContent
+    }
+
+    /// The description of `POST /items` answered by `handler`.
+    macro_rules! document {
+        ($handler:expr) => {
+            Router::<()>::new()
+                .mount(EndpointBuilder::new(
+                    Method::Post,
+                    PathTemplate::parse("/items").expect("a valid path"),
+                    $handler,
+                ))
+                .build(())
+                .expect("a describable router")
+                .openapi()
+                .clone()
+        };
+    }
+
+    /// The plan for `POST /items`.
+    fn planned(document: &Document, violating: Option<&Value>) -> Result<Vec<Refusal>, String> {
+        plan(
+            document,
+            &HttpMethod::POST,
+            &Uri::from_static("/items"),
+            violating,
+        )
+    }
+
+    /// The `requestBody` content of `POST /items`.
+    fn content(
+        document: &mut Document,
+    ) -> &mut kynos_openapi::Map<RefOr<kynos_openapi::MediaType>> {
+        let operation = document
+            .paths
+            .items
+            .get_mut("/items")
+            .and_then(|item| item.post.as_deref_mut())
+            .expect("the operation is described");
+        match operation.request_body.as_mut() {
+            Some(RefOr::Item(body)) => &mut body.content,
+            _ => panic!("the request body is inline"),
+        }
+    }
+
+    /// A JSON body is sent every refusal, in the documented order, the 422
+    /// as the first candidate the schema refuses.
+    #[cfg(feature = "json")]
+    #[test]
+    fn a_json_body_is_sent_every_refusal_in_order() {
+        let json = "application/json".to_owned();
+        let mut expected = vec![
+            Refusal::UnsupportedMediaType {
+                media_type: "application/x-kynos-undeclared".to_owned(),
+                coded: false,
+            },
+            Refusal::Malformed {
+                media_type: json.clone(),
+            },
+            Refusal::TooLarge {
+                media_type: json.clone(),
+            },
+        ];
+        #[cfg(feature = "server")]
+        expected.push(Refusal::Stalled {
+            media_type: json.clone(),
+        });
+        expected.push(Refusal::Violating {
+            media_type: json,
+            body: Bytes::from_static(b"true"),
+        });
+
+        assert_eq!(planned(&document!(json_string), None), Ok(expected));
+    }
+
+    /// The 422's candidate is the first the schema refuses, so a boolean
+    /// body is sent a string.
+    #[cfg(feature = "json")]
+    #[test]
+    fn the_422_is_the_first_candidate_the_schema_refuses() {
+        let refusals = planned(&document!(json_bool), None).expect("a plan");
+
+        assert_eq!(
+            refusals.last(),
+            Some(&Refusal::Violating {
+                media_type: "application/json".to_owned(),
+                body: Bytes::from_static(b"\"kynos\""),
+            })
+        );
+    }
+
+    /// A named body replaces the candidate; a schema every candidate
+    /// satisfies needs one.
+    #[cfg(feature = "json")]
+    #[test]
+    fn a_schema_accepting_every_candidate_needs_a_named_body() {
+        let mut document = document!(json_string);
+        if let Some(RefOr::Item(media_type)) = content(&mut document).get_mut("application/json") {
+            media_type.schema = Some(Schema::any());
+        }
+
+        let refused = planned(&document, None).expect_err("no candidate violates");
+        assert!(
+            refused.contains("name one with `assert_body_rejections_violating`"),
+            "{refused}"
+        );
+
+        let named = planned(&document, Some(&json!({ "named": 1 }))).expect("a plan");
+        assert_eq!(
+            named.last(),
+            Some(&Refusal::Violating {
+                media_type: "application/json".to_owned(),
+                body: Bytes::from_static(br#"{"named":1}"#),
+            })
+        );
+    }
+
+    /// Where `*/*` covers every media type, the 415 is a declared one under
+    /// a content coding nothing decodes.
+    #[cfg(feature = "json")]
+    #[test]
+    fn a_body_every_media_type_covers_is_sent_an_undeclared_coding() {
+        let mut document = document!(json_string);
+        let content = content(&mut document);
+        let entry = content["application/json"].clone();
+        content.insert("*/*".to_owned(), entry);
+
+        let refusals = planned(&document, None).expect("a plan");
+        assert_eq!(
+            refusals.first(),
+            Some(&Refusal::UnsupportedMediaType {
+                media_type: "application/json".to_owned(),
+                coded: true,
+            })
+        );
+    }
+
+    /// A body in no JSON type is sent no malformed or schema-violating body,
+    /// whatever it declares, and a named one is refused.
+    #[test]
+    fn a_body_that_is_not_json_is_sent_only_what_holds_for_every_format() {
+        let document = document!(text);
+        let statuses: Vec<_> = planned(&document, None)
+            .expect("a plan")
+            .iter()
+            .map(Refusal::status)
+            .collect();
+
+        assert_eq!(
+            statuses,
+            [
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                StatusCode::PAYLOAD_TOO_LARGE,
+                #[cfg(feature = "server")]
+                StatusCode::REQUEST_TIMEOUT,
+            ]
+        );
+        let refused = planned(&document, Some(&json!(1))).expect_err("no JSON is read");
+        assert!(refused.contains("reads no JSON body"), "{refused}");
+    }
+
+    /// An operation reading no body has nothing to send.
+    #[test]
+    fn an_operation_reading_no_body_is_refused() {
+        let refused = planned(&document!(bodiless), None).expect_err("no body");
+
+        assert_eq!(refused, "`POST /items` declares no `requestBody`");
+    }
+
+    /// A range is sent a type within it, and a multipart type a boundary.
+    #[test]
+    fn a_media_type_is_one_a_request_can_carry() {
+        assert_eq!(sendable("*/*"), "application/octet-stream");
+        assert_eq!(sendable("video/*"), "video/x-kynos");
+        assert_eq!(
+            sendable("text/plain; charset=utf-8"),
+            "text/plain; charset=utf-8"
+        );
+        assert_eq!(
+            sendable("multipart/form-data"),
+            "multipart/form-data; boundary=kynos"
+        );
     }
 }

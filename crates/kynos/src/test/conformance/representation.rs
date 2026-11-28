@@ -13,7 +13,7 @@ use kynos_openapi::RefOr;
 /// distinct, then one ignoring the key's parameters, since `media_type`
 /// arrives with its own already stripped, then `type/*`, then `*/*`. Keys
 /// equally specific resolve to the first the map holds.
-pub(super) fn declared_representation<'a>(
+pub(in crate::test) fn declared_representation<'a>(
     content: &'a kynos_openapi::Map<RefOr<kynos_openapi::MediaType>>,
     media_type: &str,
 ) -> Option<(&'a str, &'a RefOr<kynos_openapi::MediaType>)> {

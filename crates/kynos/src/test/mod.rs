@@ -14,6 +14,7 @@ pub mod cookie;
 pub mod document;
 #[cfg(feature = "multipart")]
 pub mod multipart;
+mod rejections;
 pub mod view;
 
 #[cfg(test)]
@@ -675,6 +676,94 @@ impl<C> TestClient<C> {
                 .map(|record| (&record.method, &record.uri, record.status)),
             &[],
         );
+    }
+
+    /// Sends one request for each body refusal the operation `template`
+    /// targets declares, each begun by `template`, and asserts each is
+    /// answered with that refusal as a problem the description declares.
+    ///
+    /// The operation is the one the description serves for the template's
+    /// method and target, and its `requestBody` decides each body; the
+    /// template's own fields, a credential among them, reach every request,
+    /// and its body is replaced. Of the five refusals an operation reading a
+    /// body declares, each one this operation declares is sent, in this
+    /// order:
+    ///
+    /// | Status | Request |
+    /// | --- | --- |
+    /// | 415 | a media type no `requestBody` key covers, or, where `*/*` covers every one, a declared one under a content coding nothing decodes |
+    /// | 400 | malformed JSON |
+    /// | 413 | a body declaring no length and never ending, so the operation's own limit, whatever covers it, stops the read one octet past it |
+    /// | 408 | with the `server` feature, a `stalled_body`, held to the idle timeout every stalled body this client sends is |
+    /// | 422 | well-formed JSON the declared schema refuses, or the test's own body, by [`assert_body_rejections_violating`](Self::assert_body_rejections_violating) |
+    ///
+    /// The 400 and 422 are sent only where the `requestBody` declares JSON,
+    /// `application/json` or a `+json` type, the one format whose malformed
+    /// and schema-violating bodies hold for every operation; the others are
+    /// sent under the first JSON key, else the first key. The 422's body is
+    /// the first of `true`, `"kynos"`, `0`, `[]`, `{}` and `null` the
+    /// declared schema refuses.
+    ///
+    /// Each response is asserted as
+    /// [`assert_problem`](TestResponse::assert_problem) asserts one, with the
+    /// declared response's schema in place of a type URI: the status, an
+    /// `application/problem+json` body whose `status` member agrees, and
+    /// conformance to the description, whether or not the client is
+    /// [`strict`](Self::strict). Every exchange is recorded as
+    /// [`send`](TestRequest::send) records one, so the five count toward
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// and a shared [`Coverage`].
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>, token: &str) {
+    /// client
+    ///     .assert_body_rejections(|| client.post("/api/v1/reports").bearer(token))
+    ///     .await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// When `template` begins a request on another client, or another
+    /// request on a later call; when no operation is declared for its method
+    /// and target, the one declared reads no `requestBody`, or it declares
+    /// none of the refusals that can be sent it; when a 422 is declared for a
+    /// JSON body whose schema every candidate satisfies, which
+    /// [`assert_body_rejections_violating`](Self::assert_body_rejections_violating)
+    /// sends a body of the test's own for; and when a response is not the
+    /// refusal it was sent for, as above.
+    pub async fn assert_body_rejections<'c>(&'c self, template: impl Fn() -> TestRequest<'c, C>) {
+        rejections::assert(self, template, None).await;
+    }
+
+    /// [`assert_body_rejections`](Self::assert_body_rejections), sending
+    /// `body`, as JSON, for the 422 in place of the candidate chosen from the
+    /// declared schema: for a schema every candidate satisfies, or a refusal
+    /// the schema does not state, such as one the handler makes.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .assert_body_rejections_violating(
+    ///         || client.post("/notes"),
+    ///         &serde_json::json!({ "body": 7 }),
+    ///     )
+    ///     .await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// As [`assert_body_rejections`](Self::assert_body_rejections) does, and
+    /// when `body` cannot be serialized to JSON, or the operation declares no
+    /// 422 or reads no JSON body, so it would not be sent.
+    pub async fn assert_body_rejections_violating<'c, T: serde::Serialize>(
+        &'c self,
+        template: impl Fn() -> TestRequest<'c, C>,
+        body: &T,
+    ) {
+        let body = serde_json::to_value(body).expect("a serializable request body");
+        rejections::assert(self, template, Some(body)).await;
     }
 }
 
@@ -1980,6 +2069,12 @@ impl<'a, C> TestRequest<'a, C> {
     /// ends without a response, and, on a [`strict`](TestClient::strict)
     /// client, when the response does not conform to the description.
     pub async fn send(self) -> TestResponse {
+        self.send_filed().await.0
+    }
+
+    /// [`send`](Self::send), also returning where the client's record filed
+    /// the exchange.
+    async fn send_filed(self) -> (TestResponse, usize) {
         let Answered {
             client,
             method,
@@ -2003,13 +2098,14 @@ impl<'a, C> TestRequest<'a, C> {
         let (at, _) = client.record(&method, &path, uri, &parts, Some(bytes.clone()));
         check_strictly(client.checked_against(), &client.observed, at);
 
-        TestResponse {
+        let response = TestResponse {
             method,
             path,
             response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
             body: bytes,
             problem_base: client.problem_base.clone(),
-        }
+        };
+        (response, at)
     }
 
     /// Sends the request, and returns as soon as the response head arrives,
@@ -2802,10 +2898,7 @@ impl TestResponse {
     /// differs; and when its `status` member disagrees with the status line.
     #[track_caller]
     pub fn assert_problem(&self, status: impl IntoStatus, type_uri: &str) -> &Self {
-        self.assert_status(status);
-        self.assert_content_type(PROBLEM_JSON);
-
-        let problem = self.problem();
+        let problem = self.assert_problem_of(status);
         let type_uri = self.problem_type(type_uri);
         let type_uri = type_uri.as_ref();
         assert!(
@@ -2815,6 +2908,24 @@ impl TestResponse {
             problem.type_uri,
             self.rendered_body()
         );
+        self.assert_status_member(&problem);
+        self
+    }
+
+    /// [`assert_problem`](Self::assert_problem)'s checks before the type:
+    /// the status, the media type, and a body that is a problem document,
+    /// which it returns.
+    #[track_caller]
+    fn assert_problem_of(&self, status: impl IntoStatus) -> TestProblem {
+        self.assert_status(status);
+        self.assert_content_type(PROBLEM_JSON);
+        self.problem()
+    }
+
+    /// Asserts that `problem`'s `status` member, where it carries one, names
+    /// the status line, which RFC 9457 section 3.1.2 binds a generator to.
+    #[track_caller]
+    fn assert_status_member(&self, problem: &TestProblem) {
         if let Some(member) = problem.status {
             assert!(
                 member == self.status().as_u16(),
@@ -2824,7 +2935,15 @@ impl TestResponse {
                 self.rendered_body()
             );
         }
-        self
+    }
+
+    /// Asserts that this response is `status` as a problem document whose
+    /// `status` member, where it carries one, agrees: what
+    /// [`assert_problem`](Self::assert_problem) asserts but the type.
+    #[track_caller]
+    fn assert_untyped_problem(&self, status: StatusCode) {
+        let problem = self.assert_problem_of(status);
+        self.assert_status_member(&problem);
     }
 
     /// Asserts that this response is an RFC 9457 problem whose extension

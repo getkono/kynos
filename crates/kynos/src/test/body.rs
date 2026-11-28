@@ -24,6 +24,10 @@ pub(super) enum RequestBody {
     /// These octets, unless empty, then never a chunk nor an end.
     #[cfg(feature = "server")]
     StalledAfter(Bytes),
+    /// A chunk of spaces whenever polled, never an end, so an operation's own
+    /// limit is what stops the read, one octet past it, whatever that limit
+    /// is.
+    Endless,
 }
 
 impl RequestBody {
@@ -39,6 +43,7 @@ impl RequestBody {
             Self::StalledAfter(first) if first.is_empty() => Poll::Pending,
             #[cfg(feature = "server")]
             Self::StalledAfter(first) => Poll::Ready(Some(std::mem::take(first))),
+            Self::Endless => Poll::Ready(Some(Bytes::from_static(&SPACES))),
         }
     }
 
@@ -62,9 +67,15 @@ impl fmt::Debug for RequestBody {
             Self::StalledAfter(first) => {
                 formatter.debug_tuple("StalledAfter").field(first).finish()
             }
+            Self::Endless => formatter.write_str("Endless"),
         }
     }
 }
+
+/// The octets one chunk of an [`Endless`](RequestBody::Endless) body
+/// carries: spaces, which are insignificant before a JSON value, so no reader
+/// refuses them as malformed before its limit refuses them as too many.
+static SPACES: [u8; 64 * 1024] = [b' '; 64 * 1024];
 
 /// A request body read as hyper reads one: frame by frame, and under a
 /// declared length exactly that many octets end it, nothing past them is read,

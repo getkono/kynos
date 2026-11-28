@@ -1306,3 +1306,148 @@ async fn a_finite_feed_is_read_as_its_events() {
     assert_eq!(events[2].id.as_deref(), Some("e2"));
     assert_eq!(events[2].json::<Reading>().celsius, 22);
 }
+
+// --- Body refusals driven from one template -------------------------------
+//
+// `assert_body_rejections` sends each refusal an operation reading a body
+// declares, so a suite writes neither the five requests nor the limit.
+
+/// What `POST /reports` reads.
+#[allow(dead_code)]
+#[derive(Schema, Deserialize)]
+struct Report {
+    title: String,
+}
+
+/// The field `POST /reports` refuses a request without, with a 400.
+#[allow(dead_code)]
+#[derive(HeaderParams)]
+struct Tenant {
+    #[header(rename = "X-Tenant")]
+    tenant: String,
+}
+
+/// Files a report under a tenant.
+#[kynos::post("/reports")]
+async fn file_report(Headers(_tenant): Headers<Tenant>, Json(_report): Json<Report>) -> NoContent {
+    NoContent
+}
+
+/// A service answering `POST /reports`, its body held to `limit` where one
+/// is given.
+fn reports(limit: Option<u64>) -> kynos::router::service::Service<()> {
+    match limit {
+        Some(limit) => Router::<()>::new()
+            .mount(kynos::routes![file_report.intercept(
+                kynos::middleware::limits::body_size::BodySize::new(limit)
+            )])
+            .build(()),
+        None => Router::<()>::new()
+            .mount(kynos::routes![file_report])
+            .build(()),
+    }
+    .expect("a describable router")
+}
+
+/// Each refusal is sent with the template's field, answered as the
+/// declared problem, and recorded: with the one success, every response the
+/// operation declares is covered.
+#[tokio::test]
+async fn every_body_refusal_an_operation_declares_is_sent_from_one_template() {
+    let client = TestClient::new(reports(None));
+
+    client
+        .assert_body_rejections(|| client.post("/reports").header("x-tenant", "acme"))
+        .await;
+    client
+        .post("/reports")
+        .header("x-tenant", "acme")
+        .json(&serde_json::json!({ "title": "late" }))
+        .send()
+        .await
+        .assert_status(204);
+
+    client.assert_declared_responses_covered();
+}
+
+/// The 413 is sent past whatever limit covers the operation, here one above
+/// the default, without the test stating it.
+#[tokio::test]
+async fn the_413_is_sent_past_the_operations_own_limit() {
+    let client = TestClient::new(reports(Some(3 * 1024 * 1024)));
+
+    client
+        .assert_body_rejections(|| client.post("/reports").header("x-tenant", "acme"))
+        .await;
+}
+
+/// Through a server, each refusal crosses the wire, the endless body
+/// included, and the 408 is the server's own idle timeout's.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn body_refusals_through_a_server_are_answered_on_the_wire() {
+    let server = kynos::server::Server::new(reports(Some(64)))
+        .request_body_idle_timeout(Some(std::time::Duration::from_millis(20)));
+    let client = TestClient::through_server(server);
+
+    client
+        .assert_body_rejections(|| client.post("/reports").header("x-tenant", "acme"))
+        .await;
+}
+
+/// Over a socket too, where the server stops reading the endless body at the
+/// default limit and the 413 still arrives.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn body_refusals_over_a_socket_are_answered() {
+    let running = spawned(
+        kynos::server::Server::new(reports(None))
+            .request_body_idle_timeout(Some(std::time::Duration::from_millis(20))),
+    )
+    .await;
+    let client = TestClient::connect(&running);
+
+    client
+        .assert_body_rejections(|| client.post("/reports").header("x-tenant", "acme"))
+        .await;
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
+/// A body the test names replaces the schema's candidate for the 422.
+#[tokio::test]
+async fn a_named_violating_body_is_sent_for_the_422() {
+    let client = TestClient::new(reports(None));
+
+    client
+        .assert_body_rejections_violating(
+            || client.post("/reports").header("x-tenant", "acme"),
+            &serde_json::json!({ "title": 7 }),
+        )
+        .await;
+}
+
+/// A template missing what the operation reads first is answered with that
+/// refusal instead, and the assertion names the request it sent.
+#[tokio::test]
+#[should_panic(expected = "POST /reports -> 400")]
+async fn a_template_without_its_field_fails_at_the_first_refusal() {
+    let client = TestClient::new(reports(None));
+
+    client
+        .assert_body_rejections(|| client.post("/reports"))
+        .await;
+}
+
+/// An operation reading no body has no body refusals to send.
+#[tokio::test]
+#[should_panic(expected = "HEAD /probe: `HEAD /probe` declares no `requestBody`")]
+async fn an_operation_without_a_body_is_refused() {
+    let client = client();
+
+    client
+        .assert_body_rejections(|| client.head("/probe"))
+        .await;
+}
