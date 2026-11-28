@@ -1394,10 +1394,21 @@ fn an_interceptor_adding_on_problems_matches_the_problem_media_type_loosely() {
     );
 }
 
-/// The `$ref` an extractor declares its 503 as.
+/// The `$ref` an extractor declares its 503 as, overriding what the component
+/// says of itself.
 fn unavailable() -> kynos::openapi::RefOr<kynos::openapi::Response> {
-    kynos::openapi::RefOr::Ref(kynos::openapi::Ref::response("Unavailable"))
+    kynos::openapi::RefOr::Ref(
+        kynos::openapi::Ref::response("Unavailable")
+            .with_summary(UNAVAILABLE_SUMMARY)
+            .with_description(UNAVAILABLE_DESCRIPTION),
+    )
 }
+
+/// The summary `unavailable` overrides its component's with.
+const UNAVAILABLE_SUMMARY: &str = "Draining";
+
+/// The description `unavailable` overrides its component's with.
+const UNAVAILABLE_DESCRIPTION: &str = "the store is draining";
 
 /// An extractor declaring an inline problem 422 and a 503 held as a `$ref`.
 struct Referencing;
@@ -1592,7 +1603,15 @@ fn a_ref_an_uncovered_operation_shares_is_copied_where_the_header_rides() {
     };
     let mut expected = unavailable_problem();
     expected.headers = copy.headers.clone();
-    assert_eq!(copy, expected, "the copy is the component, plus its header");
+    expected.description = Some(UNAVAILABLE_DESCRIPTION.to_owned());
+    #[cfg(feature = "openapi32")]
+    {
+        expected.summary = Some(UNAVAILABLE_SUMMARY.to_owned());
+    }
+    assert_eq!(
+        copy, expected,
+        "the copy is the component, under the reference's own description, plus its header"
+    );
     assert_eq!(copy.headers.keys().collect::<Vec<_>>(), vec!["X-Stamp"]);
 }
 
@@ -1615,6 +1634,122 @@ fn a_head_a_covered_get_describes_is_a_covered_reference() {
             unavailable(),
             "{method:?} still refers"
         );
+    }
+}
+
+/// The copy written in place of a covered `HEAD`'s reference is its `GET`'s
+/// without content, as the `HEAD` is answered (RFC 9110 section 9.3.2).
+#[test]
+fn a_heads_copy_of_a_ref_carries_no_content() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![referencing])
+        .group(
+            Group::<()>::new("/stamped")
+                .intercept(Stamping)
+                .mount(kynos::routes![referencing_head]),
+        )
+        .map_openapi(declaring_unavailable(unavailable_problem()))
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(unavailable_headers(&document), Vec::<String>::new());
+    let copy = |method| {
+        let kynos::openapi::RefOr::Item(copy) =
+            written(&document, "/stamped/referencing-head", method, "503")
+        else {
+            panic!("the covered {method:?} reference is replaced by a copy");
+        };
+        copy
+    };
+    let (get, head) = (
+        copy(kynos::openapi::Method::Get),
+        copy(kynos::openapi::Method::Head),
+    );
+    assert!(head.content.is_empty(), "the `HEAD` copy carries content");
+    let mut expected = get;
+    expected.content.clear();
+    assert_eq!(
+        head, expected,
+        "the `HEAD` copy is its `GET`'s, less content"
+    );
+}
+
+/// Where every reference is covered but one operation's header differs from
+/// another's under the same name, filing either on the component describes
+/// the other operation wrongly, so the component stays bare and each
+/// reference is replaced by a copy carrying its own.
+#[test]
+fn a_ref_every_referrer_covers_differently_is_copied_per_referrer() {
+    let document = Router::<()>::new()
+        .group(
+            Group::<()>::new("/stamped")
+                .intercept(Stamping)
+                .mount(kynos::routes![referencing]),
+        )
+        .group(
+            Group::<()>::new("/zoned")
+                .intercept(Zoning)
+                .mount(kynos::routes![referencing_too]),
+        )
+        .map_openapi(declaring_unavailable(unavailable_problem()))
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(unavailable_headers(&document), Vec::<String>::new());
+    let stamp = |path: &str| {
+        let operation = operation(&document, path);
+        let header = |status: &str| {
+            let Some(kynos::openapi::RefOr::Item(response)) =
+                operation.responses.responses.get(status)
+            else {
+                panic!("{path} declares {status} in place");
+            };
+            response
+                .headers
+                .get("X-Stamp")
+                .cloned()
+                .unwrap_or_else(|| panic!("{path}'s {status} declares `X-Stamp`"))
+        };
+        let copied = header("503");
+        assert_eq!(
+            copied,
+            header("204"),
+            "{path}'s copy carries its own header"
+        );
+        copied
+    };
+    assert_ne!(
+        stamp("/stamped/referencing"),
+        stamp("/zoned/referencing-too")
+    );
+}
+
+/// A field written onto every response under `Stamp`'s name, as a number.
+#[derive(kynos::HeaderParams)]
+struct Zone {
+    /// Which zone answered.
+    #[header(rename = "X-Stamp")]
+    zone: u64,
+}
+
+/// Declares `Zone` on every response.
+struct Zoning;
+
+impl<C: Sync + 'static> kynos::middleware::Interceptor<C> for Zoning {
+    type Reads = ();
+    type Adds = Zone;
+    type Short = std::convert::Infallible;
+
+    const ADDS_ON: kynos::middleware::Placement = kynos::middleware::Placement::Every;
+
+    async fn intercept(
+        &self,
+        request: kynos::http::Request,
+        (): (),
+        _: &C,
+        next: kynos::middleware::Next<'_, C>,
+    ) -> Result<kynos::middleware::Continued<Zone>, std::convert::Infallible> {
+        Ok(next.run(request).await.with_headers(Zone { zone: 1 }))
     }
 }
 
