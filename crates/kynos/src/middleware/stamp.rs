@@ -55,9 +55,10 @@ use crate::{
 /// panic a router's or group's `catch_panics` recovers, around every
 /// interceptor of both scopes. Mount it first, outermost.
 ///
-/// The description files the group on every response an operation declares
-/// in place, and leaves a shared `$ref` response, such as a Kynos refusal's,
-/// as the reference it is.
+/// The description says the same: the group is filed on every response a
+/// covered operation declares, a Kynos refusal's included, and on none of
+/// the 500s a panic recovered around it is answered with. A response the
+/// application declares as a `$ref` is left as the reference it is.
 ///
 /// Each field replaces whatever value the chain set, as
 /// [`SecurityHeaders`](crate::middleware::security_headers::SecurityHeaders)'
