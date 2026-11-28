@@ -60,8 +60,9 @@ pub(crate) const fn split_essence(media_type: &[u8]) -> (&[u8], &[u8]) {
 /// on the trimmed type and subtype in any ASCII case, whatever parameters
 /// follow them.
 ///
-/// Gated to its two readers, `JsonAs` and `QueryString`.
-#[cfg(any(feature = "json", feature = "openapi32"))]
+/// Gated to its readers: `JsonAs`, `QueryString`, and the body refusals a
+/// `TestClient` sends.
+#[cfg(any(feature = "json", feature = "openapi32", feature = "test-util"))]
 pub(crate) const fn is_json(media_type: &str) -> bool {
     use super::eq_ignore_ascii_case;
 

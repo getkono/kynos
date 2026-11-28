@@ -28,10 +28,7 @@
 //! happened that the document did not predict, the other says nothing the
 //! document predicts has gone unexercised.
 
-use kynos::{
-    extract::body::limit::DEFAULT_LIMIT, http::StatusCode, openapi::model::body::mime_names,
-    prelude::*, test::TestClient,
-};
+use kynos::{http::StatusCode, openapi::model::body::mime_names, prelude::*, test::TestClient};
 use serde::{Deserialize, Serialize};
 
 /// A user of the service.
@@ -160,43 +157,16 @@ async fn exercise_the_rejections(client: &TestClient<()>) {
         .await
         .assert_status(StatusCode::BAD_REQUEST);
 
-    // A body that is not JSON at all: an empty one ends before any value
-    // begins, which is a syntax error rather than a schema one.
+    // Every refusal of the body `POST /users` reads, each begun by the one
+    // template, so a credential it carried would reach all of them: a media
+    // type the operation never claimed (415), bytes that are not JSON (400), a
+    // body that never ends, cut off one octet past whatever limit covers the
+    // operation (413), one that never arrives (408), and valid JSON of the
+    // wrong shape, which is the distinction 400 and 422 draw: the document
+    // parsed, and then said something the schema forbids (422).
     client
-        .post("/users")
-        .header("content-type", mime_names::APPLICATION_JSON)
-        .send()
-        .await
-        .assert_status(StatusCode::BAD_REQUEST);
-
-    // A media type the operation never claimed.
-    client
-        .post("/users")
-        .header("content-type", mime_names::TEXT_PLAIN)
-        .send()
-        .await
-        .assert_status(StatusCode::UNSUPPORTED_MEDIA_TYPE);
-
-    // Valid JSON of the wrong shape, which is the distinction 400 and 422
-    // draw: the document parsed, and then said something the schema forbids.
-    client
-        .post("/users")
-        .json(&serde_json::json!({ "id": "one", "name": 1 }))
-        .send()
-        .await
-        .assert_status(StatusCode::UNPROCESSABLE_ENTITY);
-
-    // A body over the cap every buffering extractor applies when no
-    // `BodySize` limit is mounted, which is the 413 `BodyRejection` declares.
-    client
-        .post("/users")
-        .json(&User {
-            id: 2,
-            name: "n".repeat(DEFAULT_LIMIT.try_into().expect("the cap fits in memory")),
-        })
-        .send()
-        .await
-        .assert_status(StatusCode::PAYLOAD_TOO_LARGE);
+        .assert_body_rejections(|| client.post("/users"))
+        .await;
 
     // A client that sends the start of its body and goes quiet. The test
     // client holds a body to the idle timeout a server does, so the read

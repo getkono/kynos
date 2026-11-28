@@ -4,11 +4,11 @@
 //! [`representation`] decides which `content` key declares the media type a
 //! response sent.
 
-mod representation;
+pub(super) mod representation;
 
 use bytes::Bytes;
 use kynos_openapi::{
-    Document, Method, RefOr, Responses, StatusPattern,
+    Document, Method, RefOr, Responses, Schema, StatusPattern,
     model::{body::mime_names, parameter::header::is_ignored_header},
 };
 use serde_json::Value;
@@ -174,7 +174,7 @@ fn body_conformance(
 ///
 /// The schema carries the description's `components`, so a `$ref` resolves
 /// rather than silently accepting every body.
-fn validate(document: &Document, schema: &kynos_openapi::Schema, instance: &Value) -> Vec<String> {
+pub(super) fn validate(document: &Document, schema: &Schema, instance: &Value) -> Vec<String> {
     let mut root = serde_json::to_value(schema).expect("a schema in a document is serializable");
 
     if let Value::Object(members) = &mut root {
@@ -370,7 +370,7 @@ fn resolve_response<'d>(
 
 /// The media type an entry names, following one `#/components/mediaTypes`
 /// hop; a build without `openapi32` has no such section to follow.
-fn resolve_media_type<'d>(
+pub(super) fn resolve_media_type<'d>(
     #[cfg_attr(not(feature = "openapi32"), expect(unused_variables))] document: &'d Document,
     entry: &'d RefOr<kynos_openapi::MediaType>,
 ) -> Option<&'d kynos_openapi::MediaType> {

@@ -276,8 +276,8 @@ do not pay.
 counted the same way on one connection with a per-request allocation counter,
 is 14 blocks and 10129 bytes through Kynos and 13 and 9200 through axum 0.8
 over the same hyper; both pay the 8 KiB buffer. Kynos allocates 989 bytes
-axum does not — the dispatch and endpoint futures (432 and 320, below), the
-routing record (120), the read deadline axum's `serve` does not arm (96), the
+axum does not — the dispatch and endpoint futures (440 and 320, below), the
+routing record (112), the read deadline axum's `serve` does not arm (96), the
 handler's own string (13) and the `Connection` handle (8) — and axum 60 Kynos
 does not. Without hyper's buffer, Kynos allocates 1897 bytes a request to
 axum's 968, the near-2× `kynos-bench`'s first sessions recorded against
@@ -306,22 +306,22 @@ decision.** DHAT over `alloc_counter_agreement.static_match`, the same request
 | Was | Site | Decision |
 | --- | --- | --- |
 | 264 B | the handler's future, boxed again by the endpoint's terminal | **removed**: with no interceptors of its own an endpoint awaits the handler in place, inside the box its own future already has |
-| 16 B, 48 B → 88 B → 120 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way. The record's one block is **kept** |
+| 16 B, 48 B → 88 B → 120 B → 112 B | `MatchedPath` and `Forwarded`, each its own extension | **merged**: the router inserts one record holding the matched path, the captures and the resolved origin, read back through `MatchedPath`, `Path`, `Forwarded` (an argument, or `Forwarded::of` from a `&Request`) and `ByClientAddress`; a capture's own insert goes the same way. The record's one block is **kept** |
 | 32 B, 148 B | the extension map's box and its table, on first insert | **kept**: any extension costs them, and a request from the server already pays both for its `Connection` |
 | 1928 B → 1904 B → 432 B → 440 B | the dispatch future, boxed by `Service::call` | **kept**: unboxing it needs a public bound; narrowed below |
 | 920 B → 912 B → 536 B → 320 B | the endpoint's future, boxed by `DynEndpoint` | **kept**: it is the erasure every operation in one table needs; narrowed below |
 
 **Five remain, and none is the router's to remove.** They are
 [`requests.tsv`](../crates/kynos-profile/requests.tsv)'s 1052 bytes for that
-row: the map's box and table (32 and 148), the record (120), and the dispatch
-and endpoint futures (432 and 320).
+row: the map's box and table (32 and 148), the record (112), and the dispatch
+and endpoint futures (440 and 320).
 
 - The dispatch future is boxed because `Service<C>` erases it, and generic
   code calls `Service::call` under no bound on `C`, as `examples/csrf.rs`'s
   `send` and the server's own `serve_http` do. Returning `serve`'s future
   unboxed names one that is `Send` only for `C: Send + Sync + 'static`, so it
   needs that bound on `call`: a breaking change, and the one that would remove
-  the block, carrying its 432 bytes inline in every future awaiting `call`.
+  the block, carrying its 440 bytes inline in every future awaiting `call`.
 - An inline slot instead of either box, used when the future fits, stores an
   erased value in place. Writing one here needs `unsafe`, which the workspace
   forbids. Taking a vetted one, the way `alloc_counter` keeps that rule
