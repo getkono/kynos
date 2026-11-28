@@ -16,7 +16,6 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use bytes::Bytes;
 use kynos_openapi::{OpaqueReason, OpaqueRoute};
 
 use crate::{
@@ -26,7 +25,7 @@ use crate::{
     middleware::catch_panic::PanicPolicy,
     response::range::{
         Selection,
-        source::{ByteSource, Spans},
+        source::{Spans, file::FileSource},
         spec,
     },
     router::{
@@ -272,11 +271,14 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     // Opened here, so a file that cannot be opened is still a 404 rather than
     // a head followed by a failed body. Opening reads nothing: the body reads
     // once polled, so a HEAD, whose body is dropped (section 9.3.2), reads
-    // none of the file. Just opened, so its cursor is at 0.
-    let Ok(file) = tokio::fs::File::open(&path).await else {
+    // none of the file. Held open for the whole response, so a file renamed
+    // over mid-response is not spliced into it; one that shrank since `stat`
+    // fails the body with `Truncated` rather than ending short of the length
+    // the head named (section 14.4).
+    let Some(source) = open(&path).await else {
         return crate::http::body::bodiless(StatusCode::NOT_FOUND);
     };
-    let source = std::sync::Arc::new(Opened(tokio::sync::Mutex::new((file, 0))));
+    let source = std::sync::Arc::new(source);
 
     // An empty file has no last offset, so it gets an empty body.
     let body = match selection {
@@ -290,48 +292,11 @@ async fn serve(directory: &Directory, request: &Request) -> Response {
     range::assembled(body, selection, media_type(&path), &headers)
 }
 
-/// A located file, read one [`SPAN`](crate::response::range::source::SPAN)
-/// at a time as its body is polled.
-///
-/// Held open for the whole response, so a file renamed over mid-response is
-/// not spliced into it. One that shrank since `stat` fails the body with
-/// [`Truncated`](crate::response::range::source::Truncated) rather than ending
-/// short of the length the head named (RFC 9110 section 14.4).
-///
-/// Holds the file and the offset its cursor is at, so a read continuing where
-/// the last one stopped does not seek. A mutex only because `read_span` takes
-/// `&self`: `Spans` keeps one read in flight, so it is never contended.
-#[derive(Debug)]
-struct Opened(tokio::sync::Mutex<(tokio::fs::File, u64)>);
-
-impl ByteSource for Opened {
-    type Error = std::io::Error;
-
-    /// What `fstat` says; [`serve`] sizes the body from its `stat`, so never asks.
-    async fn complete_length(&self) -> Result<u64, Self::Error> {
-        Ok(self.0.lock().await.0.metadata().await?.len())
-    }
-
-    async fn read_span(&self, first: u64, last: u64) -> Result<Bytes, Self::Error> {
-        use tokio::io::{AsyncReadExt, AsyncSeekExt};
-
-        let mut guard = self.0.lock().await;
-        let (file, cursor) = &mut *guard;
-
-        if *cursor != first {
-            file.seek(std::io::SeekFrom::Start(first)).await?;
-            *cursor = first;
-        }
-
-        // `first <= last`, so this cannot wrap; `Spans` asks for one span at
-        // most, so it is never more than that.
-        let length = usize::try_from(last - first + 1).unwrap_or(usize::MAX);
-        let mut buffer = bytes::BytesMut::with_capacity(length);
-        let read = file.read_buf(&mut buffer).await?;
-        *cursor = cursor.saturating_add(u64::try_from(read).unwrap_or(u64::MAX));
-
-        Ok(buffer.freeze())
-    }
+/// The located file as a [`FileSource`], or `None` where it cannot be opened
+/// or is no longer a regular file.
+async fn open(path: &Path) -> Option<FileSource> {
+    let file = tokio::fs::File::open(path).await.ok()?.into_std().await;
+    FileSource::new(file).await.ok()
 }
 
 impl<C: Send + Sync + 'static, P: PanicPolicy, I, S> Router<C, P, I, S> {
