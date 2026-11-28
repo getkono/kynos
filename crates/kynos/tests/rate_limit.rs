@@ -254,12 +254,12 @@ async fn a_burst_allowance_is_both_honoured_and_advertised() {
 /// The shipped limiter's `Retry-After` is when its quota recovers: the rest of
 /// the current window, plus however long the carried count takes to decay.
 ///
-/// Exact whatever the wall clock reads, which the limiter takes from
-/// `SystemTime` with no seam to fix it. With a one-second window the remainder
-/// is between a millisecond and one second; with a quota of one, the carried
-/// count has to decay all the way, which takes exactly one window. The sum lies
-/// in (1 s, 2 s] and rounds up to two at every instant. Reporting the window
-/// alone, the remainder alone or the decay alone would each read "1".
+/// Exact whatever the wall clock reads, so this runs on the default
+/// `SystemClock` rather than one a test moves. With a one-second window the
+/// remainder is between a millisecond and one second; with a quota of one, the
+/// carried count has to decay all the way, which takes exactly one window. The
+/// sum lies in (1 s, 2 s] and rounds up to two at every instant. Reporting the
+/// window alone, the remainder alone or the decay alone would each read "1".
 #[tokio::test]
 async fn the_shipped_limiter_reports_when_its_quota_recovers_as_retry_after() {
     let service = limited(Quotas::new(shared(), Spent(1)).quota(Quota::new(

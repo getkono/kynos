@@ -726,7 +726,7 @@ shape, which owes a size guard here and sends resident memory at scale to
 The containment row is written against the enumerated table in
 [`architecture.md`](architecture.md#runtime-policy) rather than against
 `server/` alone, which is checkable in this repository's exhaustiveness idiom:
-a seventh site fails the build. A count asserted only in prose is a count
+an eighth site fails the build. A count asserted only in prose is a count
 nobody is holding.
 
 The HTTP/2 flow-control row was once `blocked-on-dependency`, on the reading

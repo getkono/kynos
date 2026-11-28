@@ -112,3 +112,47 @@ async fn a_handle_that_is_not_a_regular_file_is_refused() {
 
     assert_eq!(refused.kind(), std::io::ErrorKind::InvalidInput);
 }
+
+/// A read a signal interrupted is asked again, and its answer is the one the
+/// retry gave rather than the interruption.
+#[test]
+fn an_interrupted_read_is_retried() {
+    let mut answers = [
+        Err(std::io::Error::from(std::io::ErrorKind::Interrupted)),
+        Ok(7),
+    ]
+    .into_iter();
+
+    let read = super::retrying(|| answers.next().expect("asked once too often"));
+
+    assert_eq!(read.unwrap(), 7);
+    assert!(answers.next().is_none(), "the retry was not asked for");
+}
+
+/// Any other error is answered at once, not retried.
+#[test]
+fn an_error_other_than_an_interruption_is_not_retried() {
+    let mut asked = 0;
+
+    let read = super::retrying(|| {
+        asked += 1;
+        Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied))
+    });
+
+    assert_eq!(
+        read.unwrap_err().kind(),
+        std::io::ErrorKind::PermissionDenied
+    );
+    assert_eq!(asked, 1);
+}
+
+/// A blocking task that panicked is answered as an I/O error the body can
+/// report, rather than unwinding into whatever polls it.
+#[tokio::test]
+async fn a_blocking_task_that_panicked_is_an_io_error() {
+    let stopped = super::blocking::<()>(|| panic!("the read panicked"))
+        .await
+        .unwrap_err();
+
+    assert_eq!(stopped.kind(), std::io::ErrorKind::Other);
+}

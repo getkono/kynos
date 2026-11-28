@@ -66,7 +66,7 @@ is checkable, so the sites are enumerated:
 
 **Seven rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
-so a seventh site is a failing build rather than a silently broken sentence.
+so an eighth site is a failing build rather than a silently broken sentence.
 `mise run containment:check` is where that count runs, and where each row but
 `server/`'s is held to its *Names* cell: those cells are backticked
 `tokio::` use trees, and a tokio item a site writes that its row does not list
