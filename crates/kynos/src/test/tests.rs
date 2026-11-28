@@ -3163,6 +3163,96 @@ mod body_rejections {
         assert!(refused.contains("reads no JSON body"), "{refused}");
     }
 
+    /// A `requestBody` referencing `#/components/requestBodies` is planned
+    /// as the component it names, as though it were inline.
+    #[cfg(feature = "json")]
+    #[test]
+    fn a_referenced_request_body_is_read_as_its_component() {
+        let inline = document!(json_string);
+        let mut document = inline.clone();
+        let operation = document
+            .paths
+            .items
+            .get_mut("/items")
+            .and_then(|item| item.post.as_deref_mut())
+            .expect("the operation is described");
+        let body = operation
+            .request_body
+            .replace(RefOr::Ref(kynos_openapi::Ref::request_body("Item")))
+            .expect("the operation reads a body");
+        document
+            .components
+            .request_bodies
+            .insert("Item".to_owned(), body);
+
+        assert_eq!(planned(&document, None), planned(&inline, None));
+    }
+
+    /// A named 422 body for an operation declaring no 422 is refused, since
+    /// it would not be sent.
+    #[cfg(feature = "json")]
+    #[test]
+    fn a_named_body_for_an_operation_declaring_no_422_is_refused() {
+        let mut document = document!(json_string);
+        document
+            .paths
+            .items
+            .get_mut("/items")
+            .and_then(|item| item.post.as_deref_mut())
+            .expect("the operation is described")
+            .responses
+            .responses
+            .shift_remove("422")
+            .expect("a JSON body declares its 422");
+
+        let refused = planned(&document, Some(&json!(1))).expect_err("no 422 is declared");
+        assert_eq!(
+            refused,
+            "a 422 body was named, but `POST /items` declares no 422"
+        );
+    }
+
+    /// A refusal whose answer is the declared problem but breaks the
+    /// declared schema fails, on a client that is not strict.
+    #[tokio::test]
+    #[should_panic(expected = "1 response did not conform to the description:\n  \
+                               POST /items -> 415: the body does not match the declared schema")]
+    async fn a_refusal_breaking_its_declared_schema_fails_on_a_lax_client() {
+        let document: Document = serde_json::from_value(json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1" },
+            "paths": { "/items": { "post": {
+                "requestBody": { "content": { "application/json": {
+                    "schema": { "type": "string" }
+                } } },
+                "responses": { "415": {
+                    "description": "",
+                    "content": { "application/problem+json": { "schema": {
+                        "type": "object",
+                        "required": ["code"]
+                    } } }
+                } }
+            } } }
+        }))
+        .expect("a description");
+        let service = crate::router::service::Service::<()>::new(document, |_| async {
+            let mut response = crate::http::Response::new(crate::http::body::Body::from_bytes(
+                bytes::Bytes::from_static(br#"{"title":"Unsupported","status":415}"#),
+            ));
+            *response.status_mut() = StatusCode::UNSUPPORTED_MEDIA_TYPE;
+            response.headers_mut().insert(
+                crate::http::header::CONTENT_TYPE,
+                crate::http::HeaderValue::from_static("application/problem+json"),
+            );
+            response
+        });
+        let client = crate::test::TestClient::new(service);
+
+        client
+            .assert_body_rejections(|| client.post("/items"))
+            .await;
+    }
+
     /// An operation reading no body has nothing to send.
     #[test]
     fn an_operation_reading_no_body_is_refused() {
