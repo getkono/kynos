@@ -4033,6 +4033,103 @@ fn a_route_attributes_head_describes_what_the_builders_does() {
     assert_eq!(head(&attributed), head(&built));
 }
 
+/// `referencing`, describing the HEAD it answers; its 503 is the `$ref`
+/// `Referencing` declares, to a component only an edit adds.
+#[kynos::get("/referencing/described-head", head)]
+async fn referencing_described_head(checked: Referencing) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// Declares `Unavailable` as a problem 503, the content a HEAD never sends.
+fn declaring_unavailable_with_content(document: &mut Document) {
+    document.components.responses.insert(
+        "Unavailable".to_owned(),
+        kynos::openapi::RefOr::Item(kynos::openapi::Response::with_content(
+            "unavailable",
+            "application/problem+json",
+            kynos::openapi::MediaType::new(kynos::openapi::Schema::Bool(true)),
+        )),
+    );
+}
+
+/// The described HEAD's 503 at `/referencing/described-head`, if any.
+fn described_head_503(
+    document: &Document,
+) -> Option<kynos::openapi::RefOr<kynos::openapi::Response>> {
+    document.paths.items["/referencing/described-head"]
+        .operation(kynos::openapi::Method::Head)
+        .map(|head| head.responses.responses["503"].clone())
+}
+
+/// A described HEAD's `$ref` to a component an edit adds with content is
+/// inlined without that content, as one to a component the router declared
+/// is, while the GET keeps its `$ref`: the HEAD sends no body (RFC 9110
+/// section 9.3.2) whichever declared the component.
+#[test]
+fn a_described_heads_ref_to_an_edited_in_component_is_inlined_without_content() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![referencing_described_head])
+        .map_openapi(declaring_unavailable_with_content)
+        .openapi()
+        .expect("a describable router");
+
+    let get = &document.paths.items["/referencing/described-head"]
+        .operation(kynos::openapi::Method::Get)
+        .expect("the GET")
+        .responses
+        .responses["503"];
+    assert_eq!(get, &unavailable());
+
+    let Some(kynos::openapi::RefOr::Item(head)) = described_head_503(&document) else {
+        panic!("the HEAD's 503 is inlined");
+    };
+    assert!(head.content.is_empty(), "{head:?}");
+    assert_eq!(head.description.as_deref(), Some("unavailable"));
+}
+
+/// A described HEAD an edit rewrote is the application's account of it, so
+/// its `$ref` stays as the edit left it; one an edit removed is not derived
+/// back, and stays refused as the removal of an operation the router serves.
+#[test]
+fn a_described_head_an_edit_rewrote_or_removed_is_left_as_edited() {
+    let rewritten = Router::<()>::new()
+        .mount(kynos::routes![referencing_described_head])
+        .map_openapi(|document| {
+            declaring_unavailable_with_content(document);
+            let head = document
+                .paths
+                .items
+                .get_mut("/referencing/described-head")
+                .and_then(|item| item.operation_mut(kynos::openapi::Method::Head))
+                .expect("the described HEAD");
+            head.summary = Some("Whether the report is available.".to_owned());
+        })
+        .openapi()
+        .expect("a describable router");
+    assert_eq!(described_head_503(&rewritten), Some(unavailable()));
+
+    let removed = Router::<()>::new()
+        .mount(kynos::routes![referencing_described_head])
+        .map_openapi(|document| {
+            declaring_unavailable_with_content(document);
+            let item = document
+                .paths
+                .items
+                .get_mut("/referencing/described-head")
+                .expect("the path");
+            assert!(item.head.take().is_some(), "the described HEAD");
+        });
+    let located = violations_like(&removed, |error| {
+        matches!(
+            error,
+            RouterError::MappedOperation { method: kynos::openapi::Method::Head, path }
+                if path == "/referencing/described-head"
+        )
+    });
+    assert_eq!(located, ["#/paths/~1referencing~1described-head/head"]);
+}
+
 /// The router's violations of `error`'s kind, by location.
 fn violations_like(router: &Router<()>, error: fn(&RouterError) -> bool) -> Vec<String> {
     router
