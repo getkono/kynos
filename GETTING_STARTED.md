@@ -55,6 +55,7 @@ by the release that shipped each, for code written before it.
 | A `serde_json::Value` read only to index one member of a response body | `test::TestResponse::json_at`, with an RFC 6901 pointer; behind `json` |
 | A parser for a `Set-Cookie` field's attributes | `test::TestResponse::set_cookie`, `assert_cookie_set` and `assert_cookie_cleared`; behind `cookie` |
 | A `multipart/form-data` test body framed by hand | `test::TestRequest::multipart`; behind `multipart` |
+| A driver sending an operation a wrong media type, a malformed, an oversized, a stalled and a schema-violating body | `test::TestClient::assert_body_rejections(\|\| client.post(path).bearer(&token)).await`, which reads what to send, the limit included, off the operation's description |
 | A loopback socket to test what a configured server's timeouts answer | `test::TestClient::through_server` |
 | A raw socket sending a body that stalls, arrives short or runs long | `test::TestRequest::stalled_body`, or `body_stream` with `content_length` |
 | A raw socket sending a request head that never finishes, to test the header-read timeout | `test::TestRequest::send_stalled_head` |
