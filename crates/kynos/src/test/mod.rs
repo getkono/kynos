@@ -82,6 +82,8 @@ pub struct TestClient<C> {
     cookies: Vec<(String, String)>,
     /// What a problem type with no scheme is joined to, for every response.
     problem_base: Option<Arc<str>>,
+    /// Whether each response is checked for conformance as it arrives.
+    strict: bool,
     /// What [`Transport::Direct`] holds a request body to between frames.
     #[cfg(feature = "server")]
     request_body_idle_timeout: IdleTimeout,
@@ -124,9 +126,48 @@ impl<C> TestClient<C> {
             headers: HeaderMap::new(),
             cookies: Vec::new(),
             problem_base: None,
+            strict: false,
             #[cfg(feature = "server")]
             request_body_idle_timeout: IdleTimeout::Default,
         }
+    }
+
+    /// Checks each response for conformance as it arrives, as
+    /// [`assert_conformance`](Self::assert_conformance) checks every one, and
+    /// panics at the request that received it, naming the exchange, so no
+    /// test needs to remember the assertion and a failure points at the
+    /// request that caused it.
+    ///
+    /// [`send`](TestRequest::send) checks the whole response.
+    /// [`send_streaming`](TestRequest::send_streaming) checks its status and
+    /// fields as the head arrives, and its body once the stream reads it to
+    /// its end; a stream dropped before then has its body checked by
+    /// nothing, as `assert_conformance` would not check it either. Every
+    /// exchange is still recorded, so the client's and a shared
+    /// [`Coverage`]'s own assertions read it as before.
+    ///
+    /// Until this is called, a client only records, so a test can inspect a
+    /// response the description does not declare.
+    ///
+    /// ```
+    /// # async fn run(service: kynos::router::service::Service<()>) {
+    /// use kynos::test::TestClient;
+    ///
+    /// let client = TestClient::new(service).strict();
+    /// // Panics here if the response is not one the description declares.
+    /// client.get("/health").send().await;
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn strict(mut self) -> Self {
+        self.strict = true;
+        self
+    }
+
+    /// The description a strict client checks each response against, or
+    /// `None` for one that only records.
+    fn checked_against(&self) -> Option<&Document> {
+        self.strict.then(|| self.openapi())
     }
 
     /// Holds every request body to `timeout` between frames, as a server
@@ -1438,6 +1479,21 @@ fn assert_conforms<'r>(document: &Document, received: impl Iterator<Item = &'r O
     );
 }
 
+/// Asserts that the exchange filed at `at` in `observed` conforms to
+/// `document`, where a [`strict`](TestClient::strict) client names one.
+///
+/// The record is copied out first, so the panic leaves the lock unpoisoned.
+fn check_strictly(document: Option<&Document>, observed: &Mutex<Vec<Observed>>, at: usize) {
+    let Some(document) = document else {
+        return;
+    };
+    let record = observed
+        .lock()
+        .expect("a test client whose recorder panicked cannot be asserted on")[at]
+        .clone();
+    assert_conforms(document, std::iter::once(&record));
+}
+
 /// Each operation under `document`'s `paths` that a request can name, with
 /// its template and method: the operations a response is matched to, and
 /// the only ones coverage asks of.
@@ -1921,7 +1977,8 @@ impl<'a, C> TestRequest<'a, C> {
     /// when the response body fails part-way through, or, for a client built
     /// [`through_server`](TestClient::through_server) or
     /// [`connect`](TestClient::connect), when the connection is refused or
-    /// ends without a response.
+    /// ends without a response, and, on a [`strict`](TestClient::strict)
+    /// client, when the response does not conform to the description.
     pub async fn send(self) -> TestResponse {
         let Answered {
             client,
@@ -1943,7 +2000,8 @@ impl<'a, C> TestRequest<'a, C> {
             })
             .to_bytes();
 
-        client.record(&method, &path, uri, &parts, Some(bytes.clone()));
+        let (at, _) = client.record(&method, &path, uri, &parts, Some(bytes.clone()));
+        check_strictly(client.checked_against(), &client.observed, at);
 
         TestResponse {
             method,
@@ -1986,7 +2044,9 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// # Panics
     ///
-    /// Panics as [`send`](Self::send) does before the head arrives.
+    /// Panics as [`send`](Self::send) does before the head arrives, and, on
+    /// a [`strict`](TestClient::strict) client, when the status or fields do
+    /// not conform.
     pub async fn send_streaming(self) -> TestStream<'a> {
         let Answered {
             client,
@@ -1998,6 +2058,8 @@ impl<'a, C> TestRequest<'a, C> {
 
         let (parts, body) = response.into_parts();
         let (record, shared) = client.record(&method, &path, uri, &parts, None);
+        let strict = client.checked_against();
+        check_strictly(strict, &client.observed, record);
 
         TestStream {
             method,
@@ -2010,6 +2072,7 @@ impl<'a, C> TestRequest<'a, C> {
             record,
             coverage: client.coverage.as_deref().zip(shared),
             problem_base: client.problem_base.clone(),
+            strict,
         }
     }
 
@@ -2348,6 +2411,9 @@ pub struct TestStream<'a> {
     /// The client's [`with_problem_base`](TestClient::with_problem_base),
     /// for the response [`finish`](Self::finish) returns.
     problem_base: Option<Arc<str>>,
+    /// The description the body is checked against once it ends, where the
+    /// client is [`strict`](TestClient::strict).
+    strict: Option<&'a Document>,
 }
 
 impl TestStream<'_> {
@@ -2372,7 +2438,8 @@ impl TestStream<'_> {
     ///
     /// # Panics
     ///
-    /// Panics when the body fails part-way.
+    /// Panics when the body fails part-way, and, from a
+    /// [`strict`](TestClient::strict) client, when it ends not conforming.
     pub async fn next_chunk(&mut self) -> Option<Bytes> {
         if self.read == self.received.len() && !self.pull().await {
             return None;
@@ -2392,7 +2459,9 @@ impl TestStream<'_> {
     ///
     /// # Panics
     ///
-    /// Panics when the body fails part-way, or a record is not UTF-8.
+    /// Panics when the body fails part-way, or a record is not UTF-8, and,
+    /// from a [`strict`](TestClient::strict) client, when the body ends not
+    /// conforming.
     pub async fn next_event(&mut self) -> Option<TestEvent> {
         let delimiter = EVENT_DELIMITER.as_bytes();
         loop {
@@ -2422,7 +2491,8 @@ impl TestStream<'_> {
     ///
     /// # Panics
     ///
-    /// Panics when the body fails part-way.
+    /// Panics when the body fails part-way, and, from a
+    /// [`strict`](TestClient::strict) client, when it ends not conforming.
     pub async fn finish(mut self) -> TestResponse {
         while self.pull().await {}
         let body = self.received.freeze();
@@ -2472,6 +2542,7 @@ impl TestStream<'_> {
             .lock()
             .expect("a test client whose recorder panicked cannot be written to")[self.record]
             .body = Some(body);
+        check_strictly(self.strict, self.observed, self.record);
         false
     }
 
