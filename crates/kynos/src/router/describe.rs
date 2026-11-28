@@ -17,6 +17,7 @@ use super::{
     DeclaredTag, Document, Error, OperationCx, PanicPolicy, PathItem, Paths, Registry, Result,
     Router, RouterError, Severity, SpecError, SpecVersion, Violation, dispatch,
 };
+use super::{head::Heads, referred::Placed};
 use crate::error::members::Hook;
 
 impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
@@ -241,8 +242,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         let mut links = crate::extract::link::Resolver::default();
 
-        // The `HEAD`s the `GET`s describe wait for every declared operation.
-        let (mut paths, mut heads) = (Paths::new(), super::head::Heads::default());
+        // `HEAD`s wait for every operation, headers placed on a `$ref` for edits.
+        let (mut paths, mut heads, mut referred) = <(Paths, Heads, Placed)>::default();
         for mounted in &self.mounted {
             let key = mounted.path.as_str().to_owned();
             let location = path_location(&key);
@@ -270,7 +271,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             // The one place that sees every scope's tags, the endpoint's own included.
             tag_metadata.extend(cx.declared_tags().iter().map(DeclaredTag::metadata));
 
-            let operation = cx.finish();
+            let operation = referred.finish(&key, method, cx);
             #[cfg(feature = "openapi32")]
             let operation = super::install::declare_accept_query(method, operation);
 
@@ -324,11 +325,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         document.paths = paths;
         document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
-        heads.describe(&mut document.paths, &document.components, &mut violations);
+        let derived = heads.describe(&mut document.paths, &document.components, &mut violations);
 
         // Before the version is chosen and the document validated, so both
         // read what the application publishes.
         super::map::apply(&self.document_edits, &mut document, &mut violations);
+        referred.file(&mut document, &derived);
 
         // From what the document uses, never from a (unified) cargo feature.
         let mut document = lowest_expressing(&document)?;

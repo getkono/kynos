@@ -134,33 +134,58 @@ impl<'a> OperationCx<'a> {
     }
 
     /// Finishes the operation being described.
+    ///
+    /// An interceptor's header placed on a response held as a `$ref` is left
+    /// off it here: only a router, which sees the document the reference
+    /// resolves in, files it.
     #[must_use]
-    pub fn finish(mut self) -> kynos_openapi::Operation {
+    pub fn finish(self) -> kynos_openapi::Operation {
+        self.finish_referred().0
+    }
+
+    /// [`finish`](Self::finish), plus each placed header that met a `$ref`,
+    /// in the order placed, for the router to file once the document
+    /// declares what the reference names.
+    pub(crate) fn finish_referred(mut self) -> (kynos_openapi::Operation, Vec<Referred>) {
         let responses = &mut self.operation.responses.responses;
         let recovered = StatusPattern::Code(500).to_string();
+        let mut referred = Vec::new();
         for (index, (placement, name, header)) in self.placed.iter().enumerate() {
             let keys: Vec<String> = responses
                 .iter()
-                .filter(|(_, response)| reached_by(*placement, response))
+                .filter(|(_, response)| match response {
+                    RefOr::Item(response) => placement.reaches(response),
+                    RefOr::Ref(_) => true,
+                })
                 .map(|(key, _)| key.clone())
                 .collect();
             for key in keys {
-                if key != recovered {
-                    declare_header(responses, &key, name, header);
-                    continue;
-                }
-                match self.recovered.carries(index) {
-                    Carried::Always => declare_header(responses, &key, name, header),
-                    Carried::Sometimes => {
-                        let mut optional = header.clone();
-                        optional.required = None;
-                        declare_header(responses, &key, name, &optional);
+                let header = if key == recovered {
+                    match self.recovered.carries(index) {
+                        Carried::Always => header.clone(),
+                        Carried::Sometimes => {
+                            let mut optional = header.clone();
+                            optional.required = None;
+                            optional
+                        }
+                        Carried::Never => continue,
                     }
-                    Carried::Never => {}
+                } else {
+                    header.clone()
+                };
+                match responses.get(&key) {
+                    Some(RefOr::Ref(reference)) => referred.push(Referred {
+                        status: key,
+                        location: reference.location.clone(),
+                        placement: *placement,
+                        name: name.clone(),
+                        header,
+                    }),
+                    _ => declare_header(responses, &key, name, &header),
                 }
             }
         }
-        self.operation
+        (self.operation, referred)
     }
 
     /// Declares the 500 a panic recovery answers with, around every
@@ -539,20 +564,41 @@ enum Carried {
     Never,
 }
 
-/// Whether a header deferred under `placement` lands on `response`. A `$ref`
-/// is never reached into, so it is never reached.
-fn reached_by(placement: Deferred, response: &RefOr<Response>) -> bool {
-    let RefOr::Item(response) = response else {
-        return false;
-    };
-    match placement {
-        Deferred::Every => true,
-        Deferred::Problems => response.content.keys().any(|media_type| {
-            eq_ignore_ascii_case(
-                split_essence(media_type.as_bytes()).0,
-                APPLICATION_PROBLEM_JSON.as_bytes(),
-            )
-        }),
+impl Deferred {
+    /// Whether a header deferred under this placement lands on `response`.
+    fn reaches(self, response: &Response) -> bool {
+        match self {
+            Self::Every => true,
+            Self::Problems => response.content.keys().any(|media_type| {
+                eq_ignore_ascii_case(
+                    split_essence(media_type.as_bytes()).0,
+                    APPLICATION_PROBLEM_JSON.as_bytes(),
+                )
+            }),
+        }
+    }
+}
+
+/// An interceptor's header placed on a response an operation holds as a
+/// `$ref`, which [`OperationCx::finish_referred`] hands the router to file.
+#[derive(Clone, Debug)]
+pub(crate) struct Referred {
+    /// The key the reference is declared at.
+    pub(crate) status: String,
+    /// The reference, as the operation was finished with it.
+    pub(crate) location: String,
+    placement: Deferred,
+    /// The header's name.
+    pub(crate) name: String,
+    /// The header, already without `required` where the operation's 500
+    /// does not always carry it.
+    pub(crate) header: kynos_openapi::Header,
+}
+
+impl Referred {
+    /// Whether the header lands on `response`, what the reference names.
+    pub(crate) fn reaches(&self, response: &Response) -> bool {
+        self.placement.reaches(response)
     }
 }
 

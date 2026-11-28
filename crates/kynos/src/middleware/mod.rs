@@ -312,9 +312,18 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
 ///
 /// Each placement files the header on the declared responses it reaches, under
 /// whatever key each is already declared at, and never mints an entry, a range
-/// included. It leaves a response held as a `$ref` and a header that response
-/// already declares alone. A Kynos refusal is no `$ref` here: it is declared
-/// in place, and shared under `components/responses` only once described.
+/// included. It leaves a header that response already declares alone. A Kynos
+/// refusal is no `$ref` here: it is declared in place, and shared under
+/// `components/responses` only once described.
+///
+/// [`Every`](Self::Every) and [`Problems`](Self::Problems) also reach a
+/// response held as a `$ref` to a component the router's description
+/// declares, a [`map_openapi`](crate::Router::map_openapi) edit's included,
+/// by what that component is. The header is filed on the component where
+/// every reference to it is covered, and on a copy written in place of each
+/// covered reference otherwise. [`Success`](Self::Success) is filed before
+/// any edit runs, so it leaves a `$ref` alone, as does every placement on a
+/// reference an edit rewrote.
 ///
 /// The 500 of a panic recovered around the interceptor never passes through
 /// it, so no placement files the header on that 500: a router's or group's

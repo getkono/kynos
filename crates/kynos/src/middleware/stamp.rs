@@ -60,7 +60,10 @@ use crate::{
 /// The description says the same: the group is filed on every response a
 /// covered operation declares, a Kynos refusal's included, and on none of
 /// the 500s a panic recovered around it is answered with. A response the
-/// application declares as a `$ref` is left as the reference it is.
+/// application declares as a `$ref` carries it as
+/// [`Placement`] says: on the component where
+/// every reference to it is covered, and on a copy in place of each covered
+/// one otherwise.
 ///
 /// Each field replaces whatever value the chain set, as
 /// [`SecurityHeaders`](crate::middleware::security_headers::SecurityHeaders)'

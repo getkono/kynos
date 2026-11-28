@@ -1437,28 +1437,97 @@ async fn referencing(checked: Referencing) -> NoContent {
     NoContent
 }
 
-/// A response held as a `$ref` is left as written by both deferred
-/// placements, as `Placement` promises: its headers live where it is defined,
-/// which the operation does not own.
+/// The same handler as `referencing`, at a path of its own.
+#[kynos::get("/referencing-too")]
+async fn referencing_too(checked: Referencing) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// `referencing`, describing the `HEAD` it answers.
+#[kynos::get("/referencing-head", head)]
+async fn referencing_head(checked: Referencing) -> NoContent {
+    let _ = checked;
+    NoContent
+}
+
+/// Declares the `Unavailable` component `Referencing` refers to, as `response`.
+fn declaring_unavailable(response: kynos::openapi::Response) -> impl Fn(&mut Document) {
+    move |document| {
+        document.components.responses.insert(
+            "Unavailable".to_owned(),
+            kynos::openapi::RefOr::Item(response.clone()),
+        );
+    }
+}
+
+/// An `Unavailable` answered with a problem document.
+fn unavailable_problem() -> kynos::openapi::Response {
+    kynos::openapi::Response::with_content(
+        "unavailable",
+        "application/problem+json",
+        kynos::openapi::MediaType::new(kynos::openapi::Schema::Bool(true)),
+    )
+}
+
+/// The `$ref` the operation at `path` and `method` declares under `status`,
+/// in the document as published.
+fn written(
+    document: &Document,
+    path: &str,
+    method: kynos::openapi::Method,
+    status: &str,
+) -> kynos::openapi::RefOr<kynos::openapi::Response> {
+    document
+        .paths
+        .items
+        .get(path)
+        .and_then(|item| item.operation(method))
+        .and_then(|operation| operation.responses.responses.get(status))
+        .cloned()
+        .unwrap_or_else(|| panic!("{method:?} {path} declares {status}"))
+}
+
+/// The header names the published `Unavailable` component declares.
+fn unavailable_headers(document: &Document) -> Vec<String> {
+    let Some(kynos::openapi::RefOr::Item(response)) =
+        document.components.responses.get("Unavailable")
+    else {
+        panic!("`Unavailable` is declared in place");
+    };
+    response.headers.keys().cloned().collect()
+}
+
+/// A response held as a `$ref` that every reference to which is covered gets
+/// each deferred placement's header where it is defined, under the name the
+/// application gave it, and every reference to it stays one.
 #[test]
-fn an_interceptor_adding_on_every_response_or_problems_leaves_a_ref_alone() {
+fn an_interceptor_adding_on_every_response_or_problems_files_on_a_ref_every_referrer_shares() {
     let document = Router::<()>::new()
         .intercept(Stamping)
         .intercept(BackingOff)
         .mount(kynos::routes![referencing])
+        .map_openapi(declaring_unavailable(unavailable_problem()))
         .openapi()
         .expect("a describable router");
-    let operation = operation(&document, "/referencing");
 
     assert_eq!(
-        operation.responses.responses.get("503"),
-        Some(&unavailable()),
-        "the `$ref` was replaced or reached into"
+        written(
+            &document,
+            "/referencing",
+            kynos::openapi::Method::Get,
+            "503"
+        ),
+        unavailable(),
+        "the `$ref` was replaced"
+    );
+    assert_eq!(
+        unavailable_headers(&document),
+        vec!["X-Stamp".to_owned(), "X-Backoff".to_owned()]
     );
 
-    // The controls: each placement did file its header on the inline
-    // responses it reaches, so the `$ref` above was skipped rather than never
-    // visited.
+    // The controls: the inline responses carry what they did before.
+    let operation = operation(&document, "/referencing");
     assert_eq!(
         declared_headers(&operation, "422"),
         Some(vec!["X-Stamp".to_owned(), "X-Backoff".to_owned()])
@@ -1467,6 +1536,122 @@ fn an_interceptor_adding_on_every_response_or_problems_leaves_a_ref_alone() {
         declared_headers(&operation, "204"),
         Some(vec!["X-Stamp".to_owned()])
     );
+}
+
+/// `Problems` reads what the `$ref` names: a referent with no problem
+/// document is not reached, while `Every` still is.
+#[test]
+fn a_problems_placement_reaches_a_ref_by_what_it_names() {
+    let document = Router::<()>::new()
+        .intercept(Stamping)
+        .intercept(BackingOff)
+        .mount(kynos::routes![referencing])
+        .map_openapi(declaring_unavailable(kynos::openapi::Response::new(
+            "unavailable",
+        )))
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(unavailable_headers(&document), vec!["X-Stamp".to_owned()]);
+}
+
+/// A response component some reference reaches uncovered stays as written,
+/// and each covered reference is replaced by a copy carrying the header, so
+/// neither operation is described with a header it does not send, or without
+/// one it does.
+#[test]
+fn a_ref_an_uncovered_operation_shares_is_copied_where_the_header_rides() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![referencing])
+        .group(
+            Group::<()>::new("/stamped")
+                .intercept(Stamping)
+                .mount(kynos::routes![referencing_too]),
+        )
+        .map_openapi(declaring_unavailable(unavailable_problem()))
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(unavailable_headers(&document), Vec::<String>::new());
+    assert_eq!(
+        written(
+            &document,
+            "/referencing",
+            kynos::openapi::Method::Get,
+            "503"
+        ),
+        unavailable()
+    );
+    let kynos::openapi::RefOr::Item(copy) = written(
+        &document,
+        "/stamped/referencing-too",
+        kynos::openapi::Method::Get,
+        "503",
+    ) else {
+        panic!("the covered reference is replaced by a copy");
+    };
+    let mut expected = unavailable_problem();
+    expected.headers = copy.headers.clone();
+    assert_eq!(copy, expected, "the copy is the component, plus its header");
+    assert_eq!(copy.headers.keys().collect::<Vec<_>>(), vec!["X-Stamp"]);
+}
+
+/// The `HEAD` a covered `GET` describes refers where the `GET` does under the
+/// same chain, so it counts as a covered reference rather than as one that
+/// keeps the header off the component.
+#[test]
+fn a_head_a_covered_get_describes_is_a_covered_reference() {
+    let document = Router::<()>::new()
+        .intercept(Stamping)
+        .mount(kynos::routes![referencing_head])
+        .map_openapi(declaring_unavailable(unavailable_problem()))
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(unavailable_headers(&document), vec!["X-Stamp".to_owned()]);
+    for method in [kynos::openapi::Method::Get, kynos::openapi::Method::Head] {
+        assert_eq!(
+            written(&document, "/referencing-head", method, "503"),
+            unavailable(),
+            "{method:?} still refers"
+        );
+    }
+}
+
+/// An edit that points the operation's reference elsewhere is the
+/// application's account of that response, so neither component is touched.
+#[test]
+fn a_reference_an_edit_rewrote_is_left_alone() {
+    let document = Router::<()>::new()
+        .intercept(Stamping)
+        .mount(kynos::routes![referencing])
+        .map_openapi(declaring_unavailable(unavailable_problem()))
+        .map_openapi(|document| {
+            document.components.responses.insert(
+                "Overloaded".to_owned(),
+                kynos::openapi::RefOr::Item(unavailable_problem()),
+            );
+            let operation = document
+                .paths
+                .items
+                .get_mut("/referencing")
+                .and_then(|item| item.operation_mut(kynos::openapi::Method::Get))
+                .expect("a described operation");
+            operation.responses.responses.insert(
+                "503".to_owned(),
+                kynos::openapi::RefOr::Ref(kynos::openapi::Ref::response("Overloaded")),
+            );
+        })
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(unavailable_headers(&document), Vec::<String>::new());
+    let Some(kynos::openapi::RefOr::Item(overloaded)) =
+        document.components.responses.get("Overloaded")
+    else {
+        panic!("`Overloaded` is declared in place");
+    };
+    assert!(overloaded.headers.is_empty());
 }
 
 // --- Scope in the document's tags -------------------------------------------

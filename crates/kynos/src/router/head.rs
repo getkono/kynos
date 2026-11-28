@@ -52,12 +52,14 @@ impl Heads {
     ///
     /// A path that declares its own `HEAD` keeps it, and is reported; a second
     /// `GET` describing one is already reported as a duplicate `GET`.
+    ///
+    /// Returns each path a `HEAD` was added at.
     pub(super) fn describe(
         self,
         paths: &mut Paths,
         components: &Components,
         violations: &mut Vec<Violation<RouterError>>,
-    ) {
+    ) -> HashSet<String> {
         let mut derived: HashSet<String> = HashSet::new();
         for (key, head, get) in self.0 {
             let operation = derived_head(get, &head, components);
@@ -74,6 +76,7 @@ impl Heads {
             item.set_operation(Method::Head, operation);
             derived.insert(key);
         }
+        derived
     }
 }
 
@@ -173,15 +176,8 @@ fn without_content(response: &mut RefOr<Response>, components: &Components) {
             else {
                 return;
             };
-            let mut inlined = target.clone();
+            let mut inlined = super::referred::in_place(reference, target);
             inlined.content.clear();
-            if let Some(description) = &reference.description {
-                inlined.description = Some(description.clone());
-            }
-            #[cfg(feature = "openapi32")]
-            if let Some(summary) = &reference.summary {
-                inlined.summary = Some(summary.clone());
-            }
             *response = RefOr::Item(inlined);
         }
     }

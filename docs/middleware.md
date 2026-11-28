@@ -171,12 +171,25 @@ author knows, so the author declares it:
 `Short` and panic recovery's 500 are declared, so a response contributed after
 the interceptor is described is still reached. `Success` is filed on the spot,
 as it always was, so a default interceptor's document is unchanged. None of the
-three mints a response or reaches into a `$ref`, and a header the response
-already declares under that name keeps its entry. A Kynos refusal is no `$ref`
-here: it is described in place, and only the finished document shares it under
-`components/responses`, under a separate entry for operations declaring it
-with different headers. A `$ref` the application writes itself is left alone;
-[#1501](https://github.com/getkono/kynos/issues/1501) tracks reaching it.
+three mints a response, and a header the response already declares under that
+name keeps its entry. A Kynos refusal is no `$ref` here: it is described in
+place, and only the finished document shares it under `components/responses`,
+under a separate entry for operations declaring it with different headers.
+
+A `$ref` the application writes itself names a component that exists only once
+its `map_openapi` edits run, after every operation is finished. `Every` and
+`Problems` therefore wait for them, and then read the component, so `Problems`
+reaches it only for a problem document. Where every reference to the component
+is covered by the header alike — the `HEAD` a covered `GET` describes is one —
+the header is filed on the component, under the application's name. Otherwise
+the component stays as written for the operations the header does not ride,
+and each covered reference is replaced by a copy carrying it, its own
+`description` kept; sharing may then name those copies again. Filing on the
+component regardless would describe the header on an operation that never
+sends it, and leaving it off would describe one that does without it. A
+reference an edit rewrote or moved is the application's account of that
+response, and is left alone, as is every `$ref` under `Success`, which is
+filed before any edit runs.
 
 The one response they leave out is the 500 of a panic recovered around the
 interceptor, which never passes through it: a router's or group's
@@ -1848,8 +1861,10 @@ every response a covered operation declares, a Kynos refusal's included, and
 not on the 500 of a panic recovered around it. A refusal shared under
 `components/responses` carries the group where every operation sharing it is
 stamped, and an operation the stamp does not cover refers to an entry of its
-own. A response the application declares by `$ref` is left as written, as
-[placement](#declaring-is-not-describing) says.
+own. A response the application declares by `$ref` carries it as
+[placement](#declaring-is-not-describing) says: on the component where every
+reference to it is stamped, and on a copy in place of each stamped one
+otherwise.
 
 ## Opaque
 

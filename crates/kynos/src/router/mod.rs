@@ -16,6 +16,7 @@ mod head;
 mod hoist;
 mod install;
 mod map;
+mod referred;
 
 use error::RouterError;
 use install::{catches, error_at, path_location, unroutable};
