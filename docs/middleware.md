@@ -184,7 +184,7 @@ is covered by the header alike â€” the `HEAD` a covered `GET` describes is one â
 the header is filed on the component, under the application's name. Otherwise
 the component stays as written for the operations the header does not ride,
 and each covered reference is replaced by a copy carrying it, its own
-`description` kept; sharing may then name those copies again. Filing on the
+`description` kept and, on a `HEAD`, its content dropped; sharing may then name those copies again. Filing on the
 component regardless would describe the header on an operation that never
 sends it, and leaving it off would describe one that does without it. A
 reference an edit rewrote or moved is the application's account of that

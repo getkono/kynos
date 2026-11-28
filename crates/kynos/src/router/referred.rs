@@ -45,7 +45,8 @@ impl Placed {
     /// on the component, under the application's name for it. Otherwise each
     /// covered reference is replaced by a copy of the component, its own
     /// `description` and `summary` kept, declaring the header, and the
-    /// component stays as written for the rest.
+    /// component stays as written for the rest. A `HEAD`'s copy carries no
+    /// content.
     ///
     /// Left alone: a reference an edit rewrote or moved, one naming no
     /// response component the document declares in place, a component a
@@ -130,6 +131,11 @@ impl Placed {
                     continue;
                 }
                 let mut copy = in_place(&covered.reference, &target);
+                // A `HEAD` is answered without content (RFC 9110 section
+                // 9.3.2), as `derived_head` describes its inline responses.
+                if covered.method == Method::Head {
+                    copy.content.clear();
+                }
                 for (header, value) in missing {
                     copy.headers
                         .entry(header)
