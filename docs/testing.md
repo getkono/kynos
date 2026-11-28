@@ -875,6 +875,31 @@ It takes a `Document` rather than a `TestClient`: the one function serves a
 client's [`openapi()`](../crates/kynos/src/test/mod.rs), a router never served,
 and a 3.1 description emitted from an `openapi32` build by `openapi_as`.
 
+## Checking every response
+
+A suite that promises every response conforms builds its client
+[`strict()`](../crates/kynos/src/test/mod.rs) once, in its harness, rather than
+ending each test with `assert_conformance()`, which a test that leaves it out
+skips without a warning:
+
+```rust,ignore
+let client = kynos::test::TestClient::new(service).strict();
+```
+
+- **It fails at the request.** `send` panics naming the exchange, as
+  `GET /v1/items -> 200: the body does not match the declared schema`, so the
+  failure points at the request that caused it, not at the end of the test.
+- **A stream is checked twice.** `send_streaming` holds the head to the
+  description as it arrives, and the body once the stream reads it to its end.
+  A stream dropped first has no body to check, as `assert_conformance` has
+  none.
+- **The default only records.** A test that inspects a response the
+  description does not declare, such as a harness's own self-test, keeps it.
+  Making `strict` the default would break every suite with a known
+  non-conforming response. Checking on drop would keep the batched report, but
+  would report from a destructor, which must skip the check while the thread
+  is already panicking, and would name no request.
+
 ## Rationale
 
 *Non-normative. This section explains the reasoning behind the rules above so
