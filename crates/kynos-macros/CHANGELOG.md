@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/getkono/kynos/compare/kynos-macros-v0.6.2...kynos-macros-v0.7.0) - 2026-11-28
+
+### Added
+
+- *(macros)* let a fixed header value name a const
+- *(macros)* derive Scopes on a unit struct naming its scopes
+- *(macros)* derive Scope from the names serde writes
+- *(macros)* [**breaking**] state that a derived ApiError owns ProblemType and type_uri
+- *(macros)* publish a derived ApiError's type URI
+- *(params)* [**breaking**] extract a lone path value as Path<T: ParamValue>
+- *(schema)* refuse a #[param(flatten)] or #[param(default)] serde is not told
+- *(params)* flatten a query group into another with #[param(flatten)]
+- *(params)* bind and describe a query parameter's #[param(default = ...)]
+- *(schema)* take format on a #[schema(string)] type
+- *(schema)* put each #[schema(string)] example through the type's own serde
+- *(router)* report a #[schema(string)] example its type refuses as a violation
+- *(schema)* derive ParamValue for a #[schema(string)] type through its own text
+- *(schema)* describe a string-encoded type with #[schema(string)]
+- *(macros)* name a type URI under base with #[problem(slug = ...)]
+- *(macros)* expose a derived unit enum's wire names through UnitEnum
+- *(macros)* decode a QueryParams Vec<T> field as a list parameter
+- *(macros)* [**breaking**] refuse a declared query parameter given more than once
+- *(macros)* make a transparent ApiError enum a std::error::Error
+- *(macros)* let subset_of name several wider ApiError enums
+- *(macros)* build a transparent ApiError variant from its held error
+- *(macros)* mark a whole ApiError enum transparent to display as it holds
+- *(router)* recase the operationIds the framework derives
+- *(macros)* mark a route attribute's defaulted operationIds
+- *(macros)* write an ApiError status's description with describe
+- *(schema)* derive Tagged for a type serde writes under its own tag
+- *(macros)* refuse a Nullable field the Schema derive reads without a default
+- *(macros)* describe a GET's HEAD with the route attribute's head argument
+- *(macros)* forward a Provider struct's types to the context holding it
+- *(router)* collect routes! into a nameable Endpoints that keeps its stacks
+- *(macros)* mark a Provider field as a scheme's authenticator
+- *(router)* [**breaking**] refuse a group mixing guarded and unguarded operations
+- *(error)* declare a crate-wide problem base once
+- *(macros)* send a failure's delay as Retry-After with #[problem(retry_after)]
+- *(extract)* [**breaking**] let a parameter group stand without a Schema derive
+- *(security)* [**breaking**] hand the authenticator the request head and a classified credential
+- *(macros)* take one wider ApiError variant with #[problem(variant_of)]
+- *(macros)* read #[error(transparent)] as #[problem(transparent)]
+- *(macros)* derive ParamValue for a newtype through its field
+- *(schema)* let a parameter group name the problem its fields answer with
+- *(schema)* [**breaking**] answer a broken declared bound with a whole ConstraintProblem
+
+### Documentation
+
+- *(security)* narrow the Scope derive's other claims to derived serde
+- *(security)* state the Scope derive's limit on hand-written serde
+- *(errors)* rest the about:blank rationale on the None half alone
+- point the APIs reached for first at the features that replace workarounds
+- *(macros)* say where a forwarding Provider's implementations are written
+- *(macros)* say why the QueryParams derive emits no Schema
+- *(macros)* say why a one-field named struct under #[serde(transparent)] is a newtype
+
+### Fixed
+
+- *(macros)* read a required fixed header field where it is encoded
+- *(macros)* refuse a scope attribute on an enum serde names
+- *(macros)* refuse a scope rename under serde's rename_all
+- *(schema)* refuse an untold #[param] key only where serde reads the group
+- *(schema)* read the #[param] refusal without let chains, which the MSRV lacks
+- *(macros)* [**breaking**] hold an ApiError's kebab-cased type URI name to the slug rule
+- *(error)* [**breaking**] refuse a problem_type! slug the ApiError derive refuses
+- *(macros)* [**breaking**] refuse an enum-level ApiError title or type
+- *(macros)* refuse a slug segment that names another type URI
+- *(schema)* keep UnitEnum out of kynos::prelude
+- *(macros)* keep a held error's lone branch title under describe
+- *(router)* leave range handling out of the HEAD a GET describes
+- *(params)* read a query group's problem through its Schema
+
+### Other
+
+- *(schema)* [**breaking**] rename the serde tag trait to SerdeTagged
+
 ## [0.6.1](https://github.com/getkono/kynos/compare/kynos-macros-v0.6.0...kynos-macros-v0.6.1) - 2026-11-20
 
 ### Added

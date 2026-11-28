@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.6.2...kynos-openapi-v0.7.0) - 2026-11-28
+
+### Added
+
+- *(openapi)* emit a document as canonical JSON
+- *(openapi)* add PathItem::operation_mut
+- *(openapi)* walk a schema's subschemas through public API
+- *(openapi)* iterate a document's operations and follow its $refs
+- *(openapi)* add Schema::with_description and Schema::as_object_mut
+
+### Fixed
+
+- *(test)* report every document assertion failure at the caller's line
+
 ## [0.6.0](https://github.com/getkono/kynos/compare/kynos-openapi-v0.5.0...kynos-openapi-v0.6.0) - 2026-11-17
 
 ### Added
