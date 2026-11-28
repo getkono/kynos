@@ -1,5 +1,7 @@
 //! Describing one operation while the router is built.
 
+use std::ops::Range;
+
 use kynos_openapi::{
     ComponentName, Method, RefOr, Response, StatusPattern,
     model::body::mime_names::APPLICATION_PROBLEM_JSON,
@@ -168,15 +170,29 @@ impl<'a> OperationCx<'a> {
     /// leaves it off the operation's 500, or declares it optional where
     /// something else answering the 500 does carry it.
     pub(crate) fn add_recovered_responses(&mut self, responses: &kynos_openapi::Responses) {
-        if self.recovered.wraps.is_empty() {
+        if self.recovered.answers.is_empty() {
             self.recovered.declared = self
                 .operation
                 .responses
                 .responses
                 .contains_key(&StatusPattern::Code(500).to_string());
         }
-        self.recovered.wraps.push(self.placed.len());
+        self.recovered.answers.push(self.placed.len()..usize::MAX);
         self.add_responses(responses);
+    }
+
+    /// Declares that the operation's guard runs here, ahead of every
+    /// interceptor described after, under the recovery the endpoint described
+    /// first, where it described one.
+    ///
+    /// A panic in that guard is answered at this point, so its 500 carries a
+    /// header placed since that recovery and before this call, and none
+    /// placed inside the recovery or after.
+    pub(crate) fn recover_guard_here(&mut self) {
+        if let Some(endpoint) = self.recovered.answers.first() {
+            let answer = endpoint.start..self.placed.len();
+            self.recovered.answers.push(answer);
+        }
     }
 }
 
@@ -495,17 +511,18 @@ struct Recovered {
     /// Whether the operation declared a 500 before any recovery did, which
     /// passes through every interceptor.
     declared: bool,
-    /// For each recovery, in the order described, how many placed headers
-    /// were described inside it, and so never ride the 500 it answers with.
-    wraps: Vec<usize>,
+    /// For each point a recovered panic is answered at, in the order
+    /// described, the indices of the placed headers whose interceptors the
+    /// 500 it answers with passes through; it misses every other one.
+    answers: Vec<Range<usize>>,
 }
 
 impl Recovered {
     /// Whether the header placed at `index` rides each 500 the operation
     /// answers with.
     fn carries(&self, index: usize) -> Carried {
-        let missed = self.wraps.iter().any(|&wraps| index < wraps);
-        let ridden = self.declared || self.wraps.iter().any(|&wraps| index >= wraps);
+        let missed = self.answers.iter().any(|answer| !answer.contains(&index));
+        let ridden = self.declared || self.answers.iter().any(|answer| answer.contains(&index));
         match (ridden, missed) {
             (_, false) => Carried::Always,
             (true, true) => Carried::Sometimes,

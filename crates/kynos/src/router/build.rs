@@ -10,8 +10,8 @@ use std::collections::HashSet;
 use super::install::record_accept_query;
 use super::install::{catches, install_preflight, invalid};
 use super::{
-    Arc, Dispatch, EndpointTerminal, ErasedInterceptor, HashMap, Mounted, PanicPolicy, PathEntry,
-    Result, Router, RouterError, Service, TrailingSlashPolicy, dispatch,
+    Arc, Dispatch, EndpointTerminal, ErasedInterceptor, HashMap, PanicPolicy, PathEntry, Result,
+    Router, RouterError, Service, TrailingSlashPolicy, dispatch,
 };
 
 #[cfg(feature = "docs")]
@@ -75,7 +75,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             let operation_id = described.and_then(|operation| operation.operation_id.as_deref());
             let secured = described.is_some_and(declares_security);
 
-            let interceptors = covering(&self.interceptors, self.guard_first, &mounted);
+            // The endpoint's guard among them where a scope asked for it first.
+            let guard = Arc::clone(&mounted.endpoint).guard_ahead();
+            let interceptors = mounted.covered_by(&self.interceptors, self.guard_first, guard);
 
             #[cfg(feature = "unchecked")]
             let unchecked_layers =
@@ -161,29 +163,6 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         let service = service.with_body_stall(self.body_stall != Some(false));
         Ok(service)
     }
-}
-
-/// Every interceptor covering `mounted`, outermost first: the router's own,
-/// then the enclosing scopes', with the endpoint's guard among them where a
-/// scope asked for it first and the handler takes one, and without each whose
-/// [`Covers`](crate::middleware::Covers) leaves out what reads the body
-/// beneath it.
-fn covering<C: Send + Sync + 'static>(
-    router: &[Arc<dyn ErasedInterceptor<C>>],
-    router_guard: Option<usize>,
-    mounted: &Mounted<C>,
-) -> Vec<Arc<dyn ErasedInterceptor<C>>> {
-    let mut interceptors = router.to_vec();
-    interceptors.extend(mounted.interceptors.iter().cloned());
-
-    // The guard's point counts every interceptor, so it is placed first.
-    if let Some(at) = super::guard_point(router_guard, router.len(), mounted.guard_at) {
-        if let Some(guard) = Arc::clone(&mounted.endpoint).guard_ahead() {
-            interceptors.insert(at, guard);
-        }
-    }
-
-    super::covered(interceptors, mounted.endpoint.reads_body())
 }
 
 /// The root router's interceptors that run around a fallback: those covering
