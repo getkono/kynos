@@ -7,11 +7,16 @@ error[E0277]: `kynos::extract::body::binary::Binary<OctetStream>` is not a byte 
    = help: the trait `ByteSource` is not implemented for `kynos::extract::body::binary::Binary<OctetStream>`
    = note: implement `ByteSource` for it: a `complete_length` and a `read_span`, both async
    = note: for octets already in hand, `Binary<M>` is a `Rangeable` and needs no source
-help: the trait `ByteSource` is implemented for `InMemory`
+help: the following other types implement trait `ByteSource`
   --> src/response/range/source.rs
    |
    | impl ByteSource for InMemory {
-   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `InMemory`
+   |
+  ::: src/response/range/source/file.rs
+   |
+   | impl ByteSource for FileSource {
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ `FileSource`
 note: required by a bound in `is_a_source`
   --> tests/ui/traits/byte_source.rs:11:19
    |

@@ -5,10 +5,12 @@
 //!   --features openapi31,macros,server,http1,json
 //! ```
 //!
-//! [`assets.rs`](assets.rs) serves files. This serves a representation the
-//! process does not have and may never hold all of: a `ByteSource` is asked for
-//! a span and returns that span, so a client resuming a download at the 900MB
-//! mark costs one span rather than one file.
+//! [`assets.rs`](assets.rs) serves directories, and one file the handler has
+//! opened itself is a `FileSource` handed to the same `Served` below, behind
+//! `assets-fs`. This serves a representation the process does not have and may
+//! never hold all of: a `ByteSource` is asked for a span and returns that span,
+//! so a client resuming a download at the 900MB mark costs one span rather than
+//! one file.
 //!
 //! Six things are worth noticing:
 //!

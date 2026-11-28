@@ -1633,7 +1633,7 @@ class Main(unittest.TestCase):
         # absence. The count word has to be one `NUMBERS` can read, or
         # `claimed` reports an unreadable count instead of the mismatch.
         broken = self.ROW_COUNT.sub(
-            "**Seven rows, and the count is the check.**", gate.ARCHITECTURE, count=1
+            "**Eight rows, and the count is the check.**", gate.ARCHITECTURE, count=1
         )
         status, failures = self.report(architecture=broken)
         self.assertEqual(status, 1)

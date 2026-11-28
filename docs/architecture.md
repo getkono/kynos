@@ -43,7 +43,8 @@ buffer that consumes much of what it came for.
   *except where the body's own contract is a timer*, which is the Server-Sent
   Events keep-alive and nothing else. See the allowance table below.
 - File I/O, database pools, `spawn_blocking` and body producers sit outside that
-  boundary and stay the application's concern.
+  boundary. They stay the application's concern except where Kynos does them
+  itself, and each such site is a row of the allowance table below.
 - io_uring is not a second runtime and does not become one here. If
   completion-based I/O ever reaches Kynos it arrives through tokio itself; a
   parallel connection driver inside this crate is out of scope, and io_uring is
@@ -61,10 +62,11 @@ is checkable, so the sites are enumerated:
 | `middleware/decompression/` | `tokio::io::AsyncRead` | the same trait for the same reason, in the other direction: a client-compressed request body is decoded before an extractor sees it, which is as far from a socket as the encoders are |
 | `response/stream/sse.rs` | `tokio::time::{Instant, Sleep, sleep}` | a keep-alive is a property of one body, and the connection driver cannot know a body is an event stream |
 | `router/assets/fs/` | `tokio::fs::{metadata, symlink_metadata, File}`, `tokio::io::{AsyncReadExt, AsyncSeekExt}`, `tokio::sync::Mutex` | which file a request wants is not known until routing has chosen the operation, and the read is the operation; the file is read a span at a time as its body is polled, seeking to what a byte range asked for, so neither a large file nor a HEAD is ever buffered whole |
+| `response/range/source/file.rs` | `tokio::task::spawn_blocking` | a file is the `ByteSource` most applications want, and a read from one blocks its thread; the read is the body being polled, so it runs on the blocking pool as each span is asked for, by position, with no lock and no seek |
 
-**Six rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
+**Seven rows, and the count is the check.** [`nfr.md`](nfr.md#runtime) states the
 containment requirement against this table rather than against `server/` alone,
-so a seventh site is a failing build rather than a silently broken sentence.
+so an eighth site is a failing build rather than a silently broken sentence.
 `mise run containment:check` is where that count runs, and where each row but
 `server/`'s is held to its *Names* cell: those cells are backticked
 `tokio::` use trees, and a tokio item a site writes that its row does not list
@@ -73,12 +75,15 @@ graph](#the-graph) govern the published crates: an unpublished member —
 [`kynos-profile`](../crates/kynos-profile/) — drives a runtime and drains
 bodies as an application does, and neither reads it.
 
-The last two were added deliberately, which is what the table is for. Serving
+The last three were added deliberately, which is what the table is for. Serving
 a file from disk means reading one, and which file is not known until routing
 has chosen the operation — so there is nowhere in `server/` for it to live.
 Decompression is the compression row's mirror: a client-compressed body is
 decoded before an extractor sees it, on the same `async-compression` traits and
-at the same distance from a socket. That each required an entry here, argued for
+at the same distance from a socket. `FileSource` names one item, the blocking
+pool, rather than tokio's file types: a positional read on a `std::fs::File`
+needs neither a cursor nor a lock, which tokio's `File` would bring back. That
+each required an entry here, argued for
 on its own terms, is the mechanism working rather than the mechanism being
 worked around.
 
@@ -90,7 +95,7 @@ test and every tower deployment, and it would add a general mechanism to `Body`
 for one caller.
 
 `crates/kynos-openapi/` still carries no runtime dependency at all. Work that
-would add a seventh row is the work this section exists to reject.
+would add an eighth row is the work this section exists to reject.
 [Dependencies](#dependencies) applies the same containment rule to the rest of
 the graph.
 
@@ -716,7 +721,7 @@ module column is also where the `#[cfg]` lives.
 | `test-util` | `test/`, and the JSON Schema validator its conformance assertions need; with `server`, hyper's `client` half and tokio's `duplex`, which `TestClient::through_server` drives `Server::serve_io` with from `server/connection.rs`, where `TestClient::connect` drives the same half over a `TcpStream` to a spawned server's listener, and tokio's `test-util` paused clock, which `TestRequest::send_timed` measures on from `server/request_body.rs` | [`testing.md`](testing.md) |
 | `cache` | `middleware/cache/` and `middleware/conditional/`: the seam, never a store | [`middleware.md`](middleware.md) |
 | `assets` | `assets!` and `router/assets/`: a fixed set, so every path is a literal and nothing is waived | [`routing.md`](routing.md) |
-| `assets-fs` | `router/assets/fs/`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |
+| `assets-fs` | `router/assets/fs/`, and `response/range/source/file.rs`'s `FileSource`. Implies `unchecked`, because a directory's membership is not fixed | [`routing.md`](routing.md) |
 | `docs` | `Router::docs`: the reference page and the description, as two described operations | [`routing.md`](routing.md) |
 | `unchecked` | `unchecked.rs` and `unchecked/`, the only places `tower`, `tower-layer` and `tower-service` may be named. Documented anti-pattern | [`middleware.md`](middleware.md) |
 | `full` | every flag above except `unchecked` and `assets-fs`. A testing convenience, not a recommended default | — |

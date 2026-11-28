@@ -363,10 +363,12 @@ cache = []
 
 # --- Static assets ---------------------------------------------------------
 # `assets` embeds a directory as one described operation per file. `assets-fs`
-# serves a directory no template can express, so it implies `unchecked`.
+# serves a directory no template can express, so it implies `unchecked`, and
+# reads one open file as a `FileSource`.
 assets = ["kynos-macros?/assets"]
-# `io-util` reads a range rather than the whole file.
-assets-fs = ["assets", "unchecked", "tokio/fs", "tokio/io-util"]
+# `io-util` reads a range rather than the whole file; `rt` is the blocking pool
+# a `FileSource` reads on.
+assets-fs = ["assets", "unchecked", "tokio/fs", "tokio/io-util", "tokio/rt"]
 
 # --- API reference ---------------------------------------------------------
 # Mounts the reference page and the description as two described operations.
