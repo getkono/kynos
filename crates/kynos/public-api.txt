@@ -11947,6 +11947,7 @@ pub fn kynos::test::TestClient<C>::patch(&self, &str) -> kynos::test::TestReques
 pub fn kynos::test::TestClient<C>::post(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::put(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::query(&self, &str) -> kynos::test::TestRequest<'_, C>
+pub fn kynos::test::TestClient<C>::strict(self) -> Self
 pub fn kynos::test::TestClient<C>::trace(&self, &str) -> kynos::test::TestRequest<'_, C>
 pub fn kynos::test::TestClient<C>::view(&self) -> kynos::test::view::ClientView<'_, C>
 pub fn kynos::test::TestClient<C>::with_coverage(self, &kynos::test::Coverage) -> Self

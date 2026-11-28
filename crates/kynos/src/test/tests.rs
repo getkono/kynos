@@ -2,6 +2,7 @@
 //! reader about its end and its length before the reader polls. And, in
 //! [`assertions`], how each `TestResponse::assert_*` helper fails, in
 //! [`shared_conformance`], what a shared `Coverage` holds a response to, in
+//! [`strict`], what a strict client checks as each response arrives, in
 //! [`view`], what a `ClientView` adds to its client's defaults, and in
 //! `connected`, what a client built `connect` reaches and refuses.
 //!
@@ -2402,6 +2403,104 @@ mod shared_conformance {
     }
 }
 
+/// What a `strict` client checks as each response arrives, and when.
+mod strict {
+    use crate::{
+        http::{Response, StatusCode, body::Body, header::CONTENT_TYPE},
+        router::service::Service,
+        test::TestClient,
+    };
+
+    /// A strict client of a service declaring `GET /things` as a JSON object
+    /// whose `id` is an integer, which it answers with a string `id` when
+    /// asked with the query `bad`, and every other target with a conforming
+    /// one.
+    fn client() -> TestClient<()> {
+        let document: kynos_openapi::Document = serde_json::from_value(serde_json::json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1" },
+            "paths": { "/things": { "get": { "responses": { "200": {
+                "description": "",
+                "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": { "id": { "type": "integer" } }
+                } } }
+            } } } } }
+        }))
+        .expect("a description");
+        let service = Service::<()>::new(document, |request| async move {
+            let body: &'static [u8] = if request.uri().query() == Some("bad") {
+                br#"{"id":"one"}"#
+            } else {
+                br#"{"id":1}"#
+            };
+            let mut response = Response::new(Body::from_bytes(bytes::Bytes::from_static(body)));
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, "application/json".parse().unwrap());
+            *response.status_mut() = StatusCode::OK;
+            response
+        });
+        TestClient::new(service).strict()
+    }
+
+    /// The panic is the `send` that received the response: it reports that
+    /// one alone, and nothing sent after it is reached.
+    #[tokio::test]
+    #[should_panic(expected = "1 response did not conform to the description:\n  \
+                               GET /things?bad -> 200: the body does not match the declared \
+                               schema")]
+    async fn a_strict_client_panics_at_the_send_that_does_not_conform() {
+        let client = client();
+        client.get("/things").send().await;
+        client.get("/things?bad").send().await;
+        client.get("/nowhere").send().await;
+    }
+
+    /// A conforming response passes, through a view and a stream read to its
+    /// end too, and is still recorded for the client's own assertions.
+    #[tokio::test]
+    async fn a_strict_client_passes_and_records_every_conforming_response() {
+        let client = client();
+        client.get("/things").send().await.assert_status(200);
+        client.view().get("/things").send().await;
+        client.get("/things").send_streaming().await.finish().await;
+
+        client.assert_conformance();
+        client.assert_declared_responses_covered();
+    }
+
+    /// A stream's status is checked as its head arrives, before any of its
+    /// body is read.
+    #[tokio::test]
+    #[should_panic(expected = "1 response did not conform to the description:\n  \
+                               GET /nowhere -> 200: no declared path matches this request")]
+    async fn a_strict_stream_is_checked_as_its_head_arrives() {
+        let _ = client().get("/nowhere").send_streaming().await;
+    }
+
+    /// A stream dropped before its body ends is held to its head alone, as
+    /// `assert_conformance` holds it, since its octets are not all known.
+    #[tokio::test]
+    async fn a_strict_stream_dropped_before_its_end_is_held_to_its_head() {
+        let client = client();
+        drop(client.get("/things?bad").send_streaming().await);
+
+        client.assert_conformance();
+    }
+
+    /// A stream's body is checked once the stream reads it to its end.
+    #[tokio::test]
+    #[should_panic(expected = "1 response did not conform to the description:\n  \
+                               GET /things?bad -> 200: the body does not match the declared \
+                               schema")]
+    async fn a_strict_stream_is_checked_once_its_body_ends() {
+        let client = client();
+        let stream = client.get("/things?bad").send_streaming().await;
+        stream.finish().await;
+    }
+}
+
 /// How a `TestStream` reads a body that arrives in frames: what each read
 /// returns, and when the body is filed for `assert_conformance`.
 mod streaming {
@@ -2459,6 +2558,7 @@ mod streaming {
             record: 0,
             coverage: None,
             problem_base: Some("https://errors.example.com/".into()),
+            strict: None,
         }
     }
 
