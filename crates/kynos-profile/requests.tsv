@@ -8,7 +8,7 @@ alloc_counter_agreement.miss	2328	5	1183
 alloc_counter_agreement.stacked_4	2606	9	2588
 alloc_counter_agreement.stacked_8	3318	13	4124
 alloc_counter_agreement.static_match	1900	5	1052
-codecs.multipart_echo	1096191	1565	109773
+codecs.multipart_echo	1096253	1565	109773
 codecs.protobuf_echo	20476	43	5633
 codecs.reject_413	5886	11	2208
 codecs.reject_415	5984	16	2494
