@@ -82,7 +82,9 @@ pub(super) fn take_recovered(response: &mut Response) -> Option<Box<dyn Any + Se
 
 /// Declares the 500 a recovery branch contributes to every operation it
 /// covers: the shared component, narrowed to the identity and the members the
-/// problem policy gives a recovered panic, where it gives either.
+/// problem policy gives a recovered panic, where it gives either. Called once
+/// every interceptor the branch wraps is described, so none of their headers
+/// is described on it.
 pub(crate) fn describe(operation: &mut OperationCx<'_>) {
     let registry = operation.registry();
     let status = StatusCode::INTERNAL_SERVER_ERROR;
@@ -97,7 +99,7 @@ pub(crate) fn describe(operation: &mut OperationCx<'_>) {
     };
 
     let responses = kynos_openapi::Responses::new().with(500, response);
-    operation.add_responses(&responses);
+    operation.add_recovered_responses(&responses);
 }
 
 /// What the 500 a recovery branch contributes says.

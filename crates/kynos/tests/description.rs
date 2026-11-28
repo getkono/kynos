@@ -1199,6 +1199,39 @@ fn a_placement_reaches_the_500_an_endpoint_inside_it_recovers() {
     );
 }
 
+/// Under both an endpoint's recovery and the router's, the router's header
+/// rides the 500 of a panic in the handler and not one in an interceptor, so
+/// it is declared without being required; the endpoint's own rides neither.
+#[test]
+fn a_placement_declares_a_500_two_recoveries_answer_by_what_each_carries() {
+    let document = Router::<()>::new()
+        .catch_panics()
+        .intercept(Stamping)
+        .mount(
+            EndpointBuilder::new(
+                kynos::openapi::Method::Get,
+                kynos::openapi::PathTemplate::parse("/recovering").expect("a valid path"),
+                gives_up,
+            )
+            .intercept(BackingOff)
+            .catch_panics(),
+        )
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/recovering");
+
+    let Some(kynos::openapi::RefOr::Item(response)) = operation.responses.responses.get("500")
+    else {
+        panic!("the 500 is declared in place");
+    };
+    let declared: Vec<_> = response.headers.keys().collect();
+    assert_eq!(declared, ["X-Stamp"]);
+    let Some(kynos::openapi::RefOr::Item(header)) = response.headers.get("X-Stamp") else {
+        panic!("`X-Stamp` is declared in place");
+    };
+    assert_ne!(header.required, Some(true));
+}
+
 /// An extractor declaring a 500 of its own, which passes through every
 /// interceptor.
 struct Failing;

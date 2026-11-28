@@ -74,6 +74,9 @@ pub struct OperationCx<'a> {
     /// Response headers whose placement reads the finished set of responses,
     /// filed by [`finish`](Self::finish) in the order they were placed.
     placed: Vec<(Deferred, String, kynos_openapi::Header)>,
+    /// Who answers the operation's 500, which [`finish`](Self::finish) reads
+    /// to tell which placed headers ride it.
+    recovered: Recovered,
     /// Whether [`read_request_body`](Self::read_request_body) set the request
     /// body, so a stall can answer it with `BodyRejection::Stalled`'s 408.
     #[cfg(feature = "server")]
@@ -96,6 +99,7 @@ impl<'a> OperationCx<'a> {
             tags: Vec::new(),
             links: Vec::new(),
             placed: Vec::new(),
+            recovered: Recovered::default(),
             #[cfg(feature = "server")]
             reads_body: false,
             operation_id_case: OperationIdCase::AsWritten,
@@ -131,17 +135,48 @@ impl<'a> OperationCx<'a> {
     #[must_use]
     pub fn finish(mut self) -> kynos_openapi::Operation {
         let responses = &mut self.operation.responses.responses;
-        for (placement, name, header) in &self.placed {
+        let recovered = StatusPattern::Code(500).to_string();
+        for (index, (placement, name, header)) in self.placed.iter().enumerate() {
             let keys: Vec<String> = responses
                 .iter()
                 .filter(|(_, response)| reached_by(*placement, response))
                 .map(|(key, _)| key.clone())
                 .collect();
             for key in keys {
-                declare_header(responses, &key, name, header);
+                if key != recovered {
+                    declare_header(responses, &key, name, header);
+                    continue;
+                }
+                match self.recovered.carries(index) {
+                    Carried::Always => declare_header(responses, &key, name, header),
+                    Carried::Sometimes => {
+                        let mut optional = header.clone();
+                        optional.required = None;
+                        declare_header(responses, &key, name, &optional);
+                    }
+                    Carried::Never => {}
+                }
             }
         }
         self.operation
+    }
+
+    /// Declares the 500 a panic recovery answers with, around every
+    /// interceptor described so far and inside every one described after.
+    ///
+    /// A header placed so far never rides that 500, so [`finish`](Self::finish)
+    /// leaves it off the operation's 500, or declares it optional where
+    /// something else answering the 500 does carry it.
+    pub(crate) fn add_recovered_responses(&mut self, responses: &kynos_openapi::Responses) {
+        if self.recovered.wraps.is_empty() {
+            self.recovered.declared = self
+                .operation
+                .responses
+                .responses
+                .contains_key(&StatusPattern::Code(500).to_string());
+        }
+        self.recovered.wraps.push(self.placed.len());
+        self.add_responses(responses);
     }
 }
 
@@ -451,6 +486,40 @@ fn covered_by(range: StatusPattern, declared: StatusPattern) -> bool {
 enum Deferred {
     Every,
     Problems,
+}
+
+/// Who answers an operation's 500, as
+/// [`OperationCx::add_recovered_responses`] records it.
+#[derive(Debug, Default)]
+struct Recovered {
+    /// Whether the operation declared a 500 before any recovery did, which
+    /// passes through every interceptor.
+    declared: bool,
+    /// For each recovery, in the order described, how many placed headers
+    /// were described inside it, and so never ride the 500 it answers with.
+    wraps: Vec<usize>,
+}
+
+impl Recovered {
+    /// Whether the header placed at `index` rides each 500 the operation
+    /// answers with.
+    fn carries(&self, index: usize) -> Carried {
+        let missed = self.wraps.iter().any(|&wraps| index < wraps);
+        let ridden = self.declared || self.wraps.iter().any(|&wraps| index >= wraps);
+        match (ridden, missed) {
+            (_, false) => Carried::Always,
+            (true, true) => Carried::Sometimes,
+            (false, true) => Carried::Never,
+        }
+    }
+}
+
+/// What [`Recovered::carries`] answers.
+#[derive(Clone, Copy, Debug)]
+enum Carried {
+    Always,
+    Sometimes,
+    Never,
 }
 
 /// Whether a header deferred under `placement` lands on `response`. A `$ref`
