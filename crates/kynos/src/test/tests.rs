@@ -2969,8 +2969,11 @@ mod connected {
 /// What `TestClient::assert_body_rejections` sends, read off the served
 /// description. `tests/client.rs` holds that each is answered as declared.
 mod body_rejections {
+    #[cfg(feature = "json")]
     use bytes::Bytes;
-    use kynos_openapi::{Document, RefOr, Schema};
+    use kynos_openapi::Document;
+    #[cfg(feature = "json")]
+    use kynos_openapi::{RefOr, Schema};
     use serde_json::{Value, json};
 
     use crate::{
@@ -3028,6 +3031,7 @@ mod body_rejections {
     }
 
     /// The `requestBody` content of `POST /items`.
+    #[cfg(feature = "json")]
     fn content(
         document: &mut Document,
     ) -> &mut kynos_openapi::Map<RefOr<kynos_openapi::MediaType>> {
