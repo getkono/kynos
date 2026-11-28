@@ -324,11 +324,13 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         document.paths = paths;
         document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
-        heads.describe(&mut document.paths, &document.components, &mut violations);
+        let derived = heads.describe(&mut document.paths, &document.components, &mut violations);
 
         // Before the version is chosen and the document validated, so both
         // read what the application publishes.
         super::map::apply(&self.document_edits, &mut document, &mut violations);
+        // The edits may declare what a `HEAD`'s `$ref` names.
+        derived.after_edits(&mut document.paths, &document.components);
 
         // From what the document uses, never from a (unified) cargo feature.
         let mut document = lowest_expressing(&document)?;

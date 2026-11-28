@@ -47,8 +47,8 @@ impl Heads {
         }
     }
 
-    /// Adds each held `HEAD` to `paths`, once `components`, which a response
-    /// may reference, are complete too.
+    /// Adds each held `HEAD` to `paths`, from the `components` the router
+    /// declared, and returns what it added for [`Derived::after_edits`].
     ///
     /// A path that declares its own `HEAD` keeps it, and is reported; a second
     /// `GET` describing one is already reported as a duplicate `GET`.
@@ -57,13 +57,14 @@ impl Heads {
         paths: &mut Paths,
         components: &Components,
         violations: &mut Vec<Violation<RouterError>>,
-    ) {
-        let mut derived: HashSet<String> = HashSet::new();
+    ) -> Derived {
+        let mut derived = Derived::default();
+        let mut keys: HashSet<String> = HashSet::new();
         for (key, head, get) in self.0 {
             let operation = derived_head(get, &head, components);
             let item: &mut PathItem = paths.items.entry(key.clone()).or_default();
             if item.operation(Method::Head).is_some() {
-                if !derived.contains(&key) {
+                if !keys.contains(&key) {
                     violations.push(error_at(
                         format!("{}/head", path_location(&key)),
                         RouterError::HeadDescribedTwice { path: key },
@@ -71,8 +72,39 @@ impl Heads {
                 }
                 continue;
             }
-            item.set_operation(Method::Head, operation);
-            derived.insert(key);
+            item.set_operation(Method::Head, operation.clone());
+            keys.insert(key.clone());
+            derived.0.push((key, operation));
+        }
+        derived
+    }
+}
+
+/// Each `HEAD` [`Heads::describe`] added: its path, and the operation as it
+/// was derived.
+#[derive(Default)]
+pub(super) struct Derived(Vec<(String, Operation)>);
+
+impl Derived {
+    /// Derives each added `HEAD` again from the `components` the
+    /// application's edits left, where no edit changed that `HEAD`: a
+    /// reference to a response, or a parameter, an edit declared is resolved
+    /// as one the router declared is.
+    ///
+    /// A `HEAD` an edit rewrote, or removed, is the application's own account
+    /// of it, and is left as the edit left it.
+    pub(super) fn after_edits(self, paths: &mut Paths, components: &Components) {
+        for (key, derived) in self.0 {
+            let Some(head) = paths
+                .items
+                .get_mut(&key)
+                .and_then(|item| item.operation_mut(Method::Head))
+            else {
+                continue;
+            };
+            if *head == derived {
+                without_ranges_or_content(head, components);
+            }
         }
     }
 }
@@ -116,9 +148,17 @@ pub(super) fn derived_head(
     components: &Components,
 ) -> Operation {
     get.operation_id = Some(operation_id.to_owned());
-    get.parameters
+    without_ranges_or_content(&mut get, components);
+    get
+}
+
+/// `operation` without range handling or a response carrying content, as
+/// [`derived_head`] describes; deriving twice changes nothing more.
+fn without_ranges_or_content(operation: &mut Operation, components: &Components) {
+    operation
+        .parameters
         .retain(|parameter| !is_range(parameter, components));
-    let responses = &mut get.responses;
+    let responses = &mut operation.responses;
     for status in RANGE_STATUSES {
         responses.responses.shift_remove(status);
     }
@@ -129,7 +169,6 @@ pub(super) fn derived_head(
     {
         without_content(response, components);
     }
-    get
 }
 
 /// The statuses only a ranged `GET` answers: 206 Partial Content and 416
