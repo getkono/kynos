@@ -1045,7 +1045,7 @@ struct Backoff {
 /// Declares `Stamp` on every response.
 struct Stamping;
 
-impl kynos::middleware::Interceptor<()> for Stamping {
+impl<C: Sync + 'static> kynos::middleware::Interceptor<C> for Stamping {
     type Reads = ();
     type Adds = Stamp;
     type Short = std::convert::Infallible;
@@ -1056,8 +1056,8 @@ impl kynos::middleware::Interceptor<()> for Stamping {
         &self,
         request: kynos::http::Request,
         (): (),
-        (): &(),
-        next: kynos::middleware::Next<'_, ()>,
+        _: &C,
+        next: kynos::middleware::Next<'_, C>,
     ) -> Result<kynos::middleware::Continued<Stamp>, std::convert::Infallible> {
         Ok(next.run(request).await.with_headers(Stamp {
             deployment: "eu-1".to_owned(),
@@ -1068,7 +1068,7 @@ impl kynos::middleware::Interceptor<()> for Stamping {
 /// Declares `Backoff` on problem responses.
 struct BackingOff;
 
-impl kynos::middleware::Interceptor<()> for BackingOff {
+impl<C: Sync + 'static> kynos::middleware::Interceptor<C> for BackingOff {
     type Reads = ();
     type Adds = Backoff;
     type Short = std::convert::Infallible;
@@ -1079,8 +1079,8 @@ impl kynos::middleware::Interceptor<()> for BackingOff {
         &self,
         request: kynos::http::Request,
         (): (),
-        (): &(),
-        next: kynos::middleware::Next<'_, ()>,
+        _: &C,
+        next: kynos::middleware::Next<'_, C>,
     ) -> Result<kynos::middleware::Continued<Backoff>, std::convert::Infallible> {
         Ok(next.run(request).await.with_headers(Backoff { seconds: 1 }))
     }
@@ -1230,6 +1230,49 @@ fn a_placement_declares_a_500_two_recoveries_answer_by_what_each_carries() {
         panic!("`X-Stamp` is declared in place");
     };
     assert_ne!(header.required, Some(true));
+}
+
+/// Under a group's `guard_first`, an endpoint's recovery also answers a panic
+/// in its guard, at the guard's point: outside every interceptor mounted after
+/// `guard_first()`. So a header the router adds rides each 500 and stays
+/// required, and one the group adds after that point rides the handler's 500
+/// and not the guard's, so it is declared without being required.
+#[test]
+fn a_placement_declares_the_500_a_guard_run_first_recovers_by_its_point() {
+    let document = Router::<Guarded>::new()
+        .intercept(Stamping)
+        .group(
+            Group::new("/api")
+                .guard_first()
+                .intercept(BackingOff)
+                .mount(
+                    EndpointBuilder::new(
+                        kynos::openapi::Method::Get,
+                        kynos::openapi::PathTemplate::parse("/me").expect("a valid path"),
+                        me,
+                    )
+                    .catch_panics(),
+                ),
+        )
+        .openapi()
+        .expect("a describable router");
+    let operation = operation(&document, "/api/me");
+
+    let Some(kynos::openapi::RefOr::Item(response)) = operation.responses.responses.get("500")
+    else {
+        panic!("the 500 is declared in place");
+    };
+    let required = |name: &str| {
+        let Some(kynos::openapi::RefOr::Item(header)) = response.headers.get(name) else {
+            panic!("the 500 declares `{name}` in place");
+        };
+        header.required == Some(true)
+    };
+    assert!(required("X-Stamp"), "the router's header rides every 500");
+    assert!(
+        !required("X-Backoff"),
+        "the group's header misses the guard's 500"
+    );
 }
 
 /// An extractor declaring a 500 of its own, which passes through every
