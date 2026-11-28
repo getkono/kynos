@@ -1441,6 +1441,47 @@ async fn a_template_without_its_field_fails_at_the_first_refusal() {
         .await;
 }
 
+/// A template beginning its request on another client is refused before
+/// anything is sent, since that client's description and record are not the
+/// ones asserted on.
+#[tokio::test]
+#[should_panic(
+    expected = "POST /reports: the template begins its request on another client \
+                           than the one asserting its refusals"
+)]
+async fn a_template_on_another_client_is_refused() {
+    let client = TestClient::new(reports(None));
+    let other = TestClient::new(reports(None));
+
+    client
+        .assert_body_rejections(|| other.post("/reports").header("x-tenant", "acme"))
+        .await;
+}
+
+/// A template beginning another request on a later call is refused, since
+/// the refusals were planned from the first.
+#[tokio::test]
+#[should_panic(
+    expected = "POST /reports: the template began POST /reports?again on a later \
+                           call; it must begin the same request each time"
+)]
+async fn a_template_beginning_another_request_later_is_refused() {
+    let client = TestClient::new(reports(None));
+    let calls = std::cell::Cell::new(0);
+
+    client
+        .assert_body_rejections(|| {
+            calls.set(calls.get() + 1);
+            let path = if calls.get() == 1 {
+                "/reports"
+            } else {
+                "/reports?again"
+            };
+            client.post(path).header("x-tenant", "acme")
+        })
+        .await;
+}
+
 /// An operation reading no body has no body refusals to send.
 #[tokio::test]
 #[should_panic(expected = "HEAD /probe: `HEAD /probe` declares no `requestBody`")]
