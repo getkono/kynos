@@ -1,7 +1,8 @@
 //! A subset answers as the wider enum's variants, so it declares nothing they
 //! already declare: no key beside `subset_of`, no list on a variant or a
 //! field. `subset_of` belongs on an enum, and cannot name the subset's own
-//! generic parameter, since its statuses are a `const`.
+//! generic parameter, since its statuses are a `const`. A list of wider
+//! enums names at least one, each once.
 //!
 //! The controls are the `a_subset_*` cases in `tests/derives.rs`.
 
@@ -57,6 +58,18 @@ enum RemarksAField {
         #[problem(extension)]
         id: u64,
     },
+}
+
+#[derive(Debug, ApiError)]
+#[problem(subset_of = ())]
+enum OfNothing {
+    Conflict,
+}
+
+#[derive(Debug, ApiError)]
+#[problem(subset_of = (ChunkRejection, ChunkRejection))]
+enum OfOneTwice {
+    Conflict,
 }
 
 fn main() {}

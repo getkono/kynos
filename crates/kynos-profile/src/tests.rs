@@ -329,6 +329,7 @@ fn every_interceptor_row_reaches_its_interceptor() {
         ("request-id-counter", "x-request-id"),
         ("request-id-random", "x-request-id"),
         ("security-headers", "x-content-type-options"),
+        ("stamp", "x-api-version"),
         ("set-cookies", "set-cookie"),
         ("cache-miss", "age"),
         ("cache-hit", "age"),

@@ -79,31 +79,7 @@ const UNRECEIVABLE: &[&str] = &[
     // Private to `middleware::limits::body_size`: a late body's reader sees it
     // as a failed read, and the interceptor answers the 408 in its place.
     "Late",
-    // Private to `response::stream::sse::leading`: it only stops the
-    // serializer `Event::tagged` reads a tag with, and never leaves it.
-    "Stop",
 ];
-
-/// A scope set for `ScopedRejection`, which is generic over one.
-struct ReadOnly;
-
-#[derive(Clone, Copy)]
-enum Grant {
-    Read,
-}
-
-impl kynos::security::Scope for Grant {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Read => "read",
-        }
-    }
-}
-
-impl kynos::security::auth::Scopes for ReadOnly {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::Read];
-}
 
 reportable! {
     /// The framework's own failure is what every example returns from `main`,
@@ -113,6 +89,7 @@ reportable! {
     fn a_build_failure_is_reportable {
         kynos::Error;
         kynos::router::error::RouterError;
+        kynos::router::error::ExampleRefusal;
         kynos::schema::registry::SchemaConflict;
         kynos::schema::registry::InstantiationNameRefusal;
         kynos::schema::registry::UnenforceableKeyPattern;
@@ -135,11 +112,12 @@ reportable! {
         kynos::server::tls::error::TlsError;
     }
 
-    /// `InvalidNetwork` is returned where a trusted proxy is read from
-    /// configuration, which is startup.
-    fn a_network_refusal_is_reportable {
+    /// `InvalidNetwork` and `InvalidProxyHeader` are returned where a trusted
+    /// proxy is read from configuration, which is startup.
+    fn a_trusted_proxy_refusal_is_reportable {
         kynos::http::forwarded::InvalidNetwork;
         kynos::http::forwarded::InvalidNetworkEntry;
+        kynos::http::forwarded::InvalidProxyHeader;
     }
 
     /// `InvalidAsset` is returned at startup, where a hand-built asset set is
@@ -160,7 +138,7 @@ reportable! {
         kynos::error::rejection::RangeRejection;
         kynos::error::rejection::ConnectInfoRejection;
         kynos::error::rejection::AuthRejection;
-        kynos::error::rejection::ScopedRejection<ReadOnly>;
+        kynos::error::rejection::GuardRejection;
     }
 
     /// A stalled body's read fails with this, and a handler reading its body

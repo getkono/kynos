@@ -287,10 +287,12 @@ pub fn http_scheme(parts: &Parts, scheme: &str) -> Presented<SchemeCredentials> 
 /// authentication schemes above, so it is never an API key.
 ///
 /// [`Malformed`](Presented::Malformed) too when the key is present and cannot
-/// be read: a header field sent twice, a header field or the first cookie of
-/// that name whose value is not ASCII, or a first query pair of that name whose
-/// percent-decoded value is not UTF-8. A later pair or cookie never stands in
-/// for the first.
+/// be read: a header field or a query pair of that name sent twice, a header
+/// field or the first cookie of that name whose value is not ASCII, or a query
+/// pair of that name whose percent-decoded value is not UTF-8. A later cookie
+/// never stands in for the first: a user agent sends the cookie whose path is
+/// most specific first, per RFC 6265 section 5.4, so two cookies of one name
+/// are not a repeat.
 pub fn api_key(parts: &Parts, location: KeyLocation, name: &str) -> Presented<ApiKey> {
     match location {
         KeyLocation::Header => {

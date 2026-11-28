@@ -40,17 +40,24 @@
 //!   code is the whole story, which is false of a service enforcing three
 //!   different quotas. The URI is stated once, as a type, and reaches both the
 //!   429's body and the 429 the description declares.
+//! * **A limit only the body can key is spent by the handler.** The sign-in
+//!   challenge counts per username, which no interceptor can read before the
+//!   handler decodes it. Its limiter lives in the context, keyed `ByHandler`,
+//!   and refuses with the same 429 the mounted one does, through a transparent
+//!   variant that declares it. A limit keyed on the signed-in account would be
+//!   `key::ByPrincipal` instead, mounted after `guard_first`.
 
-use std::{net::Ipv4Addr, time::Duration};
+use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
 use kynos::{
     Router,
     error::problem::ProblemType,
     http::forwarded::{ProxyHeader, TrustedProxies},
     middleware::rate_limit::{
-        RateLimit,
-        key::{And, ByClientAddress, ByRoute},
+        RateLimit, Structured,
+        key::{And, ByClientAddress, ByHandler, ByRoute},
         quota::{Quota, Quotas},
+        refusal::RateLimitedFields,
         store::{RateLimitStore, StoreFailure},
     },
     prelude::*,
@@ -139,9 +146,52 @@ async fn render() -> NoContent {
     NoContent
 }
 
+/// The challenge limit, in the spelling and type the mounted limiter uses, so
+/// the two 429s are one.
+type Challenges = RateLimit<Quotas<ByHandler, MokaCounters>, Structured, Throttled>;
+
+/// Who is asking for a sign-in challenge.
+#[derive(serde::Deserialize, kynos::Schema)]
+struct ChallengeRequest {
+    /// The account the challenge is for.
+    #[schema(max_length = 64)]
+    username: String,
+}
+
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+enum ChallengeError {
+    #[error("too many challenges for this username")]
+    #[problem(transparent, from)]
+    Throttled(RateLimitedFields<Throttled>),
+}
+
+/// Issues a sign-in challenge, at most ten per username every five minutes.
+#[kynos::post("/auth/challenge")]
+async fn challenge(
+    Inject(challenges): Inject<Arc<Challenges>>,
+    Json(request): Json<ChallengeRequest>,
+) -> Result<NoContent, ChallengeError> {
+    // `max_length` bounds what one partition costs the store; the mounted
+    // per-address limit bounds how fast a client can invent new ones.
+    challenges.spend(&request.username).await?;
+    Ok(NoContent)
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new()
+    let challenges = Arc::new(
+        RateLimit::new(
+            Quotas::new(ByHandler, MokaCounters::new()).quota(Quota::new(
+                "challenge",
+                10,
+                Duration::from_secs(5 * 60),
+            )),
+        )
+        .standard_fields()
+        .problem_type::<Throttled>(),
+    );
+
+    let router = Router::<Arc<Challenges>>::new()
         // Which hops may say who the client is. Without this, `ByClientAddress`
         // reads the socket peer and every client behind the load balancer
         // shares one bucket -- a per-IP limit that is silently a global one.
@@ -175,12 +225,13 @@ async fn main() -> kynos::Result<()> {
             // branch on `type` rather than on the status code alone.
             .problem_type::<Throttled>(),
         )
-        .mount(kynos::routes![reports, render]);
+        .mount(kynos::routes![reports, render, challenge]);
 
     println!("{}", router.openapi()?.to_json()?);
 
-    Server::new(router.build(())?)
+    Server::new(router.build(challenges)?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
-        .await
+        .await?;
+    Ok(())
 }

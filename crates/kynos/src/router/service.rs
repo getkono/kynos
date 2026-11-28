@@ -5,12 +5,36 @@ use std::{pin::Pin, sync::Arc};
 use kynos_openapi::Document;
 
 /// A built router, ready to serve.
+///
+/// Cloning gives a second handle on the same router, cheaply: the same
+/// handler, context and mounted docs references, and a copy of the document.
+/// So one build, and one run of whatever building it does, backs both a
+/// `TestClient` and a `Server`:
+///
+/// ```no_run
+/// # #[cfg(all(feature = "server", feature = "test-util"))]
+/// fn split(service: kynos::router::service::Service<()>) {
+///     let client = kynos::test::TestClient::new(service.clone());
+///     let server = kynos::server::Server::new(service);
+/// #   let _ = (client, server);
+/// }
+/// ```
+///
+/// A handle's document is its own, but a mounted docs reference serves one
+/// set of bytes for every handle. So while another handle on the same router
+/// is alive, an edit that renders a reference again (mutual TLS in
+/// `Server::prepare`, or `into_tower_unchecked`) is refused with
+/// `Error::DescriptionShared` rather than leave one handle's
+/// [`openapi`](Self::openapi) disagreeing with what the reference serves. A
+/// router that mounts no reference has nothing to disagree with, so its
+/// handles are never refused, and each edits only its own document.
 pub struct Service<C> {
     document: Document,
     /// Every reference the router mounted, rendered again after each edit to
-    /// `document` so the bytes they serve never fall behind it.
+    /// `document` so the bytes they serve never fall behind it. Shared by
+    /// every clone, so an edit can tell whether it is alone.
     #[cfg(feature = "docs")]
-    published: crate::router::docs::render::Published,
+    published: Arc<crate::router::docs::render::Published>,
     handler: Arc<dyn ErasedService>,
     /// Whether the router declared the 408 a stalled body is answered with,
     /// which the server holds its idle timer to.
@@ -37,6 +61,21 @@ impl<C> std::fmt::Debug for Service<C> {
     }
 }
 
+/// Written out rather than derived, so `C` need not be `Clone`.
+impl<C> Clone for Service<C> {
+    fn clone(&self) -> Self {
+        Self {
+            document: self.document.clone(),
+            #[cfg(feature = "docs")]
+            published: Arc::clone(&self.published),
+            handler: Arc::clone(&self.handler),
+            #[cfg(feature = "server")]
+            body_stall: self.body_stall,
+            _context: std::marker::PhantomData,
+        }
+    }
+}
+
 impl<C> Service<C> {
     /// The description of the API this service implements.
     #[must_use]
@@ -52,8 +91,10 @@ impl<C> Service<C> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Json`](crate::Error::Json) when the edited document
-    /// cannot be serialized for a mounted reference.
+    /// Returns `Error::DescriptionShared`, before editing anything, when the
+    /// router mounted a reference and another handle on it is alive, and
+    /// [`Error::Json`](crate::Error::Json) when the edited document cannot be
+    /// serialized for a mounted reference.
     #[cfg(any(feature = "tls", feature = "unchecked"))]
     #[cfg_attr(
         not(feature = "docs"),
@@ -66,6 +107,12 @@ impl<C> Service<C> {
         &mut self,
         edit: impl FnOnce(&mut Document) -> R,
     ) -> crate::error::Result<R> {
+        // `&mut self` stops a handle being cloned from this one meanwhile, so
+        // an `Arc` found unique stays unique for the edit.
+        #[cfg(feature = "docs")]
+        if !self.published.is_empty() && Arc::get_mut(&mut self.published).is_none() {
+            return Err(crate::Error::DescriptionShared);
+        }
         let edited = edit(&mut self.document);
         #[cfg(feature = "docs")]
         self.published.publish(&self.document)?;
@@ -77,11 +124,22 @@ impl<C> Service<C> {
     ///
     /// Used by the escape hatches: the operations stay in `paths`, because an
     /// omission is invisible to the consumer that trusts the description.
+    ///
+    /// # Errors
+    ///
+    /// [`openapi_mut`](Self::openapi_mut)'s refusal of a shared description.
     #[cfg(feature = "unchecked")]
-    pub(crate) fn mark_opaque(&mut self, reason: kynos_openapi::OpaqueReason) {
-        self.openapi_mut(|document| Self::flag_opaque(document, reason))
+    pub(crate) fn mark_opaque(
+        &mut self,
+        reason: kynos_openapi::OpaqueReason,
+    ) -> crate::error::Result<()> {
+        match self.openapi_mut(|document| Self::flag_opaque(document, reason)) {
             // Adds only string-keyed members to a document that serialized.
-            .expect("a document that serialized at build still serializes once flagged");
+            Err(crate::Error::Json(error)) => {
+                panic!("a document that serialized at build still serializes once flagged: {error}")
+            }
+            result => result,
+        }
     }
 
     /// [`mark_opaque`](Self::mark_opaque)'s edit.
@@ -157,7 +215,7 @@ impl<C> Service<C> {
         Self {
             document,
             #[cfg(feature = "docs")]
-            published: crate::router::docs::render::Published::default(),
+            published: Arc::default(),
             handler: Arc::new(Dispatch(handler)),
             #[cfg(feature = "server")]
             body_stall: true,
@@ -185,7 +243,7 @@ impl<C> Service<C> {
         mut self,
         published: crate::router::docs::render::Published,
     ) -> Self {
-        self.published = published;
+        self.published = Arc::new(published);
         self
     }
 }

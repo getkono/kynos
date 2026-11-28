@@ -8,7 +8,7 @@ use crate::{
     derive::common::optional,
     doc::{doc_texts, is_deprecated},
     route::{
-        args::RouteArgs,
+        args::{Head, RouteArgs},
         attrs::{split_doc, take_public},
         uri::endpoint_uri_impl,
     },
@@ -41,6 +41,12 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
         .as_ref()
         .map_or_else(|| name.to_string(), LitStr::value);
 
+    // Only a defaulted identifier is one a router's case policy recases.
+    let operation_id_defaulted = args.operation_id.is_none();
+    let head_defaulted = matches!(args.head, Some(Head::Derived(_)));
+
+    let head = head_operation_id(method, args, &operation_id)?;
+    let head = optional(head.as_deref());
     let summary = optional(summary.as_deref());
     let description = optional(description.as_deref());
     let uri_impl = endpoint_uri_impl(function, &raw_path, &variables)?;
@@ -88,15 +94,68 @@ pub(crate) fn emit(method: &str, args: &RouteArgs, function: &ItemFn) -> syn::Re
             const PATH: &'static str = #raw_path;
             const PATH_VARIABLES: &'static [&'static str] = &[#(#variables),*];
             const OPERATION_ID: &'static str = #operation_id;
+            const OPERATION_ID_DEFAULTED: bool = #operation_id_defaulted;
             const SUMMARY: ::core::option::Option<&'static str> = #summary;
             const DESCRIPTION: ::core::option::Option<&'static str> = #description;
             const DEPRECATED: bool = #deprecated;
             const PUBLIC: bool = #public;
             const TAGS: &'static [::kynos::router::operation::DeclaredTag] = #tags;
+            const HEAD_OPERATION_ID: ::core::option::Option<&'static str> = #head;
+            const HEAD_OPERATION_ID_DEFAULTED: bool = #head_defaulted;
         }
 
         #uri_impl
 
         #panic_strategy_check
     })
+}
+
+/// The `operationId` of the `HEAD` a `GET`'s `head` argument describes, or
+/// `None` without one.
+///
+/// A bare `head` derives it from the handler's name, the `GET`'s own
+/// `operationId`: `get_file` describes `head_file`, and any other name `n`
+/// describes `head_n`. Beside an explicit `operation_id` it is refused, since
+/// no spelling derived from a chosen identifier is one its author would
+/// expect.
+fn head_operation_id(
+    method: &str,
+    args: &RouteArgs,
+    operation_id: &str,
+) -> syn::Result<Option<String>> {
+    let Some(head) = &args.head else {
+        return Ok(None);
+    };
+    let span = match head {
+        Head::Derived(span) => *span,
+        Head::Named(name) => name.span(),
+    };
+    if method != "GET" {
+        return Err(syn::Error::new(
+            span,
+            "`head` describes the HEAD a GET answers (RFC 9110 section 9.3.2), so only a `GET` \
+             takes it; declare a HEAD of its own with `#[kynos::head]`",
+        ));
+    }
+    let id = match head {
+        Head::Derived(_) if args.operation_id.is_some() => {
+            return Err(syn::Error::new(
+                span,
+                "a bare `head` derives the HEAD's operationId from the handler's name, and this \
+                 route names its own `operation_id`; name the HEAD's too, with `head = \"...\"`",
+            ));
+        }
+        Head::Derived(_) => {
+            let rest = operation_id.strip_prefix("get_").unwrap_or(operation_id);
+            format!("head_{rest}")
+        }
+        Head::Named(name) => name.value(),
+    };
+    if id == operation_id {
+        return Err(syn::Error::new(
+            span,
+            format!("`head` names the GET's own operationId `{id}`; the HEAD needs another"),
+        ));
+    }
+    Ok(Some(id))
 }

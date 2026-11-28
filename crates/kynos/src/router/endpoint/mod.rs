@@ -9,7 +9,7 @@ pub mod builder;
 pub mod meta;
 pub mod set;
 
-use std::{convert::Infallible, future::Future, pin::Pin, sync::Arc};
+use std::{borrow::Cow, convert::Infallible, future::Future, pin::Pin, sync::Arc};
 
 use kynos_openapi::{Method, PathTemplate};
 
@@ -17,7 +17,10 @@ use crate::{
     handler::Handler,
     http::{Request, Response},
     middleware::{Continued, Interceptor, MiddlewareError, Next, erased::ErasedInterceptor},
-    router::{dispatch::recovery, operation::OperationCx},
+    router::{
+        dispatch::recovery,
+        operation::{OperationCx, OperationIdCase},
+    },
 };
 
 /// A declared API operation.
@@ -67,6 +70,27 @@ pub trait Endpoint<C>: Send + Sync + 'static {
         false
     }
 
+    /// The guard this operation's handler takes, which an interceptor keyed
+    /// on what it admitted must run inside.
+    ///
+    /// Not part of the stable API, as [`__guarded`](Endpoint::__guarded).
+    #[doc(hidden)]
+    fn __guard_type(&self) -> Option<crate::__private::GuardType> {
+        None
+    }
+
+    /// Every guard read by an interceptor this operation holds itself, each
+    /// of which the router refuses to build unless a scope runs that guard
+    /// ahead of it, outermost interceptor first.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from what `intercept` added. Read only while the router is
+    /// built.
+    #[doc(hidden)]
+    fn __admitted_readers(&self) -> Vec<crate::__private::AdmittedReader> {
+        Vec::new()
+    }
+
     /// Whether this operation takes no guard deliberately, which a group
     /// whose other operations take one requires of it.
     ///
@@ -89,6 +113,19 @@ pub trait Endpoint<C>: Send + Sync + 'static {
     #[doc(hidden)]
     fn __reads_body(&self) -> bool {
         true
+    }
+
+    /// The `operationId` of the `HEAD` this operation describes beside
+    /// itself, if it does, as a router spelling derived ones in `case`
+    /// publishes it.
+    ///
+    /// Not part of the stable API: [`EndpointBuilder`](builder::EndpointBuilder)
+    /// answers it from [`describe_head`](builder::EndpointBuilder::describe_head),
+    /// and any other endpoint describes only itself.
+    #[doc(hidden)]
+    fn __described_head(&self, case: OperationIdCase) -> Option<Cow<'static, str>> {
+        let _ = case;
+        None
     }
 
     /// Runs this operation's guard from the request head, ahead of the
@@ -119,9 +156,14 @@ async fn guard_ahead<C: Sync, H: Handler<C, A>, A>(
     let (mut parts, body) = request.into_parts();
 
     let refused = if catches {
+        // The head is back once recovery ends, so the policy is read only
+        // where a panic needs it.
         recovery::recover(H::__guard_ahead(&mut parts, context))
             .await
-            .unwrap_or_else(|payload| Some(recovery::recovered_response(payload)))
+            .unwrap_or_else(|payload| {
+                let problems = crate::error::members::Installed::on(&parts.extensions);
+                Some(recovery::recovered_response(payload, problems))
+            })
     } else {
         H::__guard_ahead(&mut parts, context).await
     };
@@ -186,9 +228,15 @@ pub(crate) trait DynEndpoint<C>: Send + Sync + 'static {
 
     fn guarded(&self) -> bool;
 
+    fn guard_type(&self) -> Option<crate::__private::GuardType>;
+
+    fn admitted_readers(&self) -> Vec<crate::__private::AdmittedReader>;
+
     fn public(&self) -> bool;
 
     fn reads_body(&self) -> bool;
+
+    fn described_head(&self, case: OperationIdCase) -> Option<Cow<'static, str>>;
 
     /// This operation's guard as an interceptor, where its handler takes one.
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>>;
@@ -223,12 +271,24 @@ impl<C: Send + Sync + 'static, E: Endpoint<C>> DynEndpoint<C> for E {
         Endpoint::__guarded(self)
     }
 
+    fn guard_type(&self) -> Option<crate::__private::GuardType> {
+        Endpoint::__guard_type(self)
+    }
+
+    fn admitted_readers(&self) -> Vec<crate::__private::AdmittedReader> {
+        Endpoint::__admitted_readers(self)
+    }
+
     fn public(&self) -> bool {
         Endpoint::__public(self)
     }
 
     fn reads_body(&self) -> bool {
         Endpoint::__reads_body(self)
+    }
+
+    fn described_head(&self, case: OperationIdCase) -> Option<Cow<'static, str>> {
+        Endpoint::__described_head(self, case)
     }
 
     fn guard_ahead(self: Arc<Self>) -> Option<Arc<dyn ErasedInterceptor<C>>> {

@@ -118,8 +118,9 @@ matches scope in the router.
 405 and 501 the router answers when no operation does pass through them, so a
 request id or a header every response carries reaches those too. A group's and
 a nested router's do not: they cover operations, and a fallback is none. One
-covering `Covers::BodyReading`, as `BodySize` does, covers a fallback only
-while a router interceptor beneath it may read the body (`READS_BODY`), since
+covering `Covers::BodyReading`, as `BodySize` and `Decompression` do, covers a
+fallback only while a router interceptor beneath it may read the body
+(`READS_BODY`), since
 no handler reads that one. `Next::route` is `None` there, an interceptor keyed by the operation (`Cache`,
 `RateLimit`) hands the response on untouched, and nothing is added to the
 document — a fallback stays out of `paths`, as
@@ -635,6 +636,87 @@ hand beside its own `IntoResponse` — `Timeout::answer_with` takes one — wher
 that const would be a declaration written beside the behaviour rather than being
 it, which is the `contribution` method this document refuses.
 
+### Keying on the caller
+
+`key::ByPrincipal` keys on what the operation's guard admitted, read from the
+request after a scope's `guard_first` ran the guard ahead of the limiter — so
+`.guard_first()` comes before `.intercept(limit)`. Spending a per-account
+limit there, rather than in the handler, refuses before the body is read, and
+the guard still checks the credential once.
+
+- **A request no guard admitted shares one bucket.** The router refuses a
+  misplaced limiter and an operation with another guard or none, below, so
+  what reaches it is what the router cannot see. Exempting it would make a
+  misconfigured limit silently absent, and keying it on the peer would make it
+  a per-IP limit nobody asked for; one `unadmitted` bucket fails closed,
+  and shows itself. No closure output names it: a caller's partition is
+  always `principal:` and what the closure returned, and a header's is
+  `header:`, the field's name and its value. `otherwise(key)` names another
+  key, in the type, for a limiter covering public operations too.
+- **The guard type is the handler's, exactly.** `ByPrincipal<Auth<Bearer>, _>`
+  reads nothing a `Scoped` or `MaybeAuth` guard admitted. A `MaybeAuth` admits
+  anonymous callers, so its closure names their bucket; `otherwise` is only for
+  requests no guard ran on.
+- **The guard is borrowed, not taken.** The handler's guard argument receives
+  it as before; the closure runs while it is held, so it should only read.
+
+Which guard covers an operation is decided when the router is built, so a
+limiter that cannot see its guard is refused there: `Router::build` reports
+`RouterError::GuardNotAhead` for each operation a `ByPrincipal` limiter with no
+`otherwise` covers where no scope's `guard_first` comes before it, or whose
+handler takes another guard or none, naming the operation, the limiter and
+both fixes. Only `otherwise` opts out, because it is the one place the type
+says where an unadmitted request goes. Interceptors declare what they read
+through a hidden `Interceptor` item that `RateLimit` forwards from its policy,
+so the check asks each interceptor rather than recognising a limiter by
+identity, as the router does `Cors`.
+
+- **A wrapper forwards what it holds.** `RateLimitPolicy::reads_admitted` and
+  `RateLimitKey::reads_admitted` return the `AdmittedReads` of every guard
+  they key on, as `Quotas` returns its key's and `And` both halves'. A policy
+  or key wrapping another returns the inner one's, so a wrapper around
+  `Quotas` or `ByPrincipal` is checked as what it wraps is.
+- **Required, not defaulted.** A provided `none()` would let a wrapper drop
+  the check by saying nothing, so every policy and key states it, and one
+  keyed on nobody writes `AdmittedReads::none()`. Only Kynos makes an
+  `AdmittedReads` naming a guard, so an implementation can forward or join
+  them and never claim one it does not read.
+
+The `unadmitted` bucket stays behind the check as defence in depth, for what
+the router cannot see: a `route_unchecked` route, which takes no guard; a
+request an interceptor handed on as a copy; and a key or policy that calls
+another's `partition` or `check` and returns `AdmittedReads::none()` rather
+than what that one reads, as a closure key calling one does, and an
+application interceptor wrapping a `RateLimit`, whose hidden item it cannot
+forward.
+
+### Spending from a handler
+
+A limit keyed on what only the decoded body says — a username in a sign-in —
+has no interceptor to run in. `RateLimit::spend(partition)` spends one
+request from the handler, on a limiter keyed `key::ByHandler`, which the
+application keeps in its context.
+
+- **One refusal, not a second 429.** `spend` returns the spelling's own
+  `Denied`, built by the code the interceptor refuses with, so its type,
+  `Retry-After` and rate-limit fields are the interceptor's. A
+  `#[problem(transparent)]` variant holding it is how the handler returns it,
+  and that variant's `Responses` declare the 429 and its headers on the
+  operation; nothing reaches the wire undeclared. Like every application
+  error, it is not rendered under `Router::problems`, which names only
+  problems Kynos renders itself; name the type with `problem_type` so both
+  limiters carry the same one.
+- **`ByHandler` is not a key.** It implements no `RateLimitKey`, so its
+  limiter cannot also be mounted, where its counters would be spent twice,
+  and `spend` exists only on it, so a mounted limiter is never spent by hand.
+- **A body field is unbounded.** Every distinct partition is counters the
+  store keeps for two windows, so a client inventing usernames grows the
+  store as fast as it is admitted. Kynos does not own the store and cannot
+  cap it; validate the field first, and put an interceptor limit keyed on the
+  client's address over the operation, which bounds how fast one client can
+  invent partitions. The partition is stored as `handler:` and the value, so a
+  value the client chose cannot name another key's bucket.
+
 ### Replacing the algorithm, and why no bucket ships
 
 `Quotas` is one implementation of `RateLimitPolicy`, not the trait's only
@@ -705,6 +787,14 @@ RateLimit::new(policy).problem_type::<Throttled>()
 `Conditional`'s `NotModified` is absent because a 304 carries no body, and
 `Infallible` because it declares no status. Those are the two of the twelve
 `ShortCircuit` implementations that have no problem document to name.
+
+**A builder overrides the router's policy.** `Router::problems` installs one
+`ProblemPolicy` whose identity for `ProblemOrigin::Refusal` types every
+refusal above that would otherwise send `about:blank`, and whose members every
+one carries; a builder here names the more specific type for its own
+interceptor, and the members are added all the same. A `Short` an application
+writes is its own to type, as
+[`errors.md`](errors.md#the-policy-over-the-problems-kynos-renders) records.
 
 **The marker goes on the refusal, not on the interceptor.** A `ProblemType`
 names one type URI, so a type answering with several statuses carries several
@@ -873,7 +963,12 @@ measures the one number an attacker chooses freely. `Decompression` takes the
 limit instead and applies it to what the handler will actually see. The two
 cannot be mounted together — both answer 413, and `CompatibleWith` refuses
 the pair — which is right rather than awkward: on a route that accepts content
-codings, `BodySize` alone is not a weaker guard but a misleading one.
+codings, `BodySize` alone is not a weaker guard but a misleading one. Being the
+route's body limit, it covers what `BodySize` covers, `Covers::BodyReading`: one
+`Decompression` over a resource's group runs on and declares its 400, 413 and
+415 on the operations reading a body, and leaves a `GET` by id or a `DELETE`,
+which ignores whatever body arrives, coded or not, declaring none of them. It
+keeps `READS_BODY` at `true`, since it buffers the body wherever it runs.
 
 **A coding nothing decoded is refused, without `Accept-Encoding`.**
 `Decompression` removes `Content-Encoding` once it decodes, and hands a body
@@ -1248,6 +1343,14 @@ instead of shipping unasserted.
 `SetCookies` writes cookies. It does not sign them, encrypt them, or keep a
 session, and none of the three is a gap to close later.
 
+Nor does it set the cookie a handler mints per request, such as the session a
+sign-in hands out: a `CookieSource` sees the request, not what the handler
+decided. The handler returns that cookie itself, as
+`WithHeaders<T, response::cookie::SetCookieHeaders>` built from the `Cookie`
+with `into()`. It is the group `SetCookies` adds, so it is described, written
+and refused the same way, and the description declares `Set-Cookie` on that
+operation alone.
+
 A cookie carrying a credential is a
 [`SecurityScheme`](../crates/kynos/src/security/mod.rs) rather than a parameter
 — `extract::params::cookie` has said so since it landed — and signing or
@@ -1362,7 +1465,9 @@ the status choose the closing event's level instead, so a 5xx can be logged at
 `ERROR` and found by an error filter, without an observer of its own that
 logs the line again. Only the closing event reads it, since the opening
 event and the span begin before any status exists. It works the same in
-either call order: `level` never replaces the rule.
+either call order: `level` never replaces the rule. A request abandoned before
+its response head closes with a `request abandoned` event at `level`, since it
+has no status for the rule to read.
 
 It takes a `fn(StatusCode) -> Level` and not a closure, so `Trace` stays one
 type that clones and prints with `Debug`. A rule fixed in the framework,
@@ -1650,8 +1755,11 @@ could not be named even after the check passed.
 `SecurityHeaders` sets `Cache-Control: no-store`, `Referrer-Policy: no-referrer`
 and `X-Content-Type-Options: nosniff`; `strict_transport_security` and
 `deny_framing` add `Strict-Transport-Security` and `X-Frame-Options: DENY`.
-Each opt-in is a const generic, because each adds a declared name and a name
-`CompatibleWith` compares has to be in a `const`.
+Each opt-in is a type parameter, because each adds a declared name and a name
+`CompatibleWith` compares has to be in a `const`. The parameters are named
+markers rather than `bool`s, `SecurityHeaders<Hsts, DenyFraming>`, so a
+returned interceptor's type reads as what it sends, and each position takes
+its own sealed trait, so the two cannot be given in the wrong order.
 
 **Each field replaces what the chain set.** That is what lets the document
 state every fixed field as a `const`: a handler's own `Cache-Control` surviving
@@ -1676,6 +1784,57 @@ fields too, and before `Cache`, so the cache reads the handler's own lifetime
 and stores while the client is told `no-store`. Inside a `Cache` it is not
 wrong, merely useless to the cache — every response it sees says `no-store`, and
 RFC 9111 §3 forbids storing one. `tests/cache.rs` holds both orders.
+
+## Stamped headers
+
+`Stamp<H>` sends a header group on every response, for a value the whole API
+shares, such as its version. A group of `()` fields under
+`#[header(value = API_VERSION)]` names the constant the application already
+has, so the value is written once and described as that value's `const`:
+
+```rust,ignore
+Router::new().intercept(Stamp::new(Versioned { version: () })?)
+```
+
+**It is an interceptor, not a router setting.** A `Router::response_headers`
+would be a second way to add a header beside `Adds`, and the checks every
+interceptor gets would have to be written again for it: the collision check
+against another interceptor adding the same field, a group scope and an
+endpoint scope, and the order below. As an interceptor it gets them all, and it
+is described as every interceptor is.
+
+**It is encoded once.** `Stamp::new` encodes the group and keeps the fields,
+so a response pays for inserting them and never for encoding them. That is
+also where a group that cannot be sent is refused, with
+`MiddlewareError::UnencodableStamp`, rather than on every response as a 500.
+A value that differs between requests is not a stamp's: an interceptor of its
+own computes it.
+
+**Each field replaces what the chain set**, for the reason
+[security headers](#security-headers) give: a handler's own value surviving
+beside a described `const` is a description the wire contradicts. A handler
+declaring the same name keeps its own entry in the description, since a
+placement never overwrites a header a response already declares, so that one
+response is described by the handler's schema while it carries the stamp's
+value; a handler has no reason to send a field a stamp owns.
+
+**It is declared with `Placement::Every`, and sits outermost.** It writes
+everything that passes through it, so every response beneath it carries the
+group: the handler's, an extractor's or guard's refusal, an inner
+interceptor's short circuit, the 500 of a panic an endpoint's own
+`catch_panics` recovered, and the router's own 404. What is answered outside
+it goes without: an interceptor mounted before it, and a panic recovered by a
+router's or group's `catch_panics`, whose recovery wraps every interceptor of
+both scopes. So mount it with the first `intercept` call. `tests/middleware.rs`
+holds both sides.
+
+The description says the same as far as a placement reaches: the group, with
+each fixed field's `const`, on every response an operation declares in place.
+A response it refers to, such as the shared `components/responses` entry a
+Kynos refusal or a recovered panic is declared by, is left alone, since no
+placement reaches into a `$ref`: that entry is shared with operations the
+stamp may not cover. [#1500](https://github.com/getkono/kynos/issues/1500)
+tracks describing it there.
 
 ## Opaque
 

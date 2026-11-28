@@ -30,6 +30,40 @@ pub enum RouterError {
         path: String,
     },
 
+    /// A `GET` describes the `HEAD` it answers on a path that also declares a
+    /// `HEAD` operation of its own.
+    ///
+    /// The declared `HEAD` answers that method, so the one the `GET` would
+    /// describe never would. Reported rather than settled by either winning:
+    /// both were asked for, and one of them is a mistake. Located at the
+    /// `head` operation.
+    #[error(
+        "`HEAD {path}` is declared as an operation and also described by its `GET`'s `head`; \
+         remove one of them"
+    )]
+    HeadDescribedTwice {
+        /// The `paths` key both are at.
+        path: String,
+    },
+
+    /// An operation that is not a `GET` describes a `HEAD`, which only a
+    /// `GET` answers (RFC 9110 section 9.3.2).
+    ///
+    /// Reachable only through
+    /// [`EndpointBuilder::describe_head`](crate::router::endpoint::builder::EndpointBuilder::describe_head),
+    /// whose method is a runtime value; the route attribute refuses its `head`
+    /// argument anywhere but on a `GET`.
+    #[error(
+        "operation `{method} {path}` describes a `HEAD`, which only a `GET` answers; remove \
+         `describe_head`"
+    )]
+    HeadWithoutGet {
+        /// The operation's method.
+        method: kynos_openapi::Method,
+        /// The `paths` key it is at.
+        path: String,
+    },
+
     /// An operation takes no guard while another operation of its
     /// [`Group`](crate::router::group::Group) takes one, and does not declare
     /// that it is public.
@@ -52,6 +86,36 @@ pub enum RouterError {
         method: kynos_openapi::Method,
         /// The `paths` key it is at.
         path: String,
+    },
+
+    /// An interceptor covering an operation keys on what a guard admitted,
+    /// and that guard does not run ahead of it: no enclosing scope calls
+    /// `guard_first` before intercepting with it, or the operation takes
+    /// another guard or none.
+    ///
+    /// Reached by a [`RateLimit`](crate::middleware::rate_limit::RateLimit)
+    /// keyed [`ByPrincipal`](crate::middleware::rate_limit::key::ByPrincipal)
+    /// with no `otherwise`, which would otherwise count every request of the
+    /// operation against one shared bucket: a per-caller limit read as one,
+    /// and spent before the guard refuses anybody. Naming `otherwise` states
+    /// where a request no guard admitted goes, and builds.
+    ///
+    /// Reported once per such operation, located at it.
+    #[error(
+        "operation `{method} {path}` is covered by `{interceptor}`, which keys on what the guard \
+         `{guard}` admitted, and that guard does not run ahead of it; take `{guard}` and call \
+         `guard_first()` before `.intercept(...)` on a scope covering the operation, or name a \
+         key for requests no guard admitted with `ByPrincipal::otherwise(...)`"
+    )]
+    GuardNotAhead {
+        /// The operation's method.
+        method: kynos_openapi::Method,
+        /// The `paths` key it is at.
+        path: String,
+        /// The interceptor, as `std::any::type_name` spells it.
+        interceptor: &'static str,
+        /// The guard it keys on, as `std::any::type_name` spells it.
+        guard: &'static str,
     },
 
     /// An interceptor's short circuit declared statuses its responses do not
@@ -111,8 +175,8 @@ pub enum RouterError {
         policy: &'static str,
     },
 
-    /// The type [`problem_members`](crate::Router::problem_members) names
-    /// does not describe an object naming its members as properties, so no
+    /// The members of the policy [`problems`](crate::Router::problems) names
+    /// do not describe an object naming each member as a property, so no
     /// problem could carry them beside its own.
     ///
     /// A struct deriving `Schema` describes one; a `#[serde(flatten)]`, an
@@ -123,8 +187,8 @@ pub enum RouterError {
         members: &'static str,
     },
 
-    /// The type [`problem_members`](crate::Router::problem_members) names
-    /// declares a member a problem Kynos renders already sends: one RFC 9457
+    /// The members of the policy [`problems`](crate::Router::problems) names
+    /// declare a member a problem Kynos renders already sends: one RFC 9457
     /// registers, or `errors`.
     #[error(
         "problem members `{members}` declare `{member}`, which a problem Kynos renders already \
@@ -159,5 +223,133 @@ pub enum RouterError {
         method: kynos_openapi::Method,
         /// The `paths` key it is at.
         path: String,
+    },
+
+    /// A `#[schema(string)]` type lists an example it does not carry as that
+    /// string, so the document would show a reader a value the API refuses.
+    ///
+    /// Found while the type's schema is described, which cannot fail, and
+    /// reported once per example, located at it under the type's component.
+    #[error("`{schema}` lists the example {example:?}, which {refusal}")]
+    StringExample {
+        /// The type, as `std::any::type_name` spells it.
+        schema: &'static str,
+        /// The example, as listed.
+        example: String,
+        /// Why the type does not carry it.
+        refusal: ExampleRefusal,
+    },
+
+    /// A query parameter's `#[param(default = ...)]` breaks the bounds its
+    /// field or its type declares, so the document would state a default the
+    /// API refuses when a client sends it, and the decoder would bind a value
+    /// no request could carry.
+    ///
+    /// Found while the group describes its parameters, which cannot fail, and
+    /// located at each operation taking the group.
+    #[error(
+        "`{group}` defaults the query parameter `{parameter}` to {default:?}, which breaks its \
+         bounds: {}",
+        failures.join("; ")
+    )]
+    ParameterDefault {
+        /// The group, as `std::any::type_name` spells it.
+        group: &'static str,
+        /// The parameter's wire name.
+        parameter: String,
+        /// The default, as its type's `Display` writes it.
+        default: String,
+        /// What each broken bound says.
+        failures: Vec<String>,
+    },
+
+    /// A query parameter group names one parameter twice, through a
+    /// `#[param(flatten)]` group: its own field and a flattened group's, or
+    /// two flattened groups'.
+    ///
+    /// Both fields would read the one pair naming it, and the description
+    /// can carry it once. Found while the group describes its parameters,
+    /// since only the flattened group knows its names, and located at each
+    /// operation taking the group.
+    #[error(
+        "`{group}` names the query parameter `{parameter}` twice, through a flattened group; \
+         rename one of them"
+    )]
+    DuplicateQueryParameter {
+        /// The group flattening the other, as `std::any::type_name` spells
+        /// it.
+        group: &'static str,
+        /// The parameter's wire name.
+        parameter: String,
+    },
+
+    /// A `Path<T>` over one value, which reads the one variable its
+    /// operation's template declares, on an operation declaring other than
+    /// one.
+    ///
+    /// A route attribute refuses this at compile time, so only an operation
+    /// an `EndpointBuilder` assembled reaches it. Found while the operation
+    /// is described, against its own template before any prefix.
+    #[error(
+        "`Path<{value}>` reads the one variable its operation's template declares, and that \
+         template declares {variables:?}; extract a `PathParams` group naming each variable"
+    )]
+    LonePathValue {
+        /// The value's type, as `std::any::type_name` spells it.
+        value: &'static str,
+        /// The variables the operation's own template declares.
+        variables: Vec<String>,
+    },
+}
+
+/// Why a `#[schema(string)]` type does not carry an example it lists, as a
+/// [`StringExample`](RouterError::StringExample) violation says.
+///
+/// The serde refusals apply wherever the type implements serde, however it is
+/// used: the schema is described with no knowledge of its uses, and every use
+/// names the one component, a JSON body included. A type whose serde serves
+/// another purpose keeps that serde on a separate type.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ExampleRefusal {
+    /// The type's own `FromStr` refuses the example.
+    #[error("its own `FromStr` refuses")]
+    Unparsed,
+
+    /// The value `FromStr` reads breaks the bounds the type declares on its
+    /// text, checked on what its `Display` writes.
+    #[error("breaks the type's own bounds: {}", failures.join("; "))]
+    OutOfBounds {
+        /// What each broken bound says.
+        failures: Vec<String>,
+    },
+
+    /// The type's `Serialize` writes the value `FromStr` reads as something
+    /// other than the JSON string its `Display` writes, as a serde derive
+    /// carrying no attribute writes a newtype's member or a struct's fields.
+    #[error(
+        "its `Serialize` writes as {written}, not as the string its `Display` writes, \
+         {displayed:?}; carry it through the text, with `#[serde(into = \"String\", \
+         try_from = \"String\")]` or serde written by hand"
+    )]
+    Miswritten {
+        /// The JSON serde wrote.
+        written: String,
+        /// The text `Display` wrote.
+        displayed: String,
+    },
+
+    /// The type's `Serialize` refuses the value `FromStr` reads.
+    #[error("its `Serialize` refuses to write: {reason}")]
+    Unserializable {
+        /// What serde said.
+        reason: String,
+    },
+
+    /// The type's `Deserialize` does not read the example as a JSON string.
+    #[error("its `Deserialize` does not read as a JSON string: {reason}")]
+    Undeserializable {
+        /// What serde said.
+        reason: String,
     },
 }

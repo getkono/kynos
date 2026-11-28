@@ -88,6 +88,8 @@ jobs:
         run: mise run test:baseline
       - name: Test kynos-openapi with arbitrary_precision forced on
         run: mise run test:arbitrary-precision
+      - name: Test kynos-openapi and response hoisting with preserve_order forced on
+        run: mise run test:preserve-order
       - name: Check every feature combination
         run: mise run features:check
       - name: Check every target at each feature

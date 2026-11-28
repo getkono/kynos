@@ -13,6 +13,8 @@ use kynos::{
 struct Gate;
 
 impl<C: Sync> Authenticator<Bearer, C> for Gate {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         _: Presented<BearerToken>,
@@ -24,6 +26,8 @@ impl<C: Sync> Authenticator<Bearer, C> for Gate {
 }
 
 impl<C: Sync> Authenticator<Basic, C> for Gate {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         _: Presented<Credentials>,

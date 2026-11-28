@@ -1,4 +1,4 @@
-//! Named quotas over a store, and the estimator behind them.
+//! Named quotas over a store.
 
 use std::{borrow::Cow, time::Duration};
 
@@ -9,6 +9,7 @@ use crate::{
         decision::{
             Allowance, Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit,
         },
+        estimate::{estimate, recovers_in},
         key::RateLimitKey,
         store::{RateLimitStore, StoreFailure},
     },
@@ -108,55 +109,6 @@ impl Quota {
     }
 }
 
-/// The sliding-window estimate, `elapsed` into a window of `window`.
-///
-/// `current + previous × (window − elapsed) / window`, which stops a fixed
-/// window's boundary doubling the rate. Saturating, so overflow refuses rather
-/// than wraps into permission.
-pub(super) fn estimate(previous: u64, current: u64, elapsed: Duration, window: Duration) -> u64 {
-    if window.is_zero() {
-        return current;
-    }
-
-    let window_ms = window.as_millis().max(1);
-    let elapsed_ms = elapsed.as_millis().min(window_ms);
-    let weight = window_ms - elapsed_ms;
-
-    let carried = u128::from(previous)
-        .saturating_mul(weight)
-        .saturating_div(window_ms);
-
-    current.saturating_add(u64::try_from(carried).unwrap_or(u64::MAX))
-}
-
-/// The earliest instant the estimate falls to `headroom`.
-///
-/// Assuming the client sends nothing more: the current window's remainder, plus
-/// however much of the next window must pass for the carried weight to decay.
-pub(super) fn recovers_in(
-    current: u64,
-    headroom: u64,
-    elapsed: Duration,
-    window: Duration,
-) -> Duration {
-    let remaining_window = window.saturating_sub(elapsed);
-
-    if current <= headroom {
-        return remaining_window;
-    }
-
-    // Decays to `headroom` after `window × (current − headroom) / current`, in
-    // integer milliseconds: an `f64` loses precision past 2^53.
-    let excess = u128::from(current - headroom);
-    let window_ms = window.as_millis();
-    let decay_ms = window_ms
-        .saturating_mul(excess)
-        .saturating_div(u128::from(current).max(1));
-    let decay = Duration::from_millis(u64::try_from(decay_ms).unwrap_or(u64::MAX));
-
-    remaining_window.saturating_add(decay)
-}
-
 /// What one quota decided, before anything is spent.
 enum Outcome {
     /// The store could not answer and the policy allows: nothing to spend.
@@ -208,7 +160,7 @@ pub struct Quotas<K, S, Clk = SystemClock> {
     store: S,
     clock: Clk,
     enforced: Vec<Quota>,
-    policies: Vec<QuotaPolicy>,
+    pub(super) policies: Vec<QuotaPolicy>,
     on_store_failure: StoreFailure,
 }
 
@@ -257,7 +209,28 @@ impl<K, S, Clk> Quotas<K, S, Clk> {
     }
 }
 
-impl<K, S: RateLimitStore, Clk> Quotas<K, S, Clk> {
+impl<C, K, S, Clk> RateLimitPolicy<C> for Quotas<K, S, Clk>
+where
+    C: Sync + 'static,
+    K: RateLimitKey<C>,
+    S: RateLimitStore,
+    Clk: Clock,
+{
+    fn advertised(&self) -> &[QuotaPolicy] {
+        &self.policies
+    }
+
+    fn reads_admitted(&self) -> super::key::AdmittedReads {
+        self.key.reads_admitted()
+    }
+
+    async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
+        let partition = self.key.partition(request, route, context);
+        self.count(partition.as_deref()).await
+    }
+}
+
+impl<K, S: RateLimitStore, Clk: Clock> Quotas<K, S, Clk> {
     /// What `quota` decides for `partition` at `now`, spending nothing.
     async fn decide(&self, quota: &Quota, partition: &str, now: Duration) -> Outcome {
         let window_ms = quota.window.as_millis().max(1);
@@ -298,35 +271,21 @@ impl<K, S: RateLimitStore, Clk> Quotas<K, S, Clk> {
             current_key,
         }
     }
-}
 
-impl<C, K, S, Clk> RateLimitPolicy<C> for Quotas<K, S, Clk>
-where
-    C: Sync + 'static,
-    K: RateLimitKey<C>,
-    S: RateLimitStore,
-    Clk: Clock,
-{
-    fn advertised(&self) -> &[QuotaPolicy] {
-        &self.policies
-    }
-
-    async fn check(&self, request: &http::Request, route: Route<'_>, context: &C) -> Decision {
-        let Some(partition) = self.key.partition(request, route, context) else {
+    /// Decides one request against `partition`, spending it where every
+    /// quota admits it; `None` exempts it.
+    pub(super) async fn count(&self, partition: Option<&str>) -> Decision {
+        let Some(partition) = partition else {
             // Exempt: no counter touched, and the full quota reported.
-            return Decision::Allow(Allowance::new(
-                self.enforced
-                    .iter()
-                    .map(|quota| {
-                        ServiceLimit::new(
-                            quota.name.clone(),
-                            quota.ceiling(),
-                            quota.ceiling(),
-                            quota.window,
-                        )
-                    })
-                    .collect(),
-            ));
+            let full = self.enforced.iter().map(|quota| {
+                ServiceLimit::new(
+                    quota.name.clone(),
+                    quota.ceiling(),
+                    quota.ceiling(),
+                    quota.window,
+                )
+            });
+            return Decision::Allow(Allowance::new(full.collect()));
         };
 
         let now = self.clock.now();
@@ -338,7 +297,7 @@ where
         let mut denial: Option<Duration> = None;
 
         for quota in &self.enforced {
-            let outcome = self.decide(quota, &partition, now).await;
+            let outcome = self.decide(quota, partition, now).await;
             // The longest wait, since only after it would every quota admit the
             // request; a store failure denies on the same terms as a refusal.
             if let Outcome::Refused { wait } | Outcome::Unreachable { wait } = outcome {

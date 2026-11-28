@@ -113,6 +113,26 @@ fn the_page_is_described_as_html_and_the_description_as_json() {
     }
 }
 
+/// Both docs routes' identifiers are derived from their paths, so the router's
+/// case recases them as it does a handler's name.
+#[test]
+fn a_case_recases_both_docs_identifiers() {
+    let document = Router::<App>::new()
+        .operation_id_case(kynos::router::operation::OperationIdCase::LowerCamel)
+        .docs(Docs::scalar())
+        .openapi()
+        .expect("a describable router");
+
+    for (path, id) in [("/docs", "docsDocs"), ("/openapi.json", "docsOpenapiJson")] {
+        let operation = document.paths.items[path].get.as_ref();
+        assert_eq!(
+            operation.and_then(|operation| operation.operation_id.as_deref()),
+            Some(id),
+            "{path}"
+        );
+    }
+}
+
 #[test]
 fn a_description_only_reference_describes_the_description_alone() {
     let document = support::router()
@@ -306,7 +326,9 @@ async fn the_description_route_serves_the_flags_a_tower_conversion_adds() {
     use http_body_util::BodyExt as _;
     use tower::ServiceExt as _;
 
-    let unchecked = served(Docs::scalar()).into_tower_unchecked();
+    let unchecked = served(Docs::scalar())
+        .into_tower_unchecked()
+        .expect("an unshared service");
     // The premise: the conversion flagged every operation, not merely one.
     let mut flagged = 0;
     for (path, item) in &unchecked.openapi().paths.items {
@@ -340,6 +362,84 @@ async fn the_description_route_serves_the_flags_a_tower_conversion_adds() {
         .to_bytes();
 
     assert_eq!(String::from_utf8_lossy(&served), expected);
+}
+
+/// A clone is the same router: one build serves its reference in process
+/// through the clone and over a socket through the original, the same bytes
+/// both ways.
+#[cfg(all(feature = "server", feature = "test-util"))]
+#[tokio::test]
+async fn one_build_serves_its_reference_through_a_clone_and_a_server() {
+    let service = served(Docs::scalar());
+    let clone = service.clone();
+    let expected = service
+        .openapi()
+        .to_json()
+        .expect("a serializable document");
+    let running = kynos::server::Server::new(service)
+        .bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .prepare()
+        .await
+        .expect("loopback listener binds")
+        .spawn();
+
+    let in_process = get(&clone, "/openapi.json").call().await;
+    let over_socket = kynos::test::TestClient::connect(&running)
+        .get("/openapi.json")
+        .send()
+        .await
+        .expect_status(200);
+
+    assert_eq!(in_process.status, StatusCode::OK);
+    assert_eq!(in_process.text(), expected);
+    assert_eq!(over_socket.text(), expected);
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
+/// The flags a conversion adds would reach the bytes a clone's reference
+/// serves but not the clone's own document, so the conversion is refused
+/// while a clone lives, leaving both untouched, and allowed once it is alone.
+#[cfg(feature = "unchecked")]
+#[tokio::test]
+async fn a_tower_conversion_is_refused_while_a_clone_shares_the_reference() {
+    let service = served(Docs::scalar());
+    let clone = service.clone();
+    let expected = clone.openapi().to_json().expect("a serializable document");
+
+    let Err(refused) = service.into_tower_unchecked() else {
+        panic!("a clone still serves the reference");
+    };
+
+    assert!(
+        matches!(refused, kynos::Error::DescriptionShared),
+        "{refused}"
+    );
+    assert_eq!(get(&clone, "/openapi.json").call().await.text(), expected);
+    let unchecked = clone
+        .into_tower_unchecked()
+        .expect("the last handle edits alone");
+    assert!(!unchecked.openapi().is_authoritative());
+}
+
+/// The control for the case above: without a reference, nothing serves the
+/// document, so each handle's edit is its own and none is refused.
+#[cfg(feature = "unchecked")]
+#[test]
+fn a_tower_conversion_of_a_clone_with_no_reference_edits_only_its_own_document() {
+    let service = support::router()
+        .build(App::new())
+        .expect("a describable router");
+    let clone = service.clone();
+
+    let unchecked = service
+        .into_tower_unchecked()
+        .expect("no reference to share");
+
+    assert!(!unchecked.openapi().is_authoritative());
+    assert!(clone.openapi().is_authoritative());
 }
 
 #[tokio::test]

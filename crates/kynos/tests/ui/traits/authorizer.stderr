@@ -1,7 +1,7 @@
 error[E0277]: `Tokens` does not authorize the `Grant` scopes of `Bearer<std::string::String, Grant>`
-  --> tests/ui/traits/authorizer.rs:40:26
+  --> tests/ui/traits/authorizer.rs:42:26
    |
-40 |     type Authenticator = Tokens;
+42 |     type Authenticator = Tokens;
    |                          ^^^^^^ no `Authorizer<Bearer<std::string::String, Grant>, App, Grant>` impl
    |
 help: the trait `Authorizer<Bearer<std::string::String, Grant>, App, Grant>` is not implemented for `Tokens`

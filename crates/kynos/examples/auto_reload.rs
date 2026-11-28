@@ -101,5 +101,6 @@ async fn main() -> kynos::Result<()> {
         println!("listening on http://{address}");
     }
 
-    bound.serve().await
+    bound.serve().await?;
+    Ok(())
 }

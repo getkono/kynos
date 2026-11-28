@@ -322,148 +322,124 @@ fn each_event_of_a_stream_is_written_as_its_own_record() {
     assert_eq!(&third[..], b"data: 5\n\n");
 }
 
-/// Every shape serde writes a tag in puts it first, so the first member is
-/// the tag under its renamed key and value, whatever the variant holds.
-#[test]
-fn the_leading_member_is_the_tag_of_every_tagged_shape() {
-    use std::collections::BTreeMap;
-
-    use serde::Serialize;
-
-    #[derive(Serialize)]
-    struct Inner {
-        name: &'static str,
-    }
-
-    #[derive(Serialize)]
-    #[serde(tag = "kind", rename_all = "snake_case")]
-    enum Internal {
-        UnitVariant,
-        StructVariant {
-            count: u8,
-        },
-        NewtypeStruct(Inner),
-        NewtypeMap(BTreeMap<&'static str, u8>),
-        #[serde(rename = "renamed")]
-        Other,
-    }
-
-    #[derive(Serialize)]
-    #[serde(tag = "t", content = "c")]
-    enum Adjacent {
-        Pair(u8, u8),
-    }
-
-    #[derive(Serialize)]
-    #[serde(tag = "type", rename = "Ping")]
-    struct Tagged {
-        at: u64,
-    }
-
-    #[derive(Serialize)]
-    struct Wrapped(Internal);
-
-    let member = |key: &str, value: &str| Some((key.to_owned(), value.to_owned()));
-
-    assert_eq!(
-        super::leading_member(&Internal::UnitVariant),
-        member("kind", "unit_variant")
-    );
-    assert_eq!(
-        super::leading_member(&Internal::StructVariant { count: 1 }),
-        member("kind", "struct_variant")
-    );
-    assert_eq!(
-        super::leading_member(&Internal::NewtypeStruct(Inner { name: "x" })),
-        member("kind", "newtype_struct")
-    );
-    assert_eq!(
-        super::leading_member(&Internal::NewtypeMap(BTreeMap::from([("a", 1)]))),
-        member("kind", "newtype_map")
-    );
-    assert_eq!(
-        super::leading_member(&Internal::Other),
-        member("kind", "renamed")
-    );
-    assert_eq!(
-        super::leading_member(&Adjacent::Pair(1, 2)),
-        member("t", "Pair")
-    );
-    assert_eq!(
-        super::leading_member(&Tagged { at: 1 }),
-        member("type", "Ping")
-    );
-    // Through a newtype struct, which serde writes as what it wraps.
-    assert_eq!(
-        super::leading_member(&Wrapped(Internal::UnitVariant)),
-        member("kind", "unit_variant")
-    );
+/// A tagged payload, implementing by hand what `#[derive(Schema)]` would.
+#[derive(serde::Serialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+enum Phase {
+    Started,
+    Stopped { code: u8 },
 }
 
-/// What serde writes without a leading string member has no tag to read:
-/// a scalar, a sequence, an externally tagged variant, whose name is a key,
-/// an object led by a number, and an empty one.
-#[test]
-fn a_payload_without_a_leading_string_member_has_no_tag() {
-    use serde::Serialize;
+impl crate::schema::SerdeTagged for Phase {
+    const TAG: &'static str = "phase";
+    const VARIANTS: &'static [&'static str] = &["started", "stopped"];
 
-    #[derive(Serialize)]
-    enum External {
-        Unit,
-        Struct { count: u8 },
-    }
-
-    #[derive(Serialize)]
-    struct Counted {
-        count: u8,
-        name: &'static str,
-    }
-
-    #[derive(Serialize)]
-    struct Empty {}
-
-    assert_eq!(super::leading_member(&1_u8), None);
-    assert_eq!(super::leading_member("tick"), None);
-    assert_eq!(super::leading_member(&[1_u8, 2]), None);
-    assert_eq!(super::leading_member(&Some("tick")), None);
-    assert_eq!(super::leading_member(&External::Unit), None);
-    assert_eq!(super::leading_member(&External::Struct { count: 1 }), None);
-    assert_eq!(
-        super::leading_member(&Counted {
-            count: 1,
-            name: "tick"
-        }),
-        None
-    );
-    assert_eq!(super::leading_member(&Empty {}), None);
-}
-
-/// A payload with no tag is refused where it is named, rather than sent as
-/// an event no listener of the expected name hears.
-#[test]
-#[should_panic(expected = "this payload writes none")]
-fn an_untagged_payload_is_refused_a_tagged_name() {
-    let _ = Event::tagged(1_u8);
-}
-
-/// A struct led by a string field writes what a tag does, so it is told
-/// apart by its schema, which describes no tag there.
-#[cfg(debug_assertions)]
-#[test]
-#[should_panic(expected = "its schema does not describe a tag there")]
-fn a_leading_string_field_its_schema_does_not_call_a_tag_is_refused() {
-    #[derive(serde::Serialize)]
-    struct Named {
-        name: &'static str,
-    }
-
-    impl crate::schema::Schema for Named {
-        fn schema(_: &mut crate::schema::registry::Registry) -> kynos_openapi::Schema {
-            kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::Object)
+    fn variant(&self) -> &'static str {
+        match self {
+            Self::Started => "started",
+            Self::Stopped { .. } => "stopped",
         }
     }
+}
 
-    let _ = Event::tagged(Named { name: "tick" });
+impl crate::schema::Schema for Phase {
+    fn schema(_: &mut crate::schema::registry::Registry) -> kynos_openapi::Schema {
+        kynos_openapi::Schema::of_type(kynos_openapi::model::schema::types::SchemaType::Object)
+    }
+}
+
+/// A tagged event is sent under its payload's variant, keeping every field it
+/// was given, bare or as a `Result`'s `Ok`.
+#[test]
+fn a_tagged_event_is_named_by_its_payloads_variant() {
+    use super::SseItem;
+
+    let tagged = || {
+        Event::tagged(Phase::Stopped { code: 3 })
+            .id("7")
+            .retry(Duration::from_millis(5))
+            .comment("bye")
+    };
+    let Ok(bare) = tagged().into_event();
+    let carried = Ok::<_, std::io::Error>(tagged())
+        .into_event()
+        .expect("an `Ok` item");
+
+    for event in [bare, carried] {
+        assert_eq!(
+            &encode(&event).expect("an encodable event")[..],
+            b": bye\nevent: stopped\nid: 7\nretry: 5\ndata: {\"phase\":\"stopped\",\"code\":3}\n\n"
+        );
+    }
+
+    let Ok(started) = Event::tagged(Phase::Started).into_event();
+    assert_eq!(started.event.as_deref(), Some("started"));
+}
+
+/// A stream that never yields, standing for any stream of `I`.
+struct Never<I>(std::marker::PhantomData<I>);
+
+impl<I> crate::response::stream::Stream for Never<I> {
+    type Item = I;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        _: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<I>> {
+        std::task::Poll::Ready(None)
+    }
+}
+
+/// The `event` member of the `itemSchema` a stream of `I` declares, and the
+/// members it requires.
+fn described_event<I>() -> (serde_json::Value, serde_json::Value)
+where
+    I: super::SseItem,
+    I::Data: crate::schema::Schema,
+{
+    use crate::response::Responses;
+
+    let described = serde_json::to_value(super::Sse::<Never<I>>::responses(
+        &mut crate::schema::registry::Registry::new(),
+    ))
+    .expect("serializable responses");
+    let item = &described["200"]["content"]["text/event-stream"]["itemSchema"];
+    (
+        item["properties"]["event"].clone(),
+        item["required"].clone(),
+    )
+}
+
+/// A stream of tagged events names every value `event` takes, and requires
+/// it, since each event carries one; bare or as a `Result`'s `Ok` alike.
+#[test]
+fn a_tagged_stream_describes_each_name_its_events_carry() {
+    let tagged = (
+        serde_json::json!({ "type": "string", "enum": ["started", "stopped"] }),
+        serde_json::json!(["data", "event"]),
+    );
+
+    assert_eq!(described_event::<super::TaggedEvent<Phase>>(), tagged);
+    assert_eq!(
+        described_event::<Result<super::TaggedEvent<Phase>, std::io::Error>>(),
+        tagged
+    );
+}
+
+/// The control: an event names itself, or nothing, so its stream declares any
+/// string `event` may leave out, whatever its payload's tag.
+#[test]
+fn an_untagged_stream_describes_any_name() {
+    let free = (
+        serde_json::json!({ "type": "string" }),
+        serde_json::json!(["data"]),
+    );
+
+    assert_eq!(described_event::<Event<Phase>>(), free);
+    assert_eq!(
+        described_event::<Result<Event<Phase>, std::io::Error>>(),
+        free
+    );
 }
 
 /// A zero interval re-arms the keep-alive timer at the instant it fired, so an

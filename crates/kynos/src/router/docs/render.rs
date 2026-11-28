@@ -46,9 +46,15 @@ pub(crate) struct Published {
 }
 
 impl Published {
+    /// Whether the router mounted no reference, so an edit has nothing to
+    /// render.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.references.is_empty()
+    }
+
     /// Renders every reference from `document`.
     pub(crate) fn publish(&self, document: &Document) -> Result<()> {
-        if self.references.is_empty() {
+        if self.is_empty() {
             return Ok(());
         }
 

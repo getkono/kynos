@@ -129,8 +129,9 @@ pub(super) fn property(field: &Field, container: &Container) -> TokenStream2 {
 }
 
 /// A string that is one of `names`: a `const` where there is one, an `enum`
-/// otherwise. What a tag property and an externally tagged unit variant are.
-pub(crate) fn named_string(names: &[String]) -> TokenStream2 {
+/// otherwise. What a tag property and an externally tagged unit variant are,
+/// and a fixed header, whose one name may be a path to a `&str` constant.
+pub(crate) fn named_string(names: &[impl quote::ToTokens]) -> TokenStream2 {
     let value = if let [name] = names {
         quote!(constant.const_value = ::core::option::Option::Some(::core::convert::Into::into(#name));)
     } else {

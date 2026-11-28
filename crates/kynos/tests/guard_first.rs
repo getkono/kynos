@@ -13,16 +13,15 @@ use std::{
         Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
-    time::Duration,
 };
 
 use kynos::{
     Router,
     error::rejection::AuthRejection,
     extract::{body::text::Text, params::query::Query},
-    http::{Request, Response, StatusCode, header},
+    http::{Request, StatusCode, header},
     middleware::{
-        Continued, Covers, Interceptor, Next, Observer,
+        Continued, Covers, Exchange, Interceptor, Next, Observer,
         limits::body_size::{BodySize, BodySizeExceeded},
     },
     response::status::NoContent,
@@ -74,6 +73,8 @@ struct UploadKey;
 struct Keys;
 
 impl Authenticator<UploadKey, Gate> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,
@@ -145,9 +146,9 @@ struct Heard(Arc<AtomicUsize>);
 impl Observer<Gate> for Heard {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, _: &Gate) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+    fn on_response(&self, _: &Exchange<'_>, _: &Gate) {}
 
-    fn on_panic(&self, _: &(dyn Any + Send), _: Option<Route<'_>>) {
+    fn on_panic(&self, _: &(dyn Any + Send), _: Option<Route<'_>>, _: &Gate) {
         self.0.fetch_add(1, Ordering::SeqCst);
     }
 }
@@ -474,6 +475,34 @@ async fn a_guard_run_first_keeps_its_point_beside_an_interceptor_left_out() {
     assert_eq!(admitted.status, StatusCode::NO_CONTENT);
     assert_eq!(gate.passed(), ["outer", "outer", "inner"]);
     assert_eq!(gate.checks(), 2);
+}
+
+/// A guard run first reads the head alone, so one covering only bodies
+/// mounted above it still leaves an operation reading none: the guard is
+/// checked, and the interceptor above it never runs.
+#[tokio::test]
+async fn a_guard_run_first_reads_no_body_for_an_interceptor_above_it() {
+    let gate = Gate::default();
+    let service = Router::new()
+        .group(
+            Group::new("/api")
+                .intercept(BodyWitness("body"))
+                .guard_first()
+                .mount(kynos::routes![mine]),
+        )
+        .build(gate.clone())
+        .expect("a describable router");
+
+    let admitted = get(&service, "/api/mine")
+        .header("x-api-key", "k_ok")
+        .header("content-length", "4")
+        .body("left")
+        .call()
+        .await;
+
+    assert_eq!(admitted.status, StatusCode::NO_CONTENT);
+    assert_eq!(gate.checks(), 1);
+    assert!(gate.passed().is_empty(), "{:?}", gate.passed());
 }
 
 // --- Scopes, nested --------------------------------------------------------

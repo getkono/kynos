@@ -3,6 +3,7 @@
 //! Each rule refuses a form with no schema true of the wire in both
 //! directions; the expansion reads only inputs every rule has passed.
 
+mod absence;
 mod grammar;
 mod naming;
 mod object_keys;
@@ -31,6 +32,7 @@ pub(super) fn check(input: &DeriveInput, container: &Container) -> syn::Result<(
     wire_form::reject_catch_all(input, container)?;
     wire_form::reject_transparent_without_one_field(input)?;
     skips::reject_read_required_skip(input, container)?;
+    absence::reject_undefaulted_nullable(input, container)?;
     object_keys::reject_contradicted_closure(input, container)?;
     object_keys::reject_closed_tagged_struct(input, container)?;
     object_keys::reject_field_named_as_tag(input, container)?;
@@ -45,4 +47,16 @@ pub(super) fn check(input: &DeriveInput, container: &Container) -> syn::Result<(
 /// attribute beside this one or without it.
 pub(super) fn check_grammar(input: &DeriveInput, container: &Container) -> syn::Result<()> {
     grammar::check_constraints(input, container)
+}
+
+/// Every refusal of a `#[schema(string)]` type, whose declaration is not
+/// described, so only the serde attributes saying how it travels are read.
+pub(super) fn check_string(input: &DeriveInput) -> syn::Result<()> {
+    wire_form::reject_unstringed_wire_form(input)
+}
+
+/// One key of the field grammar and its value, consumed from `meta`, for the
+/// text bounds a `#[schema(string)]` type writes on itself.
+pub(super) fn check_constraint(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<()> {
+    grammar::check_constraint(meta)
 }

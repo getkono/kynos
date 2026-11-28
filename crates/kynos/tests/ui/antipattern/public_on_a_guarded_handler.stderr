@@ -26,9 +26,9 @@ note: erroneous constant encountered
   | |_____^
 
 note: the above error was encountered while instantiating `fn kynos::__private::endpoint::from_meta::<App, revoke_session, fn(Auth<Bearer>) -> impl Future<Output = NoContent> {revoke_session}, (Guarded, Auth<Bearer>)>`
-  --> tests/ui/antipattern/public_on_a_guarded_handler.rs:50:40
+  --> tests/ui/antipattern/public_on_a_guarded_handler.rs:52:40
    |
-50 |     let _ = Router::<App>::new().mount(kynos::routes![revoke_session]);
+52 |     let _ = Router::<App>::new().mount(kynos::routes![revoke_session]);
    |                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
    |
    = note: this note originates in the macro `kynos::routes` (in Nightly builds, run with -Z macro-backtrace for more info)

@@ -130,12 +130,17 @@ enum StoreError {
 
 | Position | Key | Meaning |
 | --- | --- | --- |
-| type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the kebab-cased variant name |
-| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it |
+| type | `base` | URI prefix, as a string literal, a path to a `const` of type `&str`, or `default` for the crate's `kynos::problem_base!`; `type` defaults to it plus the `slug`, or the kebab-cased variant name without a raw identifier's `r#`, held to the `slug` rule, so a non-ASCII name needs a `slug` |
+| type | `describe(status = "text", ...)` | on an enum, the description of each status named, in place of the one its variants' summaries compose; each status once, one the enum answers with |
+| type | `subset_of` | a wider derived `ApiError` enum this one's variants are some of, answering and described as that enum's; alone, on an enum, with no `#[problem(...)]` below it; or a parenthesized list of them, converting into each and answering as the first |
+| type | `transparent` | on an enum, every variant is `transparent`, and the enum implements `Display` as the error each holds and `Error` with its source; no `#[error(...)]` beside it |
+| type | `from` | beside `transparent` on an enum, every variant's `from` |
 | variant | `status` | required, 400–599 |
 | variant | `title` | the problem's `title`, and what the response's description is composed from. Absent, the wire carries the status's reason phrase and the description falls back to the doc comment |
 | variant | `type` | an absolute URI, overriding `base` |
-| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`; implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
+| variant | `slug` | the type URI's part after `base`, in place of the kebab-cased name, joined verbatim as that name is: `/`-separated segments in URI path characters, none empty or a dot segment, so no leading, trailing or doubled `/`; on a struct too, never on an enum, never beside `type`, and only under a `base` |
+| variant | `transparent` | answer as the `ApiError` or built-in refusal the variant's one field holds, instead of `status`, `title` and `type`, or as `AuthRejection`, which an authenticator's own error holds ([`security.md`](security.md#an-authenticator-may-fail-with-the-applications-own-error)); implied by `thiserror`'s `#[error(transparent)]` on a variant declaring no `status` |
+| variant | `from` | on a transparent variant, generate `From` the error it holds, as `thiserror`'s `#[from]` would; never beside that `#[from]`, and one variant per held type |
 | variant | `variant_of` | the wider derived `ApiError` enum's variant this one is, as `Wide::Variant`, answering and described as it and converting back through `TryFrom<Wide>`; alone, with no `#[problem(...)]` on its fields |
 | variant | `extension(name = value)` | send `name` with a value the failure determines, a string, number or boolean literal or the path to a `const` whose type is `Serialize`, and declare it as a `const` of that value; on a struct too, never on an enum |
 | field | `extension` | serialize this field as an extension member under its own name, a raw identifier unprefixed and never one RFC 9457 defines, and declare it by its type's schema |
@@ -153,10 +158,12 @@ receive.
 
 There is no de-camel-casing of variant names anywhere.
 
-`detail` comes from `Display`, which is why the derive requires it and why
-`thiserror` is the expected companion: the `#[error("...")]` a Rust reader
-already writes is the sentence an API consumer receives, rather than a second
-one that can drift from it.
+`detail` comes from `Display`, which is why the derive requires it of a type
+declaring a failure of its own, and why `thiserror` is the expected companion:
+the `#[error("...")]` a Rust reader already writes is the sentence an API
+consumer receives, rather than a second one that can drift from it. A type
+whose every variant is transparent reads no `Display` of its own, so the derive
+requires none.
 
 **A server failure's cause goes to the log, not the wire.** RFC 9457 section 5
 keeps implementation detail out of a problem, so a 5xx's `Display` says what
@@ -267,6 +274,14 @@ so the compiler holds them to one value. The prefix and each slug are joined
 in `const` items, so the type URI is still a `&'static str` and no response
 allocates for it.
 
+**Two failures sharing one type name its slug, not its URI.** A 409 that is the
+same problem type as a 410 says `slug = "removed"` beside the 410's own name,
+under the same `base`, rather than restating the prefix in a `type` literal
+that nothing holds to the `const`. A `slug` with no `base` to hang under is a
+compile error rather than a URI silently left at `about:blank`; `base =
+default` is written on the type, so the derive always knows whether one
+applies.
+
 A crate with one namespace says it once:
 `kynos::problem_base!("https://errors.example.com/")` at the crate root, and
 `#[problem(base = default)]` on each type publishing under it. The default is
@@ -277,6 +292,32 @@ router-level default was rejected for the same reason, and because it would make
 the type URI a run-time value. `base = default` in a crate declaring none is a
 compile error at `default`.
 
+**A derived error's type URI is named, not retyped.** A struct deriving
+`ApiError` that names a `type` or a `base` implements `ProblemType` with the
+URI the derive computed, so a test asserts `QuotaExceeded::TYPE_URI` and a
+renamed error fails to compile rather than to match, and
+`BodySize::problem_type::<PayloadTooLarge>()` refuses under the application's
+own type. A struct naming neither sends `about:blank`, which identifies
+nothing beyond the status (RFC 9457 section 4.2.1), so it implements none,
+and naming it as one is a compile error saying so. Its only answer would be
+`None`, since `Some("about:blank")` reads as `None`, and `None` misleads there:
+it leaves an interceptor's refusal to the problem policy, which renames it
+while never renaming the error itself.
+
+An enum's variants are not types, so a derived enum has
+`const fn type_uri(&self) -> Option<&'static str>`: the variant's URI,
+`about:blank` for one naming none, and `None` for a variant handing over the
+error it holds, whose URI can be chosen at run time, as an
+`AuthRejection::forbidden_as` is; a `subset_of` enum and a `variant_of`
+variant answer with the wider variant's.
+
+**The derive owns `ProblemType` and `type_uri`.** The URI has one source, so a
+`ProblemType` written by hand on a struct naming a `type` or a `base` is the
+conflicting-implementation error coherence raises at the derive, and an
+inherent `type_uri` on a derived enum a duplicate definition. Code that did
+either before the derive took these names no longer compiles: delete the
+hand-written impl, whose URI the derive now states, or rename the method.
+
 A type URI named outside a derive — a
 `Scopes::FORBIDDEN_TYPE`, or an `AuthRejection::forbidden_as` — is
 `kynos::problem_type!("insufficient-scope")`: the same base joined with that
@@ -284,7 +325,8 @@ slug in `const` items, so it cannot drift from the prefix the derives use.
 
 **A shared failure is declared once.** A variant marked `transparent` holds
 another `ApiError` — failures many operations share, such as validation or a
-missing parent resource — and `thiserror`'s `#[from]` converts into it. Its
+missing parent resource — and `thiserror`'s `#[from]`, or `from` below,
+converts into it. Its
 problem is the held error's, and that type's statuses and responses join the
 enum's: the `const` is the union in declaration order, and a status both sides
 declare is unioned rather than replaced, so the description names every type
@@ -300,6 +342,46 @@ rather than read either way, since the held error's would silently replace it.
 Where the held type is no `ApiError`, the compile error says so and names both
 ways out. A transparent variant's message being its field's is `thiserror`'s
 rule, so the implication follows it rather than any guess about the type.
+
+**An enum of held errors alone is transparent whole.** Every operation having
+its own error type leaves many enums whose every variant hands over:
+
+```rust
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum AddItemError {
+    ListNotFound(ListNotFound),
+    Internal(Internal),
+}
+```
+
+`transparent` on the enum makes each variant transparent, and the derive
+implements the enum's `Display` delegating to the error each variant holds,
+and `std::error::Error` whose `source` is that error's own, which is what
+`thiserror`'s `#[error(transparent)]` on every variant would. A type named an
+error that is no `Error` would surprise whoever boxes it or hands it to `?` in
+a function returning another error, so both come together; the enum must be
+`Debug`, as every `Error` is, and each held error an `Error`.
+It is said on the enum rather than implied by every variant being transparent:
+`Display` and `Error` are the enum's, and implied ones would collide with a
+hand-written or `thiserror` one, and fail to compile over a held error with no
+`Display` or `Error` of its own, such as a refusal Kynos ships. An
+`#[error(...)]` beside it is refused for the first reason, an `Error` written
+by hand conflicts with the derive's, and such a refusal is held by a variant
+marked `transparent` in an enum that is not. An enum of transparent variants
+that is not transparent whole needs no `Display` either, since no failure of
+its own reads one, and gets no `Error`.
+
+**`from` is asked for, not implied.** `#[problem(from)]` on a transparent
+variant generates `From` the error it holds, so `?` carries that error in;
+beside `transparent` on the enum, `#[problem(transparent, from)]`, it does so
+for every variant. A `From` for every transparent variant would collide with
+the `thiserror` `#[from]` every existing enum already writes, with a
+hand-written one, and with itself where two variants hold one type, each
+breaking code that compiled. So `from` beside `#[from]` on the field is refused
+naming the duplicate, as are two variants it would build from one type, and
+`from` on a variant that is not transparent: a failure of its own converts
+however its own fields say.
 
 **An operation that cannot fail every way names a subset.** A rejection
 type's statuses are declared on every operation returning it, so a `HEAD`
@@ -330,6 +412,16 @@ reads as hidden inherent items, and `subset_of` names a derived `ApiError`
 enum, a subset included. A per-operation exclusion was rejected, because it
 moves the guarantee from the type to a run-time check.
 
+A helper's failure two operations share is a subset of both enums:
+`#[problem(subset_of = (PutEntryError, LogPlaysError))]` generates `From` into
+each, so `?` carries it into either operation's error. A subset answers with
+one problem, so it answers and is described as the first enum listed, and a
+`const` asserts that each of its variants answers with the same statuses in
+every enum listed: converted into either, the failure declares what it sends.
+A title or type that differs between the two is the first's, which is why the
+order is written rather than guessed. An empty list, or one naming an enum
+twice, is refused.
+
 **A variant shared with a wider enum is taken, not copied.** An enum that also
 fails its own ways is no subset, but one of its variants can be the wider
 enum's: `#[problem(variant_of = ProfileProblem::ProfileUnavailable)]` on it
@@ -354,7 +446,11 @@ problem.
 
 **What the grammar refuses.** A missing or out-of-range `status`, a member the
 grammar does not define, a `base` that is neither a string literal nor a path,
-a `base` on a variant, an `extension` on a field with
+a `base` on a variant, a `title` or `type` on an enum, a `slug` outside URI
+path characters, with an empty or dot segment, on an enum,
+beside `type`, with no `base`, or on a variant answering as another, a
+name under `base` whose kebab case is outside URI path characters, an
+`extension` on a field with
 no name, a `transparent` on a struct, beside a `status`, `title` or `type`, an
 `#[error(transparent)]` variant with a `title`, `type` or `extension(...)` and
 no `status`, over
@@ -376,11 +472,17 @@ or twice, giving one no value or one that is neither a literal nor a path, or
 naming a field the failure already publishes; a `const` value whose type is not
 `Serialize` is a compile error at the path, with a case in
 [`tests/ui/macros`](../crates/kynos/tests/ui/macros). A `subset_of` on a variant or a struct, beside another key,
-naming the subset's generic parameter, or over a variant or field with a
-`#[problem(...)]` of its own is a compile error with a case in both. So is a
+naming the subset's generic parameter, naming an empty list or one enum twice,
+or over a variant or field with a `#[problem(...)]` of its own is a compile
+error with a case in both, and a listed enum disagreeing on a variant's
+statuses is one in a `const`. So is a
 `variant_of` on the type, beside another key, over a field with a
 `#[problem(...)]`, naming no enum, naming the enum's generic parameter, or
-taking a wider variant another variant already takes. What `base`, `title`,
+taking a wider variant another variant already takes. So is a transparent
+enum beside an `#[error(...)]`, or over a variant saying `transparent` again or
+taking a `variant_of`; and a `from` on a struct, on an enum not transparent
+whole, on a variant not transparent, beside `#[from]`, or building two
+variants from one type. What `base`, `title`,
 `type` and `extension` *do* is checked at run time by the conformance harness,
 which compares each problem document a service produced against what the
 description declared for that operation and status.
@@ -411,6 +513,37 @@ variant answering with the status, in declaration order and with `"; "`,
 dropping only a summary already written word for word — so a shared status
 names each of them rather than whichever came first.
 
+**An enum writes a status's description with `describe`**, where the joined
+summaries read wrong or would change with the order the variants are written
+in:
+
+```rust
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(describe(403 = "The request's origin is not allowed"))]
+enum OriginRejected { /* two 403 variants, each with its own title */ }
+```
+
+The text replaces the joined summaries and nothing else: each variant's
+`title` still reaches the wire and its branch, and a lone branch keeps its
+`title` too, since the description no longer says it. It is what the whole
+enum says of the status, so it is written over what a transparent variant's
+held error joins to it, whose lone branch keeps the title its own description
+said, may describe a status only that error answers with,
+and describes a subset of the enum as well. A subset writes none of its own,
+as it declares nothing else of its own. A struct has no `describe`: it fails
+one way, so its `title` is its status's description already.
+
+Writing is per type, and composing across types is unchanged. Where an
+extractor's rejection or another error type answers with the same status on
+one operation, the written description is the enum's half and joins the
+other's as two contributors' descriptions always join (see *A status an
+extractor also claims* below). Neither replaces the other, so neither depends
+on which arrives first, and no conflict arises: each side describes only its
+own failures.
+Within one enum the derive refuses a status written twice, an empty text, and
+a status no variant answers with — the last in a `const` where only a held
+error's statuses could say.
+
 Two rules follow from what is actually on the wire:
 
 - **A variant naming no `type` narrows to `const: "about:blank"`**, not to a
@@ -423,9 +556,10 @@ Two rules follow from what is actually on the wire:
   the schema's alone, and the description still names every variant, since
   prose is under no exactly-one rule. Where two or more distinct URIs survive,
   the surviving branch takes the summary declared first as its `title`; where
-  the dedup leaves *one*, there is no `oneOf` and the single `allOf` carries no
-  `title` at all — the description already says the only thing that status
-  publishes. The one branch must match what each of those variants sends, so
+  the dedup leaves *one*, there is no `oneOf`, and the single `allOf` carries
+  that `title` only where the description is not that very summary: one
+  variant's summary is already the description, while summaries the
+  description joins say none of them as the branch's. The one branch must match what each of those variants sends, so
   it declares every extension member any of them does, a member they type
   differently as an `anyOf` of the types, constants of one type as an `enum`
   of their values, and requires a member only where every one of them sends
@@ -461,9 +595,10 @@ publishes would declare less than the operation sends. One declaration in Kynos
 is that shape on purpose — `AuthRejection`'s 403, below — and an interceptor's
 contribution or a hand-written `Responses` may be too.
 
-The rule cuts both ways, which is why `Scopes::FORBIDDEN_TYPE` is read by
-`ScopedRejection<R>` rather than only by `Scoped`'s `Describe`: a narrowing on
-one contributor is erased by a wide one on another, whichever arrives first.
+The rule cuts both ways, which is why `Scopes::FORBIDDEN_TYPE` is read by the
+guard's own declaration of its 403, and a guard's rejection type contributes
+nothing beside it: a narrowing on one contributor is erased by a wide one on
+another, whichever arrives first.
 
 **Not narrowed is not the same as admitting everything**, and the union keeps
 the two apart. A schema satisfied by nothing, an empty `oneOf`, and a `oneOf`
@@ -488,8 +623,8 @@ All live in [`error::rejection`](../crates/kynos/src/error/rejection.rs).
 | `NegotiationRejection` | 400, 406 | `Accept<T>` |
 | `RangeRejection` | 416 | `Range<T>`'s `select`, `apply`, `select_parts` and `apply_parts`, and `Served::deliver` |
 | `ConnectInfoRejection` | 500 | `ConnectInfo`, on a connection with no IP peer |
-| `AuthRejection` | 401, 403, and 503 where the scheme opts in | `Auth<S>`, `MaybeAuth<S>` |
-| `ScopedRejection<R>` | 401, 403, and 503 where the scheme opts in | `Scoped<S, R>` |
+| `AuthRejection` | 401, 403, and 503 where the scheme opts in | an `Authenticator` or `Authorizer` whose `Error` it is |
+| `GuardRejection<E>` | `E`'s, beside the guard's own 401, 403, and 503 where the scheme opts in | `Auth<S>`, `MaybeAuth<S>`, `Scoped<S, R>` |
 
 The split is the whole point. A single shared rejection type would be *sound* —
 it satisfies `emitted ⊇ observable` — but every operation would advertise every
@@ -543,7 +678,9 @@ a field's type names, which answers only where the group names none: the value
 holding a bound answers for it, as a body's type does for its members, so one
 group reads alike as a `Query<T>` and as a `QueryString<T>`. A bounded `u32`
 field thus answers with the application's problem without a newtype naming
-it.
+it. Such a group says a `#[param(default)]` or `#[param(flatten)]` to serde
+too, which the `Schema` derive holds it to, as
+[`schema.md`](schema.md#parameter-values) sets out.
 
 What a body that does not decode into `T` sends is unchanged: `about:blank`,
 since no bound was consulted. Each input therefore declares a choice at its
@@ -627,20 +764,26 @@ in without deliberately leaking it.
 What the operation *declares* for that 403 depends on whether a **type** named
 the URI. `AuthRejection` itself carries no scope set, so its 403 stays the
 shared `Problem` component — the only claim true of both bodies it may carry,
-and what `Auth<S>` and `MaybeAuth<S>` therefore declare.
+and what `Auth<S>` and `MaybeAuth<S>` therefore declare, unless every member
+of `S` is a `Scoped<_, R>` whose sets name one URI: that 403 narrows as
+`Scoped<S, R>`'s does, read from the members by the guard's own description.
 
-`ScopedRejection<R>` is the same two failures read against the scope set that
-demanded them, and it is what `Scoped<S, R>` raises. Where `R` names a
-`Scopes::FORBIDDEN_TYPE` the 403 narrows to a `oneOf` of that URI and
-`about:blank` — both, because `AuthRejection::forbidden()` stays available to
-every authorizer and declaring only the named one would say less than the
-operation sends.
+`Scoped<S, R>` declares the same two failures read against the scope set that
+demanded them. Where `R` names a `Scopes::FORBIDDEN_TYPE` the 403 narrows to a
+`oneOf` of that URI and `about:blank` — both, because
+`AuthRejection::forbidden()` stays available to every authorizer and declaring
+only the named one would say less than the operation sends.
 
-**It is a rejection type of its own for one reason, and the reason is the union
-rule below.** `Responses` is reached through the rejection, so the wide 403
-`AuthRejection` declares would be contributed beside any narrowing done
-elsewhere — and *a side that admits every problem document wins outright*. The
-narrowing has to be read by the contributor that decides the status.
+**The narrowing is read by the guard, and only the guard contributes the
+status, for the union rule's reason.** Were the wide 403 `AuthRejection`
+declares contributed beside a narrowing done elsewhere, *a side that admits
+every problem document wins outright*. So a handler merges no guard
+rejection's `Responses`, and every guard raises one `GuardRejection<E>`, which
+carries the challenge it owes, whatever its scope set. An authenticator's own
+`Error` is the exception: no scheme constrains it, so the guard declares every
+response it declares beside its own, except that an `AuthRejection` it holds in
+a transparent variant declares the guard's own refusals there, so its wide 403
+cannot win.
 
 The rest of the reasoning is in
 [`security.md`](security.md#a-403-may-name-itself-a-401-may-not).
@@ -663,32 +806,75 @@ log line and rate-limit bucket believes, and an `Option` would put a branch
 for every IP-only deployment into every handler. A handler that runs over
 either transport takes `Connection` and matches `Connection::peer`.
 
-## Members on the problems Kynos renders
+## The policy over the problems Kynos renders
 
-A rejection is Kynos's type, so an application whose problem contract puts a
-member on *every* problem — a stable code a client localizes offline, the
-request ID — has no field to put it in. `Router::problem_members::<M>()` names
-one [`ProblemMembers`](../crates/kynos/src/error/members.rs) type that both
-produces those members and declares them, so the description cannot drift
-from the wire (RFC 9457 section 3.2). `M::for_problem` reads a `ProblemCx`: the
-problem as built, a `ProblemOrigin` saying which part of Kynos refused (a path
-parameter, the body, a credential, the router), and the request head the
-operation saw, interceptors' extensions included.
+A rejection is Kynos's type, so an application whose problem contract gives
+*every* problem its own `type` and title, or a member — a stable code a client
+localizes offline, the request ID — has no field to put them in.
+`Router::problems::<P>()` installs one
+[`ProblemPolicy`](../crates/kynos/src/error/members.rs) that sends and
+declares both from one place, so the description cannot drift from the wire
+(RFC 9457 section 3.2):
+
+- `P::identity(origin, status)` names the `type` and title of a problem Kynos
+  would send as `about:blank`, from a `ProblemOrigin` saying which part of
+  Kynos refused (a path parameter, the body, a credential, the router) and
+  the status. It reads nothing else, because those two are all a response's
+  description knows too: the `type` a response's schema narrows to is the
+  `type` it sends, and the title is that branch's summary. A problem that
+  already names a type keeps it, since an interceptor's `ProblemType`, an
+  authorizer's `forbidden_as` or a constraint's named problem is the more
+  specific answer.
+- `P::members(cx)` produces the members, read from a `ProblemCx`: the problem
+  as the identity left it, its origin, and the head the operation saw,
+  interceptors' extensions included. Each accessor reading the head answers
+  `None` for an interceptor's own refusal and a recovered panic, which are
+  rendered after the request moved away (below), so the compiler makes a
+  policy say what those carry. `type Members = ()` sends and declares none.
+
+One trait rather than an identity hook beside a members hook, so there is one
+setting to find, and no order between two to learn. An identity read from the
+whole `ProblemCx` would need a second, static answer for the description to
+declare, and the two could disagree; reading only what the description knows
+makes that impossible.
 
 **What it reaches.** Every problem Kynos renders while the request head is in
 hand: each rejection a handler's argument or guard raises, the 400 an
 interceptor's `Reads` header group answers with, an asset endpoint's 416, the
 404, 405 and 501 under `FallbackPolicy::Problem`, a CORS preflight's 405 and
 501 for an `OPTIONS` that is not one, and the 400 a `QUERY` naming no media
-type gets. Each such response an operation declares narrows its branch to
-`M`'s properties, required as `M`'s schema requires them; the wide 403
-`AuthRejection` declares stays wide, since it already admits them. The
-router's and the preflight's answers belong to no operation, so they are sent
-and declared nowhere, as they always were.
+type gets. And two rendered after the head is gone, under
+`ProblemOrigin::Refusal` and `ProblemOrigin::Panic`:
 
-**What it does not reach**, which carries none and declares none, and why:
+- The refusal of every interceptor Kynos ships — `BodySizeExceeded`,
+  `BodyRefused`, `TimedOut`, `AtCapacity`, `RateLimited`, `RateLimitedFields`,
+  `CrossSite`, `UntrustedHost`, `NotAcceptable` and `Undecodable`. It is
+  rendered where the refusing interceptor's future settles, so every
+  interceptor outside it, a compressing or a localizing one, sees the problem
+  the client receives rather than one rewritten after it. The interceptor took
+  the request by value, so `ProblemCx` reads no head; keeping a copy would
+  cost every request through every interceptor.
+- A recovered panic's 500, at every scope a recovery branch covers. The
+  request moved into the future that unwound, so the same holds.
 
-- An application's own `ApiError`, which has `#[problem(extension)]`.
+The policy reaches both through the chain the router starts, as one pointer
+to its two functions, and through the routed request where an endpoint runs
+its own interceptors or recovers its own panic.
+
+Each such response an operation declares narrows its branch to the identity
+`P` names for it, and to `P`'s members, required as `P::Members`'s schema
+requires them; the wide 403 `AuthRejection` declares stays wide, since it
+already admits both. The router's and the preflight's answers belong to no
+operation, so they are sent and declared nowhere, as they always were.
+
+**What it does not reach**, which is sent and declared as it would be without
+it, and why:
+
+- An application's own `ApiError`, which names its own type and title and has
+  `#[problem(extension)]`. That includes the error an application's
+  `Authenticator` fails with: a guard sends every refusal through it, its own
+  401 for an absent credential included, and declares each as that error
+  renders it.
 - A rejection a handler *returns* (a `RangeRejection` from `Range::apply`) and
   a ranged `Delivery`'s 416, which the handler renders before it returns.
   Rendering either with the request would keep the head borrowed across the
@@ -696,25 +882,26 @@ and declared nowhere, as they always were.
   ([`tests/alloc.rs`](../crates/kynos/tests/alloc.rs) holds that width), and
   declaring it would need a served form of every return type that can hold
   one.
-- An interceptor's own refusal — `BodySizeExceeded`, `BodyTooSlow`,
-  `RateLimited`, `AtCapacity`, `TimedOut`, `Undecodable`, `NotAcceptable`,
-  `UntrustedHost`, `CrossSite` and any `Short` an application writes. The
-  interceptor takes the request by value and renders its `Short` after it has
-  given the request away, so no head is left to read; keeping a copy would
-  cost every request through every interceptor.
-- A recovered panic's 500. The request moved into the future that unwound,
-  at every scope a recovery branch covers, so the same copy would be paid on
-  every request that could panic.
+- A `Short` an application's own interceptor writes, `refusal_problem` and
+  `refusal_response` included, and a Kynos refusal an application holds in its
+  `ApiError` or returns from a handler: each is the application's to type, as
+  its `ApiError` is.
+- A 500 that replaces a response already produced: a body or header group that
+  would not encode, the policy's own members failing to serialize, and an
+  unchecked layer's lost continuation. Each answers a failure to send, and the
+  second must not recurse into the policy that failed.
 
 **Sending and declaring are one switch.** A rejection reaches the request only
 where the handler renders it, so `IntoResponse` and `Responses` carry a hidden
 pair the handler calls for an argument's or guard's rejection instead of the
-public methods. A type overriding both sends and declares the members; every
-other type, an `ApiError` holding a rejection transparently included, does
-neither. A status two contributors share keeps a member required only where
-both send it, by [the union rule](#what-the-declared-response-narrows-to).
+public methods, and `ShortCircuit` carries a second the interceptor chain calls
+for a refusal. A type overriding both halves of a pair sends and declares the
+policy's identity and members; every other type, an `ApiError` holding a
+rejection transparently included, does neither. A status two contributors share keeps a member
+required only where both send it, by
+[the union rule](#what-the-declared-response-narrows-to).
 
-**What `M` must be.** An object naming each member as a property — a struct
+**What `P::Members` must be.** `()`, or an object naming each member as a property — a struct
 deriving `Schema` and `Serialize`, with no `flatten`. A member named like one
 RFC 9457 registers, or `errors`, is a `ProblemMemberReserved` violation while
 the router is described, and a schema of another shape is
@@ -728,9 +915,14 @@ refused, and eight bytes in the future of an endpoint whose last argument
 reads a body: the handler keeps the head it lent that extractor, to render its
 rejection ([`nfr.md`](nfr.md#routing) records the width). With it, a routed
 request, and one no operation answers that the root router's interceptors
-see, carries one extension more, holding a function pointer: its own block,
+see, carries one extension more, holding two function pointers: its own block,
 since `http::Extensions` boxes every value, so an application that did not ask
-for members does not pay it.
+for a policy does not pay it. Every chain carries a pointer to the policy,
+whether one is installed or not: 8 of the dispatch future's bytes, and 8 in
+each interceptor's future, since each holds the `Next` that hands the pointer
+down the chain ([`nfr.md`](nfr.md#routing)); an endpoint that
+runs interceptors of its own or recovers its own panics looks the extension up
+once per request.
 
 ## What is not an error type
 
@@ -836,8 +1028,9 @@ the refusal it rests on is recorded there.
 `IntoResponse::into_response(self)` takes no context, and an extraction
 rejection short-circuits to a response before any handler runs. **There is no
 point in the pipeline where a request and an application's `Problem`
-coexist.** [`problem_members`](#members-on-the-problems-kynos-renders) is one
-for Kynos's own, and it only adds members. So localizing an error is something
+coexist.** [`problems`](#the-policy-over-the-problems-kynos-renders) is one
+for Kynos's own, and its title is one per problem type, not per language. So
+localizing an error is something
 done *to* a finished response, and an interceptor is the only thing that holds
 one.
 

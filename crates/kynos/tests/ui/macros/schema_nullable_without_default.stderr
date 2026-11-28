@@ -1,0 +1,5 @@
+error: serde hands a member left out of the document to its type as `null`, so without `#[serde(default)]` this `Nullable` reads as `Nullable::Null` when the member is left out, and a patch that leaves it alone would clear it. Add `#[serde(default)]` on the field or its struct, which fills it with `Nullable::Absent` and leaves it out of `required`
+ --> tests/ui/macros/schema_nullable_without_default.rs:9:12
+  |
+9 |     title: Nullable<String>,
+  |            ^^^^^^^^

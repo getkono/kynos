@@ -9,10 +9,12 @@
 //! reference-counted clone into [`Parts::extensions`](crate::http::Parts) for
 //! each request on it.
 //!
-//! A service driven directly — by [`TestClient`](crate::test), by
+//! A service driven directly — by
 //! [`Service::call`](crate::router::service::Service::call), or by a `tower`
 //! deployment — has no socket under it. The extractors report that case rather
-//! than failing, since no request a client sends can cause it.
+//! than failing, since no request a client sends can cause it. A
+//! [`TestClient`](crate::test::TestClient) inserts a loopback connection, as
+//! its `with_peer` documents, so its requests arrive as a served one does.
 
 use core::convert::Infallible;
 use std::{
@@ -579,7 +581,8 @@ impl<C: Sync> FromRequestParts<C> for MatchedPath {
         Ok(parts
             .extensions
             .get::<crate::router::dispatch::Routed>()
-            .and_then(|routed| routed.matched.clone())
+            .and_then(|routed| routed.matched)
+            .map(|matched| matched.path.clone())
             .expect("the router records the matched path template before building an argument"))
     }
 }

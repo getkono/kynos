@@ -101,10 +101,10 @@ async fn logout() -> NoContent {
 /// operation declares.
 fn session_cookies(request: &kynos::http::Request) -> Vec<Cookie> {
     // Logging out is the one case that writes a cookie in order to take one
-    // away. `Max-Age=0` is what a removal is, and the path has to match the
-    // cookie being removed: a browser keys on name, path and domain together.
+    // away. The removal is made from the cookie it removes, so its path,
+    // `Secure` and `SameSite` match the ones a browser would refuse it over.
     if request.method() == Method::DELETE && request.uri().path() == "/session" {
-        return vec![Cookie::removal(SESSION).path("/")];
+        return vec![session_cookie("").to_removal()];
     }
 
     // A visitor who already has one keeps it. Re-issuing on every response
@@ -113,17 +113,20 @@ fn session_cookies(request: &kynos::http::Request) -> Vec<Cookie> {
         return Vec::new();
     }
 
-    vec![
-        Cookie::new(SESSION, "opaque-identifier")
-            .path("/")
-            .max_age(Duration::from_secs(86_400))
-            // Script cannot read it, so an injected script cannot steal it.
-            .http_only()
-            // Never sent in the clear.
-            .secure()
-            // Defence in depth beside `Csrf`, not instead of it.
-            .same_site(SameSite::Lax),
-    ]
+    vec![session_cookie("opaque-identifier")]
+}
+
+/// The session cookie, written once for both setting and removing it.
+fn session_cookie(identifier: &'static str) -> Cookie {
+    Cookie::new(SESSION, identifier)
+        .path("/")
+        .max_age(Duration::from_secs(86_400))
+        // Script cannot read it, so an injected script cannot steal it.
+        .http_only()
+        // Never sent in the clear.
+        .secure()
+        // Defence in depth beside `Csrf`, not instead of it.
+        .same_site(SameSite::Lax)
 }
 
 /// Whether the request already carries this service's session cookie.

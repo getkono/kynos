@@ -4,17 +4,16 @@
 use proc_macro2::{Span, TokenStream as TokenStream2, TokenTree};
 use quote::{ToTokens, quote};
 use syn::{
-    Data, DeriveInput, Fields, GenericParam, Generics, Ident, Index, Member, Type, Variant,
-    spanned::Spanned,
+    Data, DeriveInput, Fields, GenericParam, Generics, Ident, LitStr, Type, Variant, ext::IdentExt,
 };
 
 use super::{
-    Extension, Failure, Outcome, Transparent, TypeUri,
-    args::{
-        Base, Constant, Markers, Position, ProblemArgs, check_field_markers, error_transparent,
-        parse_problem,
-    },
+    Extension, Failure, Outcome,
+    args::{Base, Constant, Markers, Position, ProblemArgs, check_field_markers, parse_problem},
     fields::{header_field, retry_after_field},
+    slug::{self, Refusal},
+    transparent::{self, error_transparent},
+    type_uri::TypeUri,
 };
 use crate::doc::doc_string;
 
@@ -24,12 +23,25 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
 
     match &input.data {
         Data::Enum(data) => {
-            // A status belongs on each variant, not the enum.
             if let Some(status) = args.status {
                 return Err(syn::Error::new(
                     status.1,
                     "a status belongs on each variant, because the point of an `ApiError` enum is \
                      that its variants fail differently. Move it to the variants",
+                ));
+            }
+            if let Some((_, span)) = args.title.as_ref().or(args.type_uri.as_ref()) {
+                return Err(syn::Error::new(
+                    *span,
+                    "a `title` or `type` names one failure, so it belongs on each variant, \
+                     which never reads the enum's. Move it to them; a shared URI prefix is `base`",
+                ));
+            }
+            if let Some((_, span)) = &args.slug {
+                return Err(syn::Error::new(
+                    *span,
+                    "`slug` names one failure's type URI under `base`, so it belongs on each \
+                     variant publishing under it. Move it to the variants",
                 ));
             }
             if let Some(constant) = args.constants.first() {
@@ -40,74 +52,36 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                 ));
             }
 
+            // `transparent` on the enum: every variant answers, and the enum
+            // displays, as the error it holds.
+            let whole = args.transparent;
+            if whole.is_some() {
+                transparent::display_unclaimed(input, data)?;
+            } else if let Some(span) = args.from {
+                return Err(syn::Error::new(
+                    span,
+                    "`from` on an enum builds every variant from the error it holds, so it needs \
+                     `transparent` beside it; mark each transparent variant `#[problem(from)]` \
+                     instead",
+                ));
+            }
+
             data.variants
                 .iter()
-                .map(|variant| {
-                    let markers = check_field_markers(&variant.fields)?;
-
-                    let mut args = parse_problem(&variant.attrs, Position::Variant)?;
-                    if let Some((wide, span)) = &args.variant_of {
-                        return super::variant_of::variant_of(
-                            variant,
-                            &args,
-                            wide,
-                            *span,
-                            &markers,
-                            &input.generics,
-                        )
-                        .map(Outcome::Transparent);
-                    }
-                    if let Some(span) = args.transparent {
-                        return transparent(variant, &args, span, &markers, &input.generics)
-                            .map(Outcome::Transparent);
-                    }
-                    // `#[error(transparent)]` already says the variant is
-                    // what it holds; a status of its own is the opt-out. Only
-                    // a variant: a struct has no variant to hand over, so a
-                    // struct-level one implies nothing and the struct still
-                    // declares its status.
-                    if let (None, Some(span)) = (args.status, error_transparent(&variant.attrs)) {
-                        return implied_transparent(
-                            variant,
-                            &args,
-                            span,
-                            &markers,
-                            &input.generics,
-                        )
-                        .map(Outcome::Transparent);
-                    }
-
-                    let Some((status, _)) = args.status else {
-                        return Err(syn::Error::new(
-                            variant.ident.span(),
-                            format!(
-                                "variant `{}` does not say what status it produces; add \
-                                 `#[problem(status = ...)]`",
-                                variant.ident
-                            ),
-                        ));
-                    };
-
-                    let name = &variant.ident;
-                    let extensions = extensions(&variant.fields, &markers);
-
-                    Ok(Outcome::Declared(Failure {
-                        path: quote!(Self::#name),
-                        variant: Some(name.clone()),
-                        constants: constants(std::mem::take(&mut args.constants), &extensions)?,
-                        extensions,
-                        headers: header_field(&variant.fields, &markers)?,
-                        retry_after: retry_after_field(&variant.fields, &markers)?,
-                        status,
-                        type_uri: type_uri(&args, base, &variant.ident),
-                        title: args.title,
-                        doc: doc_string(&variant.attrs),
-                    }))
-                })
+                .map(|variant| variant_outcome(input, variant, (whole, args.from), base))
                 .collect()
         }
 
         Data::Struct(data) => {
+            if let Some(span) = args.transparent.or(args.from) {
+                return Err(syn::Error::new(
+                    span,
+                    "`transparent` and `from` hand a variant to the error it holds, so they \
+                     belong on an enum or one of its variants; a struct has no variant to hand \
+                     over",
+                ));
+            }
+
             let markers = check_field_markers(&data.fields)?;
 
             let Some((status, _)) = args.status else {
@@ -128,8 +102,8 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
                 headers: header_field(&data.fields, &markers)?,
                 retry_after: retry_after_field(&data.fields, &markers)?,
                 status,
-                type_uri: type_uri(args, base, &input.ident),
-                title: args.title.clone(),
+                type_uri: type_uri(args, base, &input.ident)?,
+                title: args.title.as_ref().map(|(title, _)| title.clone()),
                 doc: doc_string(&input.attrs),
             })])
         }
@@ -138,112 +112,80 @@ pub(super) fn outcomes(input: &DeriveInput, args: &ProblemArgs) -> syn::Result<V
     }
 }
 
-/// Reads a `#[problem(transparent)]` variant, refusing what it cannot also
-/// say.
-fn transparent(
+/// How one variant of `input` fails, `whole` and `from` the spans of a
+/// `transparent` and a `from` on the enum.
+fn variant_outcome(
+    input: &DeriveInput,
     variant: &Variant,
-    args: &ProblemArgs,
-    span: Span,
-    markers: &[Markers],
-    generics: &Generics,
-) -> syn::Result<Transparent> {
-    if args.status.is_some() || args.title.is_some() || args.type_uri.is_some() {
+    (whole, from): (Option<Span>, Option<Span>),
+    base: Option<&Base>,
+) -> syn::Result<Outcome> {
+    let markers = check_field_markers(&variant.fields)?;
+    let generics = &input.generics;
+
+    let mut args = parse_problem(&variant.attrs, Position::Variant)?;
+    if let Some(whole) = whole {
+        return transparent::whole(variant, &args, whole, from, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    // `#[error(transparent)]` already says the variant is what it holds; a
+    // status of its own is the opt-out. Only a variant: a struct has no
+    // variant to hand over, so a struct-level one implies nothing and the
+    // struct still declares its status.
+    let implied = error_transparent(&variant.attrs).filter(|_| args.status.is_none());
+    if let (Some(span), true) = (
+        args.from,
+        args.variant_of.is_some() || args.transparent.or(implied).is_none(),
+    ) {
         return Err(syn::Error::new(
             span,
-            "a transparent variant answers as the error it holds, so its status, title and type \
-             are that error's. Drop them, or drop `transparent`",
+            format!(
+                "`from` builds a transparent variant from the one error it holds, and variant \
+                 `{}` is not transparent; mark it `transparent`, or write the `From` it needs by \
+                 hand",
+                variant.ident
+            ),
         ));
     }
-
-    if let Some(constant) = args.constants.first() {
-        return Err(syn::Error::new(
-            constant.span,
-            "a transparent variant publishes the extension members of the error it holds, so it \
-             sends no constant of its own. Declare it on that error, or drop `transparent`",
-        ));
+    if let Some((wide, span)) = &args.variant_of {
+        return super::variant_of::variant_of(variant, &args, wide, *span, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    if let Some(span) = args.transparent {
+        return transparent::read(variant, &args, span, args.from, &markers, generics)
+            .map(Outcome::Transparent);
+    }
+    if let Some(span) = implied {
+        return transparent::implied(variant, &args, span, &markers, generics)
+            .map(Outcome::Transparent);
     }
 
-    let mut fields = variant.fields.iter();
-    let (Some(field), None) = (fields.next(), fields.next()) else {
+    let Some((status, _)) = args.status else {
         return Err(syn::Error::new(
             variant.ident.span(),
             format!(
-                "transparent variant `{}` holds exactly one field, the error it answers as",
+                "variant `{}` does not say what status it produces; add \
+                 `#[problem(status = ...)]`",
                 variant.ident
             ),
         ));
     };
 
-    // The one field's, since `variant` has exactly one.
-    let marked = markers.first().copied().unwrap_or_default();
+    let name = &variant.ident;
+    let extensions = extensions(&variant.fields, &markers);
 
-    if let Some(span) = marked.extension {
-        return Err(syn::Error::new(
-            span,
-            "a transparent variant publishes the extension members of the error it holds, not \
-             the field holding it",
-        ));
-    }
-
-    if let Some(span) = marked.headers {
-        return Err(syn::Error::new(
-            span,
-            "a transparent variant sends the headers of the error it holds, which is not a \
-             header group itself",
-        ));
-    }
-
-    if let Some(span) = marked.retry_after {
-        return Err(syn::Error::new(
-            span,
-            "a transparent variant sends the `Retry-After` of the error it holds, which is not a \
-             delay itself",
-        ));
-    }
-
-    if let Some(param) = generic_named_in(&field.ty, generics) {
-        return Err(syn::Error::new(
-            field.ty.span(),
-            format!(
-                "a transparent variant's statuses are a `const`, which cannot depend on the \
-                 type's generic parameter `{param}`; name a concrete error type"
-            ),
-        ));
-    }
-
-    let member = field
-        .ident
-        .clone()
-        .map_or_else(|| Member::Unnamed(Index::from(0)), Member::Named);
-    Ok(Transparent::field(
-        variant.ident.clone(),
-        &member,
-        field.ty.clone(),
-    ))
-}
-
-/// Reads a variant `#[error(transparent)]` makes transparent, having declared
-/// no `status`: a `title`, `type` or constant member beside it would be
-/// dropped as the held error's, so it is refused naming the opt-out.
-fn implied_transparent(
-    variant: &Variant,
-    args: &ProblemArgs,
-    span: Span,
-    markers: &[Markers],
-    generics: &Generics,
-) -> syn::Result<Transparent> {
-    if args.title.is_some() || args.type_uri.is_some() || !args.constants.is_empty() {
-        return Err(syn::Error::new(
-            span,
-            format!(
-                "`#[error(transparent)]` makes variant `{}` answer as the error it holds, whose \
-                 title, type and extension members are that error's. Declare \
-                 `#[problem(status = ...)]` beside them for a failure of its own, or drop them",
-                variant.ident
-            ),
-        ));
-    }
-    transparent(variant, args, span, markers, generics)
+    Ok(Outcome::Declared(Failure {
+        path: quote!(Self::#name),
+        variant: Some(name.clone()),
+        constants: constants(std::mem::take(&mut args.constants), &extensions)?,
+        extensions,
+        headers: header_field(&variant.fields, &markers)?,
+        retry_after: retry_after_field(&variant.fields, &markers)?,
+        status,
+        type_uri: type_uri(&args, base, &variant.ident)?,
+        title: args.title.map(|(title, _)| title),
+        doc: doc_string(&variant.attrs),
+    }))
 }
 
 /// The first of `generics`' parameters `ty` names, if any.
@@ -288,15 +230,42 @@ fn first_named(tokens: TokenStream2, params: &[String]) -> Option<String> {
 
 /// The URI identifying this failure's *type*, if the declaration gives one.
 ///
-/// An explicit `type` wins, else `base` plus the name as a slug, `base =
-/// default` reading the crate's `kynos::problem_base!`; with neither,
-/// the problem keeps RFC 9457's `about:blank`.
-fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> Option<TypeUri> {
-    if let Some(uri) = &args.type_uri {
-        return Some(TypeUri::Literal(uri.clone()));
+/// An explicit `type` wins, else `base` plus the `slug`, or the name as one,
+/// `base = default` reading the crate's `kynos::problem_base!`; with neither,
+/// the problem keeps RFC 9457's `about:blank`. A `slug` beside `type`, or
+/// with no `base` to hang under, is refused: either would be dropped unread.
+fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> syn::Result<Option<TypeUri>> {
+    match (&args.slug, &args.type_uri, base) {
+        (Some((_, span)), Some(_), _) => {
+            return Err(syn::Error::new(
+                *span,
+                "`type` is the whole URI and `slug` its part after `base`, so they cannot \
+                 both name it; keep `slug` to publish under `base`, or `type` alone",
+            ));
+        }
+        (Some((_, span)), None, None) => {
+            return Err(syn::Error::new(
+                *span,
+                format!(
+                    "`slug` names the type URI's part after `base`, and `{name}` has no `base` \
+                     to hang it under; add `base = ...` to the type, or write the whole URI as \
+                     `type = \"...\"`"
+                ),
+            ));
+        }
+        _ => {}
     }
-    let slug = kebab(&name.to_string());
-    base.map(|base| match base {
+    if let Some((uri, _)) = &args.type_uri {
+        return Ok(Some(TypeUri::Literal(uri.clone())));
+    }
+    let Some(base) = base else {
+        return Ok(None);
+    };
+    let slug = match &args.slug {
+        Some((slug, _)) => spelled(slug)?,
+        None => named(name)?,
+    };
+    Ok(Some(match base {
         Base::Literal(base) => TypeUri::Literal(format!("{base}{slug}")),
         Base::Const(path) => TypeUri::Joined {
             base: path.clone(),
@@ -308,7 +277,65 @@ fn type_uri(args: &ProblemArgs, base: Option<&Base>, name: &Ident) -> Option<Typ
             base: syn::parse_quote_spanned!(*span=> crate::__KYNOS_PROBLEM_BASE),
             slug,
         },
+    }))
+}
+
+/// A `slug` as [`slug::refusal`] admits it. It is joined verbatim onto
+/// `base`, as the kebab-cased name is, so it is refused wherever it would
+/// publish a URI a sibling's slug names differently or one resolution would
+/// rewrite.
+fn spelled(literal: &LitStr) -> syn::Result<String> {
+    let slug = literal.value();
+    let span = literal.span();
+    Err(match slug::refusal(&slug) {
+        None => return Ok(slug),
+        Some(Refusal::Characters) => syn::Error::new(
+            span,
+            "`slug` is the part of the type URI after `base`, so it is a non-empty run of the \
+             characters a URI path admits, written percent-encoded as it is sent",
+        ),
+        Some(Refusal::LeadingSlash) => syn::Error::new(
+            span,
+            "`slug` is joined onto `base` verbatim, as the kebab-cased name is, so `base` \
+             carries the separator; a leading `/` under a `base` ending in one publishes an \
+             empty path segment, a type URI other than the one a sibling's `slug` without it \
+             names. Drop the leading `/`",
+        ),
+        Some(Refusal::TrailingSlash) => syn::Error::new(
+            span,
+            "a `slug` ending in `/` publishes a type URI other than the same slug without it, \
+             as a kebab-cased name never ends in one. Drop the trailing `/`",
+        ),
+        Some(Refusal::EmptySegment) => syn::Error::new(
+            span,
+            "`//` in a `slug` is an empty path segment, publishing a type URI other than \
+             the one naming it with a single `/`. Write a single `/` between segments",
+        ),
+        Some(Refusal::DotSegment) => syn::Error::new(
+            span,
+            "`.` and `..` in a `slug`, percent-encoded as `%2E` or not, are dot segments, \
+             which RFC 3986 reference resolution removes, so a client resolving the type \
+             URI reads another one. Name the segment",
+        ),
     })
+}
+
+/// The slug a failure naming none publishes: its name as written, without a
+/// raw identifier's `r#`, kebab-cased, and held to [`slug::refusal`] as a
+/// `slug` is, since a non-ASCII name kebab-cases to no URI path.
+fn named(name: &Ident) -> syn::Result<String> {
+    let slug = kebab(&name.unraw().to_string());
+    match slug::refusal(&slug) {
+        None => Ok(slug),
+        Some(_) => Err(syn::Error::new(
+            name.span(),
+            format!(
+                "`{name}` would publish its kebab-cased name `{slug}` under `base`, which a \
+                 URI path cannot hold unencoded; name its type URI with \
+                 `#[problem(slug = \"...\")]`, percent-encoded as it is sent"
+            ),
+        )),
+    }
 }
 
 /// A Rust type or variant name as a URI slug.

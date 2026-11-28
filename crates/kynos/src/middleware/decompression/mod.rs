@@ -14,11 +14,15 @@ use kynos_openapi::model::schema::types::SchemaType;
 use tokio::io::AsyncRead;
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     extract::body::limit::{BodyLimit, Capped, collect_capped},
     http::{self, body::Body},
     middleware::{
-        Continued, Interceptor, Next,
+        Continued, Covers, Interceptor, Next,
         compression::codec::{
             Coding, DrainError, YIELD_ABOVE, decoded_capacity, drain, zstd_decoder_window,
         },
@@ -102,19 +106,7 @@ where
     L: ProblemType,
 {
     fn into_response(self) -> http::Response {
-        let reason = self.reason;
-        let mut response = self.into_problem().into_response();
-
-        // Only on this 415: on a media-type 415 it would misread as a coding
-        // complaint (section 15.5.16).
-        if reason == Reason::UnsupportedCoding {
-            response.headers_mut().insert(
-                http::header::ACCEPT_ENCODING,
-                http::HeaderValue::from_static(ACCEPTED),
-            );
-        }
-
-        response
+        self.__refused(Refusing::default())
     }
 }
 
@@ -159,6 +151,24 @@ where
     L: ProblemType,
 {
     const STATUSES: &'static [u16] = &[400, 413, 415];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        let reason = self.reason;
+        refused(self.into_problem(), problems.0, |response| {
+            // Only on this 415: on a media-type 415 it would misread as a
+            // coding complaint (section 15.5.16).
+            if reason == Reason::UnsupportedCoding {
+                response.headers_mut().insert(
+                    http::header::ACCEPT_ENCODING,
+                    http::HeaderValue::from_static(ACCEPTED),
+                );
+            }
+        })
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        undecodable_responses::<U, M, L>(registry, true)
+    }
 }
 
 impl<U, M, L> Responses for Undecodable<U, M, L>
@@ -168,27 +178,47 @@ where
     L: ProblemType,
 {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new()
-            .with(
-                400,
-                refusal_response::<M>(
-                    registry,
-                    "the request body did not decode as the coding it declared",
-                ),
-            )
-            .with(
-                413,
-                refusal_response::<L>(registry, "the request body exceeds the configured limit"),
-            )
-            .with(
-                415,
-                refusal_response::<U>(
-                    registry,
-                    "the request body's content coding is not one this server decodes",
-                )
-                .with_header("Accept-Encoding", accepted_encoding_header()),
-            )
+        undecodable_responses::<U, M, L>(registry, false)
     }
+}
+
+/// [`Undecodable`]'s 400, 413 and 415, under the problem policy where
+/// `served`.
+fn undecodable_responses<U, M, L>(registry: &mut Registry, served: bool) -> kynos_openapi::Responses
+where
+    U: ProblemType,
+    M: ProblemType,
+    L: ProblemType,
+{
+    kynos_openapi::Responses::new()
+        .with(
+            400,
+            served_refusal_response::<M>(
+                registry,
+                http::StatusCode::BAD_REQUEST,
+                "the request body did not decode as the coding it declared",
+                served,
+            ),
+        )
+        .with(
+            413,
+            served_refusal_response::<L>(
+                registry,
+                http::StatusCode::PAYLOAD_TOO_LARGE,
+                "the request body exceeds the configured limit",
+                served,
+            ),
+        )
+        .with(
+            415,
+            served_refusal_response::<U>(
+                registry,
+                http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "the request body's content coding is not one this server decodes",
+                served,
+            )
+            .with_header("Accept-Encoding", accepted_encoding_header()),
+        )
 }
 
 // Written out: `#[derive]` would bound each on all three markers.
@@ -312,6 +342,26 @@ pub(crate) fn declared(headers: &http::HeaderMap) -> Option<Vec<Coding>> {
 /// let decompression = Decompression::new(16 * 1024 * 1024).max_ratio(64);
 /// # }
 /// ```
+///
+/// # What it covers
+///
+/// Only the operations whose body something beneath it reads, by its
+/// [`Covers::BodyReading`], as
+/// [`BodySize`](crate::middleware::limits::body_size::BodySize) covers them: a
+/// handler whose last argument is a body extractor such as `Json<T>`, or an
+/// interceptor mounted beneath this one that may read the body, by its
+/// [`READS_BODY`](Interceptor::READS_BODY). Mounted over a group, it leaves the
+/// group's head-only operations — a `GET` by id, a `DELETE`, a `POST` that only
+/// triggers an action — exactly as they were: it does not run on them, so a
+/// coded body sent to one is ignored with the rest of that body, and they
+/// declare none of its 400, 413 and 415. A router's own `Decompression` leaves
+/// the router's fallbacks alone too, unless a router interceptor running
+/// beneath it may read the body.
+///
+/// Where it does run it reads the whole body, so it keeps its own
+/// [`READS_BODY`](Interceptor::READS_BODY) at `true`: an application's own
+/// interceptor covering [`Covers::BodyReading`] mounted above it stays on every
+/// operation it runs on.
 ///
 /// # The limit replaces `BodySize`
 ///
@@ -514,6 +564,8 @@ where
     type Reads = ();
     type Adds = ();
     type Short = Undecodable<U, M, L>;
+
+    const COVERS: Covers = Covers::BodyReading;
 
     async fn intercept(
         &self,

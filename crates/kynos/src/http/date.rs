@@ -22,7 +22,7 @@ const LONG_DAYS: [&str; 7] = [
 ];
 
 /// The month names, one-indexed by the value they encode.
-const MONTHS: [&str; 12] = [
+pub(crate) const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
@@ -186,8 +186,8 @@ fn time_of_day(time: &str) -> Option<u64> {
 }
 
 /// Days from 1970-01-01 to a civil date, by Howard Hinnant's algorithm, whose
-/// inverse below is exact.
-fn days_from_civil(year: u16, month: u8, day: u8) -> Option<i64> {
+/// inverse below is exact; `None` for a date the calendar lacks.
+pub(crate) fn days_from_civil(year: u16, month: u8, day: u8) -> Option<i64> {
     if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
         return None;
     }

@@ -20,25 +20,29 @@ default-filter = "not (package(kynos-profile) & kind(bench))"
 # a healthy run on a cold cache. Slow by construction is not the failure that
 # bound is for, and raising it for every test would blunt it where it works.
 #
+# It stays one test because splitting it would not shorten it. trybuild builds
+# every fixture in one project directory per crate, `target/tests/trybuild/kynos`,
+# and holds a lock on it for the whole of a run, so one test per `tests/ui/`
+# subdirectory would run one after another, each waiting out the others' turn
+# inside its own bound.
+#
 # Windows builds and links each `pass` fixture far slower, and the ten-minute
-# bound stopped a healthy run halfway through them with every case so far `ok`.
-# Its own bound comes first, since the first matching override wins.
+# bound it once shared stopped a healthy run halfway through them with every
+# case so far `ok`. Its own bound comes first, since the first matching override
+# wins.
 [[profile.default.overrides]]
 platform = 'cfg(windows)'
 filter = 'binary(ui)'
 slow-timeout = { period = "60s", terminate-after = 30 }
 
-# macOS runners took 377 to 527 seconds of the ten minutes, and a release run
-# that took longer was stopped at 600 with every case so far `ok`. Ahead of the
-# default for Windows' reason.
+# Twenty minutes everywhere else. macOS runners took 377 to 527 seconds of the
+# ten minutes this once was, and a release run that took longer was stopped at
+# 600 with every case so far `ok`. A loaded Linux host then reached it too: the
+# suite took 554 seconds unbounded, and timed out at 600 under nextest, alone
+# and in the full run, with no case failing.
 [[profile.default.overrides]]
-platform = 'cfg(target_os = "macos")'
 filter = 'binary(ui)'
 slow-timeout = { period = "60s", terminate-after = 20 }
-
-[[profile.default.overrides]]
-filter = 'binary(ui)'
-slow-timeout = { period = "60s", terminate-after = 10 }
 
 # Checks a package depending on `kynos` from a cold target directory on its
 # first run, which is a build rather than a deadlock, for `ui`'s reason.

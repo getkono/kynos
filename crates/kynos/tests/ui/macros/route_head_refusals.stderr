@@ -1,0 +1,17 @@
+error: a bare `head` derives the HEAD's operationId from the handler's name, and this route names its own `operation_id`; name the HEAD's too, with `head = "..."`
+ --> tests/ui/macros/route_head_refusals.rs:8:52
+  |
+8 | #[kynos::get("/files", operation_id = "listFiles", head)]
+  |                                                    ^^^^
+
+error: `head` describes the HEAD a GET answers (RFC 9110 section 9.3.2), so only a `GET` takes it; declare a HEAD of its own with `#[kynos::head]`
+  --> tests/ui/macros/route_head_refusals.rs:11:32
+   |
+11 | #[kynos::post("/files", head = "headFiles")]
+   |                                ^^^^^^^^^^^
+
+error: `head` names the GET's own operationId `files`; the HEAD needs another
+  --> tests/ui/macros/route_head_refusals.rs:14:31
+   |
+14 | #[kynos::get("/files", head = "files")]
+   |                               ^^^^^^^

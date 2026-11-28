@@ -37,6 +37,7 @@
 //! | `i64`, `u64` | `integer`/`int64`, `uint64`; of their bounds only `u64`'s `minimum: 0` survives an `f64`, so it is the only one stated |
 //! | `f32`, `f64` | `number`/`float`, `number`/`double` |
 //! | `Option<T>` | `T`, widened to admit `null` |
+//! | [`Nullable<T>`](Nullable) | `T`, widened to admit `null`, and never `required` |
 //! | `Box<T>`, `Arc<T>`, `&T`, `Cow<'_, T>` | `T`, under `T`'s own component name |
 //! | `Vec<T>`, `VecDeque<T>`, `[T]` | `array` with `items` |
 //! | `[T; N]` | `array` of exactly `N` |
@@ -112,7 +113,8 @@
 //!
 //! # How this module is laid out
 //!
-//! The trait lives here; [`registry`] collects what a description refers to,
+//! [`Schema`] lives here, with [`SerdeTagged`] for a type serde writes under a
+//! tag of its own; [`registry`] collects what a description refers to,
 //! [`unchecked`] is the explicit escape from constraint, [`constraints`] holds
 //! what a derive attaches to a field, and [`flatten`] holds the markers that
 //! say how a type composes when `#[serde(flatten)]` makes its members another
@@ -173,8 +175,9 @@ pub trait Schema {
     /// since no bound was consulted.
     ///
     /// Only the decoded type's own answer counts: a member whose type names
-    /// another one breaks a bound under the type holding it. `Option`, `Box`,
-    /// `Arc`, `&T` and `Cow` are their `T` and answer as it does.
+    /// another one breaks a bound under the type holding it. `Option`,
+    /// `Nullable`, `Box`, `Arc`, `&T` and `Cow` are their `T` and answer as it
+    /// does.
     ///
     /// `#[derive(Schema)]` sets it with `#[schema(constraint_problem = ...)]`
     /// on the type.
@@ -237,6 +240,59 @@ pub trait Schema {
         reason = "the names are what rustdoc shows an implementor"
     )]
     fn check_constraints(&self, at: Pointer<'_>, violations: &mut Violations) {}
+}
+
+/// A type serde writes under a tag of its own: an internally or adjacently
+/// tagged enum, or a named struct carrying `#[serde(tag = "...")]`.
+///
+/// `#[derive(Schema)]` implements it for every such type, from the same
+/// reading of its serde attributes that names the tag in its schema, so the
+/// two cannot disagree. A type serde writes untagged has no implementation,
+/// and a bound on this trait refuses it at compile time.
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::schema::SerdeTagged;
+///
+/// #[derive(kynos::Schema, serde::Serialize)]
+/// #[serde(tag = "kind", rename_all = "snake_case")]
+/// enum ServerEvent {
+///     Tick { fingerprint: String },
+///     ShuttingDown,
+/// }
+///
+/// assert_eq!(ServerEvent::TAG, "kind");
+/// assert_eq!(ServerEvent::VARIANTS, ["tick", "shutting_down"]);
+/// assert_eq!(ServerEvent::ShuttingDown.variant(), "shutting_down");
+/// # }
+/// ```
+///
+/// A tagged struct is its own single variant, under its serde name.
+///
+/// Implement it by hand only beside a hand-written [`Schema`] for a type
+/// serde tags; the names are then yours to keep equal to what serde writes.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` is not written under a serde tag",
+    label = "untagged",
+    note = "tag it with `#[serde(tag = \"...\")]` and derive `kynos::Schema`, which implements \
+            `SerdeTagged` for an internally or adjacently tagged enum and a tagged named struct"
+)]
+pub trait SerdeTagged {
+    /// The member serde writes the tag as: the value of `#[serde(tag = "...")]`.
+    const TAG: &'static str;
+
+    /// Every value serde writes the tag with, one per variant serde writes, in
+    /// declaration order and renamed as serde renames them.
+    ///
+    /// A variant serde skips when serializing is not among them.
+    const VARIANTS: &'static [&'static str];
+
+    /// The value serde writes this value's tag with.
+    ///
+    /// One of [`VARIANTS`](Self::VARIANTS), save for a variant serde skips when
+    /// serializing, which serde refuses to write at all.
+    fn variant(&self) -> &'static str;
 }
 
 /// The component name of one instantiation of a generic type: `base`, then each
@@ -576,6 +632,171 @@ impl std::fmt::Display for UnknownVariant {
 }
 
 impl std::error::Error for UnknownVariant {}
+
+/// A field-less enum, each variant named by one `&'static str`.
+///
+/// `#[derive(kynos::ParamValue)]` implements it for an enum from the names its
+/// `Schema` derive publishes, so a column, a log field or a lookup reads the
+/// wire name without restating it or allocating:
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::schema::UnitEnum;
+///
+/// #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+/// #[derive(kynos::Schema, kynos::ParamValue)]
+/// #[serde(rename_all = "lowercase")]
+/// enum ReportStatus {
+///     Open,
+///     Dismissed,
+/// }
+///
+/// assert_eq!(ReportStatus::Open.as_str(), "open");
+/// assert_eq!(ReportStatus::VARIANTS, [ReportStatus::Open, ReportStatus::Dismissed]);
+/// let names: Vec<_> = ReportStatus::VARIANTS.iter().map(UnitEnum::as_str).collect();
+/// assert_eq!(names, ["open", "dismissed"]);
+/// # }
+/// ```
+///
+/// A trait rather than inherent items, so a type's own `as_str` or `VARIANTS`
+/// still compiles, and generic code can range over any such enum. Reading a
+/// name back is `FromStr`, which the derive also implements.
+///
+/// It is not in `kynos::prelude`; import it where you call it. Once it is in
+/// scope its `as_str(&self)` wins a method call through a reference over an
+/// inherent by-value `fn as_str(self)`, and `T::VARIANTS` is ambiguous beside
+/// another imported trait declaring `VARIANTS`, such as strum's
+/// `VariantNames`. Where a type has either, call the trait by its path:
+/// `UnitEnum::as_str(&value)`, `<T as UnitEnum>::VARIANTS`.
+///
+/// Implement it by hand only beside a hand-written `Display`; the names are
+/// then yours to keep equal to what it writes.
+pub trait UnitEnum: Sized + 'static {
+    /// Every variant, in declaration order: the values themselves, where
+    /// [`SerdeTagged::VARIANTS`], whose variants may hold data, lists names.
+    const VARIANTS: &'static [Self];
+
+    /// The variant's name: the text its `Display` writes.
+    fn as_str(&self) -> &'static str;
+}
+
+/// A member of a JSON Merge Patch (RFC 7396): left out, sent as `null`, or
+/// sent with a value.
+///
+/// RFC 7396 §2 reads the three apart: a member left out leaves the target
+/// alone, `null` removes it, and a value replaces it. `Option<T>` cannot hold
+/// all three, so a clearable member is a `Nullable<T>`:
+///
+/// ```
+/// # #[cfg(feature = "macros")]
+/// # {
+/// use kynos::schema::Nullable;
+///
+/// #[derive(kynos::Schema, serde::Deserialize)]
+/// struct EntryPatch {
+///     #[serde(default)]
+///     #[schema(max_length = 10_000)]
+///     notes: Nullable<String>,
+/// }
+///
+/// let mut notes = Some("draft".to_owned());
+///
+/// let patch: EntryPatch = serde_json::from_str("{}").unwrap();
+/// patch.notes.apply_to(&mut notes);
+/// assert_eq!(notes.as_deref(), Some("draft"));
+///
+/// let patch: EntryPatch = serde_json::from_str(r#"{"notes": null}"#).unwrap();
+/// patch.notes.apply_to(&mut notes);
+/// assert_eq!(notes, None);
+/// # }
+/// ```
+///
+/// Its schema is `T`'s, widened to admit `null`, as `Option<T>`'s is, and a
+/// `#[schema(...)]` bound applies to the value alone.
+///
+/// serde reads a member left out as [`Absent`](Self::Absent) only under
+/// `#[serde(default)]`, on the field or its struct: without one, serde hands
+/// the missing member to the type as `null`, which would clear it. A
+/// `Nullable` field serde reads without a default is therefore refused by
+/// `#[derive(Schema)]`, and with one it is never `required`. The derive
+/// recognises the type by its last path segment, so an alias of it is not
+/// recognised. A `Nullable` member serde reads with no derive in between, such
+/// as a hand-written `Deserialize`, owes the same default.
+///
+/// It is read and never written: it has no `Serialize`, since `Absent` has no
+/// value to write and a response states each member it carries.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Nullable<T> {
+    /// Left out of the patch: the target member is left alone.
+    #[default]
+    Absent,
+    /// Sent as `null`: the target member is removed.
+    Null,
+    /// Sent with a value: the target member is replaced.
+    Value(T),
+}
+
+impl<T> Nullable<T> {
+    /// Whether the member was left out.
+    #[must_use]
+    pub const fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+
+    /// Whether the member was sent as `null`.
+    #[must_use]
+    pub const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
+
+    /// The value sent, or `None` where the member was left out or `null`.
+    #[must_use]
+    pub const fn as_value(&self) -> Option<&T> {
+        match self {
+            Self::Value(value) => Some(value),
+            Self::Absent | Self::Null => None,
+        }
+    }
+
+    /// Borrows the value, keeping which of the three this is.
+    #[must_use]
+    pub const fn as_ref(&self) -> Nullable<&T> {
+        match self {
+            Self::Absent => Nullable::Absent,
+            Self::Null => Nullable::Null,
+            Self::Value(value) => Nullable::Value(value),
+        }
+    }
+
+    /// Maps the value, keeping which of the three this is.
+    pub fn map<U>(self, f: impl FnOnce(T) -> U) -> Nullable<U> {
+        match self {
+            Self::Absent => Nullable::Absent,
+            Self::Null => Nullable::Null,
+            Self::Value(value) => Nullable::Value(f(value)),
+        }
+    }
+
+    /// Applies the member to `target` as RFC 7396 does: left out leaves it
+    /// alone, `null` clears it, and a value replaces it.
+    pub fn apply_to(self, target: &mut Option<T>) {
+        match self {
+            Self::Absent => {}
+            Self::Null => *target = None,
+            Self::Value(value) => *target = Some(value),
+        }
+    }
+}
+
+/// `null` is [`Null`](Nullable::Null) and anything else `T`'s value. A member
+/// left out reaches this as `null` too, unless `#[serde(default)]` fills it
+/// with [`Absent`](Nullable::Absent) first.
+impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Nullable<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Option::<T>::deserialize(deserializer).map(|value| value.map_or(Self::Null, Self::Value))
+    }
+}
 
 /// Whether `schema`'s `type` names `null`, whatever its other keywords say.
 pub(crate) fn type_admits_null(schema: &OpenApiSchema) -> bool {

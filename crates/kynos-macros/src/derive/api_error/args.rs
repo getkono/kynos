@@ -6,6 +6,7 @@ use syn::{
     ext::IdentExt, meta::ParseNestedMeta, spanned::Spanned,
 };
 
+use super::written::{self, Described};
 use crate::derive::attribute::{Keys, status, unknown};
 
 /// The range a problem detail's status may fall in: RFC 9457 errors, 4xx and
@@ -36,10 +37,20 @@ pub(super) enum Position {
 #[derive(Default)]
 pub(super) struct ProblemArgs {
     pub(super) status: Option<(u16, Span)>,
-    pub(super) title: Option<String>,
-    pub(super) type_uri: Option<String>,
+    /// `title`, at the span of `title`.
+    pub(super) title: Option<(String, Span)>,
+    /// `type`, at the span of `type`.
+    pub(super) type_uri: Option<(String, Span)>,
+    /// `slug`: the part of the type URI after `base`, in place of the
+    /// kebab-cased name, at the span of `slug`.
+    pub(super) slug: Option<(LitStr, Span)>,
     pub(super) base: Option<Base>,
+    /// `transparent`: on a variant, it answers as the error it holds; on an
+    /// enum, every variant does, and the enum displays as what it holds.
     pub(super) transparent: Option<Span>,
+    /// `from`: on a transparent variant, `From` its held error builds it; on
+    /// a transparent enum, every variant's.
+    pub(super) from: Option<Span>,
     /// `subset_of`: the wider `ApiError` enum this one is a subset of.
     pub(super) subset_of: Option<(Type, Span)>,
     /// `variant_of`: the variant of a wider `ApiError` enum this variant is.
@@ -47,6 +58,9 @@ pub(super) struct ProblemArgs {
     /// `extension(name = value, ...)`: the members this failure always sends
     /// the same value of, in declaration order.
     pub(super) constants: Vec<Constant>,
+    /// `describe(status = "text", ...)`: the descriptions an enum writes for
+    /// its statuses, in declaration order, at the span of `describe`.
+    pub(super) described: Option<(Vec<Described>, Span)>,
 }
 
 /// One `extension(name = value)` member: sent under `name`, as `value`
@@ -97,8 +111,11 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                     "a problem detail describes a failure",
                     &mut args.status,
                 )?,
-                "title" => args.title = Some(meta.value()?.parse::<LitStr>()?.value()),
-                "type" => args.type_uri = Some(meta.value()?.parse::<LitStr>()?.value()),
+                "title" => args.title = Some((meta.value()?.parse::<LitStr>()?.value(), span)),
+                "type" => args.type_uri = Some((meta.value()?.parse::<LitStr>()?.value(), span)),
+                // Spelled, and checked against `type` and `base`, where the
+                // outcomes are read, since a variant's `base` is its enum's.
+                "slug" => args.slug = Some((meta.value()?.parse::<LitStr>()?, span)),
                 "base" if position == Position::Type => args.base = Some(base(&meta)?),
                 "base" => {
                     return Err(syn::Error::new(
@@ -128,16 +145,13 @@ pub(super) fn parse_problem(attrs: &[Attribute], position: Position) -> syn::Res
                          `subset_of`",
                     ));
                 }
-                "transparent" if position == Position::Variant => {
-                    args.transparent = Some(span);
-                }
-                "transparent" => {
-                    return Err(syn::Error::new(
-                        span,
-                        "`transparent` hands one variant to the error it holds, so it belongs on \
-                         a variant of an enum",
-                    ));
-                }
+                // On an enum, every variant; a struct's is refused where the
+                // outcomes are read, since only there is the item's kind known.
+                "transparent" => args.transparent = Some(span),
+                // Checked against what it sits beside where the outcomes are
+                // read, as `transparent` is.
+                "from" => args.from = Some(span),
+                "describe" => args.described = Some((written::parse(&meta, position)?, span)),
                 "extension" if meta.input.peek(syn::token::Paren) => {
                     constants(&meta, &mut args.constants)?;
                 }
@@ -200,18 +214,6 @@ fn base(meta: &ParseNestedMeta<'_>) -> syn::Result<Base> {
              `default` for the crate's `kynos::problem_base!`",
         )),
     }
-}
-
-/// The span of `thiserror`'s `#[error(transparent)]` among `attrs`: the item
-/// displays as the one field it holds, which a variant declaring no status of
-/// its own also answers as.
-pub(super) fn error_transparent(attrs: &[Attribute]) -> Option<Span> {
-    attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("error"))
-        .filter_map(|attr| attr.parse_args::<syn::Ident>().ok())
-        .find(|ident| ident == "transparent")
-        .map(|ident| ident.span())
 }
 
 /// Reads the `name = value` pairs of an item's `extension(...)` list into

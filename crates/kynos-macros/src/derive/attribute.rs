@@ -111,10 +111,20 @@ pub(crate) fn status(
 pub(crate) struct FieldArgs {
     /// `rename = "..."`, which every location takes.
     pub(crate) rename: Option<LitStr>,
-    /// `value = "..."`, which `#[header]` alone takes.
-    pub(crate) value: Option<LitStr>,
+    /// `value = "..."` or `value = A_CONST`, which `#[header]` alone takes;
+    /// the header derive says which expressions it admits.
+    pub(crate) value: Option<Expr>,
     /// `style = "..."`, which `#[cookie]` alone takes.
     pub(crate) style: Option<LitStr>,
+    /// `explode = true | false`, which `#[param]` takes and only a query
+    /// group's `Vec` field honours.
+    pub(crate) explode: Option<LitBool>,
+    /// `default = <literal or path>`, which `#[param]` takes and only a query
+    /// group's field honours.
+    pub(crate) default: Option<Expr>,
+    /// A bare `flatten`, which `#[param]` takes and only a query group's
+    /// field honours.
+    pub(crate) flatten: Option<syn::Path>,
 }
 
 /// Reads a field's `#[param]`, `#[header]` or `#[cookie]` lists, named by
@@ -134,6 +144,25 @@ pub(crate) fn field_args(field: &Field, attribute: &str) -> syn::Result<FieldArg
                 "rename" => args.rename = Some(meta.value()?.parse()?),
                 "value" if attribute == "header" => args.value = Some(meta.value()?.parse()?),
                 "style" if attribute == "cookie" => args.style = Some(meta.value()?.parse()?),
+                "explode" if attribute == "param" => {
+                    let value: Expr = meta.value()?.parse()?;
+                    let Expr::Lit(ExprLit {
+                        lit: Lit::Bool(flag),
+                        ..
+                    }) = value
+                    else {
+                        return Err(syn::Error::new(
+                            value.span(),
+                            "`explode` is `true` or `false`, written as a literal: how a list \
+                             is carried is settled at the derive",
+                        ));
+                    };
+                    args.explode = Some(flag);
+                }
+                "default" if attribute == "param" => {
+                    args.default = Some(default_value(meta.value()?.parse()?)?);
+                }
+                "flatten" if attribute == "param" => args.flatten = Some(meta.path.clone()),
                 _ => {
                     return Err(unknown(
                         &meta.path,
@@ -146,6 +175,40 @@ pub(crate) fn field_args(field: &Field, attribute: &str) -> syn::Result<FieldArg
         })?;
     }
     Ok(args)
+}
+
+/// A `#[param(default = ...)]` value: a literal, a negated number, or a path
+/// such as a `const` or a unit variant, so the value the description states is
+/// settled where the field is declared rather than computed per request.
+fn default_value(value: Expr) -> syn::Result<Expr> {
+    let admitted = match &value {
+        Expr::Path(_)
+        | Expr::Lit(ExprLit {
+            lit: Lit::Int(_) | Lit::Float(_) | Lit::Bool(_) | Lit::Str(_) | Lit::Char(_),
+            ..
+        }) => true,
+        Expr::Unary(syn::ExprUnary {
+            op: syn::UnOp::Neg(_),
+            expr,
+            ..
+        }) => matches!(
+            &**expr,
+            Expr::Lit(ExprLit {
+                lit: Lit::Int(_) | Lit::Float(_),
+                ..
+            })
+        ),
+        _ => false,
+    };
+    if admitted {
+        return Ok(value);
+    }
+    Err(syn::Error::new(
+        value.span(),
+        "`default` is a literal or a path to a constant, such as `50`, `\"asc\"`, \
+         `DEFAULT_LIMIT` or `Order::Asc`: the value the description states is settled where \
+         the field is declared",
+    ))
 }
 
 /// What a header group's own `#[header(...)]`, on the struct, said.

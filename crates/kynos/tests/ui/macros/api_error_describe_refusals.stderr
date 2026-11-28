@@ -1,0 +1,35 @@
+error: `describe` writes what the whole enum says of a status, whichever variants answer with it, so it belongs on the enum rather than on one variant; a variant's own summary is its `title`
+  --> tests/ui/macros/api_error_describe_refusals.rs:14:29
+   |
+14 |     #[problem(status = 403, describe(403 = "The request's origin is not allowed"))]
+   |                             ^^^^^^^^
+
+error: a struct fails one way, and its `title` is already what its status's description says; `describe` writes one in place of an enum's variants' titles, so it belongs on an enum
+  --> tests/ui/macros/api_error_describe_refusals.rs:20:25
+   |
+20 | #[problem(status = 403, describe(403 = "The request's origin is not allowed"))]
+   |                         ^^^^^^^^
+
+error: `describe(...)` names no status; write `describe(403 = "...")`
+  --> tests/ui/macros/api_error_describe_refusals.rs:24:11
+   |
+24 | #[problem(describe())]
+   |           ^^^^^^^^
+
+error: `describe` already writes the description of 403, and a response has one
+  --> tests/ui/macros/api_error_describe_refusals.rs:32:65
+   |
+32 | #[problem(describe(403 = "The request's origin is not allowed", 403 = "Refused"))]
+   |                                                                 ^^^
+
+error: the description of 403 is empty; write what the status means, or drop the entry to keep the one its variants' titles compose
+  --> tests/ui/macros/api_error_describe_refusals.rs:40:26
+   |
+40 | #[problem(describe(403 = " "))]
+   |                          ^^^
+
+error: no variant of `Unanswered` answers with 409, so `describe` has no response of it to write the description of
+  --> tests/ui/macros/api_error_describe_refusals.rs:48:20
+   |
+48 | #[problem(describe(409 = "The origin conflicts"))]
+   |                    ^^^

@@ -3,13 +3,17 @@
 //! [`Router`] is the root and lives here. [`endpoint`] holds one declared
 //! operation and the builder a route attribute expands into, [`group`] a set of
 //! operations sharing a prefix, [`operation`] the description being assembled,
-//! [`policy`] the application-wide fallbacks, [`service`] the built result,
-//! [`error`] what a router reports wrong with itself, and, behind features of
+//! [`policy`] the application-wide fallbacks, [`sealed`] a finished router a
+//! function can name, [`service`] the built result, [`error`] what a router
+//! reports wrong with itself, and, behind features of
 //! the same names, `assets` the files a router serves and `docs` the API
 //! reference page it publishes.
 
+mod admitted;
 mod build;
 mod describe;
+mod head;
+mod hoist;
 mod install;
 mod map;
 
@@ -25,6 +29,7 @@ pub mod error;
 pub mod group;
 pub mod operation;
 pub mod policy;
+pub mod sealed;
 pub mod service;
 
 // The runtime match table and what one request does to it; nothing in it is
@@ -140,23 +145,59 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// handler asking for something the context does not provide is a compile
 /// error rather than a runtime panic.
 ///
+/// # Responses operations share
+///
+/// A response two or more operations declare under the same status key, alike
+/// up to the key order of a nested free-form object such as an example, is
+/// written once under
+/// `components/responses`, as the first of them declares it, and named by a
+/// bare `$ref` from each, so a description grows with the shapes an API
+/// answers with rather than with its operations, and a generator sees one
+/// named response rather than many anonymous copies. A response declared once
+/// stays inline, and one already given by `$ref` is left as written.
+///
+/// The name says what the response carries: the problem type it alone
+/// publishes other than `about:blank`, then the schema component its first
+/// media type names, then the key, as in `OutOfStockProblemStatus409`,
+/// `ProblemStatus500`, `ReadingStatus200`, `Status204` or `Default`, so
+/// adding an operation or a response renames nothing already shared unless
+/// it derives the very same name. Where two different responses would take
+/// one name, each appends a fingerprint of its content instead,
+/// `ProblemStatus500_1f0c9a2e`, so a new response deriving a name already
+/// shared renames that one too. The fingerprint hashes the content with every
+/// object's keys sorted, and the response's own media types, headers and links
+/// in declared order, so it is never a position, and no name depends on the
+/// order operations were mounted in or on a `serde_json` feature. A response
+/// differing anywhere — a description, a header, a link, the order it offers
+/// its media types in, which decides the one negotiation sends by default —
+/// is a different response, so sharing changes nothing an operation says but
+/// the key order of a nested free-form object, which neither OpenAPI version
+/// gives a meaning.
+///
+/// It happens after every [`map_openapi`](Router::map_openapi) edit, so an
+/// edit reads every response inline, and after the description is
+/// validated, so a violation inside a shared response is reported at each
+/// operation declaring it. A response component an edit declares is never
+/// overwritten: a minted name passes over its name, and over any name a
+/// response `$ref` already gives, and a response alike to it up to that order
+/// refers to it instead of minting another.
+///
 /// # Returning one from a function
 ///
 /// `P`, `I` and `S` change with every `catch_panics`, `intercept`, `group`,
-/// `nest` and `merge`, so a function returning a finished router leaves them
-/// opaque. [`validate`](Router::validate), [`openapi`](Router::openapi) and
-/// [`build`](Router::build) need only `P: PanicPolicy`, so the caller
-/// describes and builds the one value:
+/// `nest` and `merge`, so a function returning a finished router returns it
+/// [`seal`](Router::seal)ed, as a [`Sealed`](sealed::Sealed) whose type names
+/// only the context:
 ///
 /// ```no_run
-/// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
+/// use kynos::{Router, middleware::limits::body_size::BodySize, router::sealed::Sealed};
 ///
-/// fn api() -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
-///     Router::<()>::new().catch_panics().intercept(BodySize::new(64 * 1024))
+/// fn api(body_limit: &u64) -> Sealed<()> {
+///     Router::<()>::new().catch_panics().intercept(BodySize::new(*body_limit)).seal()
 /// }
 ///
 /// # fn main() -> kynos::Result<()> {
-/// let router = api();
+/// let router = api(&(64 * 1024));
 /// let document = router.openapi()?;
 /// let service = router.build(())?;
 /// # let _ = (document, service);
@@ -164,11 +205,28 @@ fn covered<C: 'static, T: AsRef<dyn ErasedInterceptor<C>>>(
 /// # }
 /// ```
 ///
-/// An opaque `I` or `S` cannot be checked against another interceptor, so
-/// neither `intercept` on such a router nor `nest` or `merge` of it into
-/// another compiles. Return a router that is still being composed with all four
-/// parameters named; [`stack!`](crate::stack!) writes `I` in the order its
-/// interceptors were mounted.
+/// Writing `-> Router<(), impl PanicPolicy, impl Sized, impl Sized>` instead
+/// compiles, but under edition 2024 each `impl Sized` captures the lifetime of
+/// every reference argument, so the router returned borrows `body_limit` and a
+/// call on a temporary fails with E0716. `impl Sized + use<>` opts out; a
+/// `Sealed` has nothing to capture.
+///
+/// ```compile_fail,E0716
+/// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
+///
+/// fn api(body_limit: &u64) -> Router<(), impl PanicPolicy, impl Sized, impl Sized> {
+///     Router::<()>::new().catch_panics().intercept(BodySize::new(*body_limit))
+/// }
+///
+/// let router = api(&u64::from(std::process::id()));
+/// let _ = router.openapi();
+/// ```
+///
+/// Return a router that is still being composed with all four parameters
+/// named; [`stack!`](crate::stack!) writes `I` in the order its interceptors
+/// were mounted. Neither a `Sealed` nor a router whose `I` or `S` is opaque can
+/// be checked against another interceptor, so neither `intercept` on one nor
+/// `nest` or `merge` of it into another compiles.
 ///
 /// ```compile_fail
 /// use kynos::{Router, middleware::{catch_panic::PanicPolicy, limits::body_size::BodySize}};
@@ -207,8 +265,10 @@ pub struct Router<C, P = Propagate, I = (), S = ()> {
     pub(crate) method_not_allowed: Option<FallbackPolicy>,
     pub(crate) trailing_slashes: Option<TrailingSlashPolicy>,
     pub(crate) trusted_proxies: Option<crate::http::forwarded::TrustedProxies>,
-    /// What [`problem_members`](Router::problem_members) installed.
-    pub(crate) problem_members: Option<crate::error::members::Hook>,
+    /// What [`operation_id_case`](Router::operation_id_case) set.
+    pub(crate) operation_id_case: Option<operation::OperationIdCase>,
+    /// What [`problems`](Router::problems) installed.
+    pub(crate) problems: Option<crate::error::members::Hook>,
     /// What [`declare_body_stall`](Router::declare_body_stall) set; declared
     /// until it is.
     #[cfg(feature = "server")]
@@ -273,7 +333,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: None,
             trailing_slashes: None,
             trusted_proxies: None,
-            problem_members: None,
+            operation_id_case: None,
+            problems: None,
             #[cfg(feature = "server")]
             body_stall: None,
             deny_unchecked_schemas: false,
@@ -308,7 +369,8 @@ impl<C, P, I, S> Router<C, P, I, S> {
             method_not_allowed: self.method_not_allowed,
             trailing_slashes: self.trailing_slashes,
             trusted_proxies: self.trusted_proxies,
-            problem_members: self.problem_members,
+            operation_id_case: self.operation_id_case,
+            problems: self.problems,
             #[cfg(feature = "server")]
             body_stall: self.body_stall,
             deny_unchecked_schemas: self.deny_unchecked_schemas,
@@ -431,7 +493,9 @@ impl<C, P, I, S> Router<C, P, I, S> {
             (other.method_not_allowed.is_some(), "method_not_allowed"),
             (other.trailing_slashes.is_some(), "trailing_slashes"),
             (other.trusted_proxies.is_some(), "trusted_proxies"),
-            (other.problem_members.is_some(), "problem_members"),
+            // Every `operationId` is one document's, which only the root names.
+            (other.operation_id_case.is_some(), "operation_id_case"),
+            (other.problems.is_some(), "problems"),
             // The server's timer is one per service, so its declaration is too.
             #[cfg(feature = "server")]
             (other.body_stall.is_some(), "declare_body_stall"),
@@ -751,7 +815,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// [`Next::route`](crate::middleware::Next::route) is `None`; the
     /// description is unchanged, since a fallback has no `paths` entry. One
     /// covering [`Covers::BodyReading`](crate::middleware::Covers::BodyReading)
-    /// leaves the fallbacks alone, since none of them reads a body. On a
+    /// covers a fallback only while a root router interceptor running beneath
+    /// it may read the body
+    /// ([`READS_BODY`](crate::middleware::Interceptor::READS_BODY)), since no
+    /// handler reads that one. On a
     /// router that is nested or merged into another it covers that router's
     /// operations alone, as a group's interceptor does.
     ///
@@ -892,6 +959,44 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self
     }
 
+    /// Spells every `operationId` the framework derived in `case`: a route
+    /// attribute's handler name, the HEAD a bare `head` names after it, and an
+    /// asset's or a docs page's. One given explicitly is published exactly as
+    /// written; see [`OperationIdCase`](operation::OperationIdCase).
+    ///
+    /// The description, every interceptor and observer, and each
+    /// [`Link`](crate::extract::link::Link) read the recased name, and
+    /// validation checks the recased names for uniqueness.
+    ///
+    /// ```no_run
+    /// use kynos::{Router, router::operation::OperationIdCase};
+    ///
+    /// // Published as `listUsers`, since no `operation_id = "..."` names it.
+    /// #[kynos::get("/users")]
+    /// async fn list_users() -> kynos::response::status::NoContent {
+    ///     kynos::response::status::NoContent
+    /// }
+    ///
+    /// let router = Router::<()>::new()
+    ///     .operation_id_case(OperationIdCase::LowerCamel)
+    ///     .mount(kynos::routes![list_users]);
+    /// # let _ = router;
+    /// ```
+    ///
+    /// One document holds every `operationId`, so this is set on the root
+    /// router: on a router that is then nested or merged, it is a
+    /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
+    #[must_use]
+    pub fn operation_id_case(mut self, case: operation::OperationIdCase) -> Self {
+        self.operation_id_case = Some(case);
+        self
+    }
+
+    /// The case every derived `operationId` is published in.
+    fn id_case(&self) -> operation::OperationIdCase {
+        self.operation_id_case.unwrap_or_default()
+    }
+
     /// Sets whether each operation a Kynos body extractor reads declares the
     /// `408 Request Timeout` a stalled body is answered with,
     /// [`BodyRejection::Stalled`].
@@ -927,7 +1032,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     ///     .request_body_idle_timeout(None)
     ///     .bind(("0.0.0.0", 3000))
     ///     .serve()
-    ///     .await
+    ///     .await?;
+    /// # Ok(())
     /// # }
     /// ```
     ///
@@ -939,27 +1045,33 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self
     }
 
-    /// Adds `M`'s extension members to every problem Kynos renders itself,
-    /// and declares them on every response describing one.
+    /// Renders every problem Kynos renders itself under `Q`: the type and
+    /// title `Q` names in place of `about:blank`, and `Q`'s extension
+    /// members, each declared on every response describing one.
     ///
     /// Reaches each rejection a handler's argument or guard raises, the 400
     /// an interceptor's `Reads` answers with, an asset endpoint's 416, the
     /// 404, 405 and 501 under [`FallbackPolicy::Problem`], a CORS preflight's
-    /// 405 and 501, and the 400 a `QUERY` naming no media type gets. An
-    /// application's own `#[derive(ApiError)]` type carries its own members;
-    /// a rejection or `Delivery` a handler returns, an interceptor's own
-    /// refusal and a recovered panic's 500 carry none. See
-    /// [`ProblemMembers`] for what `M` must describe.
+    /// 405 and 501, the 400 a `QUERY` naming no media type gets, the refusal
+    /// of every interceptor Kynos ships (as [`ProblemOrigin::Refusal`]) at
+    /// whichever scope it is mounted, and a recovered panic's 500 (as
+    /// [`ProblemOrigin::Panic`]) at whichever scope recovers it. An
+    /// application's own `#[derive(ApiError)]` type names its own type, title
+    /// and members; a rejection or `Delivery` a handler returns, and a `Short`
+    /// an application's own interceptor writes, are left as they are. See
+    /// [`ProblemPolicy`] for what `Q` names.
     ///
     /// One application-level policy, so it is set on the root router: on a
     /// router that is then nested or merged, it is a
     /// [`NestedRouterPolicy`](RouterError::NestedRouterPolicy) violation.
     /// Calling it twice keeps the second.
     ///
-    /// [`ProblemMembers`]: crate::error::members::ProblemMembers
+    /// [`ProblemPolicy`]: crate::error::members::ProblemPolicy
+    /// [`ProblemOrigin::Refusal`]: crate::error::members::ProblemOrigin::Refusal
+    /// [`ProblemOrigin::Panic`]: crate::error::members::ProblemOrigin::Panic
     #[must_use]
-    pub fn problem_members<M: crate::error::members::ProblemMembers>(mut self) -> Self {
-        self.problem_members = Some(crate::error::members::Hook::of::<M>());
+    pub fn problems<Q: crate::error::members::ProblemPolicy>(mut self) -> Self {
+        self.problems = Some(crate::error::members::Hook::of::<Q>());
         self
     }
 
@@ -995,6 +1107,12 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// `x-kynos-opaque` marker is a [`MappedOperation`](RouterError::MappedOperation) violation. The
     /// version the document claims is chosen after the edit, from what it
     /// uses, so the `openapi` field an edit writes is not kept.
+    ///
+    /// An edit reads every response inline: the responses operations share
+    /// are [moved](Router#responses-operations-share) under
+    /// `components/responses` only after the last edit, so a response edited
+    /// at one operation stops being shared there rather than changing at the
+    /// others.
     ///
     /// Set on the root router: an edit sees the whole document, so on a
     /// router that is then nested or merged it is a

@@ -4,6 +4,7 @@
 //! [`crate::model`] is version-agnostic data; turning it into bytes at a
 //! particular version lives here.
 
+mod canonical;
 pub mod downgrade;
 #[cfg(feature = "yaml")]
 pub mod yaml;
@@ -14,7 +15,20 @@ use crate::{
 };
 
 impl Document {
-    /// Serializes to pretty-printed JSON.
+    /// Serializes to pretty-printed JSON, in the model's order.
+    ///
+    /// Each object's fields come in the order the model declares them, then
+    /// its extensions, and each map — `paths`, `components`, `responses` and
+    /// the rest — in insertion order, which for a router's description is the
+    /// order `docs/schema.md` records. Both are fixed by the code that built
+    /// the document, so the same code emits the same bytes in every run.
+    ///
+    /// The free-form JSON a document carries — an example, a `default`, a
+    /// `const`, an extension's value — is the exception: its objects are in
+    /// `serde_json`'s order, sorted unless some crate in the build enables
+    /// `serde_json/preserve_order`, and in insertion order if one does. For
+    /// bytes no build changes, as a committed description wants, use
+    /// [`to_canonical_json`](Self::to_canonical_json).
     ///
     /// # Errors
     ///

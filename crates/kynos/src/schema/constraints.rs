@@ -15,7 +15,7 @@
 //! [`Numeric`], [`Textual`], [`Items`] or [`UniqueItems`] — so a bound on a type
 //! that cannot hold it is a compile error. Like the keyword, each one applies
 //! only to a value of its kind: an absent `Option` is `null` and satisfies
-//! every bound.
+//! every bound, as does a [`Nullable`] left out or sent as `null`.
 //!
 //! `content_encoding` and `content_media_type` are the two keys that are not
 //! bounds: JSON Schema makes `contentEncoding` and `contentMediaType`
@@ -41,6 +41,8 @@ use std::{
 };
 
 use kynos_openapi::Schema as OpenApiSchema;
+
+use crate::schema::Nullable;
 
 /// Constraints attached to a field by `#[derive(Schema)]`.
 ///
@@ -571,9 +573,9 @@ pub enum ConstraintDetail {
     message = "`{Self}` is not a number, so a numeric bound cannot apply to it",
     label = "not a number",
     note = "`minimum`, `maximum`, `exclusive_minimum`, `exclusive_maximum` and `multiple_of` \
-            apply to the integer and float types, and to an `Option`, `Box` or `Arc` of one; \
-            implement `kynos::schema::constraints::Numeric` for a newtype that is a number on \
-            the wire",
+            apply to the integer and float types, and to an `Option`, `Nullable`, `Box` or `Arc` \
+            of one; implement `kynos::schema::constraints::Numeric` for a newtype that is a \
+            number on the wire",
     note = "or, on a `Schema` field whose serde form is a number, describe it as one with \
             `#[schema(as = u64)]`, converting through `From<&{Self}>` or `via = path`"
 )]
@@ -598,7 +600,7 @@ pub trait Numeric {
     message = "`{Self}` is not a string, so a string bound cannot apply to it",
     label = "not a string",
     note = "`min_length`, `max_length`, `pattern`, `content_encoding` and `content_media_type` \
-            apply to `String`, and to an `Option`, `Box` or `Arc` of one; implement \
+            apply to `String`, and to an `Option`, `Nullable`, `Box` or `Arc` of one; implement \
             `kynos::schema::constraints::Textual` for a newtype that is a string on the wire",
     note = "or, on a `Schema` field whose serde form is a string, describe it as one with \
             `#[schema(as = String)]`, converting through `From<&{Self}>` or `via = path`"
@@ -617,8 +619,8 @@ pub trait Textual {
 #[diagnostic::on_unimplemented(
     message = "`{Self}` is not an array, so an item bound cannot apply to it",
     label = "not an array",
-    note = "`min_items` and `max_items` apply to sequences and sets, and to an `Option`, `Box` \
-            or `Arc` of one",
+    note = "`min_items` and `max_items` apply to sequences and sets, and to an `Option`, \
+            `Nullable`, `Box` or `Arc` of one",
     note = "or, on a `Schema` field whose serde form is an array, describe it as one with \
             `#[schema(as = Vec<T>)]`, converting through `From<&{Self}>` or `via = path`"
 )]
@@ -747,14 +749,20 @@ impl<T> UniqueItems for BTreeSet<T> {
     }
 }
 
-/// Emits each keyword trait for `Option`, which is `null` when absent, and
-/// for the wrappers with no wire form of their own.
+/// Emits each keyword trait for `Option` and `Nullable`, which hold no value
+/// when absent or `null`, and for the wrappers with no wire form of their own.
 macro_rules! through {
     ($($trait:ident :: $method:ident -> $output:ty),+ $(,)?) => {
         $(
             impl<T: $trait> $trait for Option<T> {
                 fn $method(&self) -> Option<$output> {
                     self.as_ref().and_then(T::$method)
+                }
+            }
+
+            impl<T: $trait> $trait for Nullable<T> {
+                fn $method(&self) -> Option<$output> {
+                    self.as_value().and_then(T::$method)
                 }
             }
 
@@ -782,6 +790,12 @@ through!(
 impl<T: Textual> Textual for Option<T> {
     fn text(&self) -> Option<&str> {
         self.as_ref().and_then(T::text)
+    }
+}
+
+impl<T: Textual> Textual for Nullable<T> {
+    fn text(&self) -> Option<&str> {
+        self.as_value().and_then(T::text)
     }
 }
 

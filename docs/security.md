@@ -22,8 +22,8 @@ has a slot of its own, the first argument, the way a body has the last, and
 `Handler` is implemented with that slot and without it — never with two. A
 second guard does not compile.
 
-Schemes combine in the guard's type parameter instead, so each shape has one
-spelling and the `security` the guard emits is the whole list, set once:
+Schemes combine in the guard's type parameter instead, so no shape is spelled
+by nesting and the `security` the guard emits is the whole list, set once:
 
 | Guard | `security` | Enforced |
 | --- | --- | --- |
@@ -33,6 +33,8 @@ spelling and the `security` the guard emits is the whole list, set once:
 | `MaybeAuth<…>` | `[{}, …]` | the same, or nothing presented at all |
 | `Scoped<S, R>` | `[{S: S::scopes() + R::REQUIRED}]` | `S`, then both scope lists |
 | `Scoped<AnyOf<(A, B)>, R>` | `[{A: A::scopes() + R::REQUIRED}, {B: …}]` | the first of `A`, `B` that is satisfied, each holding both lists |
+| `Auth<AnyOf<(A, Scoped<B, R>)>>` | `[{A}, {B: B::scopes() + R::REQUIRED}]` | the first of `A`, `B` that is satisfied, `B` holding both lists |
+| `Auth<AllOf<(A, Scoped<B, R>)>>` | `[{A, B: B::scopes() + R::REQUIRED}]` | both, `B` holding both lists |
 
 Each `{S}` above carries `S::scopes()`, the scheme's default scopes, and
 satisfying it means authenticating *and* holding them: see
@@ -61,12 +63,29 @@ satisfying it means authenticating *and* holding them: see
   request, so one is what is sent. Every built-in scheme has one, so tuple
   order picks it: `AnyOf<(MutualTls, Bearer)>` challenges `MutualTLS`, and
   listing `Bearer` first advertises `Bearer`.
-- **A combinator takes schemes, from two to four**, never another combinator.
-  Nesting would give one shape two spellings.
+- **A combinator takes members, from two to four**, never another combinator.
+  A member is a scheme or `Scoped<S, R>`; nesting would give one shape two
+  spellings.
 - **`Scoped` takes a scheme or an `AnyOf`**, whose schemes share one scope type
-  (`Scopable`), and never sits inside a combinator: a scope set over "either"
-  is written once, not once per alternative. An `AllOf` is refused, since its
-  set would be demanded of every scheme in it, mutual TLS's included.
+  (`Scopable`): a scope set over "either" is written once, not once per
+  alternative. An `AllOf` is refused, since its set would be demanded of every
+  scheme in it, mutual TLS's included.
+- **Inside a combinator, `Scoped<S, R>` scopes one member.** A combinator takes
+  `Member`s: a bare scheme, demanding its defaults, or `Scoped<S, R>`,
+  demanding `R` of `S` alone. "A session, or a token holding `write`" is
+  `Auth<AnyOf<(Session, Scoped<ApiToken, Write>)>>`, one scheme per carrier.
+  A scoped member always forbids and always owes its scheme's
+  `insufficient_scope` challenge, because a demanded set may be refused. The
+  guard is still `Auth` or `MaybeAuth`; its 403 narrows to
+  `R::FORBIDDEN_TYPE` only where every member is scoped by sets naming that
+  one type, since a bare scheme's refusal may carry any type.
+  `Scoped` is no `Requirement`, so `Auth<Scoped<S, R>>` does not
+  compile, and an `AnyOf` holding a scoped member is not `Scopable`, so no
+  scheme is demanded a set from two places.
+- **`Scoped<AnyOf<(A, B)>, R>` is shorthand.** It declares, authorizes and
+  narrows its 403 exactly as `Auth<AnyOf<(Scoped<A, R>, Scoped<B, R>)>>` does:
+  the one shape with two spellings. Write the shorthand where every
+  alternative demands one set, and the members where the sets differ.
 
 ### A scope may run the guard before its interceptors
 
@@ -93,6 +112,15 @@ guard argument, so a request is checked once.
 - **A CORS preflight runs no guard**, since it runs no interceptor.
 - **An endpoint's own `catch_panics` still covers its guard**, wherever it
   runs.
+- **An interceptor after the call can key on the caller.** What the guard
+  admitted waits in the request for the handler, and the one reader Kynos
+  gives an interceptor is `RateLimit`'s `key::ByPrincipal`, so a per-account
+  limit is spent before the body is read without a second check, and
+  `Router::build` refuses one the guard does not run ahead of. The guard's
+  value stays crate-private otherwise: an interceptor reading it would be an
+  authorization decision made outside the guard, which this section's first
+  bullet rules out. See
+  [`middleware.md`](middleware.md#keying-on-the-caller).
 
 Moving the guard into an interceptor of the application's own, which this
 replaces, checks twice and has to restate the guard's challenges to keep them
@@ -223,10 +251,11 @@ missing scope earns. So a scheme has a second challenge,
   itself, replacing whatever the authenticator put there, so the wire and the
   description agree.
 - **It is declared where a scope can be refused.** `Scoped<S, R>` always
-  authorizes, so it always declares `S`'s. `Auth` and `MaybeAuth` authorize only
-  a scheme's default scopes, so they declare the first one among the schemes
-  that have defaults. On the 403 it is not `required`, because the 403
-  `authenticate` answers sends none.
+  authorizes, so it always declares `S`'s. `Auth` and `MaybeAuth` authorize a
+  bare scheme only for its default scopes and a scoped member always, so they
+  declare the first one among the members they authorize: the scoped ones and
+  the bare schemes that have defaults. On the 403 it is not `required`,
+  because the 403 `authenticate` answers sends none.
 - **It names no `scope` or `realm`.** Section 3.1 makes `scope` optional, and
   the scopes refused are a run-time fact while the challenge is a
   `&'static str` the description states once. `challenge = "..."` on a derive
@@ -333,6 +362,28 @@ against another type does not compile. `Authorizer::authorize` receives
 `&[S::Scope]`: a scope it does not handle is a non-exhaustive `match`, not a
 string a `filter_map` silently drops.
 
+`#[derive(Scope)]` writes `name` from the name serde writes each variant
+under, by the rule the `Schema` and `ParamValue` derives read, so on an enum
+deriving serde the scope a configuration parses and the one a token carries are
+one name. An enum serde does not name says it with `#[scope(rename_all)]` and
+`#[scope(rename)]` instead, and only such an enum: either key on an enum
+implementing `Serialize` or `DeserializeOwned` is a compile error, as a
+`#[scope(rename)]` under `#[serde(rename_all)]` is, since each would be a second
+name for one scope. The check probes the traits, so it refuses a key on a
+hand-written serde implementation too, whose names the derive cannot read. A
+generic enum is refused, the probe resolving only on a concrete type. Without
+either key the name is the variant's identifier, as derived serde's is, rather
+than a casing serde would not read. A name a token's space-separated `scope`
+list cannot carry (RFC 6749 section 3.3) and two variants naming one scope are
+compile errors.
+
+That leaves the one drift the derive cannot see. An enum whose `Serialize` or
+`Deserialize` is written by hand and that carries no key still derives `Scope`,
+under its variant identifiers, and nothing compares those with the names its
+serde implementation writes and reads, so a configuration can parse one scope
+and a token carry another. Such an enum implements `Scope` by hand, its `name`
+returning the names its serde implementation uses.
+
 | Where | Scope type |
 | --- | --- |
 | `#[derive(SecurityScheme)]` | `scope = Type`; `Unscoped` when omitted |
@@ -410,6 +461,7 @@ or combined, so its 403 is `authenticate`'s alone.
 | `AllOf` | each scheme's own, after every scheme authenticates |
 | `Scoped<S, R>` | `S::scopes()`, then each of `R::REQUIRED` they do not name, in one call |
 | `Scoped<AnyOf<…>, R>` | the same, per alternative tried, with that alternative's defaults |
+| `Scoped<S, R>` as a member | what `Scoped<S, R>` receives, for that member alone |
 
 An `AnyOf` alternative whose defaults are refused is not satisfied, so the next
 one is tried, and the refusal is the answer only when none is. `AllOf`
@@ -462,12 +514,20 @@ the *scope set* an operation demands is a type, and that is the seam.
 `Scopes::FORBIDDEN_TYPE` is a defaulted associated const beside `REQUIRED`:
 
 ```rust
-impl Scopes for ReadReports {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
-    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
-}
+const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+
+#[derive(kynos::Scopes)]
+#[scopes(Grant::ReadReports, forbidden = INSUFFICIENT_SCOPE)]
+struct ReadReports;
 ```
+
+The derive writes `type Scope = Grant` from the path each scope is named
+under, so a scope is never written bare, and refuses a set requiring nothing,
+which is a plain `Auth<S>`. `forbidden` is a `&'static str`, the `const` an
+authorizer also passes to `forbidden_as`, rather than a `ProblemType` marker:
+the scope set is already the type the URI hangs on
+([`errors.md`](errors.md) says why a marker would be a second one), and
+`problem_type!` joins it from the crate's base in a `const`.
 
 A `Scoped<S, R>` argument whose `R` names one declares a 403 publishing **that
 URI or `about:blank`** — a `oneOf` of the two, each branch a `const`.
@@ -516,9 +576,8 @@ stays wide for the same reason it always was.
 
 Where a handler's own error type also names 403, the two meet under
 [`errors.md`](errors.md#where-the-union-happens)'s union rule, which is why the
-narrowing has to reach the contributor that decides the status —
-`ScopedRejection<R>`, the rejection a `Scoped` argument raises — and not only
-the `Describe` beside it.
+narrowing is in what the guard itself declares, the contributor that decides
+the status, and not in a rejection type's `Responses` that no handler merges.
 
 ### An unreachable store is a 503, and the scheme opts in
 
@@ -547,13 +606,67 @@ keeps declaring 401 and 403 alone.
   `const` block, and the variant is `#[non_exhaustive]`, so it is not built any
   other way outside Kynos. The build checks that *some* scheme opted in, not
   that the operation is guarded by it, so two holes are left: an authenticator
-  naming a scheme other than its own, and a handler or custom guard whose error
-  type is `AuthRejection` or `ScopedRejection<R>`, which wraps one through
-  `From`, returning `unavailable::<S>()` on an operation no guard over `S`
-  covers. Neither type's `Responses` declares a 503, since neither knows a
-  scheme, and declaring one there would put a 503 on every operation that
-  names it. The conformance harness, which checks
-  each status against the description, is what finds either.
+  naming a scheme other than its own, and a handler whose error type is
+  `AuthRejection`, or holds one, returning `unavailable::<S>()` on an operation
+  no guard over `S` covers. `AuthRejection`'s `Responses` declares no 503,
+  since it knows no scheme, and declaring one there would put a 503 on every
+  operation that names it. The conformance harness, which checks each status
+  against the description, is what finds either.
+
+### An authenticator may fail with the application's own error
+
+A credential lookup can fail in a way that is neither a verdict on the
+credential nor an outage: a row that will not decode, a constraint the store
+broke. That is a 500, which no `AuthRejection` is, and an application whose
+problems carry its own members wants its own problem there besides. So
+`Authenticator` names what it fails with, `type Error`, which
+`Authorizer::authorize` shares: `AuthRejection` for an authenticator whose
+every failure is a 401, a 403 or a 503, and otherwise the application's own
+`#[derive(ApiError)]` type holding an `AuthRejection` in a transparent variant.
+
+```rust
+#[derive(Debug, thiserror::Error, ApiError)]
+enum SessionError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+    #[error("the session could not be read")]
+    #[problem(status = 500)]
+    Unreadable,
+}
+```
+
+- **Breaking, and one line where nothing else changes.** Associated type
+  defaults are unstable, so every authenticator names its error, and one that
+  needs only the three statuses writes `type Error = AuthRejection;`. A type
+  parameter defaulted on the trait was refused: a context's `Authenticates`
+  impl, and `#[provide(authenticates = S)]`, would then have to name the error
+  too, and one authenticator could implement it twice. An additive
+  `AuthRejection::internal()` was refused as well: it fixes the status and
+  leaves the body Kynos's, which is half of what the application asked for.
+- **`From<AuthRejection>` is required, not offered.** A guard answers its own
+  401, for an absent credential, through it, and `?` carries
+  `Presented::require`'s into it, so an authenticator never maps the three
+  statuses by hand. A transparent variant is the intended spelling, which is
+  why `AuthRejection` is one an `ApiError` may hold.
+- **The guard still owns the challenge.** It renders the error as a handler's
+  error is rendered, then writes `WWW-Authenticate` by the status sent: the
+  scheme's challenge on every 401, the application's own 401 included, and the
+  scope challenge on a 403 `authorize` refused. RFC 9110 section 11.6.1 does
+  not depend on which type said 401.
+- **The error's responses join the guard's.** The guard declares its own 401,
+  403 and 503 from its schemes as before, then every response the error
+  declares, so the 500 reaches the description of every operation the guard
+  covers. Only the context names the authenticator, so this half is declared
+  through the handler, which knows the context, rather than through the guard's
+  context-free `Describe`. `AuthRejection` adds nothing there, so an
+  authenticator naming it describes exactly what it did before. Nor does one
+  the error holds in a transparent variant: under a guard it declares the
+  guard's own refusals, not its wide 403, which would win the union and erase
+  a scope set's `FORBIDDEN_TYPE`. So the two spellings describe the same 401,
+  403 and 503, and the error's own statuses join them.
+- **One error per guard.** `AnyOf` and `AllOf` answer whichever scheme refused,
+  as one type, so every scheme they name fails with the same `Error`; two that
+  differ do not compile.
 
 ### A scheme with nothing to forbid opts out of the 403
 
@@ -576,7 +689,9 @@ while any one forbids, since each one's authenticator is consulted.
 - **The guard declares its own refusals.** A handler no longer merges a guard's
   `Rejection::responses` after its `Describe`: `AuthRejection` knows no scheme
   and would put the 403 back. Its `Responses`, the one a hand-written extractor
-  reaches, still declares it.
+  reaches, still declares it. An authenticator's own error is declared whole,
+  a 403 of its own included, since no scheme constrains it; an `AuthRejection`
+  it holds declares only what the guard does.
 
 ### What Kynos does not verify
 
@@ -611,7 +726,9 @@ RFC 6750 defines three ways to present a bearer token. Kynos reads one.
 
 Neither is a gap to be closed later. An *API key* in a query parameter is a
 different matter and is supported, because that is what `api_key(in = "query")`
-describes and the specification permits it.
+describes and the specification permits it. A key named by two pairs is
+`Malformed(Repeated)`, as a header key sent twice is, so a proxy or log reading
+one pair and the authenticator another cannot disagree about the credential.
 
 ### Where mutual TLS fits
 
@@ -724,6 +841,32 @@ second guard when the router is built leaves a handler that compiles and is
 then rejected. A fixed slot rejects it at the signature, and moving the
 combination into the type parameter makes the description a function of the
 one type the guard runs.
+
+### Why a scope set may sit on one alternative
+
+`Scoped<AnyOf<…>, R>` demands `R` of every alternative, so "a session, or a
+token holding `write`" could only be said by giving the token scheme default
+scopes: one scheme type per scope set on the same carrier, each repeating the
+description, and one set of authenticator impls per type. OpenAPI's Security
+Requirement Object lists scopes per scheme within each alternative, under 3.1
+and 3.2 alike, so the set belongs to the alternative.
+
+A scope parameter on a derived scheme, `ApiToken<Write>`, was the other
+candidate, and was rejected: the scheme is a carrier and a verifier, and making
+its identity depend on what one operation demands would put a demand into the
+one type every operation shares. `Scoped<S, R>` already reads as "`S` holding
+`R`", so the member spells the same thing with the word a reader knows. It is
+a member and not a `Requirement`, so a guard keeps one spelling: `Scoped<S, R>`,
+never `Auth<Scoped<S, R>>`.
+
+That leaves `Scoped<AnyOf<(A, B)>, R>` and
+`Auth<AnyOf<(Scoped<A, R>, Scoped<B, R>)>>` spelling one shape. Removing the
+first would make the common case, one set over "either", repeat the set once
+per alternative; refusing the second cannot be said in the type system without
+negative bounds. So the two are held to one meaning instead: the members'
+guard narrows its 403 to `R::FORBIDDEN_TYPE` wherever every member names it,
+so neither spelling declares or answers anything the other does not, and the
+shorthand is documented as the one to write.
 
 ### Why a group does not declare its operations' guard
 

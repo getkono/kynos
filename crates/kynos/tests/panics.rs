@@ -18,13 +18,12 @@ use std::{
     any::Any,
     convert::Infallible,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use kynos::{
     Router,
-    http::{Request, Response, StatusCode},
-    middleware::{Continued, Interceptor, Next, Observer},
+    http::{Request, StatusCode},
+    middleware::{Abandonment, Continued, Exchange, Interceptor, Next, Observer},
     openapi::{Method as OpenApiMethod, PathTemplate},
     response::status::NoContent,
     router::{endpoint::builder::EndpointBuilder, group::Group, operation::Route},
@@ -33,6 +32,10 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
+#[path = "support/inline.rs"]
+mod inline;
+
+use inline::inlined;
 use support::{caught, outcome};
 
 /// The operation under test. Nothing else in the fixture panics, so a 500 here
@@ -90,6 +93,44 @@ fn a_router_that_did_not_ask_for_recovery_lets_a_panic_through() {
         "a panic was recovered by something that was never asked to catch one"
     );
     assert_eq!(outcome(&service, "/fine"), Ok(StatusCode::NO_CONTENT));
+}
+
+/// Sealing erases the policy from the type, not from the router: what was
+/// asked for before `seal` is still what the service does, either way.
+#[test]
+fn a_sealed_router_keeps_the_recovery_it_was_given() {
+    let caught = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![boom, fine])
+        .seal()
+        .build(())
+        .expect("a describable router");
+    let propagated = Router::<()>::new()
+        .mount(kynos::routes![boom, fine])
+        .seal()
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(
+        outcome(&caught, "/boom"),
+        Ok(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert_eq!(
+        outcome(&propagated, "/boom"),
+        Err(()),
+        "sealing recovered a panic the router never asked to catch"
+    );
+
+    // The recovery's 500 is declared as the unsealed router declares it.
+    let recovering = || {
+        Router::<()>::new()
+            .catch_panics()
+            .mount(kynos::routes![boom])
+    };
+    assert_eq!(
+        recovering().seal().openapi().expect("a describable router"),
+        recovering().openapi().expect("a describable router"),
+    );
 }
 
 /// Group scope: recovery covers what the group encloses and stops there.
@@ -166,9 +207,9 @@ impl Heard {
 impl Observer<()> for Heard {
     fn on_request(&self, _: &Request, _: Option<Route<'_>>, (): &()) {}
 
-    fn on_response(&self, _: &Response, _: Option<Route<'_>>, _: Duration) {}
+    fn on_response(&self, _: &Exchange<'_>, (): &()) {}
 
-    fn on_panic(&self, _: &(dyn Any + Send), route: Option<Route<'_>>) {
+    fn on_panic(&self, _: &(dyn Any + Send), route: Option<Route<'_>>, (): &()) {
         let path = route.map_or_else(|| "<unmatched>".to_owned(), |route| route.path().to_owned());
         self.0.lock().expect("an unpoisoned record").push(path);
     }
@@ -260,17 +301,40 @@ impl Observer<()> for Log {
         self.push("request".to_owned());
     }
 
-    fn on_response(&self, response: &Response, _: Option<Route<'_>>, _: Duration) {
-        self.push(format!("response {}", response.status().as_u16()));
+    fn on_response(&self, exchange: &Exchange<'_>, (): &()) {
+        self.push(format!("response {}", exchange.response.status().as_u16()));
     }
 
-    fn on_panic(&self, payload: &(dyn Any + Send), _: Option<Route<'_>>) {
+    fn on_abandoned(&self, abandonment: &Abandonment<'_>, (): &()) {
+        let path = abandonment
+            .route
+            .map_or("<unmatched>", |route| route.path());
+        self.push(format!("abandoned {path}"));
+    }
+
+    fn on_panic(&self, payload: &(dyn Any + Send), _: Option<Route<'_>>, (): &()) {
         let message = payload
             .downcast_ref::<&str>()
             .copied()
             .expect("a panic! with a literal message carries a `&str`");
         self.push(format!("panic {message}"));
     }
+}
+
+/// A panic nothing recovers ends the request with no response, so an observer
+/// hears it abandoned under the operation it unwound out of, and neither a
+/// recovered panic nor a response.
+#[test]
+fn an_unrecovered_panic_is_reported_as_an_abandoned_request() {
+    let log = Log::default();
+    let service = Router::<()>::new()
+        .mount(kynos::routes![boom])
+        .observe(log.clone())
+        .build(())
+        .expect("a describable router");
+
+    assert_eq!(outcome(&service, "/boom"), Err(()));
+    assert_eq!(log.events(), ["request", "abandoned /boom"]);
 }
 
 /// What a recovered panic answers with: a problem document naming the status
@@ -524,9 +588,9 @@ struct Exploded;
 
 #[cfg(feature = "unchecked")]
 impl tower::Service<Request> for Exploded {
-    type Response = Response;
+    type Response = kynos::http::Response;
     type Error = Infallible;
-    type Future = std::future::Ready<Result<Response, Infallible>>;
+    type Future = std::future::Ready<Result<kynos::http::Response, Infallible>>;
 
     fn poll_ready(
         &mut self,
@@ -626,7 +690,7 @@ fn recovery_below_the_router_declares_its_500_on_what_it_covers_alone() {
         ))
         .openapi()
         .expect("a describable router");
-    let document = serde_json::to_value(&document).expect("a serializable document");
+    let document = serde_json::to_value(inlined(document)).expect("a serializable document");
 
     for (path, recovered) in [
         ("/guarded/boom", true),

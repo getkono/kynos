@@ -15,6 +15,16 @@ pub(crate) struct RouteArgs {
     pub(crate) operation_id: Option<LitStr>,
     pub(crate) tag: Option<Ident>,
     pub(crate) catch_panics: bool,
+    pub(crate) head: Option<Head>,
+}
+
+/// The `head` argument: the `HEAD` a `GET` describes beside itself, under an
+/// `operationId` derived from the handler's name or given outright.
+pub(crate) enum Head {
+    /// `head`, located for the diagnostic refusing it.
+    Derived(proc_macro2::Span),
+    /// `head = "..."`.
+    Named(LitStr),
 }
 
 impl RouteArgs {
@@ -27,6 +37,7 @@ impl RouteArgs {
         let mut operation_id = None;
         let mut tag = None;
         let mut catch_panics = false;
+        let mut head = None;
         // Each argument is read once; a second `tag` has its own word.
         let mut keys =
             Keys::new("is already given, and a route attribute takes each argument once")
@@ -36,14 +47,16 @@ impl RouteArgs {
             keys.read(item.path())?;
 
             match &item {
-                // A bare flag; `catch_panics` is the only one.
+                // A bare flag: `catch_panics`, or `head` with a derived name.
                 Meta::Path(bare) => {
                     if bare.is_ident("catch_panics") {
                         catch_panics = true;
+                    } else if bare.is_ident("head") {
+                        head = Some(Head::Derived(bare.span()));
                     } else {
                         return Err(syn::Error::new(
                             bare.span(),
-                            "expected a path string literal, `operation_id = \"...\"`, `tag = Tag`, or `catch_panics`",
+                            "expected a path string literal, `operation_id = \"...\"`, `tag = Tag`, `catch_panics`, or `head`",
                         ));
                     }
                 }
@@ -55,6 +68,7 @@ impl RouteArgs {
                         .unwrap_or_default();
                     match name.as_str() {
                         "operation_id" => operation_id = Some(expect_str(&pair.value)?),
+                        "head" => head = Some(Head::Named(expect_str(&pair.value)?)),
                         // A second tag is refused rather than silently overwriting.
                         "tag" if tag.is_some() => {
                             return Err(syn::Error::new(
@@ -94,6 +108,7 @@ impl RouteArgs {
             operation_id,
             tag,
             catch_panics,
+            head,
         })
     }
 }

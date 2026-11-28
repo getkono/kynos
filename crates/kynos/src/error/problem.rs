@@ -7,7 +7,8 @@ use serde::ser::SerializeMap;
 use serde_json::Value;
 
 use kynos_openapi::{
-    ComponentName, Map, MediaType, Response, Schema as OpenApiSchema, SchemaObject,
+    ComponentName, Map, MediaType, RefOr, Response, Responses, Schema as OpenApiSchema,
+    SchemaObject,
     model::{
         body::mime_names::APPLICATION_PROBLEM_JSON,
         schema::types::{SchemaType, TypeSet},
@@ -15,6 +16,10 @@ use kynos_openapi::{
 };
 
 use crate::{
+    error::{
+        members::{ProblemOrigin, declared_identity},
+        rejection::with_installed,
+    },
     http::{HeaderValue, StatusCode, body::Body, header},
     response::{IntoResponse, codec::json_bytes},
     schema::{Schema, flatten::Flatten, registry::Registry},
@@ -27,7 +32,7 @@ mod tests;
 ///
 /// RFC 9457 registers it as the value assumed when `type` is absent; Kynos
 /// writes it out, because the schema declares `type` as required.
-const ABOUT_BLANK: &str = "about:blank";
+pub(crate) const ABOUT_BLANK: &str = "about:blank";
 
 /// The members RFC 9457 registers, which an extension may not shadow.
 pub(crate) const RESERVED: [&str; 5] = ["type", "title", "status", "detail", "instance"];
@@ -416,9 +421,39 @@ pub(crate) fn problem_response(
 /// A type rather than a value because an
 /// [`Interceptor`](crate::middleware::Interceptor)'s declaration is read from
 /// its types, so the same `const` reaches both the body and the description.
+///
+/// A struct deriving `ApiError` is one wherever it names a type URI, through
+/// a `type` or a `base`, so a refusal and the application's own error share
+/// it, and a test names it rather than retyping it. One naming neither sends `about:blank`, which identifies no
+/// problem type (RFC 9457 section 4.2.1), so it is not one. A hand-written
+/// implementation beside the derived one is the conflicting-implementation
+/// error coherence raises. An enum's variants are not types; its
+/// `type_uri(&self)` names each value's.
+#[diagnostic::on_unimplemented(
+    message = "`{Self}` names no problem type",
+    label = "not a `ProblemType`",
+    note = "name one with `impl ProblemType for {Self}` on a marker, or derive `ApiError` on a \
+            struct naming a `type` or a `base`; one naming neither sends `about:blank`, which \
+            names no type"
+)]
 pub trait ProblemType: 'static {
-    /// The URI identifying the problem type, or `None` for `about:blank`.
+    /// The URI identifying the problem type, or `None` to leave it to the
+    /// policy [`Router::problems`](crate::router::Router::problems) installs,
+    /// and to `about:blank` without one.
+    ///
+    /// `Some("about:blank")` is `None`: RFC 9457 section 4.2.1 says it names
+    /// no type, so the policy identifies the refusal either way, and its
+    /// declaration says so.
     const TYPE_URI: Option<&'static str>;
+}
+
+/// The type `T` names, where it names one other than `about:blank`.
+///
+/// Every refusal built or declared here reads [`ProblemType::TYPE_URI`]
+/// through this, so the body and the declaration agree on which refusals the
+/// policy identifies.
+fn named_type<T: ProblemType>() -> Option<&'static str> {
+    T::TYPE_URI.filter(|uri| *uri != ABOUT_BLANK)
 }
 
 /// The default: a refusal whose status code is the whole story.
@@ -458,7 +493,7 @@ impl ProblemType for () {
 pub fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
     let mut problem = Problem::new(status);
 
-    if let Some(uri) = T::TYPE_URI {
+    if let Some(uri) = named_type::<T>() {
         problem.type_uri = uri.into();
     }
 
@@ -500,8 +535,45 @@ pub fn refusal_response<T: ProblemType>(
     described_response(
         &problem,
         summary.to_owned(),
-        &[(T::TYPE_URI, Some(summary), &[])],
+        &[(named_type::<T>(), Some(summary), &[])],
+        false,
     )
+}
+
+/// The response a refusal an interceptor Kynos ships declares at `status`:
+/// [`refusal_response`]'s, or, where `served`, the same narrowed to the
+/// identity the problem policy gives an `about:blank` refusal and carrying
+/// the members it adds to every one, as `ShortCircuit::__refused` renders it.
+pub(crate) fn served_refusal_response<T: ProblemType>(
+    registry: &mut Registry,
+    status: StatusCode,
+    summary: &'static str,
+    served: bool,
+) -> Response {
+    let problem = registry.resolve::<Problem>();
+    let named = named_type::<T>();
+    let identity = match named {
+        Some(_) => (None, None),
+        None => declared_identity(registry, ProblemOrigin::Refusal, status, served),
+    };
+    let (uri, title) = match identity {
+        (Some(uri), title) => (Some(uri), title),
+        (None, _) => (named, Some(summary)),
+    };
+    let members = with_installed(registry, &[], served);
+
+    summarized_response(&problem, summary, (uri, title, &members))
+}
+
+/// The response one failure declares under the description `summary`: the
+/// shared component narrowed to `branch`, titled by the branch's own summary
+/// where that is not `summary` already.
+pub(crate) fn summarized_response(
+    problem: &OpenApiSchema,
+    summary: &str,
+    branch: Branch<'_>,
+) -> Response {
+    described_response(problem, summary.to_owned(), &[branch], false)
 }
 
 // --- What one status declares --------------------------------------------
@@ -533,14 +605,75 @@ pub(crate) fn narrowed_response(
     branches: &[Branch<'_>],
 ) -> Response {
     // From every branch, not the deduplicated ones: prose has no exactly-one rule.
-    described_response(problem, description(status, branches), branches)
+    described_response(problem, description(status, branches), branches, false)
 }
 
-/// [`narrowed_response`] under a `description` already written.
+/// [`narrowed_response`] under the description `described`, where the
+/// declaration wrote one for the status in place of the one [`description`]
+/// composes from the branches' summaries.
+///
+/// # Panics
+///
+/// If `branches` is empty.
+#[must_use]
+pub(crate) fn written_response(
+    problem: &OpenApiSchema,
+    status: u16,
+    described: Option<&str>,
+    branches: &[Branch<'_>],
+) -> Response {
+    match described {
+        // The summaries are no longer the description, so a lone branch keeps
+        // its own as its title rather than losing it.
+        Some(described) => described_response(problem, described.to_owned(), branches, true),
+        None => narrowed_response(problem, status, branches),
+    }
+}
+
+/// A transparent variant's `held` responses, readied for an enum writing the
+/// description of each status in `written` over them: there a lone branch the
+/// held error left untitled, since its description said it, takes that
+/// description as its title, as [`title_lone_branch`] says.
+pub(crate) fn titled(mut held: Responses, written: &[u16]) -> Responses {
+    for status in written {
+        if let Some(RefOr::Item(response)) = held.responses.get_mut(&status.to_string()) {
+            title_lone_branch(response);
+        }
+    }
+    held
+}
+
+/// Gives `response`'s lone problem branch its description as its title, where
+/// the branch carries none, since another description is about to be written
+/// over the one that said it.
+///
+/// [`narrowed_response`] leaves a lone branch untitled only where its
+/// description is exactly its title, so that description is the title restored;
+/// the branches of a `oneOf`, a titled branch, and any schema that is not a
+/// narrowed branch are left as they are.
+pub(crate) fn title_lone_branch(response: &mut Response) {
+    let Some(description) = &response.description else {
+        return;
+    };
+    let Some(RefOr::Item(media)) = response.content.get_mut(APPLICATION_PROBLEM_JSON) else {
+        return;
+    };
+    if let Some(OpenApiSchema::Object(branch)) = &mut media.schema {
+        if branch.title.is_none() && branch.one_of.is_none() && branch.all_of.is_some() {
+            branch.title = Some(description.clone());
+        }
+    }
+}
+
+/// [`narrowed_response`] under a `description` already written; a lone
+/// branch carries its summary as its title where `written` says the
+/// declaration wrote the description, or where the description is not exactly
+/// that summary and so does not already say it.
 fn described_response(
     problem: &OpenApiSchema,
     description: String,
     branches: &[Branch<'_>],
+    written: bool,
 ) -> Response {
     let distinct = distinct(branches);
 
@@ -549,8 +682,14 @@ fn described_response(
             "a status narrows to the failures answering with it: no caller passes an \
              empty branch list"
         ),
-        // A lone branch's title would repeat the description.
-        [only] => narrowed_branch(problem, only, None),
+        // A URI several failures share composes a description joining their
+        // summaries, which says none of them as the branch's title.
+        [only] => narrowed_branch(
+            problem,
+            only,
+            only.summary
+                .filter(|summary| written || *summary != description),
+        ),
         several => object(SchemaObject {
             one_of: Some(
                 several
@@ -606,6 +745,9 @@ fn distinct<'a>(branches: &[Branch<'a>]) -> Vec<Narrowed<'a>> {
             });
             continue;
         };
+
+        // The first summary given, though an earlier failure gave none.
+        narrowed.summary = narrowed.summary.or(*summary);
 
         // Required only where every failure publishing the URI sends it.
         for (name, _, required) in &mut narrowed.members {

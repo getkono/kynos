@@ -1,0 +1,11 @@
+error: a `title` or `type` names one failure, so it belongs on each variant, which never reads the enum's. Move it to them; a shared URI prefix is `base`
+ --> tests/ui/macros/api_error_title_type_on_the_enum.rs:9:11
+  |
+9 | #[problem(title = "The store failed")]
+  |           ^^^^^
+
+error: a `title` or `type` names one failure, so it belongs on each variant, which never reads the enum's. Move it to them; a shared URI prefix is `base`
+  --> tests/ui/macros/api_error_title_type_on_the_enum.rs:17:11
+   |
+17 | #[problem(type = "https://errors.example.com/store")]
+   |           ^^^^

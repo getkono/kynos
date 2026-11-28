@@ -8,6 +8,10 @@
 #![cfg(all(feature = "macros", feature = "json"))]
 #![allow(dead_code)]
 
+#[path = "support/inline.rs"]
+mod inline;
+
+use inline::inlined;
 use kynos::{
     http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
     middleware::cors::Cors,
@@ -767,8 +771,44 @@ async fn a_preflight_refuses_an_origin_the_covering_cors_does_not_permit() {
         .build(())
         .expect("a describable router");
 
+    assert_head_preflight_answers_from_the_reader_scope(&service).await;
+}
+
+/// A `GET` describing its HEAD changes nothing a preflight answers: the HEAD
+/// it describes runs under the `GET`'s chain as the one it answers does.
+#[tokio::test]
+async fn a_described_head_preflight_answers_from_the_cors_covering_get() {
+    use kynos::router::{endpoint::builder::EndpointBuilder, group::Group};
+
+    let described = EndpointBuilder::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/widgets").expect("a valid path"),
+        list_widgets,
+    )
+    .operation_id("list_widgets")
+    .describe_head("probe_widgets");
+    let service = Router::<()>::new()
+        .group(
+            Group::new("/")
+                .mount(kynos::routes![delete_widget])
+                .intercept(Cors::new().allow_origins(["https://admin.example.com"])),
+        )
+        .group(
+            Group::new("/")
+                .mount(described)
+                .intercept(Cors::new().allow_origins(["https://reader.example.com"])),
+        )
+        .build(())
+        .expect("a describable router");
+
+    assert_head_preflight_answers_from_the_reader_scope(&service).await;
+}
+
+/// A HEAD preflight on `/widgets` approved by the reader's `Cors` alone, and
+/// advertising `HEAD` right after `GET`.
+async fn assert_head_preflight_answers_from_the_reader_scope(service: &Service<()>) {
     let (status, fields) = send(
-        &service,
+        service,
         Method::OPTIONS,
         "/widgets",
         &[
@@ -1118,7 +1158,7 @@ mod documented {
         middleware::cors::Cors,
     };
 
-    use super::{cors_fields, field, router, send};
+    use super::{cors_fields, field, inlined, router, send};
 
     fn cors() -> kynos::middleware::cors::Cors<kynos::middleware::cors::Documented> {
         Cors::new()
@@ -1221,14 +1261,14 @@ mod documented {
             names
         };
 
-        let documented = serde_json::to_value(
+        let documented = serde_json::to_value(inlined(
             router()
                 .intercept(cors())
                 .openapi()
                 .expect("a describable router"),
-        )
+        ))
         .expect("a serializable document");
-        let undocumented = serde_json::to_value(
+        let undocumented = serde_json::to_value(inlined(
             router()
                 .intercept(
                     Cors::new()
@@ -1237,7 +1277,7 @@ mod documented {
                 )
                 .openapi()
                 .expect("a describable router"),
-        )
+        ))
         .expect("a serializable document");
 
         assert_eq!(

@@ -4,9 +4,10 @@ use super::{
     Legacy, RateLimit, RateLimitSpelling, Structured,
     clock::Clock,
     decision::{Decision, Denial, QuotaPolicy, QuotaUnit, RateLimitPolicy, ServiceLimit},
+    estimate::{estimate, recovers_in},
     headers::{RateLimitFields, RateLimitHeaders, SF_INTEGER_MAX},
-    key::Shared,
-    quota::{Quota, Quotas, estimate, recovers_in},
+    key::{ByPrincipal, RateLimitKey, Shared},
+    quota::{Quota, Quotas},
     refusal::{RateLimited, RateLimitedFields},
     store::{RateLimitStore, StoreFailure},
 };
@@ -19,6 +20,12 @@ use crate::{
     response::{IntoResponse, ShortCircuit},
     router::operation::Route,
     schema::registry::Registry,
+    security::{
+        Authenticates, Authenticator, Head,
+        auth::{Auth, MaybeAuth},
+        carrier::{BearerToken, presented::Presented},
+        schemes::Bearer,
+    },
 };
 
 /// A window of one second, for readability.
@@ -906,6 +913,82 @@ async fn a_spent_window_refills_once_the_clock_passes_its_retry_after() {
     );
 }
 
+// --- Spending from a handler -----------------------------------------------
+
+/// A [`Counting`] the test reads back after a limiter took it.
+#[derive(Clone, Debug, Default)]
+struct Kept(std::sync::Arc<Counting>);
+
+impl RateLimitStore for Kept {
+    type Error = Unavailable;
+
+    async fn read(&self, key: &str) -> Result<u64, Self::Error> {
+        self.0.read(key).await
+    }
+
+    async fn increment(&self, key: &str, by: u64, ttl: Duration) -> Result<u64, Self::Error> {
+        self.0.increment(key, by, ttl).await
+    }
+}
+
+/// A handler's spend counts against the partition it names, under a prefix a
+/// client-chosen value cannot escape, and refuses with exactly the value the
+/// limiter's spelling denies with as an interceptor.
+#[tokio::test]
+async fn a_handler_spend_refuses_as_the_interceptor_would() {
+    const START: u64 = 1_700_000_000_000;
+
+    let clock = std::sync::Arc::new(Manual::default());
+    clock.set(START);
+    let store = Kept::default();
+    let quotas = || {
+        Quotas::new(super::key::ByHandler, store.clone())
+            .quota(Quota::new("challenge", 1, WINDOW))
+            .with_clock(std::sync::Arc::clone(&clock))
+    };
+
+    let legacy = RateLimit::new(quotas()).problem_type::<Throttled>();
+    let allowed = legacy.spend("alice").await.expect("the first is admitted");
+    assert_eq!(
+        (allowed.limit, allowed.remaining),
+        (1, 0),
+        "the fields an allowed response may carry"
+    );
+    assert!(
+        store
+            .0
+            .0
+            .lock()
+            .expect("no test panics while holding this")
+            .keys()
+            .all(|key| key.starts_with("handler:alice|challenge|")),
+        "{store:?}"
+    );
+
+    let refused = legacy.spend("alice").await.expect_err("the second is not");
+    // The rest of the window, then the one after it for the spent request to
+    // leave the sliding estimate.
+    let wait = recovers_in(1, 0, Duration::ZERO, WINDOW);
+    assert_eq!(refused, RateLimited::<Throttled>::new(wait, 1));
+    assert!(
+        legacy.spend("bob").await.is_ok(),
+        "one partition's quota refused another's"
+    );
+
+    let structured = RateLimit::new(quotas())
+        .standard_fields()
+        .problem_type::<Throttled>();
+    let refused = structured.spend("alice").await.expect_err("still spent");
+    assert_eq!(
+        refused,
+        RateLimitedFields::<Throttled>::new(
+            wait,
+            vec![ServiceLimit::new("challenge", 1, 0, wait)],
+            vec![Quota::new("challenge", 1, WINDOW).policy()],
+        )
+    );
+}
+
 // --- What the shipped keys and quotas state --------------------------------
 
 /// The partition `key` gives a request carrying `fields`.
@@ -937,12 +1020,15 @@ fn a_header_key_puts_every_request_without_a_readable_value_in_one_bucket() {
 
     assert_eq!(
         partition_of(&key, &[("x-tenant", b"acme")]).as_deref(),
-        Some("x-tenant:acme")
+        Some("header:x-tenant:acme")
     );
-    assert_eq!(partition_of(&key, &[]).as_deref(), Some("x-tenant:none"));
+    assert_eq!(
+        partition_of(&key, &[]).as_deref(),
+        Some("header:x-tenant:none")
+    );
     assert_eq!(
         partition_of(&key, &[("x-tenant", b"\xff")]).as_deref(),
-        Some("x-tenant:none")
+        Some("header:x-tenant:none")
     );
 }
 
@@ -1031,6 +1117,201 @@ fn a_closure_keys_by_the_partition_it_returns() {
      -> Option<std::borrow::Cow<'static, str>> { Some("tenant:acme".into()) };
 
     assert_eq!(partition_of(&tenant, &[]).as_deref(), Some("tenant:acme"));
+}
+
+// --- Keying on the caller a guard admitted -----------------------------------
+
+/// A context whose bearer tokens no request in these tests presents: the
+/// guard is admitted by hand, as `guard_first` would admit it.
+struct Accounts;
+
+/// Refuses every token, since no test runs the guard itself.
+struct NoTokens;
+
+impl Authenticator<Bearer, Accounts> for NoTokens {
+    type Error = crate::error::rejection::AuthRejection;
+
+    async fn authenticate(
+        &self,
+        _: Presented<BearerToken>,
+        _: Head<'_>,
+        _: &Accounts,
+    ) -> Result<String, Self::Error> {
+        Err(crate::error::rejection::AuthRejection::unauthenticated())
+    }
+}
+
+impl Authenticates<Bearer> for Accounts {
+    type Authenticator = NoTokens;
+
+    fn authenticator(&self) -> &NoTokens {
+        &NoTokens
+    }
+}
+
+/// The partition `key` gives a request that `admitted` admitted, or none.
+fn principal_of<G: Send + 'static>(
+    key: &impl RateLimitKey<Accounts>,
+    admitted: Option<G>,
+) -> Option<String> {
+    let mut request = crate::http::Request::new(Body::empty());
+    if let Some(guard) = admitted {
+        crate::security::admit(request.extensions_mut(), guard);
+    }
+    key.partition(
+        &request,
+        Route::new("/counted", "counted", Method::Get),
+        &Accounts,
+    )
+    .map(std::borrow::Cow::into_owned)
+}
+
+/// Each caller its guard admitted is a bucket of its own, named under a prefix
+/// no other shipped key writes; and the guard stays for the handler, so the
+/// credential is checked once.
+#[test]
+fn a_principal_key_names_the_caller_the_guard_admitted() {
+    let key = ByPrincipal::new(|Auth(token): &Auth<Bearer>| token.clone());
+
+    assert_eq!(
+        principal_of(&key, Some(Auth::<Bearer>("alice".to_owned()))).as_deref(),
+        Some("principal:alice")
+    );
+
+    let mut request = crate::http::Request::new(Body::empty());
+    crate::security::admit(request.extensions_mut(), Auth::<Bearer>("bob".to_owned()));
+    let _ = RateLimitKey::partition(
+        &key,
+        &request,
+        Route::new("/counted", "counted", Method::Get),
+        &Accounts,
+    );
+    let (mut parts, _) = request.into_parts();
+    let handed = crate::security::admitted::<Accounts, Auth<Bearer>>(&mut parts)
+        .expect("the key leaves the guard for the handler");
+    assert_eq!(handed.0, "bob");
+}
+
+/// A request no guard of the key's type admitted — none ran ahead, another
+/// guard did, or the request is a copy of the one admitted — counts against
+/// one shared bucket rather than escaping the limit or being keyed on the
+/// peer, unless `otherwise` names another key.
+#[test]
+fn a_request_no_guard_admitted_shares_one_bucket_unless_otherwise_names_a_key() {
+    let named = |Auth(token): &Auth<Bearer>| token.clone();
+    let key = ByPrincipal::new(named);
+    let alice = || Auth::<Bearer>("alice".to_owned());
+
+    assert_eq!(
+        principal_of::<Auth<Bearer>>(&key, None).as_deref(),
+        Some("unadmitted")
+    );
+    assert_eq!(
+        principal_of(&key, Some(MaybeAuth::<Bearer>(Some("alice".to_owned())))).as_deref(),
+        Some("unadmitted"),
+        "a `MaybeAuth` is not the `Auth` the key reads"
+    );
+
+    let mut admitted = crate::http::Request::new(Body::empty());
+    crate::security::admit(admitted.extensions_mut(), alice());
+    let copy = crate::http::Request::from_parts(admitted.into_parts().0.clone(), Body::empty());
+    assert_eq!(
+        RateLimitKey::partition(
+            &key,
+            &copy,
+            Route::new("/counted", "counted", Method::Get),
+            &Accounts
+        )
+        .as_deref(),
+        Some("unadmitted"),
+        "a copy of the request is not the one the guard admitted"
+    );
+
+    let otherwise = ByPrincipal::new(named).otherwise(Shared("fallback".into()));
+    assert_eq!(
+        principal_of::<Auth<Bearer>>(&otherwise, None).as_deref(),
+        Some("fallback")
+    );
+    assert_eq!(
+        principal_of(&otherwise, Some(alice())).as_deref(),
+        Some("principal:alice")
+    );
+}
+
+/// A `MaybeAuth` admits an anonymous caller, so the closure names its bucket;
+/// the fallback is only for a request no guard admitted.
+#[test]
+fn an_anonymous_caller_a_maybe_guard_admitted_is_named_by_the_closure() {
+    let key = ByPrincipal::new(|MaybeAuth(token): &MaybeAuth<Bearer>| {
+        token.clone().unwrap_or_else(|| "anonymous".to_owned())
+    })
+    .otherwise(Shared("fallback".into()));
+
+    assert_eq!(
+        principal_of(&key, Some(MaybeAuth::<Bearer>(None))).as_deref(),
+        Some("principal:anonymous")
+    );
+}
+
+/// A principal key names the guard it reads to the router, which then holds
+/// that guard to run ahead of it, only while no `otherwise` names a key for
+/// the requests it did not admit; an `And` names every guard either half
+/// reads, the first half's first.
+#[test]
+fn a_principal_key_names_its_guard_to_the_router_only_without_otherwise() {
+    use super::key::{And, ByPeerAddress, ByRoute};
+    use crate::__private::GuardType;
+
+    let named = |Auth(token): &Auth<Bearer>| token.clone();
+    let maybe = |MaybeAuth(token): &MaybeAuth<Bearer>| token.clone().unwrap_or_default();
+    let reads = |key: &dyn RateLimitKey<Accounts>| key.reads_admitted().guards;
+    let guard = vec![GuardType::of::<Auth<Bearer>>()];
+
+    assert_eq!(reads(&ByPrincipal::new(named)), guard);
+    assert_eq!(reads(&And(ByRoute, ByPrincipal::new(named))), guard);
+    assert_eq!(
+        reads(&And(ByPrincipal::new(named), ByPrincipal::new(maybe))),
+        vec![
+            GuardType::of::<Auth<Bearer>>(),
+            GuardType::of::<MaybeAuth<Bearer>>()
+        ]
+    );
+    assert_eq!(reads(&ByPrincipal::new(named).otherwise(ByPeerAddress)), []);
+    assert_eq!(
+        reads(&ByPrincipal::new(named).otherwise(Shared("unadmitted".into()))),
+        []
+    );
+    assert_eq!(reads(&ByRoute), []);
+}
+
+/// No caller's name puts an admitted caller in the bucket of the requests no
+/// guard admitted, and no header's name reaches a principal's, a
+/// handler-spent partition's or a peer's bucket in a shared store.
+#[test]
+fn no_closure_or_header_names_another_keys_bucket() {
+    let key = ByPrincipal::new(|Auth(token): &Auth<Bearer>| token.clone());
+    let unadmitted = principal_of::<Auth<Bearer>>(&key, None);
+    for name in ["none", "unadmitted", ""] {
+        let admitted = principal_of(&key, Some(Auth::<Bearer>(name.to_owned())));
+        assert_ne!(admitted, unadmitted, "a caller named {name:?}");
+    }
+
+    for (field, value) in [
+        ("principal", "alice"),
+        ("principal", "none"),
+        ("handler", "alice"),
+        ("peer", "none"),
+        ("unadmitted", "x"),
+    ] {
+        let header = super::key::ByHeader(
+            crate::http::HeaderName::from_bytes(field.as_bytes()).expect("a legal field name"),
+        );
+        let partition = partition_of(&header, &[(field, value.as_bytes())]);
+        assert_eq!(
+            partition.as_deref(),
+            Some(format!("header:{field}:{value}").as_str())
+        );
+    }
 }
 
 /// The peer key names the connection's IP and not its port, so a client's

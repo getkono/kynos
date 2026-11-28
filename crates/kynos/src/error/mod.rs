@@ -117,6 +117,20 @@ pub enum Error {
     #[error("the description could not be emitted as JSON")]
     Json(#[from] serde_json::Error),
 
+    /// A built service's description was to be edited, mutual TLS by
+    /// `Server::prepare` or the flags `into_tower_unchecked` adds, while a
+    /// clone of the service is still alive and its router mounts a docs
+    /// reference.
+    ///
+    /// Every clone serves the reference's one set of bytes, so the edit would
+    /// leave the other clone's `openapi()` disagreeing with what it serves.
+    /// Drop the other clones first, or build the router a second time.
+    #[cfg(all(feature = "docs", any(feature = "tls", feature = "unchecked")))]
+    #[error(
+        "the description cannot be edited while another clone of the service serves its docs reference"
+    )]
+    DescriptionShared,
+
     /// The description could not be emitted as YAML.
     #[cfg(feature = "yaml")]
     #[error(transparent)]

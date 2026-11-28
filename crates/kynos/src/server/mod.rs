@@ -27,7 +27,8 @@
 //! [`tls`] are configuration; [`lifecycle`] is the state every part observes,
 //! and the [`Draining`](lifecycle::Draining) and
 //! [`Readiness`](lifecycle::Readiness) extractors a handler observes it
-//! through.
+//! through, and [`Stopped`] how a requested shutdown
+//! ended.
 
 mod accept;
 // Crate-visible so the test client reaches its socket half.
@@ -103,7 +104,7 @@ use crate::{
         accept::{TcpAcceptor, accept_loop},
         address::{BindAddress, bind_listener, resolve},
         error::ServerError,
-        lifecycle::{Drain, Lifecycle},
+        lifecycle::{Lifecycle, Stopped},
         protocol::validate_protocol_config,
         request_body::{validate_body_stall, validate_request_body_idle_timeout},
         shutdown::{ForceFuture, Shutdown, ShutdownFuture},
@@ -371,7 +372,7 @@ impl<C: 'static> Server<C> {
     /// [`DEFAULT_SHUTDOWN_TIMEOUT`](Server::DEFAULT_SHUTDOWN_TIMEOUT).
     ///
     /// [`Duration::ZERO`] forces immediate shutdown and reports
-    /// [`ServerError::ShutdownTimeout`].
+    /// [`Stopped::TimedOut`].
     #[must_use]
     pub fn shutdown_timeout(mut self, timeout: Duration) -> Self {
         self.shutdown_timeout = timeout;
@@ -611,6 +612,11 @@ impl<C: 'static> Server<C> {
     ///   [`ServerError::Bind`] when a supplied listener, an address, or a
     ///   resolved address fails; every listener already bound is dropped.
     /// - [`ServerError::NoListeners`] when nothing was configured to listen on.
+    ///
+    /// With TLS and `docs`, `Error::DescriptionShared` when a required client
+    /// certificate would change the description of a service whose router
+    /// mounts a docs reference and a clone of which is still alive, checked
+    /// before anything is bound.
     pub async fn prepare(self) -> Result<BoundServer<C>> {
         self.validate()?;
         validate_tcp_keepalive(self.tcp_keepalive)?;
@@ -718,12 +724,12 @@ impl<C: 'static> Server<C> {
         })
     }
 
-    /// Prepares and serves until shutdown.
+    /// Prepares and serves until shutdown, returning how the drain ended.
     ///
     /// # Errors
     ///
     /// Whatever [`prepare`](Self::prepare) or [`BoundServer::serve`] reports.
-    pub async fn serve(self) -> Result<()> {
+    pub async fn serve(self) -> Result<Stopped> {
         self.prepare().await?.serve().await
     }
 
@@ -908,20 +914,25 @@ impl<C: 'static> BoundServer<C> {
 
     /// Serves on every listener until shutdown or a terminal accept failure.
     ///
+    /// A requested shutdown is `Ok` however its drain ended, so
+    /// `serve().await?` in `main` exits cleanly when the process is told to
+    /// stop; the [`Stopped`] says whether every connection finished. A drain
+    /// cut short also logs a warning, so discarding the [`Stopped`] still
+    /// leaves the abandoned work on record.
+    ///
+    /// To serve in the background, as a test or a second listener does,
+    /// [`spawn`](Self::spawn) instead: its handle keeps the bound address
+    /// and begins graceful shutdown.
+    ///
     /// # Errors
     ///
     /// [`Error::Server`](crate::error::Error::Server), carrying:
     ///
-    /// - [`ServerError::ShutdownTimeout`] or [`ServerError::ShutdownForced`]
-    ///   when shutdown was requested and the drain was not allowed to complete,
-    ///   whether or not work was in flight;
-    ///   [`ServerError::is_requested_shutdown`] tells these apart from a
-    ///   failure.
     /// - [`ServerError::Signal`] when the shutdown signal could not be
     ///   registered.
     /// - [`ServerError::Accept`] or [`ServerError::AcceptLoop`] when a listener
     ///   stopped accepting.
-    pub async fn serve(self) -> Result<()> {
+    pub async fn serve(self) -> Result<Stopped> {
         let (lifecycle_sender, lifecycle_receiver) = watch::channel(Lifecycle::Running);
         let permits = Arc::new(Semaphore::new(self.config.max_connections.get()));
         let (failure_sender, mut failures) = mpsc::unbounded_channel();
@@ -994,38 +1005,40 @@ impl<C: 'static> BoundServer<C> {
         }
 
         lifecycle_sender.send_replace(Lifecycle::Draining);
-        let drain = if forced {
-            Drain::Forced
+        let draining_since = tokio::time::Instant::now();
+        let stopped = if forced {
+            Stopped::Forced
         } else if self.config.shutdown_timeout.is_zero() {
-            Drain::TimedOut
+            Stopped::TimedOut
         } else {
             let wait_for_accept_loops = async { while accept_loops.join_next().await.is_some() {} };
             tokio::pin!(wait_for_accept_loops);
             tokio::pin!(force);
             tokio::select! {
                 biased;
-                () = &mut force, if root_error.is_none() => Drain::Forced,
-                () = &mut wait_for_accept_loops => Drain::Complete,
-                () = tokio::time::sleep(self.config.shutdown_timeout) => Drain::TimedOut,
+                () = &mut force, if root_error.is_none() => Stopped::Forced,
+                () = &mut wait_for_accept_loops => Stopped::Drained,
+                () = tokio::time::sleep(self.config.shutdown_timeout) => Stopped::TimedOut,
             }
         };
 
-        if drain != Drain::Complete {
+        if stopped != Stopped::Drained {
+            // `Ok` exits `main` cleanly, so this is the only trace that a
+            // requested shutdown abandoned in-flight work. A failure already
+            // reports itself as `Err`.
+            if root_error.is_none() {
+                tracing::warn!(
+                    outcome = ?stopped,
+                    drained_for = ?draining_since.elapsed(),
+                    shutdown_timeout = ?self.config.shutdown_timeout,
+                    "shutdown stopped draining before every connection finished; the open ones are closed",
+                );
+            }
             lifecycle_sender.send_replace(Lifecycle::Forced);
             accept_loops.shutdown().await;
         }
 
-        if let Some(error) = root_error {
-            return Err(error.into());
-        }
-        match drain {
-            Drain::Complete => Ok(()),
-            Drain::TimedOut => Err(ServerError::ShutdownTimeout {
-                timeout: self.config.shutdown_timeout,
-            }
-            .into()),
-            Drain::Forced => Err(ServerError::ShutdownForced.into()),
-        }
+        root_error.map_or(Ok(stopped), |error| Err(error.into()))
     }
 
     /// Serves on a spawned task, as [`serve`](Self::serve) would, and
@@ -1093,7 +1106,7 @@ pub struct Running<C> {
     tls: bool,
     /// Never sent: dropping it is the trigger.
     trigger: oneshot::Sender<Infallible>,
-    task: JoinHandle<Result<()>>,
+    task: JoinHandle<Result<Stopped>>,
 }
 
 impl<C> Running<C> {
@@ -1119,25 +1132,31 @@ impl<C> Running<C> {
     }
 
     /// Begins graceful shutdown, unless the server already stopped, and waits
-    /// for it to end.
+    /// for it to end, returning what [`BoundServer::serve`] returns. A task
+    /// the runtime cancelled, as it does every task when it shuts down, is
+    /// [`Stopped::Forced`].
     ///
     /// # Errors
     ///
     /// Whatever [`BoundServer::serve`] reports, including a failure that
-    /// stopped the server before this was called. A task the runtime
-    /// cancelled, as it does every task when it shuts down, is reported as
-    /// [`ServerError::ShutdownForced`].
+    /// stopped the server before this was called.
     ///
     /// # Panics
     ///
     /// Where the serving task panicked, with its panic.
-    pub async fn shutdown(self) -> Result<()> {
+    pub async fn shutdown(self) -> Result<Stopped> {
         let Self { trigger, task, .. } = self;
         drop(trigger);
         match task.await {
             Ok(served) => served,
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
-            Err(_) => Err(ServerError::ShutdownForced.into()),
+            Err(_) => {
+                tracing::warn!(
+                    outcome = ?Stopped::Forced,
+                    "the runtime cancelled the serving task; its open connections are closed undrained",
+                );
+                Ok(Stopped::Forced)
+            }
         }
     }
 }

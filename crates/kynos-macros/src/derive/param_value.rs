@@ -1,7 +1,8 @@
 //! `#[derive(ParamValue)]`.
 //!
 //! A field-less enum's text form is the names the `Schema` derive gives its
-//! variants: `Display` writes the one serde writes, or for an identifier enum,
+//! variants: `UnitEnum::as_str`, which `Display` writes, returns the one serde
+//! writes, or for an identifier enum,
 //! which serde never writes, the one serde reads it by; `FromStr` reads every
 //! one serde reads, aliases included, which is the schema's `enum`. The
 //! `Schema` derive's refusals run first, so the names it would refuse never
@@ -11,6 +12,9 @@
 //! struct, or a one-field struct under `#[serde(transparent)]`. Both impls
 //! delegate to the field, whose type is bounded by `ParamValue`, so the
 //! wrapper carries one value only where what it wraps does.
+//!
+//! A `#[schema(string)]` type's text form is its own: it carries `FromStr`
+//! and `Display` already, so only the `ParamValue` impl is emitted.
 
 use quote::quote;
 use syn::{
@@ -18,9 +22,14 @@ use syn::{
     spanned::Spanned,
 };
 
-use crate::derive::schema::{attributes::serde_key_span, members::variant_wire_names};
+use crate::derive::schema::{
+    attributes::serde_key_span, container::declares_string, members::variant_wire_names,
+};
 
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
+    if declares_string(input) {
+        return Ok(string(input));
+    }
     let data = match &input.data {
         Data::Enum(data) => data,
         Data::Struct(data) => return newtype(input, data),
@@ -93,16 +102,27 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         quote!(#(#read)|* => ::core::result::Result::Ok(Self::#ident))
     });
     let expected = names.iter().flat_map(|(_, _, read)| read);
+    let every = variants.iter().map(|variant| &variant.ident);
 
     Ok(quote! {
         // The impls name the type, so a `#[deprecated]` type would otherwise
-        // warn at its own definition, as the `Schema` derive also allows.
+        // warn at its own definition, as the `Schema` derive also allows; so
+        // would a `#[deprecated]` variant every arm names.
+        #[allow(deprecated)]
+        impl #impl_generics ::kynos::schema::UnitEnum for #name #ty_generics #where_clause {
+            const VARIANTS: &'static [Self] = &[#(Self::#every),*];
+
+            fn as_str(&self) -> &'static str {
+                match self {
+                    #(#written,)*
+                }
+            }
+        }
+
         #[allow(deprecated)]
         impl #impl_generics ::core::fmt::Display for #name #ty_generics #where_clause {
             fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-                f.pad(match self {
-                    #(#written,)*
-                })
+                f.pad(::kynos::schema::UnitEnum::as_str(self))
             }
         }
 
@@ -123,6 +143,20 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         #[allow(deprecated)]
         impl #impl_generics ::kynos::schema::ParamValue for #name #ty_generics #where_clause {}
     })
+}
+
+/// The impl for a `#[schema(string)]` type, which is the promise alone: the
+/// type's own `FromStr` and `Display` already carry the string its schema
+/// describes, and the `Schema` derive requires both of them, so none is
+/// emitted here, nor any rule on what it declares.
+fn string(input: &DeriveInput) -> proc_macro2::TokenStream {
+    let name = &input.ident;
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    quote! {
+        // As for an enum: the impl names the type, which may be deprecated.
+        #[allow(deprecated)]
+        impl #impl_generics ::kynos::schema::ParamValue for #name #ty_generics #where_clause {}
+    }
 }
 
 /// The impls for a newtype, each delegating to its one field: a tuple

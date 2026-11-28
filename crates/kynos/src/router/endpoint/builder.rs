@@ -49,12 +49,14 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     method: Method,
     path: PathTemplate,
     handler: H,
-    operation_id: Option<&'static str>,
+    operation_id: Option<Named>,
     summary: Option<&'static str>,
     description: Option<&'static str>,
     tags: Vec<DeclaredTag>,
     deprecated: bool,
     public: bool,
+    /// The `operationId` of the `HEAD` this `GET` describes, if it does.
+    head: Option<Named>,
     /// Every interceptor this operation was given, outermost first.
     written: Vec<Arc<dyn ErasedInterceptor<C>>>,
     /// Those of `written` that cover this operation, which run and are
@@ -65,6 +67,15 @@ pub struct EndpointBuilder<C, H, A, P = Propagate, I = ()> {
     // is this operation's interceptor list, which `mount` checks.
     #[allow(clippy::type_complexity)]
     _private: PhantomData<fn() -> (C, H, A, P, I)>,
+}
+
+/// An `operationId`, and whether the application wrote it or a route attribute
+/// derived it, which only the router's
+/// [`OperationIdCase`](crate::router::operation::OperationIdCase) recases.
+#[derive(Clone, Copy, Debug)]
+enum Named {
+    Written(&'static str),
+    Derived(&'static str),
 }
 
 impl<C, H, A, P, I> std::fmt::Debug for EndpointBuilder<C, H, A, P, I> {
@@ -101,6 +112,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: Vec::new(),
             deprecated: false,
             public: false,
+            head: None,
             written: Vec::new(),
             interceptors: Vec::new(),
             _private: PhantomData,
@@ -119,6 +131,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
             tags: self.tags,
             deprecated: self.deprecated,
             public: self.public,
+            head: self.head,
             written: self.written,
             interceptors: self.interceptors,
             _private: PhantomData,
@@ -162,13 +175,22 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
         self.retype()
     }
 
-    /// Sets the operation identifier.
+    /// Sets the operation identifier, published exactly as written.
     ///
-    /// A route attribute defaults it to the handler's own name. Override it
-    /// only to keep a generated client's method name stable across a refactor.
+    /// A route attribute defaults it to the handler's own name, which the
+    /// router's [`OperationIdCase`](crate::router::operation::OperationIdCase)
+    /// may recase. Override it only to keep a generated client's method name
+    /// stable across a refactor.
     #[must_use]
     pub fn operation_id(mut self, id: &'static str) -> Self {
-        self.operation_id = Some(id);
+        self.operation_id = Some(Named::Written(id));
+        self
+    }
+
+    /// Sets an operation identifier a route attribute derived, which the
+    /// router's case recases.
+    pub(crate) fn derived_operation_id(mut self, id: &'static str) -> Self {
+        self.operation_id = Some(Named::Derived(id));
         self
     }
 
@@ -233,6 +255,7 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// # };
     /// # struct Tokens;
     /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+    /// #     type Error = AuthRejection;
     /// #     async fn authenticate(
     /// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
     /// #     ) -> Result<String, AuthRejection> {
@@ -272,6 +295,53 @@ impl<C, H: Handler<C, A>, A, P: PanicPolicy, I> EndpointBuilder<C, H, A, P, I> {
     /// which refuses a guarded handler in the attribute's words instead.
     pub(crate) fn declared_public(mut self) -> Self {
         self.public = true;
+        self
+    }
+
+    /// Describes the `HEAD` this `GET` already answers, as an operation of its
+    /// own named `operation_id`.
+    ///
+    /// A `GET` answers `HEAD` on its path whether or not this is called (RFC
+    /// 9110 section 9.3.2); this only puts that `HEAD` in the description, so
+    /// a client generated from it can call it. The `HEAD` is the `GET`'s
+    /// operation, its parameters, security and every response's headers
+    /// included, with no response carrying content and no range handling,
+    /// which is defined for `GET` alone (RFC 9110 section 14.2): no `Range` or
+    /// `If-Range` parameter and no 206 or 416. It runs the `GET`'s
+    /// handler under the same interceptors, which see it as `operation_id`,
+    /// published exactly as written.
+    /// `#[kynos::get(.., head)]` is the route attribute's spelling.
+    ///
+    /// Building refuses it on anything but a `GET`, as
+    /// [`RouterError::HeadWithoutGet`](crate::router::error::RouterError::HeadWithoutGet),
+    /// and on a path that also declares a `HEAD` operation, as
+    /// [`RouterError::HeadDescribedTwice`](crate::router::error::RouterError::HeadDescribedTwice).
+    ///
+    /// ```no_run
+    /// # use kynos::{openapi, router::endpoint::builder::EndpointBuilder};
+    /// async fn get_report() -> kynos::response::status::NoContent {
+    ///     kynos::response::status::NoContent
+    /// }
+    ///
+    /// let endpoint = EndpointBuilder::<(), _, _>::new(
+    ///     openapi::Method::Get,
+    ///     openapi::PathTemplate::parse("/report").expect("valid path"),
+    ///     get_report,
+    /// )
+    /// .operation_id("get_report")
+    /// .describe_head("head_report");
+    /// # let _ = endpoint;
+    /// ```
+    #[must_use]
+    pub fn describe_head(mut self, operation_id: &'static str) -> Self {
+        self.head = Some(Named::Written(operation_id));
+        self
+    }
+
+    /// [`describe_head`](EndpointBuilder::describe_head) under a name a bare
+    /// `head` derived, which the router's case recases.
+    pub(crate) fn describe_derived_head(mut self, operation_id: &'static str) -> Self {
+        self.head = Some(Named::Derived(operation_id));
         self
     }
 

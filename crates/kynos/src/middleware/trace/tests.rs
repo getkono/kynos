@@ -3,6 +3,7 @@ use std::{
     pin::{Pin, pin},
     sync::Arc,
     task::{Context, Poll, Waker},
+    time::Duration,
 };
 
 use super::{DEFAULT_CORRELATION, Level, REDACTED, SPAN_FIELDS, SpanCallsite, Trace, TraceSpan};
@@ -10,13 +11,24 @@ use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams, UnencodableHeader},
     http::{HeaderMap, HeaderValue, Request, Response, StatusCode, body::Body},
     middleware::{
-        Next, Observer,
+        Abandonment, Exchange, Next, Observer,
         erased::{ErasedInterceptor, ErasedTerminal},
         request_id::{CorrelationHeaders, RequestId, XRequestId},
     },
     router::operation::Route,
 };
 use kynos_openapi::Method;
+
+/// Hands `trace` the closing hook for `response`, answering a `GET` routed to
+/// `route` at once.
+fn respond(trace: &Trace, response: &Response, route: Option<Route<'_>>) {
+    let get = crate::http::Method::GET;
+    Observer::<()>::on_response(
+        trace,
+        &Exchange::new(&get, response, route, Duration::ZERO),
+        &(),
+    );
+}
 
 /// A header map from pairs.
 fn map(fields: &[(&str, &str)]) -> HeaderMap {
@@ -220,7 +232,7 @@ fn each_level_is_emitted_as_the_tracing_level_of_its_name() {
         let trace = Trace::new().level(level);
         let lines = captured(|| {
             Observer::<()>::on_request(&trace, &request, None, &());
-            Observer::<()>::on_response(&trace, &response, None, std::time::Duration::ZERO);
+            respond(&trace, &response, None);
         });
 
         let prefixes: Vec<&str> = lines
@@ -248,7 +260,7 @@ fn levels_of(trace: &Trace, status: StatusCode) -> Vec<String> {
 
     let lines = captured(|| {
         Observer::<()>::on_request(trace, &request, None, &());
-        Observer::<()>::on_response(trace, &response, None, std::time::Duration::ZERO);
+        respond(trace, &response, None);
     });
 
     lines
@@ -307,9 +319,7 @@ fn the_closing_event_carries_the_assigned_identifier() {
     );
     assert!(response.headers().get("x-request-id").is_none());
 
-    let lines = captured(|| {
-        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
-    });
+    let lines = captured(|| respond(&Trace::new(), &response, None));
 
     assert!(lines.contains("INFO"), "{lines}");
     assert!(lines.contains("response sent"), "{lines}");
@@ -324,34 +334,62 @@ fn the_closing_event_ignores_an_identifier_no_request_id_assigned() {
     let mut response = Response::new(Body::empty());
     *response.headers_mut() = map(&[("x-request-id", "forged")]);
 
-    let lines = captured(|| {
-        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
-    });
+    let lines = captured(|| respond(&Trace::new(), &response, None));
 
     assert!(lines.contains("request_id=\"\""), "{lines}");
 }
 
 /// The closing event names the matched operation's method, so it joins on its
-/// own, and the placeholder where nothing matched, so its shape never varies.
+/// own, and the request's where nothing matched, extension tokens included.
 #[test]
 fn the_closing_event_carries_the_method() {
     let response = crate::http::Response::new(crate::http::body::Body::empty());
     let route = Route::new("/users/{id}", "deleteUser", Method::Delete);
+    let purge = crate::http::Method::from_bytes(b"PURGE").expect("a method token");
 
-    let matched = captured(|| {
+    let matched = captured(|| respond(&Trace::new(), &response, Some(route)));
+    let unmatched = captured(|| {
         Observer::<()>::on_response(
             &Trace::new(),
-            &response,
-            Some(route),
-            std::time::Duration::ZERO,
+            &Exchange::new(&purge, &response, None, Duration::ZERO),
+            &(),
         );
-    });
-    let unmatched = captured(|| {
-        Observer::<()>::on_response(&Trace::new(), &response, None, std::time::Duration::ZERO);
     });
 
     assert!(matched.contains("method=DELETE "), "{matched}");
-    assert!(unmatched.contains("method=<unmatched> "), "{unmatched}");
+    assert!(unmatched.contains("method=PURGE "), "{unmatched}");
+}
+
+/// A request dropped before its response head closes with its own event, at
+/// the opening event's level whatever rule picks the closing one, naming the
+/// operation it was routed to, or the request's method where none matched.
+#[test]
+fn an_abandoned_request_closes_with_its_own_event() {
+    let trace = Trace::new().level(Level::Debug).level_for(by_status);
+    let route = Route::new("/users/{id}", "deleteUser", Method::Delete);
+    let post = crate::http::Method::POST;
+
+    let matched = captured(|| {
+        Observer::<()>::on_abandoned(
+            &trace,
+            &Abandonment::new(&crate::http::Method::DELETE, Some(route), Duration::ZERO),
+            &(),
+        );
+    });
+    let unmatched = captured(|| {
+        Observer::<()>::on_abandoned(&trace, &Abandonment::new(&post, None, Duration::ZERO), &());
+    });
+
+    assert_eq!(
+        matched,
+        "DEBUG kynos::middleware::trace: request abandoned method=DELETE \
+         matched_path=\"/users/{id}\" operation_id=\"deleteUser\" latency=0ns\n"
+    );
+    assert_eq!(
+        unmatched,
+        "DEBUG kynos::middleware::trace: request abandoned method=POST \
+         matched_path=\"<unmatched>\" operation_id=\"<unmatched>\" latency=0ns\n"
+    );
 }
 
 /// Several recorded headers go out as one field, joined in the order they
@@ -389,7 +427,8 @@ fn a_panic_is_reported_at_error_with_its_operation_and_message() {
     ];
 
     for (payload, message) in payloads {
-        let lines = captured(|| Observer::<()>::on_panic(&trace, payload.as_ref(), Some(route)));
+        let lines =
+            captured(|| Observer::<()>::on_panic(&trace, payload.as_ref(), Some(route), &()));
 
         assert_eq!(
             lines,
@@ -405,7 +444,7 @@ fn a_panic_is_reported_at_error_with_its_operation_and_message() {
 /// other events use, so its shape never varies.
 #[test]
 fn an_unmatched_panic_is_reported_under_the_placeholder() {
-    let lines = captured(|| Observer::<()>::on_panic(&Trace::new(), &"boom", None));
+    let lines = captured(|| Observer::<()>::on_panic(&Trace::new(), &"boom", None, &()));
 
     assert_eq!(
         lines,

@@ -946,7 +946,7 @@ mod checking {
     use crate::{
         __private::constraints::{aliased, is_multiple, max_length, minimum, unique_items},
         schema::{
-            MapKey, Schema,
+            MapKey, Nullable, Schema,
             constraints::{Items, Pointer, Textual, UniqueItems, Violations},
             registry::Registry,
         },
@@ -1187,6 +1187,38 @@ mod checking {
         assert!(violations.is_empty());
     }
 
+    /// A merge-patch member's bounds are its value's: one sent is checked as
+    /// `T` is, and one left out or sent as `null` breaks none, through the
+    /// member's own check and through each keyword trait alike.
+    #[test]
+    fn a_nullable_is_checked_only_when_it_holds_a_value() {
+        assert_eq!(located(&Nullable::Value(NonZero(0))), ["/v/inner"]);
+        assert!(failures(&Nullable::<NonZero>::Absent).is_empty());
+        assert!(failures(&Nullable::<NonZero>::Null).is_empty());
+
+        let long = |member: &Nullable<String>| {
+            let mut violations = Violations::new();
+            max_length(member, 1, Pointer::root(), &mut violations);
+            !violations.is_empty()
+        };
+        assert!(long(&Nullable::Value("ab".to_owned())));
+        assert!(!long(&Nullable::Null));
+        assert!(!long(&Nullable::Absent));
+
+        let small = |member: &Nullable<u8>| {
+            let mut violations = Violations::new();
+            minimum(member, 1.0, Pointer::root(), &mut violations);
+            !violations.is_empty()
+        };
+        assert!(small(&Nullable::Value(0)));
+        assert!(!small(&Nullable::Null));
+
+        assert_eq!(Nullable::Value(vec![1, 1]).item_count(), Some(2));
+        assert_eq!(Nullable::Value(vec![1, 1]).has_unique_items(), Some(false));
+        assert_eq!(Nullable::<Vec<u8>>::Null.item_count(), None);
+        assert_eq!(Nullable::<Vec<u8>>::Absent.has_unique_items(), None);
+    }
+
     #[test]
     fn the_first_report_at_a_location_is_the_one_kept() {
         let mut violations = Violations::new();
@@ -1284,4 +1316,88 @@ fn an_instantiation_is_named_from_every_argument_or_not_at_all() {
     );
     assert_eq!(mangled("Pair", &[named("User"), None]), None);
     assert_eq!(mangled("Pair", &[None, named("User")]), None);
+}
+
+/// `Nullable`'s three states, read from JSON as RFC 7396 §2 tells them apart,
+/// and the one schema it shares with `Option`.
+mod merge_patch {
+    use std::sync::Arc;
+
+    use crate::schema::{Nullable, Schema, constraints::ConstraintProblem};
+
+    use super::schema_of;
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Defaulted {
+        #[serde(default)]
+        notes: Nullable<String>,
+    }
+
+    #[derive(Debug, serde::Deserialize)]
+    struct Undefaulted {
+        notes: Nullable<String>,
+    }
+
+    fn read<T: serde::de::DeserializeOwned>(json: &str) -> T {
+        serde_json::from_str(json).expect("the patch reads")
+    }
+
+    #[test]
+    fn a_defaulted_member_reads_left_out_null_and_a_value_apart() {
+        assert_eq!(read::<Defaulted>("{}").notes, Nullable::Absent);
+        assert_eq!(read::<Defaulted>(r#"{"notes":null}"#).notes, Nullable::Null);
+        assert_eq!(
+            read::<Defaulted>(r#"{"notes":"hi"}"#).notes,
+            Nullable::Value("hi".to_owned())
+        );
+    }
+
+    /// serde hands a missing member to its type as `null`, so without a
+    /// default a member left out reads as one sent as `null`: the clearing a
+    /// patch never asked for, and why the derive refuses the form.
+    #[test]
+    fn an_undefaulted_member_left_out_reads_as_null() {
+        assert_eq!(read::<Undefaulted>("{}").notes, Nullable::Null);
+    }
+
+    #[test]
+    fn applying_a_member_follows_rfc_7396() {
+        let applied = |member: Nullable<u8>| {
+            let mut target = Some(1);
+            member.apply_to(&mut target);
+            target
+        };
+        assert_eq!(applied(Nullable::Absent), Some(1));
+        assert_eq!(applied(Nullable::Null), None);
+        assert_eq!(applied(Nullable::Value(2)), Some(2));
+    }
+
+    #[test]
+    fn a_nullable_is_described_and_answers_as_an_option_does() {
+        struct Limited;
+
+        impl Schema for Limited {
+            const CONSTRAINT_PROBLEM: Option<ConstraintProblem> = Some(ConstraintProblem::of_type(
+                "https://errors.example.com/limit",
+            ));
+
+            fn schema(registry: &mut crate::schema::registry::Registry) -> kynos_openapi::Schema {
+                u8::schema(registry)
+            }
+        }
+
+        assert_eq!(
+            schema_of::<Nullable<String>>(),
+            schema_of::<Option<String>>()
+        );
+        assert_eq!(
+            schema_of::<Nullable<Arc<u8>>>(),
+            schema_of::<Option<Arc<u8>>>()
+        );
+        assert_eq!(
+            Nullable::<Limited>::CONSTRAINT_PROBLEM,
+            Limited::CONSTRAINT_PROBLEM
+        );
+        assert_eq!(<Nullable<Limited> as Schema>::name(), None);
+    }
 }

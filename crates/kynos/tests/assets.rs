@@ -15,6 +15,10 @@ use kynos::{
 #[path = "support/mod.rs"]
 mod support;
 
+#[path = "support/inline.rs"]
+mod inline;
+
+use inline::inlined;
 use support::{get, send};
 
 kynos::assets! {
@@ -714,7 +718,7 @@ fn every_file_is_a_described_operation() {
 /// Each operation declares the five statuses it can produce, and no more.
 #[test]
 fn each_operation_declares_every_status_a_file_can_answer_with() {
-    let document = served().openapi().expect("a describable router");
+    let document = inlined(served().openapi().expect("a describable router"));
     let operation = document.paths.items["/static/css/app.css"]
         .get
         .as_ref()
@@ -851,6 +855,36 @@ fn every_operation_has_an_identifier_of_its_own() {
             "asset_docs_index_html",
             "asset_index",
             "asset_index_html",
+        ]
+    );
+}
+
+/// An asset's identifier is derived, so the router's case recases it as it
+/// does a handler's name.
+#[test]
+fn a_case_recases_every_asset_identifier() {
+    let document = served()
+        .operation_id_case(kynos::router::operation::OperationIdCase::LowerCamel)
+        .openapi()
+        .expect("a describable router");
+
+    let mut ids: Vec<&str> = document
+        .paths
+        .items
+        .values()
+        .filter_map(|item| item.get.as_ref())
+        .filter_map(|operation| operation.operation_id.as_deref())
+        .collect();
+    ids.sort_unstable();
+
+    assert_eq!(
+        ids,
+        [
+            "assetCssAppCss",
+            "assetDocs",
+            "assetDocsIndexHtml",
+            "assetIndex",
+            "assetIndexHtml",
         ]
     );
 }

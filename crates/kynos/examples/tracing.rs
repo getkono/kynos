@@ -55,15 +55,26 @@
 //!   or `on_disconnect` when
 //!   the client never received what was already logged as sent. Both are
 //!   defaulted like `on_panic`, and left out just as easily.
+//! * **`on_abandoned` is the other way a request ends.** A client that leaves
+//!   while the handler is still working gets no response at all, so
+//!   `on_response` never fires for it; `on_abandoned` does instead. Exactly one
+//!   of the two follows `on_request`, which is what lets an in-flight gauge
+//!   raised in one be lowered in the other.
 //!
 //! [`Route::path`]: kynos::router::operation::Route::path
 
-use std::{any::Any, collections::HashMap, net::Ipv4Addr, time::Duration};
+use std::{
+    any::Any,
+    collections::HashMap,
+    net::Ipv4Addr,
+    sync::atomic::{AtomicUsize, Ordering},
+    time::Duration,
+};
 
 use kynos::{
     http,
     middleware::{
-        Completion, Observer,
+        Abandonment, Completion, Exchange, Observer,
         request_id::{Random, RequestId},
         trace::{Level, Trace},
     },
@@ -90,12 +101,17 @@ const BUDGETS: &[(&str, Duration)] = &[
 /// anywhere in the description.
 struct Slo {
     budgets: HashMap<&'static str, Duration>,
+    /// Requests that arrived and have neither a response head nor been
+    /// abandoned: raised in `on_request`, lowered in `on_response` or
+    /// `on_abandoned`, whichever ends the request.
+    in_flight: AtomicUsize,
 }
 
 impl Slo {
     fn new() -> Self {
         Self {
             budgets: BUDGETS.iter().copied().collect(),
+            in_flight: AtomicUsize::new(0),
         }
     }
 }
@@ -103,6 +119,7 @@ impl Slo {
 impl<C> Observer<C> for Slo {
     fn on_request(&self, request: &http::Request, route: Option<Route<'_>>, context: &C) {
         let _ = context;
+        self.in_flight.fetch_add(1, Ordering::Relaxed);
         // `Route` is absent when nothing matched, and a request for a path this
         // service does not serve is the one a reader most wants in the log.
         let Some(route) = route else {
@@ -112,13 +129,14 @@ impl<C> Observer<C> for Slo {
         tracing::trace!(target: "slo", operation_id = route.operation_id(), "started");
     }
 
-    fn on_response(&self, response: &http::Response, route: Option<Route<'_>>, elapsed: Duration) {
-        let Some(route) = route else { return };
+    fn on_response(&self, exchange: &Exchange<'_>, _: &C) {
+        self.in_flight.fetch_sub(1, Ordering::Relaxed);
+        let Some(route) = exchange.route else { return };
         let Some(budget) = self.budgets.get(route.operation_id()) else {
             return;
         };
 
-        if elapsed > *budget {
+        if exchange.elapsed > *budget {
             // `matched_path` rather than the request's own path: bounded
             // cardinality, and it is the key a reader will grep the description
             // for.
@@ -126,15 +144,36 @@ impl<C> Observer<C> for Slo {
                 target: "slo",
                 operation_id = route.operation_id(),
                 matched_path = route.path(),
-                status = response.status().as_u16(),
-                elapsed_ms = elapsed.as_millis(),
+                status = exchange.response.status().as_u16(),
+                elapsed_ms = exchange.elapsed.as_millis(),
                 budget_ms = budget.as_millis(),
                 "over budget",
             );
         }
     }
 
-    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
+    fn on_abandoned(&self, abandonment: &Abandonment<'_>, _: &C) {
+        // No response head was ever produced, so `on_response` never fires for
+        // this request: the gauge `on_request` raised is lowered here instead,
+        // or it would only ever climb. A client that gave up on a slow handler
+        // is also an overrun nobody saw a response for.
+        let in_flight = self
+            .in_flight
+            .fetch_sub(1, Ordering::Relaxed)
+            .saturating_sub(1);
+        tracing::info!(
+            target: "slo",
+            method = %abandonment.method,
+            operation_id = abandonment
+                .route
+                .map_or("<unmatched>", |route| route.operation_id()),
+            elapsed_ms = abandonment.elapsed.as_millis(),
+            in_flight,
+            "client left before any response",
+        );
+    }
+
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion, _: &C) {
         // The delivered figures a bytes-sent or full-latency metric records:
         // `body_bytes` counts the content octets after any content coding,
         // without transfer framing or trailers.
@@ -147,7 +186,7 @@ impl<C> Observer<C> for Slo {
         );
     }
 
-    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: Duration) {
+    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: Duration, _: &C) {
         // Not a budget overrun: the operation may have been well inside its
         // budget and the client simply left. Recorded at `info` rather than
         // `warn` for that reason -- a cancelled download is ordinary traffic,
@@ -161,7 +200,7 @@ impl<C> Observer<C> for Slo {
         );
     }
 
-    fn on_panic(&self, payload: &(dyn Any + Send), route: Option<Route<'_>>) {
+    fn on_panic(&self, payload: &(dyn Any + Send), route: Option<Route<'_>>, _: &C) {
         // The payload is whatever was passed to `panic!`, so the two common
         // shapes are worth unwrapping before falling back to nothing.
         let message = payload
@@ -271,5 +310,6 @@ async fn main() -> kynos::Result<()> {
     Server::new(router.build(())?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
-        .await
+        .await?;
+    Ok(())
 }

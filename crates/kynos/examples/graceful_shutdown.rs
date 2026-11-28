@@ -31,24 +31,24 @@
 //!   seconds sits under the 30-second termination window orchestrators
 //!   conventionally allow. Raising it past that window buys nothing: the process
 //!   is killed at the shorter of the two, and the drain never reaches its own
-//!   deadline to report [`ServerError::ShutdownTimeout`].
+//!   deadline to report [`Stopped::TimedOut`].
 //! * **`prepare` separates binding from serving.** Every listener is bound
 //!   before any is served, so an address already in use fails before traffic
 //!   arrives rather than after half the sockets are live. It is also the only
 //!   way to learn which port the operating system chose when you asked for zero.
-//! * **An incomplete drain is an error, but not a failure.** `serve` reports a
-//!   drain it was not allowed to complete as an `Err`, so no abandoned work
-//!   goes unnoticed;
-//!   [`ServerError::is_requested_shutdown`] is how `main` exits cleanly anyway.
+//! * **An incomplete drain is not a failure.** `serve` returns a requested
+//!   shutdown as `Ok` however its drain ended, so `?` exits cleanly; the
+//!   [`Stopped`] it carries says whether work was cut short, so none goes
+//!   unnoticed.
 //!
-//! [`ServerError::ShutdownTimeout`]: kynos::server::error::ServerError::ShutdownTimeout
-//! [`ServerError::is_requested_shutdown`]: kynos::server::error::ServerError::is_requested_shutdown
+//! [`Stopped`]: kynos::server::lifecycle::Stopped
+//! [`Stopped::TimedOut`]: kynos::server::lifecycle::Stopped::TimedOut
 
 use std::{env, net::Ipv4Addr, num::NonZeroUsize, time::Duration};
 
 use kynos::{
     prelude::*,
-    server::{Server, shutdown::Shutdown},
+    server::{Server, lifecycle::Stopped, shutdown::Shutdown},
 };
 
 /// An operation slow enough that the drain is observable rather than asserted.
@@ -137,14 +137,12 @@ async fn main() -> kynos::Result<()> {
         println!("listening on http://{address}");
     }
 
-    match bound.serve().await {
-        // A drain ended by its deadline or a second signal is still the
-        // stop this process asked for. Exiting non-zero for it would have a
-        // supervisor that restarts on failure restart a service told to stop.
-        Err(kynos::Error::Server(error)) if error.is_requested_shutdown() => {
-            eprintln!("{error}");
-            Ok(())
-        }
-        outcome => outcome,
+    // `?` fails only on a real failure: a drain ended by its deadline or a
+    // second signal is still the stop this process asked for, so it exits
+    // zero, and a supervisor that restarts on failure leaves it stopped.
+    match bound.serve().await? {
+        Stopped::Drained => println!("every request finished"),
+        stopped => eprintln!("the drain was cut short: {stopped:?}"),
     }
+    Ok(())
 }

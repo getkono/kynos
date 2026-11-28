@@ -30,8 +30,8 @@ use core::convert::Infallible;
 use kynos::{
     HeaderParams, PathParams, QueryParams, Schema,
     error::rejection::{
-        AuthRejection, BodyRejection, ConnectInfoRejection, HeaderRejection, NegotiationRejection,
-        PathRejection, QueryRejection,
+        AuthRejection, BodyRejection, ConnectInfoRejection, GuardRejection, HeaderRejection,
+        NegotiationRejection, PathRejection, QueryRejection,
     },
     extract::{
         FromRequest, FromRequestParts,
@@ -367,26 +367,55 @@ witnesses! {
     /// them, which is the property that keeps an unauthenticated endpoint from
     /// advertising a challenge it will never send. `MaybeAuth` too: a
     /// credential that is present and wrong is a 401 there as much as here, so
-    /// it raises the same rejection rather than a weaker one.
+    /// it raises the same rejection rather than a weaker one. `Scoped` as well:
+    /// its scope set narrows what the guard declares, not what it raises.
     fn an_authenticated_extractor_rejects_with_the_auth_type {
-        guard_rejects_with(AuthRejection, App, Auth<Bearer<Claims>>);
-        guard_rejects_with(AuthRejection, App, MaybeAuth<Bearer<Claims>>);
+        guard_rejects_with(GuardRejection, App, Auth<Bearer<Claims>>);
+        guard_rejects_with(GuardRejection, App, MaybeAuth<Bearer<Claims>>);
+        guard_rejects_with(GuardRejection, App, Scoped<Bearer<Claims, Grant>, ReadReports>);
     }
 
-    /// `Scoped` is the one guard whose rejection names its scope set.
-    ///
-    /// The same two failures, wrapped: `Responses` is reached through the
-    /// rejection type, so the scope set's `FORBIDDEN_TYPE` has to be readable
-    /// from there or the wide 403 `AuthRejection` declares wins the union and
-    /// the narrowing reaches no document. Pinned here because widening it back
-    /// to `AuthRejection` compiles everywhere else and silently un-narrows
-    /// every scoped operation.
-    fn a_scoped_extractor_rejects_with_its_scope_sets_rejection {
-        guard_rejects_with(
-            kynos::error::rejection::ScopedRejection<ReadReports>,
-            App,
-            Scoped<Bearer<Claims, Grant>, ReadReports>
-        );
+    /// A guard raises the error its authenticator names, so an application's
+    /// own failure reaches the wire as that error rather than as one of the
+    /// guard's three statuses.
+    fn a_guard_rejects_with_its_authenticators_error {
+        guard_rejects_with(GuardRejection<LookupError>, Lookups, Auth<Bearer<Claims>>);
+        guard_rejects_with(GuardRejection<LookupError>, Lookups, MaybeAuth<Bearer<Claims>>);
+    }
+}
+
+/// An authenticator's own error: the guard's refusals, and a 500.
+#[derive(Debug, thiserror::Error, kynos::ApiError)]
+enum LookupError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+
+    #[error("the credential could not be looked up")]
+    #[problem(status = 500)]
+    Failed,
+}
+
+struct Lookups;
+
+impl Authenticator<Bearer<Claims>, Lookups> for Lookups {
+    type Error = LookupError;
+
+    async fn authenticate(
+        &self,
+        presented: Presented<BearerToken>,
+        head: Head<'_>,
+        context: &Self,
+    ) -> Result<Claims, LookupError> {
+        let _ = (presented, head, context);
+        Err(LookupError::Failed)
+    }
+}
+
+impl Authenticates<Bearer<Claims>> for Lookups {
+    type Authenticator = Self;
+
+    fn authenticator(&self) -> &Self {
+        self
     }
 }
 
@@ -395,6 +424,8 @@ struct Claims;
 struct Tokens;
 
 impl<C: Sync, P: Scope> Authenticator<Bearer<Claims, P>, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,

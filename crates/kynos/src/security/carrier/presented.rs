@@ -171,8 +171,9 @@ impl std::error::Error for Malformed {}
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum MalformedReason {
-    /// A credential field the request sent more than once: choosing either
-    /// would let an appending proxy pick the credential.
+    /// A credential field the request sent more than once, as two header
+    /// fields or two query pairs naming an API key: choosing either would let
+    /// an appending proxy pick the credential.
     Repeated,
     /// A credential field whose value is not text: not visible ASCII for a
     /// header field or a cookie, not UTF-8 once a query value is decoded.

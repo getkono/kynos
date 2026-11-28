@@ -47,8 +47,8 @@ impl Transparent {
                 <#ty as ::kynos::__private::problem::HeldError>::STATUSES
             },
             Some(of) => {
-                let item = super::subset::statuses_of(of);
-                quote!(<#ty>::#item)
+                let item = super::subset::handle_of(of);
+                quote!(<#ty>::#item.0)
             }
         }
     }
@@ -119,10 +119,7 @@ fn report(failures: &[&Failure], delegates: &[&Transparent]) -> TokenStream2 {
     let arms = server.iter().map(|failure| {
         let path = &failure.path;
         let status = failure.status;
-        let uri = failure
-            .type_uri
-            .as_ref()
-            .map_or_else(|| quote!("about:blank"), |uri| quote!(#uri));
+        let uri = super::type_uri::carried(failure.type_uri.as_ref());
         quote! {
             #path { .. } => (&::kynos::__private::problem::Failed(&self)).report(#status, #uri),
         }

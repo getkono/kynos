@@ -5,15 +5,22 @@
 //! where a reader meets them. What is left here is what no declaration reaches
 //! as readably: two failures publishing one type, the constants they union
 //! and the unions that stay an `anyOf`, two sharing one summary, a status
-//! whose failures gave no summary at all, and a status with no failure
-//! answering it -- which no caller can emit and this refuses.
+//! whose failures gave no summary at all, which titles a status whose
+//! description the declaration wrote keeps, which untitled lone branch is
+//! titled before a written description replaces its own, the title failures
+//! sharing one URI give their lone branch either way, and a status with no
+//! failure answering it -- which no caller can emit and this refuses.
 //!
 //! One case is about the wire rather than a declaration: an extension keyed
-//! like a registered member, which the hand-written `Serialize` drops.
+//! like a registered member, which the hand-written `Serialize` drops. Another
+//! sets a refusal's declaration beside what it sends: a `ProblemType` naming
+//! `about:blank` under a policy that names the refusal's identity.
 
 use serde_json::Value;
 
-use crate::error::problem::{Branch, Member, constant, narrowed_response};
+use crate::error::problem::{
+    Branch, Member, constant, narrowed_response, title_lone_branch, written_response,
+};
 
 /// The `Problem` component, as `Registry::resolve` hands it over.
 fn component() -> kynos_openapi::Schema {
@@ -32,6 +39,12 @@ fn declared(status: u16, branches: &[(Option<&'static str>, Option<&'static str>
 /// The schema one status declares, as JSON.
 fn declared_with(status: u16, branches: &[Branch<'_>]) -> Value {
     let response = narrowed_response(&component(), status, branches);
+    serde_json::to_value(response).expect("a response serializes")
+}
+
+/// The schema a status declares under the description `described`, as JSON.
+fn written(described: &str, branches: &[Branch<'_>]) -> Value {
+    let response = written_response(&component(), 403, Some(described), branches);
     serde_json::to_value(response).expect("a response serializes")
 }
 
@@ -241,6 +254,175 @@ fn one_summary_two_failures_share_is_written_once() {
     assert_eq!(response["description"], serde_json::json!("Not found"));
 }
 
+/// A description the declaration wrote replaces the joined summaries, and a
+/// lone branch then keeps its summary as its title, since the description no
+/// longer says it; with several, each branch keeps its own as before.
+#[test]
+fn a_written_description_replaces_the_summaries_and_frees_a_lone_title() {
+    let rejected = (
+        Some("https://errors.example.com/cross-origin"),
+        Some("Cross-origin request rejected"),
+        &[][..],
+    );
+    let malformed = (
+        Some("https://errors.example.com/malformed-origin"),
+        Some("Malformed Origin header"),
+        &[][..],
+    );
+
+    let lone = written("The request's origin is not allowed", &[rejected]);
+    assert_eq!(
+        lone["description"],
+        serde_json::json!("The request's origin is not allowed")
+    );
+    assert_eq!(
+        lone["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Cross-origin request rejected"),
+        "{lone}"
+    );
+
+    let several = written(
+        "The request's origin is not allowed",
+        &[rejected, malformed],
+    );
+    assert_eq!(
+        several["description"],
+        serde_json::json!("The request's origin is not allowed")
+    );
+    let titles: Vec<&Value> = several["content"]["application/problem+json"]["schema"]["oneOf"]
+        .as_array()
+        .expect("two types are a `oneOf`")
+        .iter()
+        .map(|branch| &branch["title"])
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            &serde_json::json!("Cross-origin request rejected"),
+            &serde_json::json!("Malformed Origin header"),
+        ]
+    );
+
+    // Without one, the lone title stays off: the description already says it.
+    let composed = declared_with(403, &[rejected]);
+    assert_eq!(
+        composed["content"]["application/problem+json"]["schema"]["title"],
+        Value::Null
+    );
+}
+
+/// Before an enum's written description replaces a held error's, a lone
+/// branch that error left untitled takes the description that said its title;
+/// a lone branch already titled, the branches of a `oneOf`, and a schema that
+/// narrows nothing keep what they declare.
+#[test]
+fn a_lone_branch_is_titled_by_the_description_about_to_be_replaced() {
+    let unknown = (
+        Some("https://errors.example.com/unknown"),
+        Some("Unknown origin"),
+        &[][..],
+    );
+    let malformed = (
+        Some("https://errors.example.com/malformed-origin"),
+        Some("Malformed Origin header"),
+        &[][..],
+    );
+    let titled = |mut response: kynos_openapi::Response| {
+        title_lone_branch(&mut response);
+        serde_json::to_value(response).expect("a response serializes")
+    };
+
+    let lone = titled(narrowed_response(&component(), 404, &[unknown]));
+    assert_eq!(
+        lone["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Unknown origin"),
+        "{lone}"
+    );
+
+    let written = titled(written_response(
+        &component(),
+        404,
+        Some("No such origin is registered"),
+        &[unknown],
+    ));
+    assert_eq!(
+        written["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Unknown origin"),
+        "{written}"
+    );
+
+    let several = narrowed_response(&component(), 404, &[unknown, malformed]);
+    assert_eq!(
+        titled(several.clone()),
+        serde_json::to_value(several).expect("a response serializes")
+    );
+
+    let unnarrowed = kynos_openapi::Response::with_content(
+        "Not Found",
+        "application/problem+json",
+        kynos_openapi::MediaType::new(component()),
+    );
+    assert_eq!(
+        titled(unnarrowed.clone()),
+        serde_json::to_value(unnarrowed).expect("a response serializes")
+    );
+}
+
+/// Two failures publishing one URI are one lone branch, titled by the first
+/// summary either gave whether or not a description is written over the one
+/// their summaries compose, and whether or not a written one is still to come:
+/// a description joining two summaries says neither as the branch's title.
+#[test]
+fn a_shared_uri_lone_branch_is_titled_by_its_first_summary() {
+    const URI: Option<&str> = Some("https://errors.example.com/unknown");
+    let title = |response: &kynos_openapi::Response| {
+        let response = serde_json::to_value(response).expect("a response serializes");
+        response["content"]["application/problem+json"]["schema"]["title"].clone()
+    };
+    let titled = |mut response: kynos_openapi::Response| {
+        title_lone_branch(&mut response);
+        response
+    };
+    let described = Some("No such origin is registered");
+
+    let differing: [Branch<'_>; 2] = [
+        (URI, Some("Unknown origin"), &[]),
+        (URI, Some("Unregistered origin"), &[]),
+    ];
+    let composed = narrowed_response(&component(), 404, &differing);
+    assert_eq!(
+        composed.description.as_deref(),
+        Some("Unknown origin; Unregistered origin")
+    );
+    for response in [
+        composed.clone(),
+        titled(composed),
+        written_response(&component(), 404, described, &differing),
+        titled(written_response(&component(), 404, described, &differing)),
+    ] {
+        assert_eq!(title(&response), serde_json::json!("Unknown origin"));
+    }
+
+    // The first failure gave none, so the first summary is the second's,
+    // which the composed description already says.
+    let unsummarized_first: [Branch<'_>; 2] =
+        [(URI, None, &[]), (URI, Some("Unregistered origin"), &[])];
+    let composed = narrowed_response(&component(), 404, &unsummarized_first);
+    assert_eq!(title(&composed), Value::Null);
+    for response in [
+        titled(composed),
+        written_response(&component(), 404, described, &unsummarized_first),
+        titled(written_response(
+            &component(),
+            404,
+            described,
+            &unsummarized_first,
+        )),
+    ] {
+        assert_eq!(title(&response), serde_json::json!("Unregistered origin"));
+    }
+}
+
 /// A status with no failure answering it is not a narrowing of anything, and
 /// neither caller can produce one. A caller that does is told, rather than
 /// handed the unnarrowed component and left to read it as a narrowed one.
@@ -339,4 +521,81 @@ fn the_one_of_rests_on_problem_requiring_its_type() {
          matches every `oneOf` branch at once and the narrowing refuses a \
          document Problem calls valid"
     );
+}
+
+/// A marker naming `about:blank`, the type RFC 9457 section 4.2.1 says names
+/// no type.
+struct Blank;
+
+impl crate::error::problem::ProblemType for Blank {
+    const TYPE_URI: Option<&'static str> = Some(crate::error::problem::ABOUT_BLANK);
+}
+
+/// A policy naming the identity of an interceptor's 413.
+struct Oversized;
+
+impl crate::error::members::ProblemPolicy for Oversized {
+    type Members = ();
+
+    fn identity(
+        origin: crate::error::members::ProblemOrigin,
+        status: crate::http::StatusCode,
+    ) -> Option<crate::error::members::ProblemIdentity> {
+        (origin == crate::error::members::ProblemOrigin::Refusal
+            && status == crate::http::StatusCode::PAYLOAD_TOO_LARGE)
+            .then(|| crate::error::members::ProblemIdentity::new("urn:test:oversized", "Send less"))
+    }
+
+    fn members(_: &crate::error::members::ProblemCx<'_>) {}
+}
+
+/// A refusal naming `about:blank` is sent under the policy's identity, as one
+/// naming no type is, so it declares that identity too: a body whose `type`
+/// the declared `const` refuses is the drift RFC 9457 section 3.2 rules out.
+#[tokio::test]
+async fn an_about_blank_refusal_declares_the_identity_it_is_sent_with() {
+    use http_body_util::BodyExt;
+
+    use crate::{
+        error::{
+            members::{Hook, refused},
+            problem::{refusal_problem, served_refusal_response},
+        },
+        http::StatusCode,
+        schema::registry::Registry,
+    };
+
+    let mut registry = Registry::new();
+    Hook::declare(Some(Hook::of::<Oversized>()), &mut registry);
+    let status = StatusCode::PAYLOAD_TOO_LARGE;
+    let blank = served_refusal_response::<Blank>(&mut registry, status, "too large", true);
+    let blank = serde_json::to_value(blank).expect("a response serializes");
+    let untyped = served_refusal_response::<()>(&mut registry, status, "too large", true);
+    let untyped = serde_json::to_value(untyped).expect("a response serializes");
+
+    let sent = refused(
+        refusal_problem::<Blank>(status),
+        Some(Hook::of::<Oversized>().policy),
+        |_| {},
+    );
+    let bytes = sent
+        .into_body()
+        .collect()
+        .await
+        .expect("a readable body")
+        .to_bytes();
+    let sent: Value = serde_json::from_slice(&bytes).expect("a JSON body");
+
+    let schema = "/content/application~1problem+json/schema";
+    assert_eq!(sent["type"], "urn:test:oversized");
+    assert_eq!(
+        blank.pointer(&format!("{schema}/allOf/1/properties/type/const")),
+        Some(&sent["type"]),
+        "declared {blank:#}"
+    );
+    assert_eq!(
+        blank.pointer(&format!("{schema}/title")),
+        Some(&sent["title"])
+    );
+    assert_eq!(blank, untyped);
 }

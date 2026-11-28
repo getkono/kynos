@@ -1,0 +1,29 @@
+error[E0277]: `NotAPathInput` is neither a path parameter group nor one path value
+ --> tests/ui/traits/path_input.rs:9:17
+  |
+9 |     extracted::<NotAPathInput>();
+  |                 ^^^^^^^^^^^^^ not extractable from the path
+  |
+help: the trait `ParamValue` is not implemented for `NotAPathInput`
+ --> tests/ui/traits/path_input.rs:4:1
+  |
+4 | struct NotAPathInput;
+  | ^^^^^^^^^^^^^^^^^^^^
+  = note: `Path<T>` takes a group deriving `kynos::PathParams`, whose fields name the template's variables, or one `kynos::schema::ParamValue`, which reads a template's lone variable
+  = note: a group implementing `PathParams` by hand binds its names as the derive does: add `impl PathInput for NotAPathInput { type Binding = Named<Self>; }`, both from `kynos::extract::params::path`
+  = help: the following other types implement trait `ParamValue`:
+            IpAddr
+            Ipv4Addr
+            Ipv6Addr
+            bool
+            char
+            chrono::naive::date::NaiveDate
+            chrono::naive::time::NaiveTime
+            f32
+          and $N others
+  = note: required for `NotAPathInput` to implement `PathInput`
+note: required by a bound in `extracted`
+ --> tests/ui/traits/path_input.rs:6:17
+  |
+6 | fn extracted<T: kynos::extract::params::path::PathInput>() {}
+  |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ required by this bound in `extracted`

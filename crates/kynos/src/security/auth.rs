@@ -12,10 +12,11 @@ use kynos_openapi::{
 };
 
 use crate::{
-    error::rejection::{AuthRejection, ScopedRejection, auth_responses},
+    error::rejection::{AuthRejection, GuardRejection, auth_responses, guard_error_responses},
     extract::describe::Describe,
     http::{HeaderValue, Parts, StatusCode},
     router::operation::OperationCx,
+    schema::registry::Registry,
     security::{
         Guard, Scope,
         requirement::{self, CheckedBy, Requirement, Scopable, ScopeCheckedBy},
@@ -112,17 +113,22 @@ credential_traits! {
 }
 
 impl<S: Requirement> Describe for Auth<S> {
-    /// Declares its 403, where [`Requirement::FORBIDS`] holds for `S`, as the
-    /// shared, un-narrowed `Problem` component, since the authorizer may refuse
+    /// Declares its 403, where [`Requirement::FORBIDS`] holds for `S`,
+    /// narrowed to [`Requirement::forbidden_type`]: the shared, un-narrowed
+    /// `Problem` component unless every member of `S` is a
+    /// [`Scoped<S, R>`](Scoped) whose sets name one
+    /// [`Scopes::FORBIDDEN_TYPE`], since a bare scheme's authorizer may refuse
     /// with any problem type.
-    ///
-    /// The type on a narrowed 403 is [`Scopes::FORBIDDEN_TYPE`], and this
-    /// argument names no scope set; [`Scoped`] is the guard that does.
     fn describe(operation: &mut OperationCx<'_>) {
-        let security = S::declare(operation);
-        declare_reads::<S>(operation, false);
-        declare_unscoped::<S>(operation, security);
+        describe_auth::<S>(operation, error_responses::<AuthRejection>());
     }
+}
+
+/// [`Auth<S>`]'s description, declaring `own` beside its refusals.
+fn describe_auth<S: Requirement>(operation: &mut OperationCx<'_>, own: ErrorResponses) {
+    let security = S::declare(operation);
+    declare_reads::<S>(operation, false);
+    declare_requirement::<S>(operation, security, own);
 }
 
 impl<S: Requirement> sealed::Sealed for Auth<S> {}
@@ -132,14 +138,18 @@ where
     C: Sync,
     S: CheckedBy<C>,
 {
-    type Rejection = AuthRejection;
+    type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
+
+    fn __describe(operation: &mut OperationCx<'_>) {
+        describe_auth::<S>(operation, error_responses::<<S as CheckedBy<C>>::Error>());
+    }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
         // The challenge is attached here so it is the string `describe`
         // declared; an absent credential is `Auth`'s own 401.
         S::check(parts, context)
             .await
-            .and_then(|checked| checked.ok_or_else(AuthRejection::unauthenticated))
+            .and_then(|checked| checked.ok_or_else(GuardRejection::unauthenticated))
             .map(Self)
             .map_err(|rejection| rejection.with_challenge(S::challenge()))
     }
@@ -186,16 +196,20 @@ credential_traits! {
 }
 
 impl<S: Requirement> Describe for MaybeAuth<S> {
-    /// Declares its 403, where [`Requirement::FORBIDS`] holds for `S`, as the
-    /// shared, un-narrowed `Problem` component: naming no scope set, it has no
-    /// [`Scopes::FORBIDDEN_TYPE`] to narrow it to.
+    /// Declares its 403 as [`Auth`] does, narrowed to
+    /// [`Requirement::forbidden_type`].
     fn describe(operation: &mut OperationCx<'_>) {
-        let mut security = vec![SecurityRequirement::anonymous()];
-        security.extend(S::declare(operation));
-        // An anonymous request reads none of them.
-        declare_reads::<S>(operation, true);
-        declare_unscoped::<S>(operation, security);
+        describe_maybe_auth::<S>(operation, error_responses::<AuthRejection>());
     }
+}
+
+/// [`MaybeAuth<S>`]'s description, declaring `own` beside its refusals.
+fn describe_maybe_auth<S: Requirement>(operation: &mut OperationCx<'_>, own: ErrorResponses) {
+    let mut security = vec![SecurityRequirement::anonymous()];
+    security.extend(S::declare(operation));
+    // An anonymous request reads none of them.
+    declare_reads::<S>(operation, true);
+    declare_requirement::<S>(operation, security, own);
 }
 
 impl<S: Requirement> sealed::Sealed for MaybeAuth<S> {}
@@ -205,7 +219,11 @@ where
     C: Sync,
     S: CheckedBy<C>,
 {
-    type Rejection = AuthRejection;
+    type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
+
+    fn __describe(operation: &mut OperationCx<'_>) {
+        describe_maybe_auth::<S>(operation, error_responses::<<S as CheckedBy<C>>::Error>());
+    }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
         // Absent is anonymity; malformed and present are the authenticator's.
@@ -223,6 +241,10 @@ where
 /// [`Scoped<S, R>`](Scoped) argument holds to the
 /// [`SecurityScheme::Scope`](crate::security::SecurityScheme::Scope) of every
 /// scheme `S` names: a set written against another type does not compile.
+///
+/// `#[derive(kynos::Scopes)]` writes the implementation from
+/// `#[scopes(Grant::Admin, forbidden = URI)]`, the `Scope` type read from the
+/// path each scope is named under. Written by hand:
 ///
 /// ```
 /// use kynos::security::{Scope, auth::Scopes};
@@ -293,11 +315,14 @@ pub trait Scopes: Send + Sync + 'static {
     /// That every 403 a `Scoped<S, R>` argument produces carries this URI or
     /// `about:blank` — the whole guard, so an
     /// [`Authenticator::authenticate`](crate::security::Authenticator::authenticate)
-    /// refusing with a *third* URI breaks it too. The type system does not hold
-    /// it; the conformance harness checks it.
+    /// refusing with a *third* URI breaks it too. Written as a combinator's
+    /// member, it promises the same of every refusal that member's scheme
+    /// produces. The type system does not hold it; the conformance harness
+    /// checks it.
     ///
-    /// [`Auth<S>`](Auth) and [`MaybeAuth<S>`](MaybeAuth) name no scope set and
-    /// have no counterpart.
+    /// [`Auth<S>`](Auth) and [`MaybeAuth<S>`](MaybeAuth) narrow their 403 to
+    /// it only where every member of `S` is scoped by a set naming this URI,
+    /// [`Requirement::forbidden_type`]: a bare scheme promises nothing.
     const FORBIDDEN_TYPE: Option<&'static str> = None;
 }
 
@@ -311,6 +336,14 @@ pub trait Scopes: Send + Sync + 'static {
 /// schemes sharing one scope type, which demands the set of whichever
 /// alternative authenticates and declares it on each: `[{A: [r]}, {B: [r]}]`.
 /// [`Scopable`] is what admits the two.
+///
+/// Written inside a combinator instead, `Scoped<S, R>` is a
+/// [`Member`](crate::security::requirement::Member), and demands `R` of that
+/// one scheme: `Auth<AnyOf<(A, Scoped<B, R>)>>` declares `[{A: []}, {B: [r]}]`.
+/// A guard over it is [`Auth`] or [`MaybeAuth`], whose 403 narrows to
+/// [`Scopes::FORBIDDEN_TYPE`] only where every member names that one type,
+/// so `Auth<AnyOf<(Scoped<A, R>, Scoped<B, R>)>>` describes exactly what
+/// `Scoped<AnyOf<(A, B)>, R>` does; the latter is the shorter spelling.
 ///
 /// The scope set is a type implementing [`Scopes`], since a slice is not a
 /// permitted const parameter type, and its [`Scope`](Scopes::Scope) must be
@@ -418,21 +451,29 @@ impl<S: Scopable, R: Scopes<Scope = S::Scope>> Scoped<S, R> {
 
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> Describe for Scoped<S, R> {
     fn describe(operation: &mut OperationCx<'_>) {
-        let security = S::declare_scoped(operation, R::REQUIRED);
-        declare_reads::<S>(operation, false);
-        // `Scoped` always authorizes, so each scheme may always refuse a scope.
-        let challenges = Challenges {
-            unauthenticated: S::challenge(),
-            insufficient_scope: S::scope_challenge(),
-        };
-        // Nor can a scheme that never forbids drop the 403 a scope refusal is.
-        let refusals = Refusals {
-            forbidden_type: R::FORBIDDEN_TYPE,
-            forbids: true,
-            unavailable: S::MAY_BE_UNAVAILABLE,
-        };
-        declare(operation, challenges, security, refusals);
+        describe_scoped::<S, R>(operation, error_responses::<AuthRejection>());
     }
+}
+
+/// [`Scoped<S, R>`]'s description, declaring `own` beside its refusals.
+fn describe_scoped<S: Scopable, R: Scopes<Scope = S::Scope>>(
+    operation: &mut OperationCx<'_>,
+    own: ErrorResponses,
+) {
+    let security = S::declare_scoped(operation, R::REQUIRED);
+    declare_reads::<S>(operation, false);
+    // `Scoped` always authorizes, so each scheme may always refuse a scope.
+    let challenges = Challenges {
+        unauthenticated: S::challenge(),
+        insufficient_scope: S::scope_challenge(),
+    };
+    // Nor can a scheme that never forbids drop the 403 a scope refusal is.
+    let refusals = Refusals {
+        forbidden_type: R::FORBIDDEN_TYPE,
+        forbids: true,
+        unavailable: S::MAY_BE_UNAVAILABLE,
+    };
+    declare(operation, challenges, security, refusals, own);
 }
 
 impl<S: Scopable, R: Scopes<Scope = S::Scope>> sealed::Sealed for Scoped<S, R> {}
@@ -443,22 +484,49 @@ where
     S: ScopeCheckedBy<C>,
     R: Scopes<Scope = S::Scope>,
 {
-    /// [`AuthRejection`] described against `R`, which is what narrows the 403
-    /// this argument declares.
-    type Rejection = ScopedRejection<R>;
+    type Rejection = GuardRejection<<S as CheckedBy<C>>::Error>;
+
+    fn __describe(operation: &mut OperationCx<'_>) {
+        describe_scoped::<S, R>(operation, error_responses::<<S as CheckedBy<C>>::Error>());
+    }
 
     async fn guard(parts: &Parts, context: &C) -> Result<Self, Self::Rejection> {
         // Every refusal is challenged: an `authorize` answering 401 owes one
         // too. An absent credential is `Scoped`'s own 401.
         S::check_scoped(parts, context, R::REQUIRED)
             .await
-            .and_then(|checked| checked.ok_or_else(AuthRejection::unauthenticated))
+            .and_then(|checked| checked.ok_or_else(GuardRejection::unauthenticated))
             .map(|credential| Self(credential, std::marker::PhantomData))
-            .map_err(|rejection| ScopedRejection::new(rejection.with_challenge(S::challenge())))
+            .map_err(|rejection| rejection.with_challenge(S::challenge()))
     }
 }
 
-/// Sets the operation's `security` to the guard's, and declares how it refuses.
+/// What the error a guard's schemes fail with declares, given the guard's own
+/// refusals, and whether Kynos renders those refusals itself.
+#[derive(Clone, Copy)]
+struct ErrorResponses {
+    /// [`guard_error_responses`] for that error, and for [`AuthRejection`]
+    /// where only the context-free [`Describe`] runs.
+    declare: fn(&mut Registry, &kynos_openapi::Responses) -> kynos_openapi::Responses,
+
+    /// Whether that error is [`AuthRejection`], which Kynos renders under the
+    /// problem policy the router installs. An application's own error renders
+    /// the guard's refusals itself, as it renders every other, so the policy
+    /// reaches none of them and none is declared under it.
+    served: bool,
+}
+
+/// [`ErrorResponses`] for a guard whose schemes fail with `E`.
+fn error_responses<E: crate::response::Responses + 'static>() -> ErrorResponses {
+    ErrorResponses {
+        declare: guard_error_responses::<E>,
+        served: std::any::TypeId::of::<E>() == std::any::TypeId::of::<AuthRejection>(),
+    }
+}
+
+/// Sets the operation's `security` to the guard's, and declares how it refuses:
+/// its own 401, 403 and 503 as `refusals` allows, joined with what `own` says
+/// the error its schemes fail with declares beside them.
 ///
 /// `security` is the guard's whole list, set once rather than appended to.
 fn declare(
@@ -466,16 +534,20 @@ fn declare(
     challenges: Challenges,
     security: Vec<SecurityRequirement>,
     refusals: Refusals,
+    own: ErrorResponses,
 ) {
     // Before the header: `add_response_header` invents a thin 401 when none is
-    // declared, and merging cannot replace an existing response.
-    let responses = auth_responses(
+    // declared, and merging cannot replace an existing response. `own` joins
+    // first too, so the challenge every 401 carries stays required.
+    let mut responses = auth_responses(
         operation.registry(),
         refusals.forbidden_type,
         refusals.forbids,
         refusals.unavailable,
-        true,
+        own.served,
     );
+    let own = (own.declare)(operation.registry(), &responses);
+    crate::response::headers::union_from(&mut responses, &own);
     operation.add_responses(&responses);
 
     // RFC 9110 section 15.5.2: a 401 MUST carry a challenge. A scheme that
@@ -523,22 +595,24 @@ fn declare_reads<S: Requirement>(operation: &mut OperationCx<'_>, optional: bool
     }
 }
 
-/// [`declare`] for a guard naming no scope set: `S`'s challenges and
-/// refusals, with the 403 un-narrowed.
-fn declare_unscoped<S: Requirement>(
+/// [`declare`] for a guard over requirement `S` itself, [`Auth`] or
+/// [`MaybeAuth`]: `S`'s challenges and refusals, as its members state them,
+/// and `own`.
+fn declare_requirement<S: Requirement>(
     operation: &mut OperationCx<'_>,
     security: Vec<SecurityRequirement>,
+    own: ErrorResponses,
 ) {
     let challenges = Challenges {
         unauthenticated: S::challenge(),
         insufficient_scope: S::insufficient_scope_challenge(),
     };
     let refusals = Refusals {
-        forbidden_type: None,
+        forbidden_type: S::forbidden_type(),
         forbids: S::FORBIDS,
         unavailable: S::MAY_BE_UNAVAILABLE,
     };
-    declare(operation, challenges, security, refusals);
+    declare(operation, challenges, security, refusals, own);
 }
 
 /// Which refusals beside the 401 a guard declares, as [`declare`] declares
@@ -546,10 +620,10 @@ fn declare_unscoped<S: Requirement>(
 #[derive(Clone, Copy)]
 struct Refusals {
     /// [`Scopes::FORBIDDEN_TYPE`] where the argument named a scope set, and
-    /// `None` where it named only a scheme.
+    /// [`Requirement::forbidden_type`] where it named a requirement.
     forbidden_type: Option<&'static str>,
     /// Whether the 403 is declared: [`Requirement::FORBIDS`] for a guard
-    /// naming no scope set, and always for one that does.
+    /// over a requirement, and always for one naming a scope set.
     forbids: bool,
     /// [`Requirement::MAY_BE_UNAVAILABLE`], which adds the 503.
     unavailable: bool,
@@ -561,8 +635,9 @@ struct Challenges {
     /// The 401's: [`Requirement::challenge`].
     unauthenticated: Option<&'static str>,
     /// A scope-refusing 403's, where the guard authorizes a scope at all:
-    /// [`Requirement::insufficient_scope_challenge`] for a guard naming no
-    /// scope set, and [`Scopable::scope_challenge`] for one that does.
+    /// [`Requirement::insufficient_scope_challenge`] for a guard over a
+    /// requirement, and [`Scopable::scope_challenge`] for one naming a scope
+    /// set.
     insufficient_scope: Option<&'static str>,
 }
 

@@ -18,7 +18,11 @@ use http_body::{Body as HttpBody, Frame, SizeHint};
 use tokio::time::{Instant, Sleep};
 
 use crate::{
-    error::problem::{IntoProblem, Problem, ProblemType, refusal_problem, refusal_response},
+    __private::Refusing,
+    error::{
+        members::refused,
+        problem::{IntoProblem, Problem, ProblemType, refusal_problem, served_refusal_response},
+    },
     extract::body::limit::{BodyLimit, collect_capped, declared_length},
     http::{
         self, HeaderValue, Version,
@@ -35,8 +39,9 @@ use crate::{
 /// Carries the limit it enforced, so the response can say what was exceeded
 /// rather than only that something was.
 ///
-/// `T` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`BodySize::problem_type`].
+/// `T` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one. Set it with [`BodySize::problem_type`].
 pub struct BodySizeExceeded<T = ()> {
     /// The maximum body size, in bytes.
     pub limit: u64,
@@ -68,28 +73,50 @@ impl<T: ProblemType> IntoProblem for BodySizeExceeded<T> {
 
 impl<T: ProblemType> IntoResponse for BodySizeExceeded<T> {
     fn into_response(self) -> http::Response {
-        self.into_problem().into_response()
+        self.__refused(Refusing::default())
     }
 }
 
 impl<T: ProblemType> ShortCircuit for BodySizeExceeded<T> {
     const STATUSES: &'static [u16] = &[413];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        refused(self.into_problem(), problems.0, |_| {})
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        too_large_responses::<T>(registry, true)
+    }
 }
 
 impl<T: ProblemType> Responses for BodySizeExceeded<T> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        kynos_openapi::Responses::new().with(
-            413,
-            refusal_response::<T>(registry, "the request body exceeds the configured limit"),
-        )
+        too_large_responses::<T>(registry, false)
     }
+}
+
+/// [`BodySizeExceeded`]'s 413, under the problem policy where `served`.
+fn too_large_responses<T: ProblemType>(
+    registry: &mut Registry,
+    served: bool,
+) -> kynos_openapi::Responses {
+    kynos_openapi::Responses::new().with(
+        413,
+        served_refusal_response::<T>(
+            registry,
+            http::StatusCode::PAYLOAD_TOO_LARGE,
+            "the request body exceeds the configured limit",
+            served,
+        ),
+    )
 }
 
 /// What a [`BodySize`] with a [`deadline`](BodySize::deadline) answers with
 /// when a body has not arrived in time: RFC 9110 section 15.5.9's 408.
 ///
-/// `U` names the problem type the body carries; `()` leaves `about:blank`. Set
-/// it with [`BodySize::deadline_problem_type`].
+/// `U` names the problem type the body carries; `()` leaves it to the policy
+/// [`Router::problems`](crate::router::Router::problems) installs, and to
+/// `about:blank` without one. Set it with [`BodySize::deadline_problem_type`].
 ///
 /// Over HTTP/1 the 408 a deadline answers with carries `Connection: close`, as
 /// that section advises, so the client cannot frame the rest of the body it
@@ -137,13 +164,22 @@ impl<U: ProblemType> BodyTooSlow<U> {
 
 impl<U: ProblemType> IntoResponse for BodyTooSlow<U> {
     fn into_response(self) -> http::Response {
-        let mut response = self.problem().into_response();
-        if self.closes {
-            response
-                .headers_mut()
-                .insert(header::CONNECTION, HeaderValue::from_static("close"));
-        }
-        response
+        self.refuse(Refusing::default())
+    }
+}
+
+impl<U: ProblemType> BodyTooSlow<U> {
+    /// This refusal, rendered under the problem policy `problems` holds, with
+    /// the `Connection` field it owes.
+    fn refuse(self, problems: Refusing) -> http::Response {
+        let closes = self.closes;
+        refused(self.problem(), problems.0, |response| {
+            if closes {
+                response
+                    .headers_mut()
+                    .insert(header::CONNECTION, HeaderValue::from_static("close"));
+            }
+        })
     }
 }
 
@@ -181,29 +217,47 @@ impl<T: ProblemType, U: ProblemType> IntoProblem for BodyRefused<T, U> {
 
 impl<T: ProblemType, U: ProblemType> IntoResponse for BodyRefused<T, U> {
     fn into_response(self) -> http::Response {
-        match self {
-            Self::TooLarge(refusal) => refusal.into_response(),
-            Self::TooSlow(refusal) => refusal.into_response(),
-        }
+        self.__refused(Refusing::default())
     }
 }
 
 impl<T: ProblemType, U: ProblemType> ShortCircuit for BodyRefused<T, U> {
     const STATUSES: &'static [u16] = &[408, 413];
+
+    fn __refused(self, problems: Refusing) -> http::Response {
+        match self {
+            Self::TooLarge(refusal) => refusal.__refused(problems),
+            Self::TooSlow(refusal) => refusal.refuse(problems),
+        }
+    }
+
+    fn __refusal_responses(registry: &mut Registry) -> kynos_openapi::Responses {
+        refused_body_responses::<T, U>(registry, true)
+    }
 }
 
 impl<T: ProblemType, U: ProblemType> Responses for BodyRefused<T, U> {
     fn responses(registry: &mut Registry) -> kynos_openapi::Responses {
-        let mut responses = kynos_openapi::Responses::new().with(
-            408,
-            refusal_response::<U>(
-                registry,
-                "the request body did not arrive within the configured limit",
-            ),
-        );
-        responses.merge_from(&BodySizeExceeded::<T>::responses(registry));
-        responses
+        refused_body_responses::<T, U>(registry, false)
     }
+}
+
+/// [`BodyRefused`]'s 408 and 413, under the problem policy where `served`.
+fn refused_body_responses<T: ProblemType, U: ProblemType>(
+    registry: &mut Registry,
+    served: bool,
+) -> kynos_openapi::Responses {
+    let mut responses = kynos_openapi::Responses::new().with(
+        408,
+        served_refusal_response::<U>(
+            registry,
+            http::StatusCode::REQUEST_TIMEOUT,
+            "the request body did not arrive within the configured limit",
+            served,
+        ),
+    );
+    responses.merge_from(&too_large_responses::<T>(registry, served));
+    responses
 }
 
 /// Caps the size of a request body.
@@ -222,7 +276,8 @@ impl<T: ProblemType, U: ProblemType> Responses for BodyRefused<T, U> {
 /// does not run on them, and they declare neither its 413 nor, with a
 /// [`deadline`](BodySize::deadline), its 408, since neither is a refusal they
 /// could make. A router's own `BodySize` leaves the router's fallbacks alone
-/// too. So one limit covers a whole resource, and its group stays one per
+/// too, unless a router interceptor running beneath it may read the body. So
+/// one limit covers a whole resource, and its group stays one per
 /// resource rather than one per body class.
 ///
 /// Above an interceptor that buffers the body, such as one printing it, it

@@ -162,6 +162,7 @@ pub mod rate_limit;
 pub mod request_id;
 pub mod security_headers;
 pub mod stack;
+pub mod stamp;
 pub mod trusted_hosts;
 
 // Never `pub`, so `Pin<Box<dyn Future>>` reaches no user signature.
@@ -272,6 +273,20 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
     #[doc(hidden)]
     const __METHODS: Methods = Methods::EVERY;
 
+    /// Not part of the API: every guard whose admission this interceptor
+    /// keys on, each of which the router refuses to build unless a scope's
+    /// `guard_first` runs that guard ahead of it.
+    ///
+    /// Every interceptor but a [`RateLimit`](rate_limit::RateLimit), which
+    /// answers what its policy's
+    /// [`reads_admitted`](rate_limit::decision::RateLimitPolicy::reads_admitted)
+    /// does, leaves it at its default, naming none. Read only while the
+    /// router is built, never per request.
+    #[doc(hidden)]
+    fn __reads_admitted(&self) -> Vec<crate::__private::GuardType> {
+        Vec::new()
+    }
+
     /// Handles a request, calling `next` to continue.
     ///
     /// `reads` arrives already extracted from the request headers; a failure to
@@ -367,7 +382,8 @@ impl Covers {
 
 /// An interceptor configured with a combination it cannot honour.
 ///
-/// Checked once, while the router is assembled, and never per request.
+/// Checked once, where the interceptor is constructed or while the router is
+/// assembled, and never per request.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum MiddlewareError {
@@ -395,6 +411,15 @@ pub enum MiddlewareError {
          `expose_headers` should expose, or drop `allow_credentials`"
     )]
     CredentialedWildcardExposure,
+
+    /// A [`Stamp`](stamp::Stamp) was given a header group holding a value
+    /// that is not a field value (RFC 9110 section 5.5), so no response could
+    /// carry the group it declares.
+    ///
+    /// Boxed, so the field name it holds widens neither this error nor
+    /// every `kynos::Result`.
+    #[error("a `Stamp` was given a header group that no response can carry")]
+    UnencodableStamp(#[source] Box<crate::extract::params::header::UnencodableHeader>),
 }
 
 /// A response that came back through the rest of the chain.
@@ -445,10 +470,11 @@ impl Continued<()> {
 
     /// Attaches group `G` from the fields it already encoded, as
     /// [`with_headers`](Continued::with_headers) does, for an interceptor that
-    /// set the same fields on the request.
+    /// set the same fields on the request, or encoded them once for every
+    /// response.
     pub(crate) fn with_encoded<G: EncodeHeaders>(
         mut self,
-        encoded: Vec<(crate::http::HeaderName, crate::http::HeaderValue)>,
+        encoded: impl IntoIterator<Item = (crate::http::HeaderName, crate::http::HeaderValue)>,
     ) -> Continued<G> {
         crate::response::headers::write_encoded::<G>(self.response.headers_mut(), encoded);
         self.retag()
@@ -582,6 +608,11 @@ pub struct Next<'a, C> {
     terminal: &'a dyn ErasedTerminal<C>,
     context: &'a C,
     route: Option<Route<'a>>,
+    /// The problem policy each refusal along the chain is rendered under.
+    ///
+    /// Eight bytes in every interceptor's future, which holds the `Next` it
+    /// is handed until it runs it.
+    problems: crate::__private::Refusing,
 }
 
 impl<C> std::fmt::Debug for Next<'_, C> {
@@ -606,7 +637,15 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
             terminal,
             context,
             route,
+            problems: crate::__private::Refusing::default(),
         }
+    }
+
+    /// Renders each refusal along the chain under `problems`, the policy
+    /// the router installed.
+    pub(crate) fn with_problems(mut self, problems: Option<crate::error::members::Policy>) -> Self {
+        self.problems = crate::__private::Refusing(problems);
+        self
     }
 
     /// Runs the rest of the chain.
@@ -628,11 +667,15 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
     /// timer such as `tokio::time::timeout` starts after that work, which,
     /// being synchronous, it could never have interrupted.
     pub fn run(self, request: Request) -> impl Future<Output = Continued<()>> + Send + 'a {
+        // The policy rides in the interceptor's arm, the only one reading it.
+        // It widens nothing here, the terminal arm's tag fitting in the
+        // pointer's niche, but leaves no niche for an enum around this future.
         enum Rest<I, T> {
-            Interceptor(I),
+            Interceptor(I, crate::__private::Refusing),
             Terminal(T),
         }
 
+        let problems = self.problems;
         let mut rest = match self.remaining.split_first() {
             Some((head, remaining)) => {
                 let next = Self {
@@ -640,8 +683,9 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
                     terminal: self.terminal,
                     context: self.context,
                     route: self.route,
+                    problems,
                 };
-                Rest::Interceptor((**head).intercept(request, self.context, next))
+                Rest::Interceptor((**head).intercept(request, self.context, next), problems)
             }
             None => Rest::Terminal(self.terminal.call(request, self.context)),
         };
@@ -649,7 +693,9 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
         // Both arms are boxed, so polling them in place needs no pinning here.
         std::future::poll_fn(move |context| {
             match &mut rest {
-                Rest::Interceptor(intercepted) => intercepted.as_mut().poll_settle(context),
+                Rest::Interceptor(intercepted, problems) => {
+                    intercepted.as_mut().poll_settle(context, *problems)
+                }
                 Rest::Terminal(terminal) => terminal.as_mut().poll(context),
             }
             .map(Continued::new)
@@ -672,7 +718,23 @@ impl<'a, C: Sync + 'static> Next<'a, C> {
 /// It contributes nothing to the description, so it needs no declaration and
 /// can see everything.
 ///
-/// `route` is `None` when no operation matched.
+/// Every hook is handed the router's context last, so state the application
+/// already owns, such as a metrics registry, is read from it rather than
+/// cloned into the observer. `route` is `None` when no operation matched.
+///
+/// Exactly one of [`on_response`](Observer::on_response) and
+/// [`on_abandoned`](Observer::on_abandoned) follows each
+/// [`on_request`](Observer::on_request), so a gauge one raises the other
+/// lowers, and it never only climbs.
+///
+/// That holds only while no hook panics, since no hook call is guarded: a
+/// hook is called on each observer in turn, and one that panics ends that
+/// turn. A panicking `on_request` leaves the observers already told of the
+/// request with neither ending, and a panicking `on_response` or
+/// `on_abandoned` leaves the observers after it with neither. An
+/// `on_abandoned` that panics while a panic nothing recovered is unwinding
+/// aborts the process, as any panic in a drop does then. A hook should
+/// record and return, never panic.
 pub trait Observer<C>: Send + Sync + 'static {
     /// Called when a request arrives, before any interceptor.
     ///
@@ -684,17 +746,25 @@ pub trait Observer<C>: Send + Sync + 'static {
 
     /// Called when a response is about to be written.
     ///
-    /// `elapsed` measures producing the response head, not delivering the
-    /// body; a streaming response is reported long before its last frame.
-    /// Exactly one of [`on_complete`](Observer::on_complete), for a body
-    /// that finished, and [`on_disconnect`](Observer::on_disconnect), for one
-    /// that did not, follows.
-    fn on_response(
-        &self,
-        response: &Response,
-        route: Option<Route<'_>>,
-        elapsed: std::time::Duration,
-    );
+    /// [`Exchange::elapsed`] measures producing the response head, not
+    /// delivering the body; a streaming response is reported long before its
+    /// last frame. Exactly one of [`on_complete`](Observer::on_complete), for
+    /// a body that finished, and [`on_disconnect`](Observer::on_disconnect),
+    /// for one that did not, follows.
+    fn on_response(&self, exchange: &Exchange<'_>, context: &C);
+
+    /// Called when a request is dropped before its response head was
+    /// produced, in place of [`on_response`](Observer::on_response).
+    ///
+    /// The client left, or the connection closed, while an interceptor or the
+    /// handler was still working. A panic that nothing recovers is reported
+    /// the same way, since no response follows it either.
+    ///
+    /// Called from the drop of the request's future, on whatever task held
+    /// it: record and return, never block or await.
+    fn on_abandoned(&self, abandonment: &Abandonment<'_>, context: &C) {
+        let _ = (abandonment, context);
+    }
 
     /// Called when the response body [`on_response`](Observer::on_response)
     /// reported was read to its end.
@@ -706,8 +776,8 @@ pub trait Observer<C>: Send + Sync + 'static {
     ///
     /// Called from whatever task reads or drops the body: record and return,
     /// never block or await.
-    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion) {
-        let _ = (route, completion);
+    fn on_complete(&self, route: Option<Route<'_>>, completion: &Completion, context: &C) {
+        let _ = (route, completion, context);
     }
 
     /// Called when a response body was dropped before its end.
@@ -719,15 +789,15 @@ pub trait Observer<C>: Send + Sync + 'static {
     ///
     /// `elapsed` runs from the request arriving to the body being dropped.
     ///
-    /// A client that leaves while the handler is still working is not
-    /// reported, since there is no response body to drop yet.
+    /// A client that leaves while the handler is still working has no body to
+    /// drop yet; [`on_abandoned`](Observer::on_abandoned) reports it instead.
     ///
     /// Called once the body has been released, so whatever it owned is gone;
     /// a body whose own drop panics is still reported, once. Called from the
     /// drop on whatever task last held the body: record and return, never
     /// block or await.
-    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: std::time::Duration) {
-        let _ = (route, elapsed);
+    fn on_disconnect(&self, route: Option<Route<'_>>, elapsed: std::time::Duration, context: &C) {
+        let _ = (route, elapsed, context);
     }
 
     /// Called when a panic was recovered, at whichever scope asked for
@@ -738,10 +808,78 @@ pub trait Observer<C>: Send + Sync + 'static {
     /// only for one out of a router's own interceptor around a request no
     /// operation matched. A panic is reported once, by the innermost scope
     /// that recovered it.
-    /// Not reported: a panic nothing recovers, or one whose 500 an outer
-    /// interceptor replaced with a short circuit of its own.
-    fn on_panic(&self, payload: &(dyn std::any::Any + Send), route: Option<Route<'_>>) {
-        let _ = (payload, route);
+    /// Not reported: a panic nothing recovers, which
+    /// [`on_abandoned`](Observer::on_abandoned) reports as the request it
+    /// cost, or one whose 500 an outer interceptor replaced with a short
+    /// circuit of its own.
+    fn on_panic(
+        &self,
+        payload: &(dyn std::any::Any + Send),
+        route: Option<Route<'_>>,
+        context: &C,
+    ) {
+        let _ = (payload, route, context);
+    }
+}
+
+/// A response head about to be written, as [`Observer::on_response`] reports
+/// it.
+#[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
+pub struct Exchange<'a> {
+    /// The request's method, as it arrived: `HEAD` for a `HEAD` that a `GET`
+    /// answers, and whatever token the client sent where no operation matched.
+    pub method: &'a crate::http::Method,
+    /// The response, with a HEAD's content already shed, since that is what
+    /// the peer will receive.
+    pub response: &'a Response,
+    /// The operation that answered; `None` for an answer the router gives
+    /// itself, such as a 404 or a 405.
+    pub route: Option<Route<'a>>,
+    /// From the request arriving to the response head being ready.
+    pub elapsed: std::time::Duration,
+}
+
+impl<'a> Exchange<'a> {
+    pub(crate) fn new(
+        method: &'a crate::http::Method,
+        response: &'a Response,
+        route: Option<Route<'a>>,
+        elapsed: std::time::Duration,
+    ) -> Self {
+        Self {
+            method,
+            response,
+            route,
+            elapsed,
+        }
+    }
+}
+
+/// A request dropped before its response head, as [`Observer::on_abandoned`]
+/// reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct Abandonment<'a> {
+    /// The request's method, as it arrived.
+    pub method: &'a crate::http::Method,
+    /// The operation the request was routed to; `None` where none matched.
+    pub route: Option<Route<'a>>,
+    /// From the request arriving to its being dropped.
+    pub elapsed: std::time::Duration,
+}
+
+impl<'a> Abandonment<'a> {
+    pub(crate) fn new(
+        method: &'a crate::http::Method,
+        route: Option<Route<'a>>,
+        elapsed: std::time::Duration,
+    ) -> Self {
+        Self {
+            method,
+            route,
+            elapsed,
+        }
     }
 }
 

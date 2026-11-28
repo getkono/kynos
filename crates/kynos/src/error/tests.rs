@@ -140,6 +140,8 @@ mod variants {
             Error::Middleware(_) => "Middleware",
             Error::Link(_) => "Link",
             Error::Json(_) => "Json",
+            #[cfg(all(feature = "docs", any(feature = "tls", feature = "unchecked")))]
+            Error::DescriptionShared => "DescriptionShared",
             #[cfg(feature = "yaml")]
             Error::Yaml(_) => "Yaml",
             #[cfg(feature = "server")]
@@ -212,6 +214,12 @@ mod variants {
                     serde_json::from_str::<u8>("not a number").expect_err("a parse failure"),
                 ),
                 "the description could not be emitted as JSON".to_owned(),
+            ),
+            #[cfg(all(feature = "docs", any(feature = "tls", feature = "unchecked")))]
+            (
+                Error::DescriptionShared,
+                "the description cannot be edited while another clone of the service serves its docs reference"
+                    .to_owned(),
             ),
             #[cfg(feature = "yaml")]
             (Error::Yaml(yaml()), yaml().to_string()),
@@ -323,6 +331,8 @@ mod variants {
             "Middleware",
             "Link",
             "Json",
+            #[cfg(all(feature = "docs", any(feature = "tls", feature = "unchecked")))]
+            "DescriptionShared",
             #[cfg(feature = "yaml")]
             "Yaml",
             #[cfg(feature = "server")]

@@ -52,10 +52,27 @@
 //! The tenth is which components a named instantiation reaches. A name declared
 //! on a nested router applies to the whole document, and a document still
 //! carrying the mangled name would validate against everything else here.
+//!
+//! The eleventh is what the HEAD a `GET` describes says. It is that `GET`
+//! without content, and a document that copied the content, dropped a field,
+//! or let it stand beside a declared `head` would still validate.
+//!
+//! The twelfth is which `operationId`s a case policy recases. A document that
+//! recased a written one, or left a derived one alone, would still validate.
+//!
+//! The thirteenth is which responses the document shares. The problems the
+//! framework writes, `catch_panics`'s 500 and a derived `ApiError`'s, are the
+//! ones every operation repeats, and a document writing each out in full at
+//! every operation would still validate.
 
 #![cfg(all(feature = "macros", feature = "json"))]
 
+#[path = "support/inline.rs"]
+mod inline;
+
 use std::{collections::BTreeSet, num::NonZeroUsize};
+
+use inline::inlined;
 
 use kynos::{
     ApiError, PathParams, Router, Schema,
@@ -270,8 +287,9 @@ async fn preview_recording(range: Range<Binary<OctetStream>>) -> Binary<OctetStr
     Binary::new(&b"0123456789"[..])
 }
 
-/// The one operation under `path`.
+/// The one operation under `path`, every response it shares written out.
 fn operation(document: &Document, path: &str) -> kynos::openapi::Operation {
+    let document = inlined(document.clone());
     let item = document.paths.items.get(path).expect("a described path");
     let (_, operation) = item.operations().next().expect("one operation");
     operation.clone()
@@ -1729,6 +1747,203 @@ fn a_shared_status_describes_both_halves_of_what_it_publishes() {
     );
 }
 
+/// The 403 an enum writes the description of, its two variants in one order.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/", describe(403 = "The request's origin is not allowed"))]
+#[allow(dead_code)]
+enum OriginRefused {
+    #[error("cross-origin request rejected")]
+    #[problem(status = 403, title = "Cross-origin request rejected")]
+    CrossOrigin,
+
+    #[error("malformed Origin header")]
+    #[problem(status = 403, title = "Malformed Origin header")]
+    Malformed,
+
+    #[error("no such origin")]
+    #[problem(status = 404, title = "Unknown origin")]
+    Unknown,
+}
+
+/// [`OriginRefused`] with its 403 variants the other way round.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/", describe(403 = "The request's origin is not allowed"))]
+#[allow(dead_code)]
+enum OriginRefusedReordered {
+    #[error("malformed Origin header")]
+    #[problem(status = 403, title = "Malformed Origin header")]
+    Malformed,
+
+    #[error("cross-origin request rejected")]
+    #[problem(status = 403, title = "Cross-origin request rejected")]
+    CrossOrigin,
+}
+
+/// An enum holding [`OriginRefused`] beside a 403 of its own, and writing
+/// the description of a status only the held error answers with.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/", describe(403 = "The request is not allowed", 404 = "No such origin is registered"))]
+#[allow(dead_code)]
+enum GatewayRefused {
+    #[error("the gateway is closed")]
+    #[problem(status = 403, title = "Gateway closed")]
+    Closed,
+
+    #[error(transparent)]
+    Origin(OriginRefused),
+}
+
+/// A subset of [`OriginRefused`] keeping one of its 403 variants.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(subset_of = OriginRefused)]
+#[allow(dead_code)]
+enum OnlyCrossOrigin {
+    #[error("cross-origin request rejected")]
+    CrossOrigin,
+}
+
+/// The responses `E` declares, as JSON keyed by status.
+fn responses_of<E: kynos::response::Responses>() -> serde_json::Value {
+    let mut registry = kynos::schema::registry::Registry::default();
+    serde_json::to_value(E::responses(&mut registry)).expect("responses serialize")
+}
+
+/// An enum's `describe` replaces the titles its variants' declarations would
+/// join, so the description no longer depends on the order they are written
+/// in; each variant's title still labels its branch, and a status it does not
+/// name keeps the joined one.
+#[test]
+fn a_written_description_replaces_the_joined_titles_in_any_order() {
+    let responses = responses_of::<OriginRefused>();
+    let reordered = responses_of::<OriginRefusedReordered>();
+
+    for described in [&responses["403"], &reordered["403"]] {
+        assert_eq!(
+            described["description"],
+            serde_json::json!("The request's origin is not allowed"),
+            "{described}"
+        );
+    }
+    let mut titles: Vec<&str> =
+        responses["403"]["content"]["application/problem+json"]["schema"]["oneOf"]
+            .as_array()
+            .expect("two types are a `oneOf`")
+            .iter()
+            .filter_map(|branch| branch["title"].as_str())
+            .collect();
+    titles.sort_unstable();
+    assert_eq!(
+        titles,
+        ["Cross-origin request rejected", "Malformed Origin header"]
+    );
+    assert_eq!(
+        responses["404"]["description"],
+        serde_json::json!("Unknown origin")
+    );
+}
+
+/// What an enum writes is what the whole enum says of the status: it replaces
+/// the description a transparent variant's held error joins to its own, and
+/// describes a status only that held error answers with. The held error's
+/// branches still reach the schema, each under its title: a lone one keeps
+/// the title its description said, as the enum's text no longer says it.
+#[test]
+fn a_written_description_covers_what_a_transparent_variant_answers() {
+    let responses = responses_of::<GatewayRefused>();
+
+    assert_eq!(
+        responses["403"]["description"],
+        serde_json::json!("The request is not allowed")
+    );
+    let schema = &responses["403"]["content"]["application/problem+json"]["schema"];
+    assert_eq!(published(schema).len(), 3, "{}", responses["403"]);
+    let mut titles: Vec<&str> = schema["oneOf"]
+        .as_array()
+        .expect("three types are a `oneOf`")
+        .iter()
+        .filter_map(|branch| branch["title"].as_str())
+        .collect();
+    titles.sort_unstable();
+    assert_eq!(
+        titles,
+        [
+            "Cross-origin request rejected",
+            "Gateway closed",
+            "Malformed Origin header"
+        ]
+    );
+    let unknown = &responses["404"];
+    assert_eq!(
+        unknown["description"],
+        serde_json::json!("No such origin is registered")
+    );
+    assert_eq!(
+        unknown["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Unknown origin"),
+        "{unknown}"
+    );
+}
+
+/// A subset is described as the wider enum describes the variants it keeps,
+/// so the wider enum's written description reaches it; and a lone branch keeps
+/// its title, which the description no longer says.
+#[test]
+fn a_subset_is_described_by_the_wider_enums_written_description() {
+    let responses = responses_of::<OnlyCrossOrigin>();
+    let described = &responses["403"];
+
+    assert_eq!(
+        described["description"],
+        serde_json::json!("The request's origin is not allowed")
+    );
+    assert_eq!(
+        described["content"]["application/problem+json"]["schema"]["title"],
+        serde_json::json!("Cross-origin request rejected"),
+        "{described}"
+    );
+    assert!(responses.get("404").is_none(), "{responses}");
+}
+
+/// A failure answering with the capture's 400, whose enum writes the
+/// description of it.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(describe(400 = "The review cannot be published"))]
+enum PublishError {
+    #[error("the review says nothing")]
+    #[problem(
+        status = 400,
+        type = "https://errors.example.com/empty-review",
+        title = "Empty review"
+    )]
+    Empty,
+}
+
+/// One operation, the capture's rejection and a described enum on one status.
+#[kynos::get("/published/{id}")]
+async fn publish_review(Path(path): Path<ReviewPath>) -> Result<NoContent, PublishError> {
+    let _ = path;
+    Err(PublishError::Empty)
+}
+
+/// An enum's written description is that enum's half of a status another
+/// contributor shares, joined as a composed one is: it says what the enum's
+/// failures mean, and says nothing for the extractor's, so neither replaces
+/// the other.
+#[test]
+fn a_written_description_joins_another_contributors_on_one_operation() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![publish_review])
+        .openapi()
+        .expect("a describable router");
+    let response = declared_problem(&operation(&document, "/published/{id}"), "400");
+
+    assert_eq!(
+        response["description"],
+        serde_json::json!("Bad Request; The review cannot be published"),
+        "{response}"
+    );
+}
+
 /// The field a turned-away client waits on.
 #[derive(Debug, kynos::HeaderParams)]
 struct RetryAfter {
@@ -2038,6 +2253,8 @@ struct Tokens;
 impl<C: Sync, P: kynos::security::Scope>
     kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims, P>, C> for Tokens
 {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         presented: kynos::security::carrier::presented::Presented<
@@ -2315,6 +2532,207 @@ fn a_named_forbidden_type_meets_a_handler_errors_403_as_a_choice_of_three() {
     );
 }
 
+/// An authenticator's own error: the guard's refusals, held transparently as
+/// the `Authenticator::Error` documentation spells it, beside a 500.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum TokenError {
+    #[error(transparent)]
+    Rejected(#[from] kynos::error::rejection::AuthRejection),
+
+    #[error("the token could not be read")]
+    #[problem(status = 500)]
+    Unreadable,
+}
+
+/// `Tokens`, failing with `TokenError`.
+struct OwnTokens;
+
+impl<C: Sync, P: kynos::security::Scope>
+    kynos::security::Authenticator<kynos::security::schemes::Bearer<Claims, P>, C> for OwnTokens
+{
+    type Error = TokenError;
+
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::presented::Presented<
+            kynos::security::carrier::BearerToken,
+        >,
+        head: kynos::security::Head<'_>,
+        context: &C,
+    ) -> Result<Claims, TokenError> {
+        let _ = (presented, head, context);
+        Err(TokenError::Unreadable)
+    }
+}
+
+impl<C: Sync> kynos::security::Authorizer<Granted, C, Grant> for OwnTokens {
+    async fn authorize(
+        &self,
+        credential: &Claims,
+        scopes: &[Grant],
+        context: &C,
+    ) -> Result<(), TokenError> {
+        let _ = (credential, scopes, context);
+        Err(kynos::error::rejection::AuthRejection::forbidden_as(INSUFFICIENT_SCOPE).into())
+    }
+}
+
+/// `Guarded`, authenticated by `OwnTokens`.
+struct Owned;
+
+impl<P: kynos::security::Scope>
+    kynos::security::Authenticates<kynos::security::schemes::Bearer<Claims, P>> for Owned
+where
+    OwnTokens: kynos::security::Authorizer<kynos::security::schemes::Bearer<Claims, P>, Self, P>,
+{
+    type Authenticator = OwnTokens;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &OwnTokens
+    }
+}
+
+#[kynos::get("/owned/audit")]
+async fn owned_audit(caller: kynos::security::auth::Scoped<Granted, Staff>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// A scope set's narrowing survives an authenticator's own error holding an
+/// `AuthRejection`: the held one declares the 403 the guard declares rather
+/// than its own wide one, which would win the union and erase the named type.
+/// The error's own 500 is declared beside it.
+#[test]
+fn a_held_auth_rejection_keeps_the_scope_sets_narrowed_403() {
+    let document = Router::<Owned>::new()
+        .mount(kynos::routes![owned_audit])
+        .openapi()
+        .expect("a describable router");
+    let schema = declared_problem_schema(&document, "/owned/audit", "403");
+
+    assert_eq!(
+        published(&schema),
+        vec!["about:blank".to_owned(), INSUFFICIENT_SCOPE.to_owned()],
+        "{schema}"
+    );
+    assert_eq!(
+        schema,
+        declared_problem_schema(&guarded_document(), "/admin/audit", "403")
+    );
+    assert!(
+        operation(&document, "/owned/audit")
+            .responses
+            .responses
+            .contains_key("500")
+    );
+}
+
+/// A bearer token whose authenticator never refuses a valid one.
+#[derive(kynos::SecurityScheme)]
+#[security(bearer, credential = Claims, forbids = false)]
+struct Probe;
+
+/// Fails `Probe`, and `StoredProbe` below, with `TokenError`; never reached.
+struct Probes;
+
+impl<C: Sync> kynos::security::Authenticator<Probe, C> for Probes {
+    type Error = TokenError;
+
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::presented::Presented<
+            kynos::security::carrier::BearerToken,
+        >,
+        head: kynos::security::Head<'_>,
+        context: &C,
+    ) -> Result<Claims, TokenError> {
+        let _ = (presented, head, context);
+        Err(TokenError::Unreadable)
+    }
+}
+
+/// The context `Probes` authenticates in.
+struct Probed;
+
+impl kynos::security::Authenticates<Probe> for Probed {
+    type Authenticator = Probes;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Probes
+    }
+}
+
+#[kynos::get("/probe")]
+async fn probe(caller: kynos::security::auth::Auth<Probe>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// `TokenError` returned by a handler no guard precedes.
+#[kynos::get("/probe/unguarded")]
+async fn unguarded_probe() -> Result<NoContent, TokenError> {
+    Err(TokenError::Unreadable)
+}
+
+/// The statuses `path` declares.
+fn statuses(document: &Document, path: &str) -> BTreeSet<String> {
+    operation(document, path)
+        .responses
+        .responses
+        .keys()
+        .cloned()
+        .collect()
+}
+
+/// A held `AuthRejection` under a guard whose schemes never forbid declares
+/// what the guard does, which has no 403, beside the error's own 500; and no
+/// 503, since no scheme opted in to one.
+///
+/// Its own `Responses` would declare the wide 403, so a 403 here is the hold
+/// losing to it.
+#[test]
+fn a_held_auth_rejection_declares_no_403_where_no_scheme_forbids() {
+    let document = Router::<Probed>::new()
+        .mount(kynos::routes![probe])
+        .openapi()
+        .expect("a describable router");
+
+    assert_eq!(statuses(&document, "/probe"), paths(&["204", "401", "500"]));
+}
+
+/// The narrowing is the guard's alone: in the router that holds it, the same
+/// error returned by a handler declares its own wide 403 again, whichever
+/// operation is described first, and the guarded one still declares none.
+///
+/// The guard sets the hold while it describes its error and restores it after,
+/// so the unguarded operation described after it must find none left; one
+/// described before it must not leak its wide 403 into the guard. Both orders
+/// emit the same document.
+#[test]
+fn a_held_auth_rejection_returned_by_a_handler_declares_the_wide_403_beside_a_guard() {
+    let guard_first = Router::<Probed>::new()
+        .mount(kynos::routes![probe, unguarded_probe])
+        .openapi()
+        .expect("a describable router");
+    let handler_first = Router::<Probed>::new()
+        .mount(kynos::routes![unguarded_probe, probe])
+        .openapi()
+        .expect("a describable router");
+
+    for document in [&guard_first, &handler_first] {
+        assert_eq!(statuses(document, "/probe"), paths(&["204", "401", "500"]));
+        assert_eq!(
+            statuses(document, "/probe/unguarded"),
+            paths(&["204", "401", "403", "500"])
+        );
+        assert_eq!(
+            declared_problem_schema(document, "/probe/unguarded", "403"),
+            serde_json::json!({ "$ref": "#/components/schemas/Problem" })
+        );
+    }
+    assert_eq!(guard_first, handler_first);
+}
+
 // --- Scope in what an unreachable store publishes ---------------------------
 //
 // `AuthRejection::unavailable` answers 503 where a credential store cannot be
@@ -2333,6 +2751,8 @@ struct Session;
 struct Sessions;
 
 impl<C: Sync> kynos::security::Authenticator<Session, C> for Sessions {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         presented: kynos::security::carrier::presented::Presented<kynos::security::carrier::ApiKey>,
@@ -2385,6 +2805,79 @@ fn only_a_scheme_that_may_be_unavailable_declares_a_503() {
     let bearer = operation(&document, "/me");
     assert!(!bearer.responses.responses.contains_key("503"));
     assert!(bearer.responses.responses.contains_key("401"));
+}
+
+/// A key whose store can be down, and whose authenticator never refuses a
+/// valid one.
+#[derive(kynos::SecurityScheme)]
+#[security(
+    api_key(in = "header", name = "x-probe-key"),
+    credential = Claims,
+    forbids = false,
+    unavailable
+)]
+struct StoredProbe;
+
+impl<C: Sync> kynos::security::Authenticator<StoredProbe, C> for Probes {
+    type Error = TokenError;
+
+    async fn authenticate(
+        &self,
+        presented: kynos::security::carrier::presented::Presented<kynos::security::carrier::ApiKey>,
+        head: kynos::security::Head<'_>,
+        context: &C,
+    ) -> Result<Claims, TokenError> {
+        let _ = (presented, head, context);
+        Err(kynos::error::rejection::AuthRejection::unavailable::<StoredProbe>().into())
+    }
+}
+
+impl kynos::security::Authenticates<StoredProbe> for Probed {
+    type Authenticator = Probes;
+
+    fn authenticator(&self) -> &Self::Authenticator {
+        &Probes
+    }
+}
+
+#[kynos::get("/probe/stored")]
+async fn stored_probe(caller: kynos::security::auth::Auth<StoredProbe>) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+#[kynos::get("/probe/either")]
+async fn either_probe(
+    caller: kynos::security::auth::Auth<kynos::security::requirement::AnyOf<(Probe, StoredProbe)>>,
+) -> NoContent {
+    let _ = caller.into_inner();
+    NoContent
+}
+
+/// A held `AuthRejection` declares the 503 only under a guard naming a scheme
+/// that opted in, as the `about:blank` problem `Problem::new` writes, and still
+/// no 403 where none of its schemes forbids; the guard beside it naming only
+/// `Probe` declares neither.
+#[test]
+fn a_held_auth_rejection_declares_a_503_only_where_a_scheme_may_be_unavailable() {
+    let document = Router::<Probed>::new()
+        .mount(kynos::routes![probe, stored_probe, either_probe])
+        .openapi()
+        .expect("a describable router");
+
+    for path in ["/probe/stored", "/probe/either"] {
+        assert_eq!(
+            statuses(&document, path),
+            paths(&["204", "401", "500", "503"]),
+            "{path}"
+        );
+        assert_eq!(
+            published(&declared_problem_schema(&document, path, "503")),
+            vec!["about:blank".to_owned()],
+            "{path}"
+        );
+    }
+    assert_eq!(statuses(&document, "/probe"), paths(&["204", "401", "500"]));
 }
 
 // --- What `deny_unchecked_schemas` reaches ----------------------------------
@@ -2802,6 +3295,9 @@ fn a_policy_set_on_a_nested_or_merged_router_is_a_violation() {
         ("trusted_proxies", |router| {
             router.trusted_proxies(TrustedProxies::hops(ProxyHeader::XForwarded, 1))
         }),
+        ("operation_id_case", |router| {
+            router.operation_id_case(kynos::router::operation::OperationIdCase::LowerCamel)
+        }),
         #[cfg(feature = "server")]
         ("declare_body_stall", |router| {
             router.declare_body_stall(true)
@@ -3108,6 +3604,54 @@ fn an_unprocessable_parameter_problem_declares_its_own_422() {
     assert_eq!(published(&schema), ["about:blank"], "{schema}");
 }
 
+/// What a broken bound of [`PageWindow`] sends, at 422 so it is declared alone.
+const PAGING_INVALID: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/paging-invalid",
+    )
+    .titled("The paging is invalid")
+    .unprocessable();
+
+/// A shared query group naming its own problem.
+#[derive(kynos::QueryParams)]
+#[schema(constraint_problem = PAGING_INVALID)]
+struct PageWindow {
+    #[schema(maximum = 200)]
+    limit: Option<u32>,
+}
+
+/// A group naming no problem of its own, flattening [`PageWindow`].
+#[derive(kynos::QueryParams)]
+struct Catalogue {
+    #[param(flatten)]
+    paging: PageWindow,
+    tag: Option<String>,
+}
+
+#[kynos::get("/catalogue")]
+async fn catalogue(_: kynos::extract::params::query::Query<Catalogue>) -> NoContent {
+    NoContent
+}
+
+/// A flattened group's own problem is declared on each operation taking the
+/// group flattening it, since the flattened group's decoder sends it; a
+/// parent naming none of its own does not hide it.
+#[test]
+fn a_flattened_query_groups_problem_is_declared_on_its_parents_operation() {
+    let document = Router::<()>::new()
+        .mount(kynos::routes![catalogue])
+        .openapi()
+        .expect("a describable router");
+
+    let declared = declared_problem(&operation(&document, "/catalogue"), "422");
+    assert_eq!(
+        declared["description"], "The paging is invalid",
+        "{declared}"
+    );
+    let schema = &declared["content"]["application/problem+json"]["schema"];
+    assert_eq!(published(schema), [PAGING_INVALID.type_uri], "{schema}");
+}
+
 /// A body and a parameter whose types name a problem declare it beside
 /// `about:blank`, each at its input's own status, with the `errors` member it
 /// always sends; a body whose type names none declares `about:blank` alone.
@@ -3200,4 +3744,360 @@ fn a_named_instantiation_declared_on_a_nested_router_names_its_component() {
         shelf.description.as_deref(),
         Some("The books on one shelf.")
     );
+}
+
+// --- The HEAD a GET describes -----------------------------------------------
+
+/// `object`'s `GET`, describing the HEAD it answers as `head_object`.
+fn object_and_its_head() -> impl kynos::router::endpoint::set::IntoEndpoints<(), Stacks = ()> {
+    EndpointBuilder::new(
+        kynos::openapi::Method::Get,
+        kynos::openapi::PathTemplate::parse("/objects/current").expect("a valid path"),
+        object,
+    )
+    .operation_id("get_object")
+    .describe_head("head_object")
+}
+
+/// The HEAD a `GET` describes is that `GET` under its own name with no
+/// response carrying content (RFC 9110 section 9.3.2) and no range handling,
+/// every other field the `GET` declares still declared; a `GET` that describes
+/// none leaves its HEAD out.
+#[test]
+fn a_described_head_is_its_get_without_content() {
+    let document = inlined(
+        Router::<()>::new()
+            .mount(object_and_its_head())
+            .mount(kynos::routes![alpha])
+            .openapi()
+            .expect("a describable router"),
+    );
+
+    let item = &document.paths.items["/objects/current"];
+    let get = item
+        .operation(kynos::openapi::Method::Get)
+        .expect("the GET")
+        .clone();
+    let head = item
+        .operation(kynos::openapi::Method::Head)
+        .expect("the HEAD it describes")
+        .clone();
+
+    // Not vacuous: the GET's 200 has content to remove and fields to keep.
+    let Some(kynos::openapi::RefOr::Item(ok)) = get.responses.responses.get("200") else {
+        panic!("an inline 200");
+    };
+    assert!(!ok.content.is_empty() && ok.headers.contains_key("ETag"));
+
+    // Not vacuous either: the GET declares range handling, which a HEAD lacks
+    // (RFC 9110 section 14.2), so its HEAD declares none.
+    let ranged = |parameter: &kynos::openapi::RefOr<kynos::openapi::Parameter>| {
+        parameter
+            .as_item()
+            .is_some_and(|parameter| ["Range", "If-Range"].contains(&parameter.name.as_str()))
+    };
+    assert!(get.parameters.iter().any(ranged));
+    assert!(get.responses.responses.contains_key("206"));
+    assert!(get.responses.responses.contains_key("416"));
+
+    let mut expected = get.clone();
+    expected.operation_id = Some("head_object".to_owned());
+    expected.parameters.retain(|parameter| !ranged(parameter));
+    expected.responses.responses.shift_remove("206");
+    expected.responses.responses.shift_remove("416");
+    for response in expected.responses.responses.values_mut() {
+        let kynos::openapi::RefOr::Item(response) = response else {
+            panic!("an inline response");
+        };
+        response.content.clear();
+    }
+    assert_eq!(head, expected);
+
+    let alpha = &document.paths.items["/alpha"];
+    assert!(alpha.operation(kynos::openapi::Method::Head).is_none());
+}
+
+// The same `GET` as `object`, describing its HEAD through the attribute; no
+// doc comment, which the builder it is compared with has no summary for.
+#[kynos::get("/objects/current", head)]
+async fn get_object(conditions: Conditions) -> Delivery<OctetStream> {
+    object(conditions).await
+}
+
+/// The attribute's `head` reaches the document as the builder's does: the
+/// same HEAD, under the name derived from the handler's.
+#[test]
+fn a_route_attributes_head_describes_what_the_builders_does() {
+    let attributed = Router::<()>::new()
+        .mount(kynos::routes![get_object])
+        .openapi()
+        .expect("a describable router");
+    let built = Router::<()>::new()
+        .mount(object_and_its_head())
+        .openapi()
+        .expect("a describable router");
+
+    let head = |document: &Document| {
+        document.paths.items["/objects/current"]
+            .operation(kynos::openapi::Method::Head)
+            .expect("a described HEAD")
+            .clone()
+    };
+    assert_eq!(head(&attributed), head(&built));
+}
+
+/// The router's violations of `error`'s kind, by location.
+fn violations_like(router: &Router<()>, error: fn(&RouterError) -> bool) -> Vec<String> {
+    router
+        .validate()
+        .expect("a describable router")
+        .into_iter()
+        .filter(|violation| error(&violation.error))
+        .map(|violation| violation.location)
+        .collect()
+}
+
+#[kynos::head("/objects/current")]
+async fn object_head() -> NoContent {
+    NoContent
+}
+
+/// A path declaring its own HEAD beside a `GET` describing one is refused at
+/// the HEAD, whichever was mounted first: both were asked for.
+#[test]
+fn a_described_head_beside_a_declared_one_is_refused() {
+    for router in [
+        Router::<()>::new()
+            .mount(object_and_its_head())
+            .mount(kynos::routes![object_head]),
+        Router::<()>::new()
+            .mount(kynos::routes![object_head])
+            .mount(object_and_its_head()),
+    ] {
+        let located = violations_like(
+            &router,
+            |error| matches!(error, RouterError::HeadDescribedTwice { path } if path == "/objects/current"),
+        );
+        assert_eq!(located, ["#/paths/~1objects~1current/head"]);
+        assert!(router.openapi().is_err());
+    }
+}
+
+/// Only a `GET` answers a HEAD, so describing one from any other method is
+/// refused at that operation.
+#[test]
+fn a_head_described_by_another_method_is_refused() {
+    let router = Router::<()>::new().mount(
+        EndpointBuilder::new(
+            kynos::openapi::Method::Post,
+            kynos::openapi::PathTemplate::parse("/alpha").expect("a valid path"),
+            alpha,
+        )
+        .describe_head("head_alpha"),
+    );
+
+    let located = violations_like(&router, |error| {
+        matches!(
+            error,
+            RouterError::HeadWithoutGet { method: kynos::openapi::Method::Post, path } if path == "/alpha"
+        )
+    });
+    assert_eq!(located, ["#/paths/~1alpha/post"]);
+}
+
+// --- The case a derived operationId is published in -------------------------
+
+/// Named by the handler, and describing a HEAD named after it.
+#[kynos::get("/cased/derived", head)]
+async fn get_cased_report() -> NoContent {
+    NoContent
+}
+
+/// Named by the handler, and describing a HEAD named by hand.
+#[kynos::get("/cased/half", head = "probe_cased_half")]
+async fn get_cased_half() -> NoContent {
+    NoContent
+}
+
+/// Named by hand, the HEAD too.
+#[kynos::get(
+    "/cased/written",
+    operation_id = "fetch_cased_written",
+    head = "probe_cased_written"
+)]
+async fn get_cased_written() -> NoContent {
+    NoContent
+}
+
+/// Each `operationId` the document publishes, by `paths` key and method.
+fn operation_ids(document: &Document) -> BTreeSet<String> {
+    document
+        .paths
+        .items
+        .iter()
+        .flat_map(|(path, item)| {
+            [kynos::openapi::Method::Get, kynos::openapi::Method::Head]
+                .into_iter()
+                .filter_map(move |method| {
+                    let id = item.operation(method)?.operation_id.clone()?;
+                    Some(format!("{} {path} {id}", method.as_wire_str()))
+                })
+        })
+        .collect()
+}
+
+/// A case recases exactly what the framework derived: the handler's name and
+/// the HEAD a bare `head` names after it. What was written -- `operation_id`,
+/// `head = "..."` and the builder's -- is published as written, and a router
+/// that sets no case publishes each name as derived.
+#[test]
+fn a_case_recases_only_the_operation_ids_the_framework_derived() {
+    use kynos::router::operation::OperationIdCase;
+
+    let described = |case: Option<OperationIdCase>| {
+        let router = Router::<()>::new()
+            .mount(kynos::routes![
+                get_cased_report,
+                get_cased_half,
+                get_cased_written
+            ])
+            .mount(object_and_its_head());
+        let router = match case {
+            Some(case) => router.operation_id_case(case),
+            None => router,
+        };
+        operation_ids(&router.openapi().expect("a describable router"))
+    };
+    let expected = |derived: [&str; 3]| {
+        let [get, head, half] = derived;
+        [
+            format!("GET /cased/derived {get}"),
+            format!("HEAD /cased/derived {head}"),
+            format!("GET /cased/half {half}"),
+            "HEAD /cased/half probe_cased_half".to_owned(),
+            "GET /cased/written fetch_cased_written".to_owned(),
+            "HEAD /cased/written probe_cased_written".to_owned(),
+            "GET /objects/current get_object".to_owned(),
+            "HEAD /objects/current head_object".to_owned(),
+        ]
+        .into_iter()
+        .collect::<BTreeSet<_>>()
+    };
+
+    let as_written = ["get_cased_report", "head_cased_report", "get_cased_half"];
+    assert_eq!(described(None), expected(as_written));
+    assert_eq!(
+        described(Some(OperationIdCase::AsWritten)),
+        expected(as_written)
+    );
+    assert_eq!(
+        described(Some(OperationIdCase::LowerCamel)),
+        expected(["getCasedReport", "headCasedReport", "getCasedHalf"])
+    );
+    assert_eq!(
+        described(Some(OperationIdCase::UpperCamel)),
+        expected(["GetCasedReport", "HeadCasedReport", "GetCasedHalf"])
+    );
+}
+
+/// Named by hand as `get_cased_report` is once recased.
+#[kynos::post("/cased/copy", operation_id = "getCasedReport")]
+async fn copy_cased_report() -> NoContent {
+    NoContent
+}
+
+/// Uniqueness is the published names': a derived name that only collides
+/// with a written one once recased is a repeated `operationId`, and is not
+/// one before.
+#[test]
+fn a_recased_operation_id_repeating_a_written_one_is_refused() {
+    use kynos::{openapi::SpecError, router::operation::OperationIdCase};
+
+    let repeated = |router: &Router<()>| {
+        violations_like(router, |error| {
+            matches!(
+                error,
+                RouterError::Spec(SpecError::DuplicateOperationId { operation_id, .. })
+                    if operation_id == "getCasedReport"
+            )
+        })
+    };
+    let router = || Router::<()>::new().mount(kynos::routes![get_cased_report, copy_cased_report]);
+
+    assert!(repeated(&router()).is_empty());
+    let cased = router().operation_id_case(OperationIdCase::LowerCamel);
+    assert_eq!(repeated(&cased).len(), 1);
+    assert!(cased.openapi().is_err());
+}
+
+/// One problem type two operations answer with.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum StockError {
+    #[error("the item is out of stock")]
+    #[problem(
+        status = 409,
+        type = "https://errors.example.com/orders/out-of-stock",
+        title = "Out of stock"
+    )]
+    OutOfStock,
+}
+
+#[kynos::get("/stock/first")]
+async fn first_stock() -> Result<NoContent, StockError> {
+    Err(StockError::OutOfStock)
+}
+
+#[kynos::get("/stock/second")]
+async fn second_stock() -> Result<NoContent, StockError> {
+    Err(StockError::OutOfStock)
+}
+
+/// The recovery's 500 and the `ApiError`'s 409 are each written once under
+/// `components/responses`, named for the problem they carry, and every
+/// operation refers to that one component, which says what the operation's
+/// own response said and leaves the document valid.
+#[test]
+fn a_problem_the_framework_writes_at_two_operations_is_one_named_component() {
+    use kynos::openapi::{Ref, RefOr, validate::Validator};
+
+    let document = Router::<()>::new()
+        .catch_panics()
+        .mount(kynos::routes![first_stock, second_stock])
+        .openapi()
+        .expect("a describable router");
+    let written = inlined(document.clone());
+
+    for (status, name) in [
+        ("409", "OutOfStockProblemStatus409"),
+        ("500", "ProblemStatus500"),
+    ] {
+        let shared = document.components.responses.get(name).unwrap_or_else(|| {
+            panic!("no {name} among {:?}", document.components.responses.keys())
+        });
+        assert!(
+            shared
+                .as_item()
+                .is_some_and(|response| response.content.contains_key("application/problem+json")),
+            "{name} is the problem response itself"
+        );
+        for path in ["/stock/first", "/stock/second"] {
+            let operation = |document: &Document| {
+                document.paths.items[path]
+                    .operation(kynos::openapi::Method::Get)
+                    .expect("a described GET")
+                    .responses
+                    .responses[status]
+                    .clone()
+            };
+            assert_eq!(
+                operation(&document),
+                RefOr::Ref(Ref::response(name)),
+                "{path}"
+            );
+            assert_eq!(&operation(&written), shared, "{path}");
+        }
+    }
+
+    let version = document.spec_version().unwrap_or_default();
+    assert_eq!(Validator::new(version).validate(&document), []);
 }

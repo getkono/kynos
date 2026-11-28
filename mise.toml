@@ -113,6 +113,18 @@ cargo nextest run -p kynos-openapi \
   -E 'not (test(=emit::yaml::tests::an_extension_repeating_a_model_field_leaves_the_field_in_place) | (binary(properties) & test(=yaml_emission_is_what_serde_norway_writes_for_the_model)))'
 '''
 
+[tasks."test:preserve-order"]
+description = "Test kynos-openapi and kynos's response hoisting with serde_json's preserve_order forced on"
+# As `test:arbitrary-precision`, for the other `serde_json` feature a downstream
+# graph may unify on: only under it does a `Value` keep insertion order, which
+# `to_canonical_json` and the router's response hoisting must sort themselves
+# (docs/testing.md#cross-cutting).
+env = { CARGO_INCREMENTAL = "0" }
+run = [
+  "cargo nextest run -p kynos-openapi --features yaml,serde_json/preserve_order --no-tests=fail",
+  "cargo nextest run -p kynos --features serde_json/preserve_order --no-tests=fail -E 'test(/^router::hoist::/)'",
+]
+
 [tasks."features:check"]
 description = "Lint every reachable feature combination"
 # Clippy rather than `cargo check`: the only gate compiling partial feature
@@ -757,8 +769,10 @@ run = "mise run fuzz --replay"
 [tasks.check]
 description = "Run formatting, linting, and tests"
 # The `features:*` tasks run last: `cargo hack` rewrites member manifests while
-# it works, which breaks anything sharing the workspace.
+# it works, which breaks anything sharing the workspace. `hooks:check` runs
+# first, so its warning is not lost behind a later failure.
 run = [
+  { task = "hooks:check" },
   { task = "format:check" },
   { task = "lint" },
   { task = "lint:baseline" },
@@ -777,18 +791,21 @@ run = [
   { task = "cost:test" },
   { task = "profile:test" },
   { task = "commits:test" },
+  { task = "commits:gates:test" },
   { task = "deps:test" },
   { task = "docs:check" },
   { task = "panic:check" },
   { task = "test:arbitrary-precision" },
+  { task = "test:preserve-order" },
   { task = "features:check" },
   { task = "features:targets" },
 ]
 
 [tasks.ci]
 description = "Run every check CI runs on master and on pull requests"
-# `check` plus what only `ci.yml`'s `commits` and `msrv` jobs and `full.yml`
-# run, so one command answers what CI would. `check` comes last, keeping
+# `check` plus what only `ci.yml`'s `commits`, `commit-gates` and `msrv` jobs
+# and `full.yml` run, so one command answers what CI would; `commits:gates`
+# here checks what a push would publish. `check` comes last, keeping
 # `features:*` last.
 # `semver:check` is advisory here as on master and pull requests; only a
 # release branch blocks on it. `cost:features` and `profile:requests` measure
@@ -799,6 +816,7 @@ description = "Run every check CI runs on master and on pull requests"
 # `ci:full` pull request.
 run = [
   { task = "commits:check" },
+  { task = "commits:gates" },
   { task = "coverage:ci" },
   { task = "msrv:check" },
   "mise run semver:check --advisory",
@@ -849,3 +867,33 @@ description = "Test that both halves of the commit rule agree about a merge"
 # to both over real repositories, including a merge through hk's hook.
 tools = { python = "3.11.16" }
 run = "python3 scripts/commits_test.py"
+
+[tasks."commits:gates"]
+description = "Run lint, docs:check, api:check and msrv:check over each commit of an explicit or outgoing range"
+# A series lands commit by commit, so a commit red mid-series stays red in
+# history; every other run of these gates sees only a tip. Bare, the commits no
+# remote-tracking branch has; `-- range OLD NEW` what NEW has that OLD has not.
+# The `pre-push` hook and CI's `commit-gates` job run it;
+# `scripts/commit_gates.py` says what it skips.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates.py"
+
+[tasks."commits:gates:test"]
+description = "Test that the per-commit gates check each commit's own tree, and that the pre-push hook runs them"
+# Over throwaway repositories with stub gates, so it compiles nothing.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates_test.py"
+
+[tasks."hooks:install"]
+description = "Install the commit-msg, pre-commit and pre-push hooks"
+# hk owns the first two. The `pre-push` hook is `commit_gates.py`'s, since hk
+# hands a step none of the refs a push names.
+tools = { python = "3.11.16" }
+run = ["hk install --mise", "python3 scripts/commit_gates.py install"]
+
+[tasks."hooks:check"]
+description = "Warn, never failing, where git would not run the pre-push hook hooks:install writes"
+# A checkout whose hooks predate `commit_gates.py install` has hk's two and no
+# `pre-push`, and nothing else says so. Silent under CI and outside a repository.
+tools = { python = "3.11.16" }
+run = "python3 scripts/commit_gates.py check-install"

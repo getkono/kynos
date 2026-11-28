@@ -1,10 +1,9 @@
 //! What `#[derive(ApiError)]` declares each status with, joins a `const` type
 //! URI prefix with, reads a transparent variant's held error through and
-//! unions its statuses with, sends its
-//! extension members through, declares a constant one by, and sends and
-//! declares a failure's
-//! `#[problem(headers)]` group and `#[problem(retry_after)]` delay with, and
-//! logs a 5xx failure through before its problem consumes it.
+//! unions its statuses with, sends its extension members through, declares a
+//! constant one by, and sends and declares a failure's `#[problem(headers)]`
+//! group and `#[problem(retry_after)]` delay with, and logs a 5xx failure
+//! through before its problem consumes it.
 //!
 //! [`response`] forwards to [`error::problem`](crate::error::problem), where
 //! the shape is built, and the header helpers to
@@ -13,9 +12,11 @@
 //! event is emitted by `middleware::trace::reported`, next to the request
 //! log, so the logging facade stays named where the runtime allowance lists.
 
+pub mod slug;
+
 use std::time::Duration;
 
-use kynos_openapi::{Header, Map, RefOr, Response, Schema as OpenApiSchema};
+use kynos_openapi::{Header, Map, RefOr, Response, Responses, Schema as OpenApiSchema};
 
 use crate::{
     extract::params::header::{EncodeHeaders, HeaderParams},
@@ -29,13 +30,15 @@ use crate::{
 /// Each branch is the type URI a failure publishes, or `None` where it names
 /// none, the summary its declaration gave it, and its extension members: each
 /// one's name, its type's schema, and whether every occurrence sends it.
+/// `described` is the enum's `describe` text for the status, if it wrote one.
 #[must_use]
 pub fn response(
     problem: &OpenApiSchema,
     status: u16,
+    described: Option<&'static str>,
     branches: &[crate::error::problem::Branch<'_>],
 ) -> Response {
-    crate::error::problem::narrowed_response(problem, status, branches)
+    crate::error::problem::written_response(problem, status, described, branches)
 }
 
 /// The headers group `H` declares, as one failure's entry in
@@ -102,9 +105,10 @@ impl<E: crate::error::problem::IntoProblem + crate::response::ShortCircuit> Held
 }
 
 /// Joins a transparent variant's `held` responses to the enum's, a status both
-/// declare naming every type and every header that reaches it.
-pub fn union_responses(responses: &mut kynos_openapi::Responses, held: &kynos_openapi::Responses) {
-    crate::response::headers::union_from(responses, held);
+/// declare naming every type and header reaching it, after `held` is titled at
+/// each status in `written`, whose description the enum writes over the union.
+pub fn union_responses(responses: &mut Responses, held: Responses, written: &[u16]) {
+    crate::response::headers::union_from(responses, &crate::error::problem::titled(held, written));
 }
 
 /// Writes a failure's header group onto the problem response it answers with,

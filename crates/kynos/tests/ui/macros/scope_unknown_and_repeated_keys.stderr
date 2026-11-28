@@ -1,0 +1,17 @@
+error: `rename` is not part of the `#[scope(...)]` grammar on an enum, which takes `rename_all` alone; a variant's `rename` goes on that variant
+ --> tests/ui/macros/scope_unknown_and_repeated_keys.rs:7:9
+  |
+7 | #[scope(rename = "grant")]
+  |         ^^^^^^
+
+error: `rename_all` is not part of the `#[scope(...)]` grammar on a variant, which takes `rename` alone; `rename_all` goes on the enum
+  --> tests/ui/macros/scope_unknown_and_repeated_keys.rs:14:13
+   |
+14 |     #[scope(rename_all = "lowercase")]
+   |             ^^^^^^^^^^
+
+error: `rename` is already set, and `#[scope(...)]` takes each key once
+  --> tests/ui/macros/scope_unknown_and_repeated_keys.rs:21:13
+   |
+21 |     #[scope(rename = "root")]
+   |             ^^^^^^

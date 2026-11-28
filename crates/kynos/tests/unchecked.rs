@@ -420,6 +420,29 @@ fn a_gate_can_tolerate_one_waiver_and_still_catch_the_rest() {
     );
 }
 
+/// Sealing a router keeps the gate: a function returning `Sealed` reports what
+/// the router it sealed would, at either panic policy.
+#[test]
+fn a_sealed_router_reports_the_waivers_it_was_given() {
+    let waived = || with_catch_all().upgrade_unchecked("/ws", echo_path);
+    let expected = [
+        kynos::openapi::OpaqueReason::UntypedRoute,
+        kynos::openapi::OpaqueReason::ProtocolUpgrade,
+    ];
+
+    let propagating = waived().seal();
+    assert!(propagating.has_unchecked());
+    assert_eq!(propagating.unchecked_reasons(), expected);
+
+    let catching = waived().catch_panics().seal();
+    assert!(catching.has_unchecked());
+    assert_eq!(catching.unchecked_reasons(), expected);
+
+    let clean = Router::<()>::new().catch_panics().seal();
+    assert!(!clean.has_unchecked());
+    assert!(clean.unchecked_reasons().is_empty());
+}
+
 /// Two routes waived for one reason report it once.
 #[test]
 fn one_reason_is_reported_once_however_many_routes_took_it() {
@@ -691,6 +714,42 @@ fn an_unchecked_route_repeating_a_described_operation_fails_every_entry_point() 
             "error at #/paths/~1users/get: operation `GET /users` is described more than once; a \
              path item holds one operation per method"
         ]
+    );
+}
+
+/// A `GET` describing the HEAD it answers.
+#[kynos::get("/reports", head)]
+async fn get_reports() -> NoContent {
+    NoContent
+}
+
+/// The same `GET`, describing no HEAD.
+#[kynos::get("/reports")]
+async fn reports() -> NoContent {
+    NoContent
+}
+
+/// The HEAD a `GET` describes is a described operation like any other, so an
+/// unchecked HEAD on its path repeats it and is refused at it.
+#[test]
+fn an_unchecked_head_repeating_a_described_head_fails_every_entry_point() {
+    assert_eq!(
+        refusals(|| Router::<()>::new()
+            .mount(kynos::routes![get_reports])
+            .route_unchecked([Method::HEAD], "/reports", echo_path)),
+        [
+            "error at #/paths/~1reports/head: operation `HEAD /reports` is described more than \
+             once; a path item holds one operation per method"
+        ]
+    );
+
+    // The control: a `GET` describing no HEAD leaves it to the unchecked route.
+    assert!(
+        Router::<()>::new()
+            .mount(kynos::routes![reports])
+            .route_unchecked([Method::HEAD], "/reports", echo_path)
+            .build(())
+            .is_ok()
     );
 }
 

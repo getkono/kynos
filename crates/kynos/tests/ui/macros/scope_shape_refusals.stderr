@@ -1,0 +1,11 @@
+error: `Scope` names each variant of an enum as one scope, so a misspelt scope is an unknown variant; derive it on a field-less enum
+ --> tests/ui/macros/scope_shape_refusals.rs:6:1
+  |
+6 | struct Admin;
+  | ^^^^^^
+
+error: a scope is one name, so a variant declaring fields has nothing for them to say; make every variant a unit
+  --> tests/ui/macros/scope_shape_refusals.rs:11:9
+   |
+11 |     Read(u8),
+   |         ^^^^

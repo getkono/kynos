@@ -214,7 +214,7 @@ impl<C: Send + Sync + 'static> Endpoint<C> for AssetEndpoint {
     }
 
     fn describe(&self, operation: &mut OperationCx<'_>) {
-        operation.set_operation_id(&self.operation_id);
+        operation.set_derived_operation_id(&self.operation_id);
         operation.set_summary(format!("Serves {}", self.asset.path()));
 
         let mut responses = kynos_openapi::Responses::new()

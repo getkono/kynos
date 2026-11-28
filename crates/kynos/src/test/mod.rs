@@ -4,10 +4,17 @@
 //! description promises, so a suite exercising every operation proves the
 //! document truthful — see [`TestClient::assert_conformance`]. Where the
 //! declared responses need several differently built services to produce, a
-//! [`Coverage`] shared between their clients checks them together.
+//! [`Coverage`] shared between their clients checks them together, for
+//! coverage and for conformance.
 
 mod body;
 mod conformance;
+#[cfg(feature = "cookie")]
+pub mod cookie;
+pub mod document;
+#[cfg(feature = "multipart")]
+pub mod multipart;
+pub mod view;
 
 #[cfg(test)]
 mod tests;
@@ -20,10 +27,13 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use http_body_util::BodyExt;
 use kynos_openapi::{
-    Document, Method, model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
+    Document, Method, OperationAt, StatusPattern,
+    model::body::mime_names::APPLICATION_PROBLEM_JSON as PROBLEM_JSON,
 };
 use serde_json::{Map, Value};
 
+#[cfg(all(feature = "server", feature = "http1"))]
+use crate::server::connection::test_client::Stalled;
 use crate::{
     extract::connection::Connection,
     http::{
@@ -39,7 +49,7 @@ use crate::{
 
 /// One response, as it was received, with the request target; the template is
 /// matched against the description when an assertion runs.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Observed {
     method: HttpMethod,
     /// The target as the test wrote it, for reporting.
@@ -68,6 +78,12 @@ pub struct TestClient<C> {
     peer: Option<std::net::SocketAddr>,
     /// The fields every request starts from.
     headers: HeaderMap,
+    /// The cookies every request sends beside its own, by name.
+    cookies: Vec<(String, String)>,
+    /// What a problem type with no scheme is joined to, for every response.
+    problem_base: Option<Arc<str>>,
+    /// Whether each response is checked for conformance as it arrives.
+    strict: bool,
     /// What [`Transport::Direct`] holds a request body to between frames.
     #[cfg(feature = "server")]
     request_body_idle_timeout: IdleTimeout,
@@ -88,7 +104,10 @@ enum IdleTimeout {
 impl<C> TestClient<C> {
     /// Wraps a built service.
     ///
-    /// With the `server` feature, every request body is held to the idle
+    /// Every request arrives on a connection from the peer
+    /// [`with_peer`](Self::with_peer) documents, as a served one does, so
+    /// the extractors reading a peer read the same one whichever transport
+    /// a test is moved to. With the `server` feature, every request body is held to the idle
     /// timeout a server holds it to,
     /// [`Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT`](crate::server::Server::DEFAULT_REQUEST_BODY_IDLE_TIMEOUT),
     /// unless [`with_request_body_idle_timeout`](Self::with_request_body_idle_timeout)
@@ -105,9 +124,50 @@ impl<C> TestClient<C> {
             coverage: None,
             peer: None,
             headers: HeaderMap::new(),
+            cookies: Vec::new(),
+            problem_base: None,
+            strict: false,
             #[cfg(feature = "server")]
             request_body_idle_timeout: IdleTimeout::Default,
         }
+    }
+
+    /// Checks each response for conformance as it arrives, as
+    /// [`assert_conformance`](Self::assert_conformance) checks every one, and
+    /// panics at the request that received it, naming the exchange, so no
+    /// test needs to remember the assertion and a failure points at the
+    /// request that caused it.
+    ///
+    /// [`send`](TestRequest::send) checks the whole response.
+    /// [`send_streaming`](TestRequest::send_streaming) checks its status and
+    /// fields as the head arrives, and its body once the stream reads it to
+    /// its end; a stream dropped before then has its body checked by
+    /// nothing, as `assert_conformance` would not check it either. Every
+    /// exchange is still recorded, so the client's and a shared
+    /// [`Coverage`]'s own assertions read it as before.
+    ///
+    /// Until this is called, a client only records, so a test can inspect a
+    /// response the description does not declare.
+    ///
+    /// ```
+    /// # async fn run(service: kynos::router::service::Service<()>) {
+    /// use kynos::test::TestClient;
+    ///
+    /// let client = TestClient::new(service).strict();
+    /// // Panics here if the response is not one the description declares.
+    /// client.get("/health").send().await;
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn strict(mut self) -> Self {
+        self.strict = true;
+        self
+    }
+
+    /// The description a strict client checks each response against, or
+    /// `None` for one that only records.
+    fn checked_against(&self) -> Option<&Document> {
+        self.strict.then(|| self.openapi())
     }
 
     /// Holds every request body to `timeout` between frames, as a server
@@ -145,6 +205,7 @@ impl<C> TestClient<C> {
     /// bodies.
     #[cfg(feature = "server")]
     #[must_use]
+    #[track_caller]
     pub fn with_request_body_idle_timeout(mut self, timeout: Option<std::time::Duration>) -> Self {
         if let Some(built) = self.transport.served_by() {
             panic!(
@@ -172,6 +233,26 @@ impl<C> TestClient<C> {
         }
     }
 
+    /// The description the answering service serves, which this client's
+    /// own assertions read: the document to give a [`Coverage`] assertion
+    /// without building the router a second time.
+    ///
+    /// ```
+    /// use kynos::{Router, test::{Coverage, TestClient}};
+    ///
+    /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let coverage = Coverage::new();
+    /// let client = TestClient::new(Router::<()>::new().build(())?).with_coverage(&coverage);
+    /// // ... exercise the client, then:
+    /// coverage.assert_declared_responses_covered(client.openapi());
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn openapi(&self) -> &Document {
+        self.service().openapi()
+    }
+
     /// The service that answers, whose description assertions read.
     fn service(&self) -> &Service<C> {
         match &self.transport {
@@ -187,6 +268,7 @@ impl<C> TestClient<C> {
     /// [`connect`](Self::connect), whose requests leave from their own
     /// socket's address.
     #[cfg(feature = "server")]
+    #[track_caller]
     fn refuse_peer_over_a_socket(&self, setter: &str) {
         if let Transport::Connected { .. } = self.transport {
             panic!(
@@ -199,8 +281,9 @@ impl<C> TestClient<C> {
     /// Records every response this client receives into `coverage` as well.
     ///
     /// The client's own assertions still read only what it received; the
-    /// shared record is read by [`Coverage::assert_declared_responses_covered`]
-    /// or [`Coverage::assert_covered`].
+    /// shared record is read by [`Coverage`]'s own: coverage, such as
+    /// [`Coverage::assert_covered`], and conformance,
+    /// [`Coverage::assert_conformance`].
     /// A second call replaces the first.
     #[must_use]
     pub fn with_coverage(mut self, coverage: &Coverage) -> Self {
@@ -215,11 +298,22 @@ impl<C> TestClient<C> {
     /// client address: a rate limiter keyed by client, or a trusted-proxy
     /// policy. A second call replaces the first.
     ///
+    /// Until this is called, a request a client built [`new`](Self::new) or
+    /// [`through_server`](Self::through_server) sends comes from
+    /// `127.0.0.1:0`, over a connection whose local address is `127.0.0.1:0`
+    /// too: the loopback a request [`connect`](Self::connect) sends comes
+    /// from, so a test reads the same client whichever transport carries it.
+    /// Either way the request arrived on a connection:
+    /// [`Connection::is_in_process`](crate::extract::connection::Connection::is_in_process)
+    /// is `false`, and a trusted-proxy policy trusting loopback reads its
+    /// forwarding fields.
+    ///
     /// # Panics
     ///
     /// Panics on a client built [`connect`](Self::connect), whose requests
     /// leave from their own socket's address.
     #[must_use]
+    #[track_caller]
     pub fn with_peer(mut self, peer: std::net::SocketAddr) -> Self {
         #[cfg(feature = "server")]
         self.refuse_peer_over_a_socket("with_peer");
@@ -234,15 +328,116 @@ impl<C> TestClient<C> {
     /// wrote it: [`TestRequest::header`], [`bearer`](TestRequest::bearer) for
     /// `Authorization`, a body's `Content-Type`, or the `Cookie` field
     /// [`cookie`](TestRequest::cookie) assembles. A second call naming the
-    /// same field replaces the first.
+    /// same field replaces the first. A default cookie that a request's own
+    /// cookies should join rather than replace is
+    /// [`with_default_cookie`](Self::with_default_cookie).
     ///
     /// # Panics
     ///
-    /// Panics when `name` or `value` is not one HTTP can carry.
+    /// Panics when `name` or `value` is not one HTTP can carry, and when
+    /// `name` is `Cookie` on a client given a
+    /// [`with_default_cookie`](Self::with_default_cookie), whose cookies the
+    /// field would silently replace.
     #[must_use]
+    #[track_caller]
     pub fn with_default_header(mut self, name: &str, value: &str) -> Self {
         let (name, value) = field(name, value);
+        assert!(
+            name != crate::http::header::COOKIE || self.cookies.is_empty(),
+            "a `Cookie` default header would replace the client's `with_default_cookie`s; \
+             give the client each cookie by `with_default_cookie` instead"
+        );
         self.headers.insert(name, value);
+        self
+    }
+
+    /// Sends the cookie `name=value` on every request, beside the request's
+    /// own [`cookie`](TestRequest::cookie)s.
+    ///
+    /// The cookies join one `Cookie` field (RFC 6265 section 5.4), the
+    /// client's first, in the order they were given. A request's own cookie
+    /// of the same name is sent instead of the client's, so a signed-in
+    /// client can still send one request as another user. A second call
+    /// naming the same cookie replaces the first. A request that writes the
+    /// `Cookie` field itself, through [`TestRequest::header`], sends that
+    /// field and none of these.
+    ///
+    /// ```
+    /// # async fn run(service: kynos::router::service::Service<()>) {
+    /// use kynos::test::TestClient;
+    ///
+    /// let client = TestClient::new(service).with_default_cookie("session", "abc123");
+    /// // Sends `Cookie: session=abc123; theme=dark`.
+    /// client.get("/me").cookie("theme", "dark").send().await;
+    /// // Sends `Cookie: session=other`.
+    /// client.get("/me").cookie("session", "other").send().await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name=value` is not a header value, and on a client given
+    /// a `Cookie` [`with_default_header`](Self::with_default_header), which
+    /// these would silently replace.
+    #[must_use]
+    #[track_caller]
+    pub fn with_default_cookie(mut self, name: &str, value: &str) -> Self {
+        assert!(
+            !self.headers.contains_key(crate::http::header::COOKIE),
+            "`with_default_cookie` would replace the client's `Cookie` default header; \
+             give the client each cookie by `with_default_cookie` instead"
+        );
+        let pair = format!("{name}={value}");
+        assert!(
+            HeaderValue::from_str(&pair).is_ok(),
+            "`{pair}` is not a header value"
+        );
+        match self.cookies.iter_mut().find(|(set, _)| set == name) {
+            Some((_, set)) => value.clone_into(set),
+            None => self.cookies.push((name.to_owned(), value.to_owned())),
+        }
+        self
+    }
+
+    /// Joins `base` to every problem type given to
+    /// [`TestResponse::assert_problem`] and
+    /// [`TestResponse::assert_problem_type`] as a slug, one with no URI
+    /// scheme, so an API whose types share one prefix names each by its
+    /// slug. A type with a scheme, `about:blank` or a full URI, is compared
+    /// as given. A second call replaces the first.
+    ///
+    /// `base` and the slug are joined verbatim, as
+    /// [`problem_type!`](crate::problem_type) joins them, so the base is the
+    /// string the application's [`problem_base!`](crate::problem_base)
+    /// declares, its trailing `/` included.
+    ///
+    /// ```
+    /// # async fn run(service: kynos::router::service::Service<()>) {
+    /// use kynos::test::TestClient;
+    ///
+    /// let client = TestClient::new(service).with_problem_base("https://errors.example.com/");
+    /// // Compared against `https://errors.example.com/insufficient-scope`.
+    /// client
+    ///     .get("/admin")
+    ///     .send()
+    ///     .await
+    ///     .assert_problem(403, "insufficient-scope");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `base` has no URI scheme (RFC 3986 section 3.1), so that
+    /// no type it is joined to could be absolute.
+    #[must_use]
+    #[track_caller]
+    pub fn with_problem_base(mut self, base: &str) -> Self {
+        assert!(
+            has_scheme(base),
+            "`{base}` is not a problem base: one begins with a URI scheme, as \
+             `https://errors.example.com/` does"
+        );
+        self.problem_base = Some(Arc::from(base));
         self
     }
 
@@ -308,30 +503,101 @@ impl<C> TestClient<C> {
         )
     }
 
-    /// Begins a request with any method.
+    /// Begins a request with any method, given as a
+    /// [`Method`](crate::http::Method) or by its name.
     ///
-    /// For a method Kynos routes that this type has no shortcut for.
+    /// For a method Kynos routes that this type has no shortcut for, and for
+    /// a table of cases that names each method as text.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// use kynos::http::Method;
+    ///
+    /// for (method, path, status) in [("GET", "/v1/status", 200), ("DELETE", "/v1/status", 405)] {
+    ///     client.method(method, path).send().await.assert_status(status);
+    /// }
+    /// client.method(Method::PUT, "/v1/status").send().await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`IntoMethod::into_method`] does: when a name is not a
+    /// method token, or spells a method RFC 9110 registers in another case.
     #[must_use]
-    pub fn method(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
-        self.request(method, path)
+    #[track_caller]
+    pub fn method(&self, method: impl IntoMethod, path: &str) -> TestRequest<'_, C> {
+        self.request(method.into_method(), path)
     }
 
     fn request(&self, method: HttpMethod, path: &str) -> TestRequest<'_, C> {
+        self.begin(method, path.to_owned(), self.headers.clone(), self.peer)
+    }
+
+    /// Begins a request to `target`, starting from `headers` and `peer`.
+    fn begin(
+        &self,
+        method: HttpMethod,
+        target: String,
+        headers: HeaderMap,
+        peer: Option<std::net::SocketAddr>,
+    ) -> TestRequest<'_, C> {
         TestRequest {
             client: self,
             method,
-            path: path.to_owned(),
-            headers: self.headers.clone(),
+            path: target,
+            headers,
             body: RequestBody::Whole(Bytes::new()),
             content_length: None,
-            peer: self.peer,
+            peer,
             cookies: Vec::new(),
         }
     }
 
+    /// Begins a [`ClientView`](view::ClientView) of this client: requests
+    /// sent through it reach this client's transport and records, under the
+    /// defaults the view adds to this client's own.
+    ///
+    /// For what a client cannot be given as it is built: a credential a
+    /// login request through it mints, or two users' credentials
+    /// interleaved in one test.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// let token = client.post("/login").send().await.text().to_owned();
+    /// let user = client.view().bearer(&token);
+    /// user.get("/me").send().await.assert_status(200);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn view(&self) -> view::ClientView<'_, C> {
+        view::ClientView::of(self)
+    }
+
+    /// Begins a [`ClientView`](view::ClientView) of this client mounted at
+    /// `prefix`, as [`view().at(prefix)`](view::ClientView::at) does, so a
+    /// suite names its API's mount prefix once.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// let api = client.at("/api/v1");
+    /// // Requests `/api/v1/reports`.
+    /// api.get("/reports").send().await;
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`ClientView::at`](view::ClientView::at) does.
+    #[must_use]
+    #[track_caller]
+    pub fn at(&self, prefix: &str) -> view::ClientView<'_, C> {
+        self.view().at(prefix)
+    }
+
     /// Records one exchange as its head arrived, into the shared coverage
-    /// too, and returns where it was observed, for a [`TestStream`] to file
-    /// the body under once it ends.
+    /// too, and returns where it was filed in each, for a [`TestStream`] to
+    /// file the body under once it ends.
     fn record(
         &self,
         method: &HttpMethod,
@@ -339,31 +605,27 @@ impl<C> TestClient<C> {
         uri: Uri,
         parts: &::http::response::Parts,
         body: Option<Bytes>,
-    ) -> usize {
-        if let Some(coverage) = &self.coverage {
-            push(
-                coverage,
-                Exchange {
-                    method: method.clone(),
-                    uri: uri.clone(),
-                    status: parts.status,
-                },
-            );
-        }
-
-        let mut recorded = self.recorded();
-        recorded.push(Observed {
+    ) -> (usize, Option<usize>) {
+        let observed = Observed {
             method: method.clone(),
             target: target.to_owned(),
             uri,
             status: parts.status,
             headers: parts.headers.clone(),
             body,
-        });
-        recorded.len() - 1
+        };
+        let shared = self
+            .coverage
+            .as_ref()
+            .map(|coverage| push(coverage, Exchange::Received(observed.clone())));
+
+        let mut recorded = self.recorded();
+        recorded.push(observed);
+        (recorded.len() - 1, shared)
     }
 
     /// Reads back what has been observed so far.
+    #[track_caller]
     fn recorded(&self) -> std::sync::MutexGuard<'_, Vec<Observed>> {
         self.observed
             .lock()
@@ -388,27 +650,9 @@ impl<C> TestClient<C> {
     /// # Panics
     ///
     /// Panics listing every response that did not conform.
+    #[track_caller]
     pub fn assert_conformance(&self) {
-        let document = self.service().openapi();
-        let mut failures = Vec::new();
-
-        for record in self.recorded().iter() {
-            for reason in conformance(document, record) {
-                failures.push(format!(
-                    "  {} {} -> {}: {reason}",
-                    record.method,
-                    record.target,
-                    record.status.as_u16()
-                ));
-            }
-        }
-
-        assert!(
-            failures.is_empty(),
-            "{} did not conform to the description:\n{}",
-            responses(failures.len()),
-            failures.join("\n")
-        );
+        assert_conforms(self.openapi(), self.recorded().iter());
     }
 
     /// Asserts that every declared response was exercised at least once.
@@ -420,13 +664,16 @@ impl<C> TestClient<C> {
     /// # Panics
     ///
     /// Panics listing every declared response that was never seen.
+    #[track_caller]
     pub fn assert_declared_responses_covered(&self) {
         let recorded = self.recorded();
         assert_covered(
-            self.service().openapi(),
+            self.openapi(),
+            |_| true,
             recorded
                 .iter()
                 .map(|record| (&record.method, &record.uri, record.status)),
+            &[],
         );
     }
 }
@@ -451,7 +698,8 @@ impl<C: 'static> TestClient<C> {
     ///   [`TestStream`] closes it without draining.
     /// - The connection is recorded between [`TestRequest::peer`], the
     ///   client's [`with_peer`](Self::with_peer), or `127.0.0.1:0` where
-    ///   neither is set, and a local `127.0.0.1:0`.
+    ///   neither is set, and a local `127.0.0.1:0`, as a request
+    ///   [`new`](Self::new)'s client sends arrives.
     /// - A body ending short of its
     ///   [`content_length`](TestRequest::content_length) aborts the message,
     ///   as a client whose connection broke does.
@@ -474,6 +722,7 @@ impl<C: 'static> TestClient<C> {
     /// Panics when `serve_io` refuses `server`: a value
     /// [`prepare`](crate::server::Server::prepare) refuses, or TLS.
     #[must_use]
+    #[track_caller]
     pub fn through_server(server: crate::server::Server<C>) -> Self {
         if let Err(error) = server.check_servable() {
             panic!("a server `serve_io` refuses cannot be tested through: {error}");
@@ -481,6 +730,8 @@ impl<C: 'static> TestClient<C> {
         Self::over(Transport::Served {
             server: Box::new(server),
             exchange: crate::server::Server::exchange,
+            #[cfg(feature = "http1")]
+            stall: crate::server::Server::stall,
         })
     }
 
@@ -533,10 +784,11 @@ impl<C: 'static> TestClient<C> {
     /// domain sockets has, and when its listeners speak TLS, since the
     /// client writes plaintext.
     #[must_use]
+    #[track_caller]
     pub fn connect(running: &crate::server::Running<C>) -> Self {
-        let address = running.local_addr().unwrap_or_else(|| {
+        let Some(address) = running.local_addr() else {
             panic!("a server with no TCP listener cannot be connected to; `connect` sends over TCP")
-        });
+        };
         assert!(
             !running.serves_tls(),
             "a server whose listeners speak TLS cannot be connected to; `connect` writes plaintext"
@@ -578,6 +830,9 @@ enum Transport<C> {
         /// `Server::exchange`, taken where `C: 'static` is known so sending
         /// needs no such bound.
         exchange: fn(&crate::server::Server<C>, Request, Connection) -> Exchanged,
+        /// `Server::stall`, taken for the same reason.
+        #[cfg(feature = "http1")]
+        stall: fn(&crate::server::Server<C>, Bytes, Connection) -> Stalled,
     },
     /// Over one fresh TCP connection each, to a spawned server's listener.
     #[cfg(feature = "server")]
@@ -612,12 +867,9 @@ impl<C> Transport<C> {
     ) -> std::io::Result<Response> {
         match self {
             Self::Direct(service) => {
-                if let Some(peer) = peer {
-                    // The same extension the server inserts per connection.
-                    request
-                        .extensions_mut()
-                        .insert(Connection::from_peer(peer, IN_PROCESS));
-                }
+                // The same extension the server inserts per connection, so
+                // the request arrives from where a served one does.
+                request.extensions_mut().insert(connection_from(peer));
                 // Held as a server holds it, so a stalled body is answered as
                 // a served one is.
                 #[cfg(feature = "server")]
@@ -641,16 +893,29 @@ impl<C> Transport<C> {
                 Ok(with_content_length(&method, response))
             }
             #[cfg(feature = "server")]
-            Self::Served { server, exchange } => {
-                let connection = Connection::from_peer(peer.unwrap_or(IN_PROCESS), IN_PROCESS);
-                exchange(server, request, connection).await
-            }
+            Self::Served {
+                server, exchange, ..
+            } => exchange(server, request, connection_from(peer)).await,
             // The peer is the socket's own; `with_peer` and `peer` refuse
             // to set one.
             #[cfg(feature = "server")]
             Self::Connected { address, .. } => {
                 crate::server::connection::test_client::exchange_at(*address, request).await
             }
+        }
+    }
+
+    /// Writes `head` on a fresh connection from `peer`, and resolves once the
+    /// server closes it, or `None` for [`Self::Direct`], which has no
+    /// connection to write on.
+    #[cfg(all(feature = "server", feature = "http1"))]
+    fn stall(&self, head: Bytes, peer: Option<std::net::SocketAddr>) -> Option<Stalled> {
+        match self {
+            Self::Direct(_) => None,
+            Self::Served { server, stall, .. } => Some(stall(server, head, connection_from(peer))),
+            Self::Connected { address, .. } => Some(Box::pin(
+                crate::server::connection::test_client::stall_at(*address, head),
+            )),
         }
     }
 }
@@ -699,12 +964,21 @@ const STALLED_BODY_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from
 type Exchanged =
     std::pin::Pin<Box<dyn std::future::Future<Output = std::io::Result<Response>> + Send>>;
 
-/// Where neither the test nor its client says who a served request is from,
-/// and where every request arrives.
-const IN_PROCESS: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+/// Where a request comes from when neither the test nor its client says, and
+/// where every request [`TestClient::new`] or
+/// [`through_server`](TestClient::through_server) sends arrives: loopback,
+/// as a request [`connect`](TestClient::connect) sends comes from, with port
+/// zero, which no socket's own port is.
+const DEFAULT_PEER: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
     std::net::Ipv4Addr::LOCALHOST,
     0,
 ));
+
+/// The connection a request from `peer`, or from [`DEFAULT_PEER`], arrives
+/// on, whichever transport carries it in process.
+fn connection_from(peer: Option<std::net::SocketAddr>) -> Connection {
+    Connection::from_peer(peer.unwrap_or(DEFAULT_PEER), DEFAULT_PEER)
+}
 
 /// The responses any number of [`TestClient`]s received, checked together
 /// against one description.
@@ -714,7 +988,9 @@ const IN_PROCESS: std::net::SocketAddr = std::net::SocketAddr::V4(std::net::Sock
 /// present and absent. Each of those clients is built
 /// [`with_coverage`](TestClient::with_coverage) over the same `Coverage`, and
 /// the declared responses are asserted once, after all of them ran, against
-/// the description that declares them all.
+/// the description that declares them all. The responses those clients
+/// received are checked for conformance to it once too, with
+/// [`assert_conformance`](Self::assert_conformance).
 ///
 /// A clone is the same record, not a copy of it: what one clone's clients
 /// record, every clone reads, and every clone is bound to the same document.
@@ -752,23 +1028,79 @@ impl Coverage {
     /// or [`assert_covered`](Self::assert_covered) to count.
     ///
     /// `path` is the concrete request target, matched against the
-    /// description when asserted, as a client's own exchanges are.
+    /// description when asserted, as a client's own exchanges are. No
+    /// response is recorded with it, so
+    /// [`assert_conformance`](Self::assert_conformance) has nothing of it to
+    /// check.
     ///
     /// # Panics
     ///
     /// Panics when `path` is not a request target.
+    #[track_caller]
     pub fn record(&self, method: &HttpMethod, path: &str, status: StatusCode) {
-        let uri = path
-            .parse::<Uri>()
-            .unwrap_or_else(|_| panic!("`{path}` is not a request target"));
+        let Ok(uri) = path.parse::<Uri>() else {
+            panic!("`{path}` is not a request target")
+        };
         push(
             &self.exchanges,
-            Exchange {
+            Exchange::Recorded {
                 method: method.clone(),
                 uri,
                 status,
             },
         );
+    }
+
+    /// Asserts that every response a client recording here received conforms
+    /// to `document`, as [`TestClient::assert_conformance`] checks one
+    /// client's against its own service's description.
+    ///
+    /// One assertion over every client sharing the record, so a client added
+    /// to a suite is checked without a call of its own. Each response is
+    /// held to its declared status, schema and required headers, whichever
+    /// client received it. An exchange [`record`](Self::record)ed by hand
+    /// carries no response, and is not checked.
+    ///
+    /// # Panics
+    ///
+    /// Panics listing every response that did not conform.
+    #[track_caller]
+    pub fn assert_conformance_to(&self, document: &Document) {
+        let exchanges = self.exchanges();
+        assert_conforms(document, exchanges.iter().filter_map(Exchange::received));
+    }
+
+    /// Asserts that every response a client recording here received conforms
+    /// to the document given to [`for_document`](Self::for_document), as
+    /// [`assert_conformance_to`](Self::assert_conformance_to) does for an
+    /// explicit document.
+    ///
+    /// ```
+    /// use kynos::{Router, test::{Coverage, TestClient}};
+    ///
+    /// # #[tokio::main(flavor = "current_thread")]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let service = Router::<()>::new().build(())?;
+    /// let coverage = Coverage::for_document(service.openapi().clone());
+    /// let anonymous = TestClient::new(service.clone()).with_coverage(&coverage);
+    /// let signed_in = TestClient::new(service)
+    ///     .with_default_header("authorization", "Bearer token")
+    ///     .with_coverage(&coverage);
+    /// # let _ = (anonymous, signed_in);
+    /// // ... exercise both clients, then check them together:
+    /// coverage.assert_conformance();
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), and otherwise listing every
+    /// response that did not conform.
+    #[track_caller]
+    pub fn assert_conformance(&self) {
+        self.assert_conformance_to(self.bound("assert_conformance_to"));
     }
 
     /// Asserts that every response `document` declares was exercised by at
@@ -780,11 +1112,20 @@ impl Coverage {
     /// [`TestClient::assert_declared_responses_covered`], a `HEAD` answered by
     /// a path's `get` does not count toward that operation.
     ///
+    /// A 403 no test can provoke, from a scheme whose credential grants
+    /// nothing beyond itself, is not declared once the scheme says so with
+    /// [`FORBIDS`](crate::security::SecurityScheme::FORBIDS)
+    /// (`#[security(forbids = false)]`), so it needs no exchange here. One
+    /// that is declared and still unreachable, such as the 500 only a
+    /// recovered panic answers with, is named in an [`Exemptions`] given to
+    /// [`assert_declared_responses_covered_except`](Self::assert_declared_responses_covered_except).
+    ///
     /// # Panics
     ///
     /// Panics listing every declared response that was never seen.
+    #[track_caller]
     pub fn assert_declared_responses_covered(&self, document: &Document) {
-        self.assert_against(document);
+        self.assert_against(document, |_| true);
     }
 
     /// Asserts that every response the document given to
@@ -798,51 +1139,381 @@ impl Coverage {
     /// Panics when this record was not built
     /// [`for_document`](Self::for_document), and otherwise listing every
     /// declared response that was never seen.
+    #[track_caller]
     pub fn assert_covered(&self) {
-        let document = self.document.as_deref().expect(
-            "a Coverage built without a document has nothing to assert against; \
-             build it with `Coverage::for_document`, or name the document with \
-             `assert_declared_responses_covered`",
-        );
-        self.assert_against(document);
+        self.assert_against(self.bound("assert_declared_responses_covered"), |_| true);
     }
 
-    /// Asserts the recorded exchanges cover what `document` declares.
-    fn assert_against(&self, document: &Document) {
-        let exchanges = self
-            .exchanges
-            .lock()
-            .expect("a coverage record whose recorder panicked cannot be asserted on");
+    /// Asserts that every response declared by the operations of `document`
+    /// that `keep` selects was exercised by at least one client recording
+    /// here, as
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// does for all of them.
+    ///
+    /// `keep` is asked of each operation under `document`'s `paths`, as
+    /// [`Document::operations`] yields it, so it can select by tag, by path
+    /// or by anything else the operation declares. One suite per area of an
+    /// API asserts that area's responses alone:
+    ///
+    /// ```
+    /// use kynos::{openapi::Document, test::Coverage};
+    ///
+    /// fn assert_lists_covered(coverage: &Coverage, document: &Document) {
+    ///     coverage.assert_declared_responses_covered_where(document, |op| {
+    ///         op.operation.tags.iter().any(|tag| tag == "lists")
+    ///     });
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `keep` selects no operation, which would assert nothing,
+    /// and otherwise listing every declared response of a selected operation
+    /// that was never seen.
+    #[track_caller]
+    pub fn assert_declared_responses_covered_where(
+        &self,
+        document: &Document,
+        keep: impl Fn(&OperationAt<'_>) -> bool,
+    ) {
+        assert!(
+            routed(document).any(|(_, _, at)| keep(&at)),
+            "the predicate selects no operation under the description's `paths`, \
+             so there is nothing to assert"
+        );
+        self.assert_against(document, keep);
+    }
+
+    /// Asserts that every response declared by the operations that `keep`
+    /// selects, of the document given to [`for_document`](Self::for_document),
+    /// was exercised by at least one client recording here, as
+    /// [`assert_declared_responses_covered_where`](Self::assert_declared_responses_covered_where)
+    /// does for an explicit document.
+    ///
+    /// ```
+    /// use kynos::test::Coverage;
+    ///
+    /// fn assert_lists_covered(coverage: &Coverage) {
+    ///     coverage.assert_covered_where(|op| op.operation.tags.iter().any(|tag| tag == "lists"));
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), when `keep` selects no
+    /// operation, and otherwise listing every declared response of a
+    /// selected operation that was never seen.
+    #[track_caller]
+    pub fn assert_covered_where(&self, keep: impl Fn(&OperationAt<'_>) -> bool) {
+        self.assert_declared_responses_covered_where(
+            self.bound("assert_declared_responses_covered_where"),
+            keep,
+        );
+    }
+
+    /// Asserts that every response `document` declares was exercised by at
+    /// least one client recording here, except the ones `exempt` names, as
+    /// [`assert_declared_responses_covered`](Self::assert_declared_responses_covered)
+    /// does for all of them.
+    ///
+    /// For a response no test can honestly produce, such as the 500 only a
+    /// recovered panic answers with. Each exemption is checked too, so none
+    /// outlives its reason: one naming a response `document` does not
+    /// declare, or one a client exercised after all, fails the assertion.
+    ///
+    /// ```
+    /// use kynos::test::{Coverage, Exemptions, TestClient};
+    ///
+    /// fn assert_suite_covered<C>(coverage: &Coverage, client: &TestClient<C>) {
+    ///     coverage.assert_declared_responses_covered_except(
+    ///         client.openapi(),
+    ///         &Exemptions::new().except("GET", "/health", 500, "only a panic answers 500"),
+    ///     );
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics listing every declared response that was neither seen nor
+    /// exempted, every exemption naming a response `document` does not
+    /// declare, and every exemption of a response that was seen.
+    #[track_caller]
+    pub fn assert_declared_responses_covered_except(
+        &self,
+        document: &Document,
+        exempt: &Exemptions,
+    ) {
+        let exchanges = self.exchanges();
         assert_covered(
             document,
-            exchanges
-                .iter()
-                .map(|exchange| (&exchange.method, &exchange.uri, exchange.status)),
+            |_| true,
+            exchanges.iter().map(Exchange::matched),
+            &exempt.entries,
         );
+    }
+
+    /// Asserts that every response the document given to
+    /// [`for_document`](Self::for_document) declares was exercised by at
+    /// least one client recording here, except the ones `exempt` names, as
+    /// [`assert_declared_responses_covered_except`](Self::assert_declared_responses_covered_except)
+    /// does for an explicit document.
+    ///
+    /// # Panics
+    ///
+    /// Panics when this record was not built
+    /// [`for_document`](Self::for_document), and otherwise as
+    /// [`assert_declared_responses_covered_except`](Self::assert_declared_responses_covered_except)
+    /// does.
+    #[track_caller]
+    pub fn assert_covered_except(&self, exempt: &Exemptions) {
+        self.assert_declared_responses_covered_except(
+            self.bound("assert_declared_responses_covered_except"),
+            exempt,
+        );
+    }
+
+    /// The document this record was built for, or a panic naming `explicit`,
+    /// the assertion that takes one instead.
+    #[track_caller]
+    fn bound(&self, explicit: &str) -> &Document {
+        let Some(document) = self.document.as_deref() else {
+            panic!(
+                "a Coverage built without a document has nothing to assert against; \
+                 build it with `Coverage::for_document`, or name the document with \
+                 `{explicit}`"
+            )
+        };
+        document
+    }
+
+    /// Asserts the recorded exchanges cover what the operations of `document`
+    /// that `keep` selects declare.
+    #[track_caller]
+    fn assert_against(&self, document: &Document, keep: impl Fn(&OperationAt<'_>) -> bool) {
+        let exchanges = self.exchanges();
+        assert_covered(document, keep, exchanges.iter().map(Exchange::matched), &[]);
+    }
+
+    /// Reads back what has been recorded so far.
+    #[track_caller]
+    fn exchanges(&self) -> std::sync::MutexGuard<'_, Vec<Exchange>> {
+        self.exchanges
+            .lock()
+            .expect("a coverage record whose recorder panicked cannot be asserted on")
     }
 }
 
-/// What a [`Coverage`] keeps of one exchange: enough to match it against a
-/// description later.
-#[derive(Debug)]
-struct Exchange {
+/// Declared responses a coverage assertion leaves out, each with the reason
+/// no test produces it, for
+/// [`Coverage::assert_declared_responses_covered_except`] and
+/// [`Coverage::assert_covered_except`].
+///
+/// Each entry names one response as the description declares it: the
+/// operation's method, its path template exactly as it appears under
+/// `paths`, such as `/users/{id}` rather than a request target, and the
+/// response's key. The assertion refuses an entry that names no declared
+/// response, and one whose response a test exercised after all, so the list
+/// cannot outlive what it records.
+///
+/// ```
+/// use kynos::{http::StatusCode, openapi::StatusPattern, test::Exemptions};
+///
+/// let exempt = Exemptions::new()
+///     .except("GET", "/health", 500, "only a recovered panic answers 500")
+///     .except("GET", "/ready", StatusCode::SERVICE_UNAVAILABLE, "the store never fails in a test")
+///     .except("POST", "/users", StatusPattern::ServerError, "nothing upstream fails in a test")
+///     .except("DELETE", "/users/{id}", "default", "a catch-all no handler returns");
+/// # let _ = exempt;
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct Exemptions {
+    entries: Vec<Exemption>,
+}
+
+impl Exemptions {
+    /// A list exempting nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Exempts the response `status` that `method` at `path` declares,
+    /// because of `reason`.
+    ///
+    /// `path` is the template as the description declares it, and `status`
+    /// the response's key: a [`StatusCode`] or its number for an exact key,
+    /// a [`StatusPattern`] for a range, or the key's text, which is how
+    /// `default` is written. `reason` is shown beside the exemption
+    /// wherever an assertion reports it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `method` or `status` names no method or response key, as
+    /// [`IntoMethod`] and [`IntoResponseKey`] say, when `reason` is blank,
+    /// and when the same response is exempted twice.
+    #[must_use]
+    #[track_caller]
+    pub fn except(
+        mut self,
+        method: impl IntoMethod,
+        path: &str,
+        status: impl IntoResponseKey,
+        reason: &str,
+    ) -> Self {
+        let method = method.into_method();
+        let key = status.into_response_key();
+        assert!(
+            !reason.trim().is_empty(),
+            "the exemption of `{method} {path} -> {key}` gives no reason; say why no test \
+             produces it"
+        );
+        assert!(
+            !self
+                .entries
+                .iter()
+                .any(|entry| entry.method == method && entry.template == path && entry.key == key),
+            "`{method} {path} -> {key}` is exempted twice"
+        );
+        self.entries.push(Exemption {
+            method,
+            template: path.to_owned(),
+            key,
+            reason: reason.to_owned(),
+        });
+        self
+    }
+}
+
+/// One response an [`Exemptions`] leaves out.
+#[derive(Clone, Debug)]
+struct Exemption {
     method: HttpMethod,
-    uri: Uri,
-    status: StatusCode,
+    template: String,
+    key: String,
+    reason: String,
 }
 
-/// Adds `exchange` to a shared coverage record.
-fn push(exchanges: &Mutex<Vec<Exchange>>, exchange: Exchange) {
-    exchanges
+impl Exemption {
+    /// Whether this names the response `key` of `method` at `template`.
+    fn names(&self, template: &str, method: Method, key: &str) -> bool {
+        self.template == template && self.method.as_str() == method.as_wire_str() && self.key == key
+    }
+
+    /// The exemption as a failure lists it.
+    fn line(&self) -> String {
+        format!(
+            "  {} {} -> {} ({})",
+            self.method, self.template, self.key, self.reason
+        )
+    }
+}
+
+/// What a [`Coverage`] keeps of one exchange.
+#[derive(Debug)]
+enum Exchange {
+    /// One a client received, kept whole, so it can be held to a
+    /// description as the client's own record is.
+    Received(Observed),
+    /// One [`Coverage::record`] was told of, which carries no response.
+    Recorded {
+        method: HttpMethod,
+        uri: Uri,
+        status: StatusCode,
+    },
+}
+
+impl Exchange {
+    /// What a declared response is matched by: the method, the target and
+    /// the status.
+    fn matched(&self) -> (&HttpMethod, &Uri, StatusCode) {
+        match self {
+            Self::Received(observed) => (&observed.method, &observed.uri, observed.status),
+            Self::Recorded {
+                method,
+                uri,
+                status,
+            } => (method, uri, *status),
+        }
+    }
+
+    /// The response, where one was received.
+    fn received(&self) -> Option<&Observed> {
+        match self {
+            Self::Received(observed) => Some(observed),
+            Self::Recorded { .. } => None,
+        }
+    }
+}
+
+/// Adds `exchange` to a shared coverage record, returning where it was filed.
+fn push(exchanges: &Mutex<Vec<Exchange>>, exchange: Exchange) -> usize {
+    let mut exchanges = exchanges
         .lock()
-        .expect("a coverage record whose recorder panicked cannot be written to")
-        .push(exchange);
+        .expect("a coverage record whose recorder panicked cannot be written to");
+    exchanges.push(exchange);
+    exchanges.len() - 1
 }
 
-/// Asserts that every response `document` declares is among `received`.
+/// Asserts that each of `received` conforms to `document`.
+#[track_caller]
+fn assert_conforms<'r>(document: &Document, received: impl Iterator<Item = &'r Observed>) {
+    let mut failures = Vec::new();
+
+    for record in received {
+        for reason in conformance(document, record) {
+            failures.push(format!(
+                "  {} {} -> {}: {reason}",
+                record.method,
+                record.target,
+                record.status.as_u16()
+            ));
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} did not conform to the description:\n{}",
+        responses(failures.len()),
+        failures.join("\n")
+    );
+}
+
+/// Asserts that the exchange filed at `at` in `observed` conforms to
+/// `document`, where a [`strict`](TestClient::strict) client names one.
+///
+/// The record is copied out first, so the panic leaves the lock unpoisoned.
+fn check_strictly(document: Option<&Document>, observed: &Mutex<Vec<Observed>>, at: usize) {
+    let Some(document) = document else {
+        return;
+    };
+    let record = observed
+        .lock()
+        .expect("a test client whose recorder panicked cannot be asserted on")[at]
+        .clone();
+    assert_conforms(document, std::iter::once(&record));
+}
+
+/// Each operation under `document`'s `paths` that a request can name, with
+/// its template and method: the operations a response is matched to, and
+/// the only ones coverage asks of.
+fn routed(document: &Document) -> impl Iterator<Item = (&str, Method, OperationAt<'_>)> {
+    document.operations().filter_map(|at| {
+        let template = at.path?;
+        let method = Method::from_wire_str(at.method)?;
+        Some((template, method, at))
+    })
+}
+
+/// Asserts that every response the operations of `document` that `keep`
+/// selects declare is among `received` or `exempt`, and that each of `exempt`
+/// names a declared response none of `received` is.
+#[track_caller]
 fn assert_covered<'r>(
     document: &Document,
+    keep: impl Fn(&OperationAt<'_>) -> bool,
     received: impl Iterator<Item = (&'r HttpMethod, &'r Uri, StatusCode)>,
+    exempt: &[Exemption],
 ) {
     let exercised: BTreeSet<(&str, Method, String)> = received
         .filter_map(|(method, uri, status)| {
@@ -855,22 +1526,101 @@ fn assert_covered<'r>(
         .collect();
 
     let mut missing = Vec::new();
-    for (template, item) in &document.paths.items {
-        for (method, operation) in item.operations() {
-            for key in declared_keys(&operation.responses) {
-                if !exercised.contains(&(template.as_str(), method, key.clone())) {
+    let mut declared = vec![false; exempt.len()];
+    let mut seen = Vec::new();
+    for (template, method, at) in routed(document).filter(|(_, _, at)| keep(at)) {
+        for key in declared_keys(&at.operation.responses) {
+            let exercised = exercised.contains(&(template, method, key.clone()));
+            match exempt
+                .iter()
+                .position(|entry| entry.names(template, method, &key))
+            {
+                Some(index) => {
+                    declared[index] = true;
+                    if exercised {
+                        seen.push(exempt[index].line());
+                    }
+                }
+                None if !exercised => {
                     missing.push(format!("  {} {template} -> {key}", method.as_wire_str()));
                 }
+                None => {}
             }
         }
     }
+    let stale: Vec<String> = exempt
+        .iter()
+        .zip(declared)
+        .filter(|(_, declared)| !declared)
+        .map(|(entry, _)| format!("{}: {}", entry.line(), undeclared(document, entry)))
+        .collect();
 
-    assert!(
-        missing.is_empty(),
-        "{} declared but never exercised:\n{}",
-        responses(missing.len()),
-        missing.join("\n")
-    );
+    let mut failures = Vec::new();
+    if !missing.is_empty() {
+        failures.push(format!(
+            "{} declared but never exercised:\n{}",
+            responses(missing.len()),
+            missing.join("\n")
+        ));
+    }
+    if !stale.is_empty() {
+        failures.push(format!(
+            "{} no declared response:\n{}",
+            exemptions_naming(stale.len()),
+            stale.join("\n")
+        ));
+    }
+    if !seen.is_empty() {
+        failures.push(format!(
+            "{} a response a test exercised, which needs no exemption:\n{}",
+            exemptions_naming(seen.len()),
+            seen.join("\n")
+        ));
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// Why `entry` names no response `document` declares.
+fn undeclared(document: &Document, entry: &Exemption) -> String {
+    let Some(item) = document.paths.items.get(&entry.template) else {
+        let target = entry.template.parse::<Uri>().ok();
+        return match target
+            .as_ref()
+            .and_then(|uri| matched_template(document, uri))
+        {
+            Some(template) => format!(
+                "`{}` is a request target; name the template it matches, `{template}`",
+                entry.template
+            ),
+            None => format!("no path `{}` is declared", entry.template),
+        };
+    };
+    let Some(operation) =
+        Method::from_wire_str(entry.method.as_str()).and_then(|method| item.operation(method))
+    else {
+        return format!(
+            "`{}` declares no `{}` operation",
+            entry.template, entry.method
+        );
+    };
+    let keys: Vec<String> = declared_keys(&operation.responses)
+        .iter()
+        .map(|key| format!("`{key}`"))
+        .collect();
+    format!(
+        "the operation declares no `{}` response, only {}",
+        entry.key,
+        keys.join(", ")
+    )
+}
+
+/// `count` exemptions, and the verb agreeing with them.
+fn exemptions_naming(count: usize) -> String {
+    if count == 1 {
+        "1 exemption names".to_owned()
+    } else {
+        format!("{count} exemptions name")
+    }
 }
 
 /// A request under construction.
@@ -892,10 +1642,16 @@ pub struct TestRequest<'a, C> {
 impl<'a, C> TestRequest<'a, C> {
     /// Sets a header.
     ///
+    /// A bearer token is [`bearer`](Self::bearer), a header every
+    /// request carries is [`TestClient::with_default_header`], and one every
+    /// request a view begins carries is
+    /// [`ClientView::header`](view::ClientView::header).
+    ///
     /// # Panics
     ///
     /// Panics when `name` or `value` is not one HTTP can carry.
     #[must_use]
+    #[track_caller]
     pub fn header(mut self, name: &str, value: &str) -> Self {
         let (name, value) = field(name, value);
         self.headers.insert(name, value);
@@ -912,6 +1668,7 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// Panics when `token` leaves the field no header value.
     #[must_use]
+    #[track_caller]
     pub fn bearer(self, token: &str) -> Self {
         self.header("authorization", &format!("Bearer {token}"))
     }
@@ -927,11 +1684,14 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics when `name` is not a header name, or when `value` holds an octet
     /// no field value can: a control character other than horizontal tab.
     #[must_use]
+    #[track_caller]
     pub fn header_bytes(mut self, name: &str, value: &[u8]) -> Self {
-        let name = HeaderName::from_bytes(name.as_bytes())
-            .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
-        let value = HeaderValue::from_bytes(value)
-            .unwrap_or_else(|_| panic!("`{}` is not a header value", value.escape_ascii()));
+        let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+            panic!("`{name}` is not a header name")
+        };
+        let Ok(value) = HeaderValue::from_bytes(value) else {
+            panic!("`{}` is not a header value", value.escape_ascii())
+        };
         self.headers.insert(name, value);
         self
     }
@@ -946,6 +1706,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// infinite float (so a `HashMap<(u8, u8), _>` panics here).
     #[cfg(feature = "json")]
     #[must_use]
+    #[track_caller]
     pub fn json<T: serde::Serialize>(mut self, body: &T) -> Self {
         self.body = RequestBody::Whole(Bytes::from(
             serde_json::to_vec(body).expect("a serializable request body"),
@@ -968,6 +1729,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// struct of scalars cannot cause.
     #[cfg(feature = "form")]
     #[must_use]
+    #[track_caller]
     pub fn query_string<T: serde::Serialize>(mut self, value: &T) -> Self {
         let encoded = serde_html_form::to_string(value).expect("a serializable query");
         if !encoded.is_empty() {
@@ -981,7 +1743,9 @@ impl<'a, C> TestRequest<'a, C> {
     /// Sends a cookie.
     ///
     /// Accumulated rather than set: RFC 6265 section 5.4 puts every cookie in
-    /// one `Cookie` field separated by `; `.
+    /// one `Cookie` field separated by `; `. The client's
+    /// [`with_default_cookie`](TestClient::with_default_cookie)s join it,
+    /// less any this names.
     /// A name or value that leaves that field no header value panics in
     /// [`send`](Self::send), not here.
     #[must_use]
@@ -993,8 +1757,9 @@ impl<'a, C> TestRequest<'a, C> {
     /// Says who the request came from.
     ///
     /// Without one, a service reading a peer address sees the client's
-    /// [`with_peer`](TestClient::with_peer), or the in-process default where
-    /// the client sets none; set it to test a rate limiter keyed by client, or
+    /// [`with_peer`](TestClient::with_peer), or the loopback default it
+    /// documents where the client sets none; set it to test a rate limiter
+    /// keyed by client, or
     /// a trusted-proxy policy.
     ///
     /// # Panics
@@ -1002,6 +1767,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics on a client built [`connect`](TestClient::connect), whose
     /// requests leave from their own socket's address.
     #[must_use]
+    #[track_caller]
     pub fn peer(mut self, address: std::net::SocketAddr) -> Self {
         #[cfg(feature = "server")]
         self.client.refuse_peer_over_a_socket("peer");
@@ -1015,6 +1781,7 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// Panics when `media_type` is not a header value.
     #[must_use]
+    #[track_caller]
     pub fn body(mut self, media_type: &str, bytes: impl Into<Bytes>) -> Self {
         self.body = RequestBody::Whole(bytes.into());
         self.content_type(media_type)
@@ -1038,6 +1805,7 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// Panics when `media_type` is not a header value.
     #[must_use]
+    #[track_caller]
     pub fn body_stream<S>(mut self, media_type: &str, chunks: S) -> Self
     where
         S: futures_core::Stream<Item = Bytes> + Send + 'static,
@@ -1069,6 +1837,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics when `media_type` is not a header value.
     #[cfg(feature = "server")]
     #[must_use]
+    #[track_caller]
     pub fn stalled_body(mut self, media_type: &str) -> Self {
         self.body = RequestBody::Stalled;
         self.content_length(1).content_type(media_type)
@@ -1112,6 +1881,7 @@ impl<'a, C> TestRequest<'a, C> {
     /// since such a body arrives whole rather than stalling.
     #[cfg(feature = "server")]
     #[must_use]
+    #[track_caller]
     pub fn stalled_after(mut self, media_type: &str, first: impl Into<Bytes>) -> Self {
         self.body = RequestBody::StalledAfter(first.into());
         self.content_type(media_type)
@@ -1135,17 +1905,19 @@ impl<'a, C> TestRequest<'a, C> {
         self
     }
 
+    #[track_caller]
     fn content_type(mut self, media_type: &str) -> Self {
-        self.headers.insert(
-            crate::http::header::CONTENT_TYPE,
-            HeaderValue::from_str(media_type)
-                .unwrap_or_else(|_| panic!("`{media_type}` is not a media type")),
-        );
+        let Ok(value) = HeaderValue::from_str(media_type) else {
+            panic!("`{media_type}` is not a media type")
+        };
+        self.headers
+            .insert(crate::http::header::CONTENT_TYPE, value);
         self
     }
 
     /// Sets a `text/plain` body.
     #[must_use]
+    #[track_caller]
     pub fn text(self, body: &str) -> Self {
         self.body("text/plain; charset=utf-8", Bytes::from(body.to_owned()))
     }
@@ -1157,12 +1929,34 @@ impl<'a, C> TestRequest<'a, C> {
     /// Panics when `body` cannot be form-encoded.
     #[cfg(feature = "form")]
     #[must_use]
+    #[track_caller]
     pub fn form<T: serde::Serialize>(self, body: &T) -> Self {
         let encoded = serde_html_form::to_string(body).expect("a serializable form body");
         self.body(
             kynos_openapi::model::body::mime_names::APPLICATION_FORM_URLENCODED,
             Bytes::from(encoded.into_bytes()),
         )
+    }
+
+    /// Sets a `multipart/form-data` body, and the `Content-Type` naming the
+    /// delimiter it is framed by.
+    ///
+    /// `form` is a [`TestMultipart`](multipart::TestMultipart) assembled
+    /// part by part, or a value of a type deriving `MultipartForm`, written as
+    /// a [`MultipartForm`](crate::extract::body::multipart::MultipartForm)
+    /// response writes it. The delimiter is one no part contains, so a part's
+    /// octets are never mistaken for framing.
+    #[cfg(feature = "multipart")]
+    #[must_use]
+    pub fn multipart(
+        mut self,
+        form: impl crate::response::codec::multipart::IntoMultipart,
+    ) -> Self {
+        let (content_type, body) = crate::response::codec::multipart::encode(form.into_parts());
+        self.body = RequestBody::Whole(body);
+        self.headers
+            .insert(crate::http::header::CONTENT_TYPE, content_type);
+        self
     }
 
     /// Sends the request.
@@ -1183,7 +1977,8 @@ impl<'a, C> TestRequest<'a, C> {
     /// when the response body fails part-way through, or, for a client built
     /// [`through_server`](TestClient::through_server) or
     /// [`connect`](TestClient::connect), when the connection is refused or
-    /// ends without a response.
+    /// ends without a response, and, on a [`strict`](TestClient::strict)
+    /// client, when the response does not conform to the description.
     pub async fn send(self) -> TestResponse {
         let Answered {
             client,
@@ -1205,13 +2000,15 @@ impl<'a, C> TestRequest<'a, C> {
             })
             .to_bytes();
 
-        client.record(&method, &path, uri, &parts, Some(bytes.clone()));
+        let (at, _) = client.record(&method, &path, uri, &parts, Some(bytes.clone()));
+        check_strictly(client.checked_against(), &client.observed, at);
 
         TestResponse {
             method,
             path,
             response: Response::from_parts(parts, Body::from_bytes(bytes.clone())),
             body: bytes,
+            problem_base: client.problem_base.clone(),
         }
     }
 
@@ -1225,9 +2022,10 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// The exchange is recorded once its head arrives, so a dropped stream
     /// counts toward [`TestClient::assert_declared_responses_covered`] and a
-    /// shared [`Coverage`]. [`TestClient::assert_conformance`] checks its
-    /// status and fields, and its body once the stream has read the body to
-    /// its end, by [`finish`](TestStream::finish) or by reading until `None`.
+    /// shared [`Coverage`]. [`TestClient::assert_conformance`] and
+    /// [`Coverage::assert_conformance`] check its status and fields, and its
+    /// body once the stream has read the body to its end, by
+    /// [`finish`](TestStream::finish) or by reading until `None`.
     ///
     /// ```
     /// use kynos::{Router, test::TestClient};
@@ -1246,7 +2044,9 @@ impl<'a, C> TestRequest<'a, C> {
     ///
     /// # Panics
     ///
-    /// Panics as [`send`](Self::send) does before the head arrives.
+    /// Panics as [`send`](Self::send) does before the head arrives, and, on
+    /// a [`strict`](TestClient::strict) client, when the status or fields do
+    /// not conform.
     pub async fn send_streaming(self) -> TestStream<'a> {
         let Answered {
             client,
@@ -1257,7 +2057,9 @@ impl<'a, C> TestRequest<'a, C> {
         } = self.answered().await;
 
         let (parts, body) = response.into_parts();
-        let record = client.record(&method, &path, uri, &parts, None);
+        let (record, shared) = client.record(&method, &path, uri, &parts, None);
+        let strict = client.checked_against();
+        check_strictly(strict, &client.observed, record);
 
         TestStream {
             method,
@@ -1268,7 +2070,38 @@ impl<'a, C> TestRequest<'a, C> {
             read: 0,
             observed: &client.observed,
             record,
+            coverage: client.coverage.as_deref().zip(shared),
+            problem_base: client.problem_base.clone(),
+            strict,
         }
+    }
+
+    /// The `Cookie` field this request sends in place of any it carries, or
+    /// `None` to send the one it carries.
+    ///
+    /// The client's default cookies, less those the request names itself,
+    /// then the request's own. Without cookies of its own, a `Cookie` field
+    /// the request wrote itself wins whole: none of the client's is a
+    /// default header, which [`TestClient::with_default_cookie`] refuses.
+    fn cookie_field(&self) -> Option<String> {
+        if self.cookies.is_empty()
+            && (self.client.cookies.is_empty()
+                || self.headers.contains_key(crate::http::header::COOKIE))
+        {
+            return None;
+        }
+        let defaults = self
+            .client
+            .cookies
+            .iter()
+            .filter(|(name, _)| !self.cookies.iter().any(|(own, _)| own == name));
+        Some(
+            defaults
+                .chain(&self.cookies)
+                .map(|(name, value)| format!("{name}={value}"))
+                .collect::<Vec<_>>()
+                .join("; "),
+        )
     }
 
     /// Sends the request, and returns once the response head arrives.
@@ -1289,6 +2122,7 @@ impl<'a, C> TestRequest<'a, C> {
         let idle = self.client.request_body_idle_limit(self.body.is_stalled());
         #[cfg(not(feature = "server"))]
         let idle = None;
+        let jar = self.cookie_field();
         let body = match (self.body, self.content_length) {
             (RequestBody::Whole(bytes), None) => Body::from_bytes(bytes),
             (body, remaining) => Body::from_body(Framed {
@@ -1304,13 +2138,7 @@ impl<'a, C> TestRequest<'a, C> {
             .parse::<Uri>()
             .unwrap_or_else(|_| panic!("`{}` is not a request target", self.path));
         *request.uri_mut() = uri.clone();
-        if !self.cookies.is_empty() {
-            let jar = self
-                .cookies
-                .iter()
-                .map(|(name, value)| format!("{name}={value}"))
-                .collect::<Vec<_>>()
-                .join("; ");
+        if let Some(jar) = jar {
             self.headers.insert(
                 crate::http::header::COOKIE,
                 HeaderValue::from_str(&jar).expect("a cookie a test wrote"),
@@ -1395,6 +2223,149 @@ impl<'a, C> TestRequest<'a, C> {
                 )
             })
     }
+
+    /// Writes the request's head up to, and not including, the blank line
+    /// that ends it, then nothing more, and resolves once the server closes
+    /// the connection: a client that stalled mid-head.
+    ///
+    /// The head is the HTTP/1.1 request line and every field the request
+    /// carries, its cookies and the client's defaults included, each ended
+    /// by its CRLF. A server holds it to its
+    /// [`header_read_timeout`](crate::server::protocol::http1::Http1Config::header_read_timeout),
+    /// or to an earlier first-head deadline where HTTP/2's idle timeout is
+    /// shorter, and closes the connection without a response. With neither
+    /// set, nothing closes it and the future never resolves.
+    ///
+    /// The wait is on tokio's clock, from before the connection opened, so
+    /// [`TestClosed::after`] is never short of the server's deadline. A
+    /// client built [`through_server`](TestClient::through_server) resolves
+    /// at once in real time under
+    /// `#[tokio::test(start_paused = true)]`, at the deadline on the paused
+    /// clock; one built [`connect`](TestClient::connect) waits the
+    /// deadline out on the real clock, so give its server a short one.
+    ///
+    /// Nothing is recorded: with no response, there is nothing to conform
+    /// or to cover.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use kynos::{
+    ///     Router,
+    ///     server::{Server, protocol::http1::Http1Config},
+    ///     test::TestClient,
+    /// };
+    ///
+    /// #[tokio::main(flavor = "current_thread", start_paused = true)]
+    /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    ///     let timeout = Duration::from_secs(5);
+    ///     let server = Server::new(Router::<()>::new().build(())?)
+    ///         .http1(Http1Config::default().header_read_timeout(Some(timeout)));
+    ///     let client = TestClient::through_server(server);
+    ///     let closed = client
+    ///         .get("/health")
+    ///         .header("host", "example.test")
+    ///         .send_stalled_head()
+    ///         .await;
+    ///     assert!(closed.after() >= timeout);
+    ///     assert!(closed.received().is_empty());
+    ///     Ok(())
+    /// }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics on a client built with [`TestClient::new`], which has no
+    /// connection to write a head on; when the request was given a body,
+    /// which a head that never ends never reaches; when the path is not a
+    /// request target; and when the connection is refused or fails for any
+    /// reason other than the server closing it.
+    #[cfg(all(feature = "server", feature = "http1"))]
+    #[track_caller]
+    pub fn send_stalled_head(self) -> impl std::future::Future<Output = TestClosed> {
+        let exchange = format!("{} {}", self.method, self.path);
+        assert!(
+            matches!(&self.body, RequestBody::Whole(bytes) if bytes.is_empty()),
+            "{exchange}: a stalled head never ends, so the body set on it is never sent"
+        );
+        assert!(
+            self.path.parse::<Uri>().is_ok(),
+            "`{}` is not a request target",
+            self.path
+        );
+        let (client, peer) = (self.client, self.peer);
+        let Some(stalled) = client.transport.stall(self.stalled_head(), peer) else {
+            panic!(
+                "{exchange}: a client built with `TestClient::new` has no connection to stall a \
+                 head on; build it `through_server` or `connect`"
+            )
+        };
+        async move {
+            stalled.await.unwrap_or_else(|error| {
+                panic!("{exchange}: the connection failed before the server closed it: {error}")
+            })
+        }
+    }
+
+    /// The octets [`send_stalled_head`](Self::send_stalled_head) writes: the
+    /// request line and every field, each ended by its CRLF, and no blank
+    /// line after them.
+    #[cfg(all(feature = "server", feature = "http1"))]
+    fn stalled_head(mut self) -> Bytes {
+        if let Some(jar) = self.cookie_field() {
+            self.headers.insert(
+                crate::http::header::COOKIE,
+                HeaderValue::from_str(&jar).expect("a cookie a test wrote"),
+            );
+        }
+        let mut head = BytesMut::new();
+        head.extend_from_slice(format!("{} {} HTTP/1.1\r\n", self.method, self.path).as_bytes());
+        for (name, value) in &self.headers {
+            head.extend_from_slice(name.as_str().as_bytes());
+            head.extend_from_slice(b": ");
+            head.extend_from_slice(value.as_bytes());
+            head.extend_from_slice(b"\r\n");
+        }
+        head.freeze()
+    }
+}
+
+/// How a connection ended that
+/// [`TestRequest::send_stalled_head`] left waiting mid-head.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[derive(Debug)]
+pub struct TestClosed {
+    pub(crate) after: std::time::Duration,
+    pub(crate) received: Bytes,
+    pub(crate) reset: bool,
+}
+
+#[cfg(all(feature = "server", feature = "http1"))]
+impl TestClosed {
+    /// How long after the connection opened the server closed it, on tokio's
+    /// clock: the server's deadline, or later by the time the close took.
+    #[must_use]
+    pub fn after(&self) -> std::time::Duration {
+        self.after
+    }
+
+    /// The octets the server wrote before it closed the connection: empty
+    /// where it closed at its header-read deadline, which answers nothing.
+    #[must_use]
+    pub fn received(&self) -> &[u8] {
+        &self.received
+    }
+
+    /// Whether the server ended the connection abortively, rather than with
+    /// an orderly close after reading the head: a TCP reset, or a write it
+    /// refused because it had already hung up. A server closing at its
+    /// header-read deadline has read the whole head, so it closes in order
+    /// and this is `false`; one that answers an oversized head and hangs up
+    /// with the rest of it unread makes it `true`.
+    #[must_use]
+    pub fn is_reset(&self) -> bool {
+        self.reset
+    }
 }
 
 /// A request answered as far as its head, with the client that sent it.
@@ -1434,6 +2405,15 @@ pub struct TestStream<'a> {
     observed: &'a Mutex<Vec<Observed>>,
     /// This exchange's place in `observed`.
     record: usize,
+    /// The shared [`Coverage`] the client records into, and this exchange's
+    /// place in it, where the body is filed too.
+    coverage: Option<(&'a Mutex<Vec<Exchange>>, usize)>,
+    /// The client's [`with_problem_base`](TestClient::with_problem_base),
+    /// for the response [`finish`](Self::finish) returns.
+    problem_base: Option<Arc<str>>,
+    /// The description the body is checked against once it ends, where the
+    /// client is [`strict`](TestClient::strict).
+    strict: Option<&'a Document>,
 }
 
 impl TestStream<'_> {
@@ -1458,7 +2438,8 @@ impl TestStream<'_> {
     ///
     /// # Panics
     ///
-    /// Panics when the body fails part-way.
+    /// Panics when the body fails part-way, and, from a
+    /// [`strict`](TestClient::strict) client, when it ends not conforming.
     pub async fn next_chunk(&mut self) -> Option<Bytes> {
         if self.read == self.received.len() && !self.pull().await {
             return None;
@@ -1478,7 +2459,9 @@ impl TestStream<'_> {
     ///
     /// # Panics
     ///
-    /// Panics when the body fails part-way, or a record is not UTF-8.
+    /// Panics when the body fails part-way, or a record is not UTF-8, and,
+    /// from a [`strict`](TestClient::strict) client, when the body ends not
+    /// conforming.
     pub async fn next_event(&mut self) -> Option<TestEvent> {
         let delimiter = EVENT_DELIMITER.as_bytes();
         loop {
@@ -1508,7 +2491,8 @@ impl TestStream<'_> {
     ///
     /// # Panics
     ///
-    /// Panics when the body fails part-way.
+    /// Panics when the body fails part-way, and, from a
+    /// [`strict`](TestClient::strict) client, when it ends not conforming.
     pub async fn finish(mut self) -> TestResponse {
         while self.pull().await {}
         let body = self.received.freeze();
@@ -1517,6 +2501,7 @@ impl TestStream<'_> {
             path: self.path,
             response: Response::from_parts(self.parts, Body::from_bytes(body.clone())),
             body,
+            problem_base: self.problem_base,
         }
     }
 
@@ -1544,10 +2529,20 @@ impl TestStream<'_> {
             }
         }
         self.body = None;
+        let body = Bytes::copy_from_slice(&self.received);
+        if let Some((coverage, at)) = self.coverage {
+            let mut exchanges = coverage
+                .lock()
+                .expect("a coverage record whose recorder panicked cannot be written to");
+            if let Exchange::Received(shared) = &mut exchanges[at] {
+                shared.body = Some(body.clone());
+            }
+        }
         self.observed
             .lock()
             .expect("a test client whose recorder panicked cannot be written to")[self.record]
-            .body = Some(Bytes::copy_from_slice(&self.received));
+            .body = Some(body);
+        check_strictly(self.strict, self.observed, self.record);
         false
     }
 
@@ -1585,6 +2580,8 @@ pub struct TestResponse {
     response: Response,
     /// The drained body, kept so the response stays readable after assertions.
     body: Bytes,
+    /// The client's [`with_problem_base`](TestClient::with_problem_base).
+    problem_base: Option<Arc<str>>,
 }
 
 impl TestResponse {
@@ -1615,15 +2612,17 @@ impl TestResponse {
     /// Panics when the body is not valid JSON for `T`.
     #[cfg(feature = "json")]
     #[must_use]
+    #[track_caller]
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
-        serde_json::from_slice(&self.body).unwrap_or_else(|error| {
-            panic!(
+        match serde_json::from_slice(&self.body) {
+            Ok(value) => value,
+            Err(error) => panic!(
                 "{}: the body is not valid JSON for `{}`: {error}\n{}",
                 self.exchange(),
                 std::any::type_name::<T>(),
                 self.rendered_body()
-            )
-        })
+            ),
+        }
     }
 
     /// The body as bytes.
@@ -1647,18 +2646,58 @@ impl TestResponse {
     ///
     /// Panics, with the body included, when the status differs, and when a
     /// number is outside 100 to 999, which no status can be.
+    #[track_caller]
     pub fn assert_status(&self, expected: impl IntoStatus) -> &Self {
-        let expected = expected.status().unwrap_or_else(|code| {
-            panic!(
-                "{}: `{code}` is not a status code, which is 100 to 999",
-                self.exchange()
-            )
-        });
+        self.check_status(expected, None)
+    }
+
+    /// [`assert_status`](Self::assert_status), saying which rule the status
+    /// checks: `reason` follows the exchange at the head of the failure
+    /// message, before the statuses and the body.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .get("/sessions/current")
+    ///     .bearer("revoked")
+    ///     .send()
+    ///     .await
+    ///     .assert_status_because(401, "a revoked token is dead");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics as [`assert_status`](Self::assert_status) does, naming
+    /// `reason`.
+    #[track_caller]
+    pub fn assert_status_because(
+        &self,
+        expected: impl IntoStatus,
+        reason: impl std::fmt::Display,
+    ) -> &Self {
+        self.check_status(expected, Some(&reason))
+    }
+
+    /// Asserts the status, `reason` leading the failure where there is one.
+    #[track_caller]
+    fn check_status(
+        &self,
+        expected: impl IntoStatus,
+        reason: Option<&dyn std::fmt::Display>,
+    ) -> &Self {
+        let head = match reason {
+            Some(reason) => format!("{}: {reason}", self.exchange()),
+            None => self.exchange(),
+        };
+        let expected = match expected.status() {
+            Ok(expected) => expected,
+            Err(code) => panic!("{head}: `{code}` is not a status code, which is 100 to 999"),
+        };
         let actual = self.status();
         assert!(
             actual == expected,
-            "{}: expected {expected}, received {actual}\n{}",
-            self.exchange(),
+            "{head}: expected {expected}, received {actual}\n{}",
             self.rendered_body()
         );
         self
@@ -1683,6 +2722,7 @@ impl TestResponse {
     ///
     /// Panics as [`assert_status`](Self::assert_status) does.
     #[must_use = "a response nothing reads again is asserted with `assert_status`"]
+    #[track_caller]
     pub fn expect_status(self, expected: impl IntoStatus) -> Self {
         self.assert_status(expected);
         self
@@ -1691,30 +2731,36 @@ impl TestResponse {
     /// Asserts that the body is an RFC 9457 problem document of a given type.
     ///
     /// A problem document that omits `type` means `about:blank`, which RFC 9457
-    /// section 3.1.1 makes the default rather than an absence.
+    /// section 3.1.1 makes the default rather than an absence. A slug is
+    /// joined to the client's
+    /// [`with_problem_base`](TestClient::with_problem_base) first.
     ///
     /// # Panics
     ///
     /// Panics when the body is not a problem document, or its `type` differs.
+    #[track_caller]
     pub fn assert_problem_type(&self, expected: &str) -> &Self {
-        let document: Value = serde_json::from_slice(&self.body).unwrap_or_else(|error| {
-            panic!(
+        let expected = self.problem_type(expected);
+        let expected = expected.as_ref();
+        let document: Value = match serde_json::from_slice(&self.body) {
+            Ok(document) => document,
+            Err(error) => panic!(
                 "{}: the body is not a problem document: {error}\n{}",
                 self.exchange(),
                 self.rendered_body()
-            )
-        });
+            ),
+        };
 
-        let actual = document
+        let Some(actual) = document
             .get("type")
             .map_or(Some("about:blank"), Value::as_str)
-            .unwrap_or_else(|| {
-                panic!(
-                    "{}: the problem document's `type` is not a string\n{}",
-                    self.exchange(),
-                    self.rendered_body()
-                )
-            });
+        else {
+            panic!(
+                "{}: the problem document's `type` is not a string\n{}",
+                self.exchange(),
+                self.rendered_body()
+            )
+        };
 
         assert!(
             actual == expected,
@@ -1732,7 +2778,9 @@ impl TestResponse {
     /// [`assert_status`](Self::assert_status) does; that `Content-Type` is
     /// `application/problem+json` (RFC 9457 section 6.1), its parameters aside;
     /// that the body's `type` is `type_uri`, an omitted one being
-    /// `about:blank` (section 3.1.1); and that a `status` member, where the
+    /// `about:blank` (section 3.1.1), and a slug being joined to the client's
+    /// [`with_problem_base`](TestClient::with_problem_base) first; and that a
+    /// `status` member, where the
     /// document carries one, names the status line, which section 3.1.2 binds a
     /// generator to.
     ///
@@ -1752,34 +2800,14 @@ impl TestResponse {
     /// is absent or another media type; when the body is not a problem
     /// document, as [`problem`](Self::problem) reads one; when its `type`
     /// differs; and when its `status` member disagrees with the status line.
+    #[track_caller]
     pub fn assert_problem(&self, status: impl IntoStatus, type_uri: &str) -> &Self {
         self.assert_status(status);
-
-        match self
-            .response
-            .headers()
-            .get(crate::http::header::CONTENT_TYPE)
-        {
-            Some(value) => {
-                assert!(
-                    crate::http::eq_ignore_ascii_case(
-                        crate::http::media::split_essence(value.as_bytes()).0,
-                        PROBLEM_JSON.as_bytes()
-                    ),
-                    "{}: expected `Content-Type: {PROBLEM_JSON}`, received `Content-Type: {}`\n{}",
-                    self.exchange(),
-                    value.as_bytes().escape_ascii(),
-                    self.rendered_body()
-                );
-            }
-            None => panic!(
-                "{}: expected `Content-Type: {PROBLEM_JSON}`, and the response carries none\n{}",
-                self.exchange(),
-                self.rendered_body()
-            ),
-        }
+        self.assert_content_type(PROBLEM_JSON);
 
         let problem = self.problem();
+        let type_uri = self.problem_type(type_uri);
+        let type_uri = type_uri.as_ref();
         assert!(
             problem.type_uri == type_uri,
             "{}: expected problem type `{type_uri}`, received `{}`\n{}",
@@ -1797,6 +2825,114 @@ impl TestResponse {
             );
         }
         self
+    }
+
+    /// Asserts that this response is an RFC 9457 problem whose extension
+    /// member `name` is `expected`.
+    ///
+    /// Checks that `Content-Type` is `application/problem+json`, as
+    /// [`assert_problem`](Self::assert_problem) does, then compares the member
+    /// with `expected` as JSON, so `"quota_exceeded"` matches the string and
+    /// `3` the number. The status and the type are
+    /// [`assert_problem`](Self::assert_problem)'s, which this chains after.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .post("/uploads")
+    ///     .send()
+    ///     .await
+    ///     .assert_problem(429, "https://errors.example.com/quota")
+    ///     .assert_problem_extension("code", "quota_exceeded");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is one of the five members RFC 9457 section 3.1
+    /// registers, which are not extensions; when `Content-Type` is absent or
+    /// another media type; when the body is not a problem document, as
+    /// [`problem`](Self::problem) reads one; when the document does not carry
+    /// `name`; and when it carries another value.
+    #[track_caller]
+    pub fn assert_problem_extension(&self, name: &str, expected: impl serde::Serialize) -> &Self {
+        assert!(
+            !REGISTERED_MEMBERS.contains(&name),
+            "{}: `{name}` is a member RFC 9457 registers, not an extension; \
+             assert it with `assert_problem` or read it from `problem()`",
+            self.exchange()
+        );
+        let expected = match serde_json::to_value(expected) {
+            Ok(expected) => expected,
+            Err(error) => panic!(
+                "{}: the expected `{name}` is not representable as JSON: {error}",
+                self.exchange()
+            ),
+        };
+        self.assert_content_type(PROBLEM_JSON);
+
+        let problem = self.problem();
+        match problem.extensions.get(name) {
+            Some(actual) => assert!(
+                *actual == expected,
+                "{}: expected the problem's `{name}` to be `{expected}`, received `{actual}`\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+            None => panic!(
+                "{}: expected the problem's `{name}` to be `{expected}`, and the document \
+                 carries no `{name}`\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
+        self
+    }
+
+    /// The JSON value the RFC 6901 `pointer` names in the body, deserialized.
+    ///
+    /// The empty pointer names the whole document; `/items/0/id` the `id` of
+    /// the first element of `items`; `~1` and `~0` stand for a `/` and a `~`
+    /// inside a member name.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// let token: String = client.post("/sessions").send().await.json_at("/token");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `pointer` is not a JSON pointer, which is empty or opens
+    /// with `/` and escapes only `~0` and `~1`; when the body is not JSON; when
+    /// `pointer` names nothing in it; and when what it names is not a `T`.
+    #[cfg(feature = "json")]
+    #[must_use]
+    #[track_caller]
+    pub fn json_at<T: serde::de::DeserializeOwned>(&self, pointer: &str) -> T {
+        assert!(
+            is_json_pointer(pointer),
+            "{}: `{pointer}` is not a JSON pointer (RFC 6901): one is empty or opens with `/`, \
+             and escapes only `~0` and `~1`",
+            self.exchange()
+        );
+        let document: Value = self.json();
+        let Some(value) = document.pointer(pointer) else {
+            panic!(
+                "{}: `{pointer}` names nothing in the body\n{}",
+                self.exchange(),
+                self.rendered_body()
+            )
+        };
+        match T::deserialize(value) {
+            Ok(value) => value,
+            Err(error) => panic!(
+                "{}: `{pointer}` is not a `{}`: {error}\n{}",
+                self.exchange(),
+                std::any::type_name::<T>(),
+                self.rendered_body()
+            ),
+        }
     }
 
     /// The body read as an RFC 9457 problem document.
@@ -1821,6 +2957,7 @@ impl TestResponse {
     /// ignores such a member, which in a test would hide the defect that
     /// produced it.
     #[must_use]
+    #[track_caller]
     pub fn problem(&self) -> TestProblem {
         let mut members = match serde_json::from_slice(&self.body) {
             Ok(Value::Object(members)) => members,
@@ -1836,33 +2973,28 @@ impl TestResponse {
             ),
         };
 
-        let mut string = |name: &str| match members.remove(name) {
-            None => None,
-            Some(Value::String(value)) => Some(value),
-            Some(_) => panic!(
-                "{}: the problem document's `{name}` is not a string\n{}",
-                self.exchange(),
-                self.rendered_body()
-            ),
-        };
-        let type_uri = string("type").unwrap_or_else(|| "about:blank".to_owned());
-        let title = string("title");
-        let detail = string("detail");
-        let instance = string("instance");
+        let type_uri = self
+            .problem_string(&mut members, "type")
+            .unwrap_or_else(|| "about:blank".to_owned());
+        let title = self.problem_string(&mut members, "title");
+        let detail = self.problem_string(&mut members, "detail");
+        let instance = self.problem_string(&mut members, "instance");
 
-        let status = members.remove("status").map(|value| {
-            value
+        let status = match members.remove("status") {
+            None => None,
+            Some(value) => match value
                 .as_u64()
                 .and_then(|number| u16::try_from(number).ok())
                 .filter(|number| StatusCode::from_u16(*number).is_ok())
-                .unwrap_or_else(|| {
-                    panic!(
-                        "{}: the problem document's `status` is not a status code\n{}",
-                        self.exchange(),
-                        self.rendered_body()
-                    )
-                })
-        });
+            {
+                Some(status) => Some(status),
+                None => panic!(
+                    "{}: the problem document's `status` is not a status code\n{}",
+                    self.exchange(),
+                    self.rendered_body()
+                ),
+            },
+        };
 
         TestProblem {
             type_uri,
@@ -1880,14 +3012,16 @@ impl TestResponse {
     ///
     /// Panics when the body is not UTF-8.
     #[must_use]
+    #[track_caller]
     pub fn text(&self) -> &str {
-        std::str::from_utf8(&self.body).unwrap_or_else(|_| {
+        let Ok(text) = std::str::from_utf8(&self.body) else {
             panic!(
                 "{}: the body is not text\n{}",
                 self.exchange(),
                 self.rendered_body()
-            );
-        })
+            )
+        };
+        text
     }
 
     /// The first value of a response header, as text.
@@ -1950,6 +3084,7 @@ impl TestResponse {
     /// # Panics
     ///
     /// Panics when the field is absent or carries something else.
+    #[track_caller]
     pub fn assert_header(&self, name: &str, expected: &str) -> &Self {
         match self.header(name) {
             Some(actual) => assert!(
@@ -1969,9 +3104,9 @@ impl TestResponse {
     /// Panics when `name` is not a header name, which no response could carry
     /// and so would pass whatever was sent, and when the response carries the
     /// field, naming every value it carries.
+    #[track_caller]
     pub fn assert_no_header(&self, name: &str) -> &Self {
-        let field = HeaderName::from_bytes(name.as_bytes())
-            .unwrap_or_else(|_| panic!("{}: `{name}` is not a header name", self.exchange()));
+        let field = self.field_name(name);
         let values: Vec<String> = self
             .response
             .headers()
@@ -1988,11 +3123,148 @@ impl TestResponse {
         self
     }
 
+    /// Asserts a field `name` is on the response, whatever its value.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name, which no response could
+    /// carry, and when the response carries no such field.
+    #[track_caller]
+    pub fn assert_has_header(&self, name: &str) -> &Self {
+        let field = self.field_name(name);
+        assert!(
+            self.response.headers().contains_key(&field),
+            "{}: `{name}` is not on the response",
+            self.exchange()
+        );
+        self
+    }
+
+    /// Asserts the list-based field `name` lists `member` as one of its
+    /// elements (RFC 9110 section 5.6.1).
+    ///
+    /// Every field line filed under `name` is read as one list, split at each
+    /// comma outside a `quoted-string`, and each element is compared whole, its
+    /// surrounding whitespace aside: `authorization` is listed by
+    /// `Content-Type, Authorization` and not by `X-Authorization`. A `member`
+    /// that is a `token` matches in any ASCII case, as field names, directives
+    /// and codings compare; any other, such as a quoted entity tag or
+    /// `max-age=60`, matches octet for octet, and so does every element of
+    /// `Allow` and `Access-Control-Allow-Methods`, whose methods are
+    /// case-sensitive (RFC 9110 section 9.1): `get` is not `GET`.
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client
+    ///     .options("/items")
+    ///     .header("origin", "https://app.example.com")
+    ///     .header("access-control-request-method", "POST")
+    ///     .send()
+    ///     .await
+    ///     .assert_header_lists("access-control-allow-headers", "authorization")
+    ///     .assert_header_lists("vary", "origin");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not a header name; when `member` is not one list
+    /// element, being empty, padded with whitespace or holding a comma outside
+    /// quotes, which no element could equal; when the response carries no such
+    /// field; and when no element is `member`, naming every line received.
+    #[track_caller]
+    pub fn assert_header_lists(&self, name: &str, member: &str) -> &Self {
+        let field = self.field_name(name);
+        let mut elements = list_elements(member.as_bytes());
+        assert!(
+            elements.next() == Some(member.as_bytes()) && elements.next().is_none(),
+            "{}: `{member}` is not one list element, so no `{name}` could list it",
+            self.exchange()
+        );
+
+        let lines = self.response.headers().get_all(&field);
+        assert!(
+            lines.iter().next().is_some(),
+            "{}: `{name}` is not on the response",
+            self.exchange()
+        );
+        let methods = METHOD_LISTS.contains(&field);
+        let listed = lines.iter().any(|line| {
+            list_elements(line.as_bytes())
+                .any(|element| lists_member(element, member.as_bytes(), methods))
+        });
+        assert!(
+            listed,
+            "{}: expected `{name}` to list `{member}`, received {}",
+            self.exchange(),
+            lines
+                .iter()
+                .map(|line| format!("`{name}: {}`", line.as_bytes().escape_ascii()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        self
+    }
+
+    /// Asserts the `Content-Type` names the media type `essence`, its
+    /// parameters aside: `text/plain` passes for `text/plain;
+    /// charset=utf-8`. Type and subtype compare in any ASCII case (RFC 9110
+    /// section 8.3.1).
+    ///
+    /// ```
+    /// # async fn run(client: kynos::test::TestClient<()>) {
+    /// client.get("/metrics").send().await.assert_content_type("text/plain");
+    /// # }
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics when `essence` is not a `type/subtype` pair of tokens, which a
+    /// `Content-Type` carrying parameters to compare would not be either;
+    /// when the response carries no `Content-Type`; and when it names
+    /// another media type.
+    #[track_caller]
+    pub fn assert_content_type(&self, essence: &str) -> &Self {
+        assert!(
+            essence
+                .split_once('/')
+                .is_some_and(|(kind, subtype)| crate::http::is_token(kind.as_bytes())
+                    && crate::http::is_token(subtype.as_bytes())),
+            "{}: `{essence}` is not a media type's `type/subtype`; \
+             `assert_content_type` compares no parameters, and \
+             `assert_header` compares the field whole",
+            self.exchange()
+        );
+        match self
+            .response
+            .headers()
+            .get(crate::http::header::CONTENT_TYPE)
+        {
+            Some(value) => assert!(
+                crate::http::eq_ignore_ascii_case(
+                    crate::http::media::split_essence(value.as_bytes()).0,
+                    essence.as_bytes()
+                ),
+                "{}: expected `Content-Type: {essence}`, received `Content-Type: {}`\n{}",
+                self.exchange(),
+                value.as_bytes().escape_ascii(),
+                self.rendered_body()
+            ),
+            None => panic!(
+                "{}: expected `Content-Type: {essence}`, and the response carries none\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
+        self
+    }
+
     /// Asserts a cookie was set with this value.
     ///
     /// # Panics
     ///
     /// Panics when no `Set-Cookie` names `name`, or it carries something else.
+    #[track_caller]
     pub fn assert_cookie(&self, name: &str, expected: &str) -> &Self {
         let cookies = self.cookies();
         match cookies.iter().find(|(set, _)| *set == name) {
@@ -2016,6 +3288,7 @@ impl TestResponse {
     ///
     /// Panics when the status is not a redirect, or `Location` names something
     /// else.
+    #[track_caller]
     pub fn assert_redirect(&self, location: &str) -> &Self {
         assert!(
             self.status().is_redirection(),
@@ -2037,6 +3310,7 @@ impl TestResponse {
     /// Panics when `last` precedes `first`, which names no octets; when the
     /// status is not 206, the field is absent or names another span, or the
     /// body is not the length the field claims.
+    #[track_caller]
     pub fn assert_part(&self, first: u64, last: u64, complete_length: u64) -> &Self {
         assert!(
             first <= last,
@@ -2070,6 +3344,7 @@ impl TestResponse {
     /// [`TestRequest::send_streaming`] reads one that is not as it arrives.
     /// Comment lines (keep-alives) are dropped, as a client ignores them.
     #[must_use]
+    #[track_caller]
     pub fn events(&self) -> Vec<TestEvent> {
         self.text()
             .split(EVENT_DELIMITER)
@@ -2091,6 +3366,42 @@ impl TestResponse {
             self.path,
             self.status().as_u16()
         )
+    }
+
+    /// `name` as a header name.
+    ///
+    /// # Panics
+    ///
+    /// Panics when `name` is not one, which no response could carry.
+    #[track_caller]
+    fn field_name(&self, name: &str) -> HeaderName {
+        let Ok(field) = HeaderName::from_bytes(name.as_bytes()) else {
+            panic!("{}: `{name}` is not a header name", self.exchange())
+        };
+        field
+    }
+
+    /// Takes the string member `name` out of a problem document's `members`.
+    #[track_caller]
+    fn problem_string(&self, members: &mut Map<String, Value>, name: &str) -> Option<String> {
+        match members.remove(name) {
+            None => None,
+            Some(Value::String(value)) => Some(value),
+            Some(_) => panic!(
+                "{}: the problem document's `{name}` is not a string\n{}",
+                self.exchange(),
+                self.rendered_body()
+            ),
+        }
+    }
+
+    /// `type_uri` joined to the problem base where it is a slug, and as
+    /// given where it has a scheme or the client set no base.
+    fn problem_type<'t>(&self, type_uri: &'t str) -> std::borrow::Cow<'t, str> {
+        match &self.problem_base {
+            Some(base) if !has_scheme(type_uri) => format!("{base}{type_uri}").into(),
+            _ => type_uri.into(),
+        }
     }
 
     /// The body as an assertion message shows it.
@@ -2123,6 +3434,139 @@ mod sealed {
         /// The status, or the number that names none.
         fn status(self) -> Result<StatusCode, u16>;
     }
+
+    /// What closes [`IntoMethod`](super::IntoMethod) to the types here.
+    pub trait SealedMethod {}
+
+    /// What closes [`IntoResponseKey`](super::IntoResponseKey) to the types
+    /// here.
+    pub trait SealedKey {}
+}
+
+/// A response key an [`Exemptions`] entry names: a [`StatusCode`] or its
+/// number for an exact key such as `500`, a [`StatusPattern`] for a range,
+/// or the key as a description writes it, `5XX` and `default` included.
+///
+/// Sealed: implemented for `StatusCode`, `u16`, `StatusPattern` and `&str`.
+pub trait IntoResponseKey: sealed::SealedKey {
+    /// The key as a `Responses` object writes it.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a status is not 100 to 599, and when text is neither such
+    /// a status in three digits, a range from `1XX` to `5XX`, nor `default`.
+    fn into_response_key(self) -> String;
+}
+
+impl sealed::SealedKey for StatusCode {}
+impl sealed::SealedKey for u16 {}
+impl sealed::SealedKey for StatusPattern {}
+impl sealed::SealedKey for &str {}
+
+impl IntoResponseKey for StatusCode {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        self.as_u16().into_response_key()
+    }
+}
+
+impl IntoResponseKey for u16 {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        assert!(
+            (100..600).contains(&self),
+            "`{self}` is no response key, which is a status from 100 to 599"
+        );
+        StatusPattern::Code(self).to_string()
+    }
+}
+
+impl IntoResponseKey for StatusPattern {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        match self {
+            Self::Code(code) => code.into_response_key(),
+            range => range.to_string(),
+        }
+    }
+}
+
+impl IntoResponseKey for &str {
+    #[track_caller]
+    fn into_response_key(self) -> String {
+        assert!(
+            self == "default" || self.parse::<StatusPattern>().is_ok(),
+            "`{}` is no response key: write a status such as `500`, a range from `1XX` \
+             to `5XX`, or `default`",
+            self.escape_debug()
+        );
+        self.to_owned()
+    }
+}
+
+/// A method [`TestClient::method`] sends: a [`Method`](crate::http::Method),
+/// or its name, which a table of cases holds more naturally.
+///
+/// Sealed: implemented for `Method`, `&Method` and `&str`.
+pub trait IntoMethod: sealed::SealedMethod {
+    /// The method this names.
+    ///
+    /// A name is case-sensitive, as RFC 9110 section 9.1 makes a method, so
+    /// `"POST"` names `POST`. One that spells a registered method in another
+    /// case, as `"post"` does, panics rather than sending the extension
+    /// method it names; a test of that method sends
+    /// `Method::from_bytes(b"post")`.
+    ///
+    /// # Panics
+    ///
+    /// Panics when a name is not a method token, and when it spells a
+    /// registered method in another case.
+    fn into_method(self) -> HttpMethod;
+}
+
+/// The methods RFC 9110 section 9.3, RFC 5789 and the `QUERY` draft
+/// register, whose names a test spells in another case only by mistake.
+const REGISTERED_METHODS: [&str; 10] = [
+    "GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH", "QUERY",
+];
+
+impl sealed::SealedMethod for HttpMethod {}
+impl sealed::SealedMethod for &HttpMethod {}
+impl sealed::SealedMethod for &str {}
+
+impl IntoMethod for HttpMethod {
+    fn into_method(self) -> HttpMethod {
+        self
+    }
+}
+
+impl IntoMethod for &HttpMethod {
+    fn into_method(self) -> HttpMethod {
+        self.clone()
+    }
+}
+
+impl IntoMethod for &str {
+    #[track_caller]
+    fn into_method(self) -> HttpMethod {
+        let Ok(method) = HttpMethod::from_bytes(self.as_bytes()) else {
+            panic!(
+                "`{}` is not a method, which is a token (RFC 9110 section 9.1)",
+                self.escape_debug()
+            )
+        };
+        if let Some(registered) = REGISTERED_METHODS
+            .iter()
+            .find(|registered| registered.eq_ignore_ascii_case(self) && **registered != self)
+        {
+            panic!(
+                "`{self}` is not `{registered}`: a method is case-sensitive (RFC 9110 \
+                 section 9.1); write `{registered}`, or pass `Method::from_bytes(b\"{self}\")` \
+                 to send the extension method `{self}`"
+            );
+        }
+        method
+    }
 }
 
 impl sealed::Sealed for StatusCode {
@@ -2144,9 +3588,12 @@ impl IntoStatus for StatusCode {
 }
 
 impl IntoStatus for u16 {
+    #[track_caller]
     fn into_status(self) -> StatusCode {
-        sealed::Sealed::status(self)
-            .unwrap_or_else(|code| panic!("`{code}` is not a status code, which is 100 to 999"))
+        match sealed::Sealed::status(self) {
+            Ok(status) => status,
+            Err(code) => panic!("`{code}` is not a status code, which is 100 to 999"),
+        }
     }
 }
 
@@ -2155,12 +3602,79 @@ impl IntoStatus for u16 {
 /// # Panics
 ///
 /// Panics when `name` or `value` is not one HTTP can carry.
+#[track_caller]
 fn field(name: &str, value: &str) -> (HeaderName, HeaderValue) {
-    let name = HeaderName::from_bytes(name.as_bytes())
-        .unwrap_or_else(|_| panic!("`{name}` is not a header name"));
-    let value =
-        HeaderValue::from_str(value).unwrap_or_else(|_| panic!("`{value}` is not a header value"));
-    (name, value)
+    let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+        panic!("`{name}` is not a header name")
+    };
+    let Ok(field_value) = HeaderValue::from_str(value) else {
+        panic!("`{value}` is not a header value")
+    };
+    (name, field_value)
+}
+
+/// Whether `reference` opens with a URI scheme, `ALPHA *( ALPHA / DIGIT /
+/// "+" / "-" / "." ) ":"` (RFC 3986 section 3.1): an absolute URI does, and
+/// a relative reference cannot, since section 4.2 bars a colon from its
+/// first segment.
+fn has_scheme(reference: &str) -> bool {
+    reference.split_once(':').is_some_and(|(scheme, _)| {
+        let mut octets = scheme.bytes();
+        octets
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic())
+            && octets.all(|octet| octet.is_ascii_alphanumeric() || b"+-.".contains(&octet))
+    })
+}
+
+/// The elements of one list-based field line (RFC 9110 section 5.6.1):
+/// split at each comma outside a `quoted-string`, with the optional
+/// whitespace around each trimmed and the empty ones a recipient ignores
+/// dropped.
+fn list_elements(line: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut rest = Some(line);
+    std::iter::from_fn(move || {
+        let piece = rest?;
+        let Some(at) = crate::http::unquoted_position(piece, b',') else {
+            return rest.take();
+        };
+        rest = Some(&piece[at + 1..]);
+        Some(&piece[..at])
+    })
+    .map(<[u8]>::trim_ascii)
+    .filter(|element| !element.is_empty())
+}
+
+/// The list fields whose elements are methods, which compare case-sensitively
+/// (RFC 9110 section 9.1) where most listed tokens do not.
+const METHOD_LISTS: [HeaderName; 2] = [
+    crate::http::header::ALLOW,
+    crate::http::header::ACCESS_CONTROL_ALLOW_METHODS,
+];
+
+/// Whether `element` is the list member `member`: in any ASCII case where
+/// `member` is a `token` and the field lists no `methods`, as the tokens
+/// most list fields carry compare (field names, connection options and
+/// content codings: RFC 9110 sections 5.1, 7.6.1 and 8.4.1), and octet for
+/// octet otherwise, as a method, a `quoted-string` or a parameter's value
+/// does.
+fn lists_member(element: &[u8], member: &[u8], methods: bool) -> bool {
+    if !methods && crate::http::is_token(member) {
+        crate::http::eq_ignore_ascii_case(element, member)
+    } else {
+        element == member
+    }
+}
+
+/// Whether `pointer` is an RFC 6901 JSON pointer: empty, or `/`-prefixed
+/// reference tokens in which every `~` opens `~0` or `~1`.
+#[cfg(feature = "json")]
+fn is_json_pointer(pointer: &str) -> bool {
+    (pointer.is_empty() || pointer.starts_with('/'))
+        && pointer
+            .split('~')
+            .skip(1)
+            .all(|escaped| escaped.starts_with(['0', '1']))
 }
 
 /// `n responses`, or `1 response`, for an assertion message that counts them.
@@ -2237,11 +3751,17 @@ impl TestEvent {
     /// Panics when `data` is not the JSON `T`.
     #[cfg(feature = "json")]
     #[must_use]
+    #[track_caller]
     pub fn json<T: serde::de::DeserializeOwned>(&self) -> T {
-        serde_json::from_str(&self.data)
-            .unwrap_or_else(|error| panic!("`{}` is not the expected JSON: {error}", self.data))
+        match serde_json::from_str(&self.data) {
+            Ok(value) => value,
+            Err(error) => panic!("`{}` is not the expected JSON: {error}", self.data),
+        }
     }
 }
+
+/// The members RFC 9457 section 3.1 registers, which no extension may be.
+const REGISTERED_MEMBERS: [&str; 5] = ["type", "title", "status", "detail", "instance"];
 
 /// An RFC 9457 problem document, as [`TestResponse::problem`] read it.
 ///
@@ -2275,17 +3795,19 @@ impl TestProblem {
     /// read from their fields and would otherwise read as absent here, and
     /// when the member is present but not a `T`.
     #[must_use]
+    #[track_caller]
     pub fn extension<T: serde::de::DeserializeOwned>(&self, name: &str) -> Option<T> {
         assert!(
-            !["type", "title", "status", "detail", "instance"].contains(&name),
+            !REGISTERED_MEMBERS.contains(&name),
             "`{name}` is a member RFC 9457 registers, not an extension; read its field"
         );
         let value = self.extensions.get(name)?;
-        Some(T::deserialize(value).unwrap_or_else(|error| {
-            panic!(
+        match T::deserialize(value) {
+            Ok(extension) => Some(extension),
+            Err(error) => panic!(
                 "the problem document's `{name}` is not a `{}`: {error}\n{name}: {value}",
                 std::any::type_name::<T>()
-            )
-        }))
+            ),
+        }
     }
 }

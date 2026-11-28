@@ -1,0 +1,5 @@
+error: a list parameter is absent exactly when it has no items, so an `Option` around it holds a `Some(vec![])` no query string carries. Use the `Vec` alone, which is empty when no pair names it
+ --> tests/ui/macros/query_params_optional_list.rs:7:11
+  |
+7 |     diet: Option<Vec<String>>,
+  |           ^^^^^^

@@ -46,6 +46,7 @@ use kynos::{
         rate_limit::{
             RateLimit,
             decision::{Decision, QuotaPolicy, RateLimitPolicy, ServiceLimit},
+            key::AdmittedReads,
         },
         request_id::RequestId,
     },
@@ -185,6 +186,8 @@ impl Scope for Grant {
 }
 
 impl<C: Sync, P: Scope> Authenticator<Bearer<Caller, P>, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -266,6 +269,8 @@ struct ServiceKey;
 struct Keys;
 
 impl<C: Sync> Authenticator<ServiceKey, C> for Keys {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,
@@ -331,6 +336,10 @@ impl AllowsOnce {
 impl RateLimitPolicy<App> for AllowsOnce {
     fn advertised(&self) -> &[QuotaPolicy] {
         &self.policies
+    }
+
+    fn reads_admitted(&self) -> AdmittedReads {
+        AdmittedReads::none()
     }
 
     async fn check(&self, _: &kynos::http::Request, _: Route<'_>, _: &App) -> Decision {

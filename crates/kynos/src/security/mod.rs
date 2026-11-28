@@ -82,10 +82,11 @@ use std::future::Future;
 use kynos_openapi::Parameter;
 
 use crate::{
-    error::rejection::AuthRejection,
+    error::{problem::IntoProblem, rejection::AuthRejection},
     extract::describe::Describe,
     http::Parts,
     response::{IntoResponse, Responses},
+    router::operation::OperationCx,
     schema::registry::Registry,
 };
 
@@ -114,6 +115,7 @@ mod sealed {
 /// # };
 /// # struct Tokens;
 /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+/// #     type Error = AuthRejection;
 /// #     async fn authenticate(
 /// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
 /// #     ) -> Result<String, AuthRejection> {
@@ -144,6 +146,7 @@ mod sealed {
 /// # };
 /// # struct Tokens;
 /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+/// #     type Error = AuthRejection;
 /// #     async fn authenticate(
 /// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
 /// #     ) -> Result<String, AuthRejection> {
@@ -174,6 +177,7 @@ mod sealed {
 /// # };
 /// # struct Tokens;
 /// # impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+/// #     type Error = AuthRejection;
 /// #     async fn authenticate(
 /// #         &self, _: Presented<BearerToken>, _: Head<'_>, _: &C,
 /// #     ) -> Result<String, AuthRejection> {
@@ -198,6 +202,15 @@ pub trait Guard<C>: sealed::Sealed + Describe + Sized + Send + 'static {
     /// cannot leave out the 403 of one that never sets
     /// [`FORBIDS`](SecurityScheme::FORBIDS).
     type Rejection: IntoResponse + Responses;
+
+    /// Describes the guard on an operation served with context `C`: its
+    /// [`Describe`], and the responses of the error its schemes'
+    /// authenticators fail with, which only `C` names.
+    ///
+    /// Not part of the stable API: a [`Handler`](crate::handler::Handler)
+    /// describes its guard through this.
+    #[doc(hidden)]
+    fn __describe(operation: &mut OperationCx<'_>);
 
     /// Checks the request head, yielding the verified credential.
     ///
@@ -231,20 +244,36 @@ pub(crate) async fn guard_ahead<C, G: Guard<C>>(
 ) -> Option<crate::http::Response> {
     match G::guard(parts, context).await {
         Ok(guard) => {
-            parts
-                .extensions
-                .insert(Admitted(std::sync::Mutex::new(Some(guard))));
+            admit(&mut parts.extensions, guard);
             None
         }
         Err(rejection) => Some(rejection.__into_response_for(parts)),
     }
 }
 
+/// Keeps `guard` in `extensions` as what admitted the request.
+pub(crate) fn admit<G: Send + 'static>(extensions: &mut crate::http::Extensions, guard: G) {
+    extensions.insert(Admitted(std::sync::Mutex::new(Some(guard))));
+}
+
 /// The guard [`guard_ahead`] admitted this request with, taken off it.
 pub(crate) fn admitted<C, G: Guard<C>>(parts: &mut Parts) -> Option<G> {
     let Admitted(slot) = parts.extensions.remove::<Admitted<G>>()?;
-    // Nothing panics while the slot is held, so it is never poisoned.
+    // Only a `read` handed to `peek_admitted` can panic while the slot is
+    // held, and that unwinds the request before its handler takes the slot.
     slot.into_inner().ok().flatten()
+}
+
+/// What `read` makes of the guard [`guard_ahead`] admitted this request with,
+/// leaving it for the handler; `None` where no guard of type `G` ran ahead of
+/// the caller, or the request is a copy of the one it admitted.
+pub(crate) fn peek_admitted<G: Send + 'static, R>(
+    extensions: &crate::http::Extensions,
+    read: impl FnOnce(&G) -> R,
+) -> Option<R> {
+    let Admitted(slot) = extensions.get::<Admitted<G>>()?;
+    let guard = slot.lock().ok()?;
+    guard.as_ref().map(read)
 }
 
 /// Compares two secrets without returning on the first byte that differs.
@@ -421,6 +450,12 @@ pub trait SecurityScheme: Send + Sync + 'static {
 /// recognises; [`name`](Scope::name) is the one place it becomes a string,
 /// for the description and for comparing against what a token carries.
 ///
+/// `#[derive(kynos::Scope)]` writes `name` from the name serde writes each
+/// variant under, so on an enum deriving serde the scopes a configuration
+/// parses are the ones a token carries. A keyless enum whose serde is written
+/// by hand derives its variant identifiers instead, which nothing compares
+/// with its serde names; such an enum implements `Scope` by hand, as here:
+///
 /// ```
 /// use kynos::security::Scope;
 ///
@@ -559,6 +594,8 @@ impl<'a> Head<'a> {
 /// struct Tokens;
 ///
 /// impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+///     type Error = AuthRejection;
+///
 ///     async fn authenticate(
 ///         &self,
 ///         presented: Presented<BearerToken>,
@@ -578,6 +615,66 @@ impl<'a> Head<'a> {
 /// }
 /// ```
 pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
+    /// What [`authenticate`](Authenticator::authenticate) and
+    /// [`Authorizer::authorize`] fail with.
+    ///
+    /// [`AuthRejection`] where every failure is a 401, a 403 or the 503 of an
+    /// unreachable store. The application's own `#[derive(ApiError)]` type
+    /// where a failure is none of those — a lookup failing in a way that is no
+    /// outage, which is a 500 — or where it should answer with the
+    /// application's own problem. Such a type holds an `AuthRejection` in a
+    /// transparent variant, which is the `From<AuthRejection>` this requires,
+    /// so `?` carries [`Presented::require`](carrier::presented::Presented::require)'s
+    /// 401 into it and a guard can answer its own 401 through it.
+    ///
+    /// A guard renders it as a handler's error is rendered, writing the
+    /// scheme's challenge onto a 401 and a 403 as it does onto an
+    /// `AuthRejection`'s, and declares every response it declares beside its
+    /// own 401, 403 and 503 on each operation it guards. Every scheme one
+    /// [`AnyOf`](requirement::AnyOf) or [`AllOf`](requirement::AllOf) names
+    /// fails with the same one.
+    ///
+    /// ```
+    /// # #[cfg(feature = "macros")]
+    /// # {
+    /// use kynos::{
+    ///     ApiError,
+    ///     error::rejection::AuthRejection,
+    ///     security::{Authenticator, Head, carrier::{BearerToken, presented::Presented}, schemes::Bearer},
+    /// };
+    ///
+    /// #[derive(Debug, thiserror::Error, ApiError)]
+    /// enum SessionError {
+    ///     #[error(transparent)]
+    ///     Rejected(#[from] AuthRejection),
+    ///
+    ///     #[error("the session could not be read")]
+    ///     #[problem(status = 500)]
+    ///     Unreadable,
+    /// }
+    ///
+    /// struct Sessions;
+    ///
+    /// impl<C: Sync> Authenticator<Bearer, C> for Sessions {
+    ///     type Error = SessionError;
+    ///
+    ///     async fn authenticate(
+    ///         &self,
+    ///         presented: Presented<BearerToken>,
+    ///         _: Head<'_>,
+    ///         _: &C,
+    ///     ) -> Result<String, SessionError> {
+    ///         let token = presented.require()?;
+    ///         match token.into_inner() {
+    ///             token if token.is_ascii() => Ok(token),
+    ///             _ => Err(SessionError::Unreadable),
+    ///         }
+    ///     }
+    /// }
+    /// # }
+    /// ```
+    type Error: IntoProblem + IntoResponse + Responses + From<AuthRejection> + Send + 'static;
+
     /// Checks the credential this request presented.
     ///
     /// Return [`AuthRejection::unauthenticated`] when the credential is invalid
@@ -592,6 +689,8 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
     /// the description cannot name different ones.
     ///
     /// A store that cannot be reached is neither: [`AuthRejection::unavailable`].
+    /// A failure that is no verdict on the credential and no outage either is
+    /// the application's own [`Error`](Authenticator::Error), such as a 500.
     ///
     /// A [`Malformed`](carrier::presented::Presented::Malformed) credential
     /// reaches here under a guard over this scheme alone, so its refusal is
@@ -615,7 +714,7 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
         presented: carrier::presented::Presented<S::Presented>,
         head: Head<'_>,
         context: &C,
-    ) -> impl Future<Output = Result<S::Credential, AuthRejection>> + Send;
+    ) -> impl Future<Output = Result<S::Credential, Self::Error>> + Send;
 }
 
 /// Checks an authenticated credential's scopes.
@@ -655,6 +754,8 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
 /// struct Tokens;
 ///
 /// impl<C: Sync> Authenticator<Bearer<String, Grant>, C> for Tokens {
+///     type Error = AuthRejection;
+///
 ///     async fn authenticate(
 ///         &self,
 ///         presented: Presented<BearerToken>,
@@ -688,6 +789,8 @@ pub trait Authenticator<S: carrier::Carries, C: Sync>: Send + Sync + 'static {
 /// struct Tokens;
 ///
 /// impl<C: Sync> Authenticator<Bearer, C> for Tokens {
+///     type Error = AuthRejection;
+///
 ///     async fn authenticate(
 ///         &self,
 ///         presented: Presented<BearerToken>,
@@ -722,14 +825,15 @@ where
     ///
     /// A refusal is [`AuthRejection::forbidden`], or
     /// [`AuthRejection::forbidden_as`] where the application has a problem type
-    /// for the rule that refused, and [`AuthRejection::unavailable`] as in
-    /// [`authenticate`](Authenticator::authenticate).
+    /// for the rule that refused, and [`AuthRejection::unavailable`] or the
+    /// application's own [`Error`](Authenticator::Error) as in
+    /// [`authenticate`](Authenticator::authenticate), whose error this shares.
     fn authorize(
         &self,
         credential: &S::Credential,
         scopes: &[P],
         context: &C,
-    ) -> impl Future<Output = Result<(), AuthRejection>> + Send;
+    ) -> impl Future<Output = Result<(), <Self as Authenticator<S, C>>::Error>> + Send;
 }
 
 impl<S, C, A> Authorizer<S, C, Unscoped> for A
@@ -744,7 +848,7 @@ where
         _: &S::Credential,
         _: &[Unscoped],
         _: &C,
-    ) -> impl Future<Output = Result<(), AuthRejection>> + Send {
+    ) -> impl Future<Output = Result<(), A::Error>> + Send {
         std::future::ready(Ok(()))
     }
 }

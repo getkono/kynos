@@ -25,7 +25,15 @@
 //!   `FromStr`, written with `Display`, and described by a schema that is not
 //!   an object or an array. `UserId` below derives `FromStr` and `Display`
 //!   through the integer it wraps, and `Order` derives them from the names its
-//!   schema lists.
+//!   schema lists, which its `UnitEnum` exposes as `as_str` and `VARIANTS`.
+//!   `Release` is two numbers travelling as one string, described as that
+//!   string by `#[schema(string)]` and carried by its own `FromStr`. A
+//!   query `Vec<T>` is the one list, of `ParamValue` items:
+//!   repeated pairs by default, or one comma-separated pair under
+//!   `#[param(explode = false)]`. `#[param(default = ...)]` gives an absent
+//!   parameter its value, and `#[param(flatten)]` shares a group, such as
+//!   `Paging`, between the groups that page. A route of one variable takes
+//!   its `ParamValue` alone, as `delete_user`'s `Path<UserId>` does.
 //! * **A hand-written extractor is a first-class one.** `ApiVersion` below
 //!   implements the same two traits the derives implement. Nothing about the
 //!   derived path is privileged, which is what makes the rule "every argument
@@ -44,7 +52,7 @@ use kynos::{
     openapi::{Parameter, ParameterIn},
     prelude::*,
     router::operation::OperationCx,
-    schema::registry::Registry,
+    schema::{UnitEnum, registry::Registry},
     server::Server,
 };
 use serde::{Deserialize, Serialize};
@@ -95,21 +103,81 @@ enum Order {
     Desc,
 }
 
-/// How a list is paged.
+/// A release, `<major>.<minor>`, as a query carries it.
+///
+/// Two numbers that travel as one string, so its schema is that string:
+/// `#[schema(string)]` describes the text `Display` writes and `FromStr` reads,
+/// bounded and illustrated on the type, and `ParamValue` keeps both impls.
+#[derive(Schema, kynos::ParamValue)]
+#[schema(string, max_length = 11, examples("1.2"))]
+struct Release {
+    major: u32,
+    minor: u32,
+}
+
+impl std::fmt::Display for Release {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+impl std::str::FromStr for Release {
+    type Err = &'static str;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (major, minor) = text.split_once('.').ok_or("no `.` between two numbers")?;
+        Ok(Self {
+            major: major
+                .parse()
+                .map_err(|_| "the major version is no number")?,
+            minor: minor
+                .parse()
+                .map_err(|_| "the minor version is no number")?,
+        })
+    }
+}
+
+/// How many users a page holds when the client does not say.
+const DEFAULT_PER_PAGE: u32 = 20;
+
+/// How any list is paged, declared once and flattened into each group that
+/// pages.
+#[allow(dead_code)]
+#[derive(QueryParams)]
+struct Paging {
+    /// Optional, because the type is.
+    after: Option<u64>,
+
+    /// `rename` is what lets a Rust name and a wire name differ without either
+    /// being written twice. Both derives read serde's `rename` too, so a type
+    /// that already carries one does not repeat itself. An absent `per_page`
+    /// binds the default, which the description states beside the bounds it
+    /// is checked against when the router is built.
+    #[param(rename = "per_page", default = DEFAULT_PER_PAGE)]
+    #[schema(minimum = 1, maximum = 100)]
+    per: u32,
+}
+
+/// How the user list is paged and filtered.
 #[allow(dead_code)]
 #[derive(QueryParams)]
 struct Page {
-    /// Optional, because the type is.
-    after: Option<u64>,
+    /// `after` and `per_page`, decoded and described by `Paging` itself.
+    #[param(flatten)]
+    paging: Paging,
 
     /// Refused with the names it accepts when it is none of them.
     order: Option<Order>,
 
-    /// `rename` is what lets a Rust name and a wire name differ without either
-    /// being written twice. Both derives read serde's `rename` too, so a type
-    /// that already carries one does not repeat itself.
-    #[param(rename = "per_page")]
-    per: u32,
+    /// Every pair named `tag`, `?tag=a&tag=b`; empty when there is none.
+    tag: Vec<String>,
+
+    /// One pair of comma-separated orders, `?sort=asc,desc`.
+    #[param(explode = false)]
+    sort: Vec<Order>,
+
+    /// Users seen since a release, `?since=1.2`.
+    since: Option<Release>,
 }
 
 /// Conditional-request headers.
@@ -192,8 +260,8 @@ impl Describe for ApiVersion {
 
 /// Fetches one user.
 ///
-/// Seven arguments, and the description lists exactly the eight things a
-/// consumer can observe: one path variable, three query parameters, two
+/// Seven arguments, and the description lists exactly the eleven things a
+/// consumer can observe: one path variable, six query parameters, two
 /// conditional headers, one cookie and one custom header. `MatchedPath` and `ConnectInfo`
 /// contribute nothing, by saying so.
 #[kynos::get("/users/{id}")]
@@ -210,6 +278,9 @@ async fn get_user(
     // `matched` is the `paths` key with its `{}` intact, never the request's
     // own path, which is what makes it a bounded metric label.
     println!("v{} from {} for {}", version.0, peer.0, matched.0);
+    // A derived enum's wire name, borrowed rather than formatted.
+    let order = page.order.as_ref().map_or("unordered", UnitEnum::as_str);
+    println!("listed {order}");
     let _ = (page, conditional, preferences);
 
     Json(User {
@@ -218,9 +289,20 @@ async fn get_user(
     })
 }
 
+/// Removes one user.
+///
+/// A route of one variable takes the value alone: `Path<UserId>` reads `{id}`
+/// with no one-field group, and the description names the parameter after the
+/// variable. A template of two variables beside it is a compile error.
+#[kynos::delete("/users/{id}")]
+async fn delete_user(Path(id): Path<UserId>) -> NoContent {
+    println!("removed {}", id.0);
+    NoContent
+}
+
 #[tokio::main]
 async fn main() -> kynos::Result<()> {
-    let router = Router::<()>::new().mount(kynos::routes![get_user]);
+    let router = Router::<()>::new().mount(kynos::routes![get_user, delete_user]);
 
     let document = router.openapi()?;
     println!("{}", document.to_json()?);
@@ -228,5 +310,6 @@ async fn main() -> kynos::Result<()> {
     Server::new(router.build(())?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
-        .await
+        .await?;
+    Ok(())
 }

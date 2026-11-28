@@ -29,16 +29,32 @@ pub trait EndpointMeta {
 
     /// The variable names appearing in [`PATH`](EndpointMeta::PATH).
     ///
-    /// Compared against `PathParams::NAMES` by a const assertion in the
-    /// expansion, so a handler whose parameters do not match its path is a
-    /// compile error rather than a runtime 500.
+    /// Compared against what the handler's `Path<T>` binds, its
+    /// [`PathBinding::NAMES`](crate::extract::params::path::PathBinding::NAMES),
+    /// by a const assertion in the expansion, so a handler whose parameters do
+    /// not match its path is a compile error rather than a runtime 500. One
+    /// path value is named after the one variable listed here.
     const PATH_VARIABLES: &'static [&'static str];
 
-    /// The operation identifier.
+    /// The operation identifier, as the attribute emitted it.
     ///
     /// Defaults to the handler function's name; the attribute's `operation_id`
-    /// argument overrides it.
+    /// argument overrides it. The one published, unless
+    /// [`OPERATION_ID_DEFAULTED`](EndpointMeta::OPERATION_ID_DEFAULTED) and the
+    /// router recases it.
     const OPERATION_ID: &'static str;
+
+    /// Whether [`OPERATION_ID`](EndpointMeta::OPERATION_ID) is the handler's
+    /// name, which the route attribute defaulted it to, rather than one its
+    /// `operation_id` argument wrote.
+    ///
+    /// A defaulted identifier is one
+    /// [`Router::operation_id_case`](crate::Router::operation_id_case) recases;
+    /// a written one is published exactly as written, and a
+    /// [`Link`](crate::extract::link::Link) finds its target either way.
+    /// Defaults to `false`, so an implementation written before it existed
+    /// keeps the identifier it wrote.
+    const OPERATION_ID_DEFAULTED: bool = false;
 
     /// The first line of the handler's doc comment.
     const SUMMARY: Option<&'static str>;
@@ -66,6 +82,23 @@ pub trait EndpointMeta {
     /// [`EndpointBuilder::tag`](crate::router::endpoint::builder::EndpointBuilder::tag),
     /// and the only one readable without building a router.
     const TAGS: &'static [DeclaredTag];
+
+    /// The `operationId` of the `HEAD` this `GET` describes beside itself, as
+    /// [`EndpointBuilder::describe_head`](crate::router::endpoint::builder::EndpointBuilder::describe_head)
+    /// does; `None` where it describes none.
+    ///
+    /// Set by the route attribute's `head` argument, which only `GET` takes.
+    /// Defaults to `None`, so an implementation written before it existed
+    /// describes nothing it did not.
+    const HEAD_OPERATION_ID: Option<&'static str> = None;
+
+    /// Whether [`HEAD_OPERATION_ID`](EndpointMeta::HEAD_OPERATION_ID) was
+    /// derived from the handler's name by a bare `head`, rather than named by
+    /// `head = "..."`.
+    ///
+    /// Read as [`OPERATION_ID_DEFAULTED`](EndpointMeta::OPERATION_ID_DEFAULTED)
+    /// is, and defaults to `false` for the same reason.
+    const HEAD_OPERATION_ID_DEFAULTED: bool = false;
 }
 
 /// How a route attribute renders its operation's URI against a path template.
@@ -75,8 +108,8 @@ pub trait EndpointMeta {
 /// extracts, so a [`Link`](crate::extract::link::Link) to the operation takes
 /// the same arguments its `relative_uri` does.
 pub trait EndpointUri: EndpointMeta {
-    /// What the URI is built from: `()`, the handler's `Path<P>` group, its
-    /// `Query<Q>` group, or `(P, Q)` when it extracts both.
+    /// What the URI is built from: `()`, the handler's `Path<P>` group or one
+    /// value, its `Query<Q>` group, or `(P, Q)` when it extracts both.
     type Params;
 
     /// Renders `params` into `template`, a path template with exactly

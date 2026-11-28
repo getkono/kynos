@@ -28,7 +28,8 @@ async fn an_ip_connection_reports_its_peer_through_every_reader() {
 }
 
 /// No socket is not a transport without IP: the in-process sentinel stays an
-/// IP address, so a handler taking `ConnectInfo` still runs under `TestClient`.
+/// IP address, so a handler taking `ConnectInfo` still runs under a directly
+/// driven `Service::call`.
 #[tokio::test]
 async fn a_request_on_no_socket_reports_the_in_process_address() {
     let unspecified = SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0));

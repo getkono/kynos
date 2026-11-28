@@ -120,6 +120,11 @@ is what `cargo publish` will do. CI runs the same task in `full.yml`'s
   A breaking commit of any of those types is still listed: the `!` parser in
   `release-plz.toml` matches it before any skip rule does, and it has to, because
   breaking changes in this history are routinely `refactor!:`.
+- **Nothing holds [`migrating.md`](migrating.md) to the changelog.** Before
+  merging the release pull request, read each `feat` entry it lists: either it
+  has a row in the guide's section for this release, or no downstream code it
+  makes unnecessary still compiles. A feature filed without a **Replaces**
+  field is the one that slips.
 
 ## Dependency bumps
 

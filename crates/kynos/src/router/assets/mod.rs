@@ -319,6 +319,10 @@ impl AssetSet {
     }
 
     /// The prefix every `operationId` takes.
+    ///
+    /// Each identifier is derived, so the router's
+    /// [`OperationIdCase`](crate::router::operation::OperationIdCase) recases
+    /// it, prefix included.
     #[must_use]
     pub fn operation_id_prefix(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
         self.operation_id_prefix = prefix.into();

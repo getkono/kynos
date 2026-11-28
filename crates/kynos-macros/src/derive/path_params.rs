@@ -2,13 +2,14 @@
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::{quote, quote_spanned};
-use syn::{DeriveInput, spanned::Spanned};
+use syn::{DeriveInput, FieldsNamed, spanned::Spanned};
 
 use crate::derive::{
+    attribute::field_args,
     common::{NameCase, named_fields, names_const, reject_duplicate_names, wire_names},
     params::{
-        Param, check_field, constraint_problems_body, construct, decode_field, group_problem,
-        parameters_body,
+        Param, check_field, constraint_problems_body, construct, decode_field,
+        describe::parameters_body, group_problem,
     },
 };
 
@@ -25,9 +26,40 @@ fn reject_optional(params: &[Param<'_>]) -> syn::Result<()> {
     }
 }
 
+/// `#[param(explode)]`, `default` and `flatten` are the query group's: a path
+/// variable is one value, always captured, named by the template.
+fn reject_query_keys(fields: &FieldsNamed) -> syn::Result<()> {
+    for field in &fields.named {
+        let args = field_args(field, "param")?;
+        if let Some(flag) = args.explode {
+            return Err(syn::Error::new(
+                flag.span(),
+                "`explode` says how a query list's items are carried, and a path parameter is \
+                 one value. Only a `QueryParams` group's `Vec<T>` field takes it",
+            ));
+        }
+        if let Some(default) = args.default {
+            return Err(syn::Error::new(
+                default.span(),
+                "a path parameter is always captured, so a `default` would never be read. Only \
+                 a `QueryParams` group's field takes it",
+            ));
+        }
+        if let Some(flatten) = args.flatten {
+            return Err(syn::Error::new(
+                flatten.span(),
+                "each path parameter is a variable the route template names, so no group can be \
+                 flattened into a path group. Only a `QueryParams` group's field takes `flatten`",
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     let fields = named_fields(input, "PathParams")?;
     let names = wire_names(input, fields, "param")?;
+    reject_query_keys(fields)?;
     reject_duplicate_names(fields, &names, "path parameter", NameCase::Sensitive)?;
 
     let name = &input.ident;
@@ -79,6 +111,12 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
             ) -> ::std::vec::Vec<::kynos::schema::constraints::ConstraintProblem> {
                 #constraint_problems
             }
+        }
+
+        impl #impl_generics ::kynos::extract::params::path::PathInput
+            for #name #ty_generics #where_clause
+        {
+            type Binding = ::kynos::extract::params::path::Named<Self>;
         }
 
         impl #impl_generics ::kynos::extract::params::path::DecodePath

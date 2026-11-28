@@ -6,6 +6,7 @@ use kynos_openapi::{ComponentName, Components, Schema as OpenApiSchema};
 
 use crate::{
     middleware::contribution::ContributionConflict,
+    router::error::{ExampleRefusal, RouterError},
     schema::{MapKey, NamedInstantiation, Schema},
 };
 
@@ -61,11 +62,32 @@ pub struct Registry {
     /// different `SecurityScheme::NAME`, not a renamed schema.
     scheme_conflicts: Vec<ContributionConflict>,
 
-    /// The extension members
-    /// [`Router::problem_members`](crate::router::Router::problem_members)
-    /// adds to every problem Kynos renders itself: each one's name, schema, and
+    /// Examples [`Registry::refuse_example`] recorded, each beside where it
+    /// is listed, deduplicated.
+    refused_examples: Vec<(String, RouterError)>,
+
+    /// What [`Registry::refuse_parameter`] recorded since the router last
+    /// took it, for the operation being described, deduplicated.
+    refused_parameters: Vec<RouterError>,
+
+    /// The extension members the [`ProblemPolicy`] that
+    /// [`Router::problems`](crate::router::Router::problems) installs adds to
+    /// every problem Kynos renders itself: each one's name, schema, and
     /// whether every problem sends it. Read by each such problem's response.
+    ///
+    /// [`ProblemPolicy`]: crate::error::members::ProblemPolicy
     problem_members: Vec<(String, OpenApiSchema, bool)>,
+
+    /// The type and title that policy gives a problem Kynos would send as
+    /// `about:blank`, by where it came from and its status; `None` where no
+    /// policy is installed.
+    problem_identity: Option<crate::error::members::Identify>,
+
+    /// What an [`AuthRejection`](crate::error::rejection::AuthRejection) held
+    /// in a transparent variant declares while a guard describes the error
+    /// holding it: the guard's own refusals, as its schemes and scope set
+    /// narrow them. `None` outside a guard, where it declares its own.
+    held_auth: Option<kynos_openapi::Responses>,
 }
 
 impl Registry {
@@ -311,16 +333,95 @@ impl Registry {
         }
     }
 
-    /// Declares `members` on every problem Kynos renders itself, before any
-    /// operation is described.
-    pub(crate) fn declare_problem_members(&mut self, members: Vec<(String, OpenApiSchema, bool)>) {
-        self.problem_members = members;
+    /// Records that `T`, a `#[schema(string)]` type, lists at `index` an
+    /// `example` it does not carry, for `refusal`.
+    ///
+    /// Recorded rather than returned for [`resolve`](Registry::resolve)'s
+    /// reason; the router reports it, located at the example under `T`'s
+    /// component, as a [`StringExample`](RouterError::StringExample)
+    /// violation.
+    pub(crate) fn refuse_example<T: Schema>(
+        &mut self,
+        index: usize,
+        example: &str,
+        refusal: ExampleRefusal,
+    ) {
+        let location = T::name().map_or_else(
+            || "#".to_owned(),
+            |name| format!("#/components/schemas/{name}/examples/{index}"),
+        );
+        let refused = (
+            location,
+            RouterError::StringExample {
+                schema: std::any::type_name::<T>(),
+                example: example.to_owned(),
+                refusal,
+            },
+        );
+        if !self.refused_examples.contains(&refused) {
+            self.refused_examples.push(refused);
+        }
     }
 
-    /// What [`declare_problem_members`](Self::declare_problem_members)
+    /// Records what is wrong with a parameter a group describes, which its
+    /// `parameters` cannot return.
+    ///
+    /// Recorded rather than returned for [`resolve`](Registry::resolve)'s
+    /// reason; the router takes it once the operation is described and
+    /// reports it located there.
+    pub(crate) fn refuse_parameter(&mut self, error: RouterError) {
+        if !self.refused_parameters.contains(&error) {
+            self.refused_parameters.push(error);
+        }
+    }
+
+    /// Takes what [`refuse_parameter`](Registry::refuse_parameter) recorded
+    /// since it was last taken, in the order it was recorded.
+    pub(crate) fn take_parameter_refusals(&mut self) -> Vec<RouterError> {
+        std::mem::take(&mut self.refused_parameters)
+    }
+
+    /// Declares `members`, and the types and titles `identity` gives, on
+    /// every problem Kynos renders itself, before any operation is described.
+    pub(crate) fn declare_problem_policy(
+        &mut self,
+        members: Vec<(String, OpenApiSchema, bool)>,
+        identity: crate::error::members::Identify,
+    ) {
+        self.problem_members = members;
+        self.problem_identity = Some(identity);
+    }
+
+    /// The members [`declare_problem_policy`](Self::declare_problem_policy)
     /// declared; empty where nothing did.
     pub(crate) fn problem_members(&self) -> &[(String, OpenApiSchema, bool)] {
         &self.problem_members
+    }
+
+    /// The identity a problem from `origin` answering with `status` carries
+    /// in place of `about:blank`, under the policy
+    /// [`declare_problem_policy`](Self::declare_problem_policy) declared.
+    pub(crate) fn problem_identity(
+        &self,
+        origin: crate::error::members::ProblemOrigin,
+        status: crate::http::StatusCode,
+    ) -> Option<crate::error::members::ProblemIdentity> {
+        self.problem_identity
+            .and_then(|identify| identify(origin, status))
+    }
+
+    /// Sets what a held `AuthRejection` declares, returning what it replaced,
+    /// for the caller to restore once its description is done.
+    pub(crate) fn hold_auth(
+        &mut self,
+        declared: Option<kynos_openapi::Responses>,
+    ) -> Option<kynos_openapi::Responses> {
+        std::mem::replace(&mut self.held_auth, declared)
+    }
+
+    /// What [`hold_auth`](Self::hold_auth) set; `None` outside a guard.
+    pub(crate) fn held_auth(&self) -> Option<&kynos_openapi::Responses> {
+        self.held_auth.as_ref()
     }
 
     /// Every key pattern [`admit_key_pattern`](Registry::admit_key_pattern)
@@ -333,6 +434,12 @@ impl Registry {
     /// refused, in the order it found them.
     pub(crate) fn instantiation_name_refusals(&self) -> &[InstantiationNameRefusal] {
         &self.instantiation_names
+    }
+
+    /// Every example [`refuse_example`](Registry::refuse_example) recorded,
+    /// each beside its location, in the order it found them.
+    pub(crate) fn example_refusals(&self) -> &[(String, RouterError)] {
+        &self.refused_examples
     }
 
     /// Every conflict [`resolve`](Registry::resolve) discovered, in the order

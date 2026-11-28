@@ -52,14 +52,13 @@ use std::convert::Infallible;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
-use std::time::Duration;
 
 use alloc_counter::count_alloc;
 use kynos::{
     Router,
     extract::params::path::Path,
-    http::{HeaderMap, HeaderValue, Method, Request, Response, StatusCode, header},
-    middleware::{Continued, Interceptor, Next, Observer},
+    http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header},
+    middleware::{Continued, Exchange, Interceptor, Next, Observer},
     prelude::*,
     response::status::NoContent,
     router::{operation::Route, service::Service},
@@ -525,8 +524,8 @@ impl Observer<()> for Unheard {
         let _ = (request, route, context);
     }
 
-    fn on_response(&self, response: &Response, route: Option<Route<'_>>, elapsed: Duration) {
-        let _ = (response, route, elapsed);
+    fn on_response(&self, exchange: &Exchange<'_>, context: &()) {
+        let _ = (exchange, context);
     }
 }
 
@@ -610,8 +609,8 @@ const ENDPOINT_FUTURE_BYTES: usize = 320;
 
 /// The same, for a handler whose last argument consumes a JSON body: 584 bytes
 /// on Linux. 576 before the handler kept the head it lends the body extractor
-/// across that read, to render the extractor's rejection with the members
-/// `Router::problem_members` installs; 632 while the read collected through
+/// across that read, to render the extractor's rejection under the policy
+/// `Router::problems` installs; 632 while the read collected through
 /// `http-body-util`'s collector, with its frame queue and trailer map, and 1528
 /// before that, when each `async fn` from the endpoint down to the codec's read
 /// kept a request of its own. What it holds past [`ENDPOINT_FUTURE_BYTES`] is

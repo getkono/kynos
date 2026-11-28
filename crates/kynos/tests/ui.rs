@@ -131,9 +131,17 @@ fn every_guided_diagnostic_has_a_snapshot() {
             "ClosedFlatten",
             "macros/schema_flatten_internally_tagged_denying_unknown_fields.stderr",
         ),
+        (
+            "DefaultAgrees",
+            "macros/schema_query_params_unspelt_to_serde.stderr",
+        ),
         ("Describe", "traits/describe.stderr"),
         ("EndpointMeta", "traits/endpoint_meta.stderr"),
         ("Flatten", "traits/flatten.stderr"),
+        (
+            "FlattenAgrees",
+            "macros/schema_query_params_unspelt_to_serde.stderr",
+        ),
         ("FromRequest", "antipattern/raw_request_extractor.stderr"),
         (
             "FromRequestParts",
@@ -151,6 +159,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("MapKey", "traits/map_key.stderr"),
         ("Message", "traits/protobuf_message.stderr"),
         ("NamedInstantiation", "traits/named_instantiation.stderr"),
+        ("NamedOnce", "macros/scope_named_by_serde.stderr"),
         (
             "NumberBound",
             "macros/schema_constraint_const_of_the_wrong_type.stderr",
@@ -158,6 +167,8 @@ fn every_guided_diagnostic_has_a_snapshot() {
         ("Numeric", "macros/schema_numeric_bound_on_a_string.stderr"),
         ("OpenMap", "traits/open_map.stderr"),
         ("ParamValue", "macros/query_params_object_field.stderr"),
+        ("PathInput", "traits/path_input.stderr"),
+        ("ProblemType", "traits/problem_type.stderr"),
         ("Provides", "antipattern/inject_without_provider.stderr"),
         ("Rangeable", "traits/rangeable.stderr"),
         ("RequestContent", "traits/request_content.stderr"),
@@ -167,6 +178,7 @@ fn every_guided_diagnostic_has_a_snapshot() {
             "macros/api_error_retry_after_not_a_delay.stderr",
         ),
         ("Schema", "schema/serde_json_value.stderr"),
+        ("SerdeTagged", "traits/serde_tagged.stderr"),
         ("ShortCircuit", "traits/short_circuit.stderr"),
         ("Textual", "macros/schema_length_bound_on_a_number.stderr"),
         (

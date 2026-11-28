@@ -11,14 +11,18 @@
 //! the path, query, header and cookie decoders' refusal of a value that breaks
 //! a bound; the query decoder's refusal of a declared value that is not UTF-8,
 //! and its decoding of `+` as a space and of an escaped `+` as a `+`; the
-//! cookie decoder's refusal of a declared cookie that is not ASCII; the header
-//! decoder's refusal of a missing required header or a value that is not
+//! query decoder's binding of an absent defaulted parameter and of a flattened
+//! group, and the router's refusal of a default breaking its bounds or a name
+//! a flattened group repeats; the cookie decoder's refusal of a
+//! declared cookie that is not ASCII; the header decoder's refusal of a missing required header or a value that is not
 //! ASCII, its reading of an absent optional header as `None`, the value a
 //! fixed header is written, compared and described as, and the 500 a value
 //! that is no field value is refused with; the text a derived `ParamValue`
-//! reads and writes; the octets a derived `ProtobufMessage` reads and writes,
+//! reads and writes; the scope a derived `Scope` names each variant; the
+//! octets a derived `ProtobufMessage` reads and writes,
 //! and the syntax error it makes of a body `prost` refuses; the response a
-//! derived `Reply` or `ApiError` writes; and a derived carrier's reading of
+//! derived `Reply` or `ApiError` writes, and the type URI an `ApiError`
+//! publishes beside it; and a derived carrier's reading of
 //! its `reads` group beside the credential.
 //! Their tests call the derived code directly, with no server. What *is*
 //! checked beyond compiling is the description a derive emits.
@@ -35,7 +39,7 @@ use kynos::{
     },
     response::{IntoResponse, Responses},
     router::operation::Tag as TagTrait,
-    schema::{ParamValue as ParamValueTrait, Schema as SchemaTrait, UnknownVariant},
+    schema::{ParamValue as ParamValueTrait, Schema as SchemaTrait, UnitEnum, UnknownVariant},
     security::{
         SecurityScheme as SecuritySchemeTrait,
         carrier::{
@@ -235,7 +239,15 @@ enum StoreError {
 /// Each source of a variant name the `Schema` derive reads: the container's
 /// `rename_all`, a variant's own `rename`, and an `alias` serde reads alone.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Schema,
+    ParamValue,
+    kynos::Scope,
+    serde::Serialize,
+    serde::Deserialize,
 )]
 #[serde(rename_all = "snake_case")]
 enum Phase {
@@ -250,6 +262,23 @@ enum Phase {
 #[derive(Schema, QueryParams)]
 struct PhaseQuery {
     phase: Option<Phase>,
+}
+
+/// A group deriving `Schema` and no serde, so the probe the `Schema` derive
+/// emits for each `#[param(default)]` and `#[param(flatten)]` serde is not
+/// told resolves to a group serde does not read, under Clippy.
+#[derive(Schema, QueryParams)]
+struct UnreadPage {
+    #[param(default = 50)]
+    limit: u32,
+}
+
+#[derive(Schema, QueryParams)]
+struct UnreadListing {
+    #[param(flatten)]
+    page: UnreadPage,
+    #[param(default = false)]
+    deleted: bool,
 }
 
 #[derive(Reply)]
@@ -267,7 +296,10 @@ fn implements_header_params<T: HeaderParams>() {}
 #[cfg(feature = "cookie")]
 fn implements_cookie_params<T: kynos::extract::params::cookie::CookieParams>() {}
 fn implements_param_value<T: ParamValueTrait>() {}
+fn implements_unit_enum<T: UnitEnum>() {}
 fn implements_tag<T: TagTrait>() {}
+fn implements_scope<T: kynos::security::Scope>() {}
+fn implements_scopes<T: kynos::security::auth::Scopes>() {}
 fn implements_security_scheme<T: SecuritySchemeTrait>() {}
 fn implements_responses<T: IntoResponse + Responses>() {}
 #[cfg(feature = "multipart")]
@@ -287,7 +319,10 @@ fn every_derive_implements_its_trait() {
     implements_path_params::<UserPath>();
     implements_query_params::<ListQuery>();
     implements_query_params::<PhaseQuery>();
+    implements_query_params::<UnreadListing>();
+    implements_schema::<UnreadListing>();
     implements_param_value::<Phase>();
+    implements_unit_enum::<Phase>();
     implements_header_params::<Conditional>();
     #[cfg(feature = "cookie")]
     implements_cookie_params::<Session>();
@@ -299,6 +334,10 @@ fn every_derive_implements_its_trait() {
     implements_protobuf_message::<ReexportedSample>();
     implements_tag::<Users>();
     implements_tag::<Admin>();
+    implements_scope::<Phase>();
+    implements_scope::<Permission>();
+    implements_scopes::<Auditing>();
+    implements_scopes::<AuditOnly>();
     implements_security_scheme::<BearerAuth>();
     implements_security_scheme::<SessionCookie>();
     implements_responses::<StoreError>();
@@ -542,6 +581,8 @@ fn the_provider_derive_supplies_every_field_it_was_not_told_to_skip() {
 struct Gate(&'static str);
 
 impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer, C> for Gate {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
@@ -553,6 +594,8 @@ impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer, C
 }
 
 impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u32>, C> for Gate {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
@@ -582,6 +625,8 @@ struct Guarded {
 struct Shared(Gate);
 
 impl<C: Sync> kynos::security::Authenticator<kynos::security::schemes::Bearer<u64>, C> for Shared {
+    type Error = kynos::error::rejection::AuthRejection;
+
     async fn authenticate(
         &self,
         _: kynos::security::carrier::presented::Presented<kynos::security::carrier::BearerToken>,
@@ -1211,11 +1256,18 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
         ["checking", "awaiting_metadata", "metadata", "SEEDING"]
     );
 
-    for variant in [Phase::Checking, Phase::AwaitingMetadata, Phase::Seeding] {
+    // Every variant once, in declaration order; each `as_str` is what serde
+    // writes, and `Display` writes it.
+    assert_eq!(
+        Phase::VARIANTS,
+        [Phase::Checking, Phase::AwaitingMetadata, Phase::Seeding]
+    );
+    for &variant in Phase::VARIANTS {
         assert_eq!(
-            serde_json::Value::String(variant.to_string()),
+            serde_json::Value::from(variant.as_str()),
             serde_json::to_value(variant).expect("a unit variant serializes"),
         );
+        assert_eq!(variant.to_string(), variant.as_str());
     }
 
     for name in &listed {
@@ -1240,6 +1292,185 @@ fn a_derived_param_value_reads_and_writes_the_names_its_schema_lists() {
     assert_eq!(format!("{:>10}", Phase::Checking), "  checking");
     assert_eq!(format!("{:*<10}", Phase::Seeding), "SEEDING***");
     assert_eq!(format!("{:.3}", Phase::Checking), "che");
+}
+
+/// Scopes serde does not name, so the derive's own attribute does.
+#[derive(Clone, Copy, kynos::Scope)]
+#[scope(rename_all = "kebab-case")]
+enum Permission {
+    ReadReports,
+    r#Move,
+    #[scope(rename = "admin:all")]
+    Admin,
+}
+
+/// A derived `Scope` names each variant as serde writes it, held to serde as
+/// the oracle, so the scopes a configuration parses are the ones a token and
+/// the description carry; and, for an enum serde does not name, as its own
+/// attribute says, `r#` stripped. A recorded exception to a derive being a
+/// type-level surface, since the names are what an authorizer compares.
+#[test]
+fn a_derived_scope_is_named_as_serde_writes_it() {
+    use kynos::security::Scope as _;
+
+    for &variant in Phase::VARIANTS {
+        assert_eq!(
+            serde_json::Value::from(variant.name()),
+            serde_json::to_value(variant).expect("a unit variant serializes"),
+        );
+    }
+
+    assert_eq!(
+        [Permission::ReadReports, Permission::Move, Permission::Admin].map(|grant| grant.name()),
+        ["read-reports", "move", "admin:all"]
+    );
+}
+
+/// The type a refusal of `AuditOnly` names, joined from the crate's base.
+const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+
+/// A scope set naming two scopes, and no 403 type of its own.
+#[derive(kynos::Scopes)]
+#[scopes(Grant::Audit, Grant::ReadReports)]
+struct Auditing;
+
+/// A scope set naming the 403 type its authorizer refuses with.
+#[derive(kynos::Scopes)]
+#[scopes(Grant::Audit, forbidden = INSUFFICIENT_SCOPE)]
+struct AuditOnly;
+
+/// A scheme of `Grant` scopes demanding none by default, so a `Scoped`
+/// requirement over it lists exactly its set's.
+#[derive(SecurityScheme)]
+#[security(bearer, scope = Grant)]
+struct GrantBearer;
+
+/// The operation a `Scoped<GrantBearer, R>` argument describes.
+fn scoped_operation<R: kynos::security::auth::Scopes<Scope = Grant>>() -> kynos::openapi::Operation
+{
+    let mut registry = kynos::schema::registry::Registry::new();
+    let mut operation = kynos::router::operation::OperationCx::new(&mut registry);
+    <kynos::security::auth::Scoped<GrantBearer, R> as kynos::extract::describe::Describe>::describe(
+        &mut operation,
+    );
+    operation.finish()
+}
+
+/// A derived `Scopes` demands the scopes it lists, in order, by the names
+/// `Scope::name` gives them, and its 403 publishes the type `forbidden`
+/// names, or none of its own.
+#[test]
+fn a_derived_scope_set_demands_what_it_lists_and_names_its_403() {
+    let auditing = scoped_operation::<Auditing>();
+    assert_eq!(
+        auditing.security,
+        Some(vec![kynos::openapi::SecurityRequirement::scoped(
+            "GrantBearer",
+            ["audit", "reports:read"],
+        )])
+    );
+    let declared = |operation: &kynos::openapi::Operation| {
+        serde_json::to_string(&operation.responses).expect("responses serialize")
+    };
+    assert!(!declared(&auditing).contains(INSUFFICIENT_SCOPE));
+
+    let audit_only = scoped_operation::<AuditOnly>();
+    assert_eq!(
+        audit_only.security,
+        Some(vec![kynos::openapi::SecurityRequirement::scoped(
+            "GrantBearer",
+            ["audit"],
+        )])
+    );
+    assert_eq!(
+        INSUFFICIENT_SCOPE,
+        "https://errors.example.com/insufficient-scope"
+    );
+    assert!(declared(&audit_only).contains(INSUFFICIENT_SCOPE));
+}
+
+/// An enum declaring its own `as_str` and `VARIANTS`, which the derive's
+/// `UnitEnum` must not clash with.
+#[derive(Debug, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum Severity {
+    Low,
+    High,
+}
+
+impl Severity {
+    const VARIANTS: [Self; 1] = [Self::High];
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Low => "Low severity",
+            Self::High => "High severity",
+        }
+    }
+}
+
+/// The derive's names sit on a trait, so a type's own items of the same names
+/// still compile and, with a `&self` receiver, still win a path or a method
+/// call even where the trait is imported, and the wire names stay reachable
+/// through the trait.
+#[test]
+fn a_derived_unit_enum_leaves_the_types_own_items_alone() {
+    assert_eq!(Severity::High.as_str(), "High severity");
+    assert_eq!(Severity::VARIANTS, [Severity::High]);
+    assert_eq!(UnitEnum::as_str(&Severity::High), "high");
+    assert_eq!(
+        <Severity as UnitEnum>::VARIANTS,
+        [Severity::Low, Severity::High]
+    );
+    assert_eq!(Severity::High.to_string(), "high");
+}
+
+/// Code importing only the prelude, whose method calls and associated paths
+/// the derive's `UnitEnum` must leave resolving as they did before it.
+mod unit_enum_beside_the_prelude {
+    use kynos::prelude::*;
+
+    /// A strum-style trait declaring its own `VARIANTS`.
+    trait VariantNames {
+        const VARIANTS: &'static [&'static str];
+    }
+
+    /// The issue's own shape: a by-value `const fn as_str(self)`.
+    #[derive(
+        Clone, Copy, Debug, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize,
+    )]
+    #[serde(rename_all = "lowercase")]
+    enum Status {
+        Open,
+        Dismissed,
+    }
+
+    impl Status {
+        const fn as_str(self) -> &'static str {
+            match self {
+                Self::Open => "Open status",
+                Self::Dismissed => "Dismissed status",
+            }
+        }
+    }
+
+    impl VariantNames for Status {
+        const VARIANTS: &'static [&'static str] = &["Open", "Dismissed"];
+    }
+
+    /// Were `UnitEnum` in the prelude, a call through a reference would
+    /// resolve to its `as_str(&self)` and `Status::VARIANTS` would not compile.
+    #[test]
+    fn a_by_value_as_str_and_a_foreign_variants_keep_resolving() {
+        let status = &Status::Dismissed;
+        assert_eq!(status.as_str(), "Dismissed status");
+        let found = [Status::Open, Status::Dismissed]
+            .iter()
+            .find(|status| status.as_str() == "Open status");
+        assert_eq!(found, Some(&Status::Open));
+        assert_eq!(Status::VARIANTS, ["Open", "Dismissed"]);
+        assert_eq!(kynos::schema::UnitEnum::as_str(status), "dismissed");
+    }
 }
 
 /// A newtype over one parameter value, written by serde as itself.
@@ -1280,6 +1511,486 @@ fn a_derived_newtype_param_value_reads_and_writes_through_its_field() {
         "abc"
     );
     implements_param_value::<Cursor>();
+}
+
+/// What a title reference names, which is no string of its own: serde would
+/// write it as an object.
+#[derive(Debug, Clone, PartialEq)]
+struct MediaId {
+    provider: String,
+    id: u64,
+}
+
+/// A title reference, `<provider>:<id>`.
+#[derive(Debug, Clone, PartialEq, Schema, ParamValue, serde::Serialize, serde::Deserialize)]
+#[schema(string, min_length = 3, max_length = 24)]
+#[schema(examples("tmdb:550", "anilist:21"))]
+#[serde(into = "String", try_from = "String")]
+struct TitleRef(MediaId);
+
+impl std::fmt::Display for TitleRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.0.provider, self.0.id)
+    }
+}
+
+impl std::str::FromStr for TitleRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let (provider, id) = text
+            .split_once(':')
+            .ok_or_else(|| format!("{text:?} names no provider"))?;
+        let id = id.parse().map_err(|_| format!("{id:?} is no id"))?;
+        Ok(Self(MediaId {
+            provider: provider.to_owned(),
+            id,
+        }))
+    }
+}
+
+impl TryFrom<String> for TitleRef {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl From<TitleRef> for String {
+    fn from(title: TitleRef) -> Self {
+        title.to_string()
+    }
+}
+
+/// A string whose example its own `FromStr` refuses.
+#[derive(Schema)]
+#[schema(string, examples("tmdb"))]
+struct MisdescribedRef(MediaId);
+
+/// A string whose example breaks its own bound.
+#[derive(Schema)]
+#[schema(string, max_length = 4, examples("tmdb:550"))]
+struct OverlongRef(MediaId);
+
+macro_rules! displayed_as_title_ref {
+    ($($ty:ident),*) => {$(
+        impl std::fmt::Display for $ty {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                std::fmt::Display::fmt(&TitleRef(self.0.clone()), f)
+            }
+        }
+
+        impl std::str::FromStr for $ty {
+            type Err = String;
+
+            fn from_str(text: &str) -> Result<Self, Self::Err> {
+                text.parse::<TitleRef>().map(|title| Self(title.0))
+            }
+        }
+    )*};
+}
+
+displayed_as_title_ref!(MisdescribedRef, OverlongRef);
+
+/// A `#[schema(string)]` type is the string its `Display` writes, whatever it
+/// declares: `type: string`, its own prose, its text's bounds and examples,
+/// and its own component name. serde, converting through `String`, agrees.
+#[test]
+fn a_string_type_is_described_as_its_text() {
+    assert_eq!(
+        emitted::<TitleRef>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A title reference, `<provider>:<id>`.",
+            "minLength": 3,
+            "maxLength": 24,
+            "examples": ["tmdb:550", "anilist:21"],
+        })
+    );
+    assert_eq!(
+        <TitleRef as SchemaTrait>::name().map(|name| name.to_string()),
+        Some("TitleRef".to_owned())
+    );
+
+    let title: TitleRef = "tmdb:550".parse().expect("the example parses");
+    let written = serde_json::to_value(title.clone()).expect("a title serializes");
+    assert_eq!(written, serde_json::json!("tmdb:550"));
+    assert_eq!(
+        serde_json::from_value::<TitleRef>(written).ok(),
+        Some(title)
+    );
+}
+
+/// The text's bounds are checked on the text `Display` writes, at the
+/// value's own pointer.
+#[test]
+fn a_string_type_checks_its_bounds_on_its_text() {
+    use kynos::schema::constraints::{Pointer, Violations};
+
+    let fits: TitleRef = "tmdb:550".parse().expect("a reference parses");
+    assert!(Violations::of(&fits, Pointer::root()).is_ok());
+
+    let long: TitleRef = "a-provider-named-at-length:550"
+        .parse()
+        .expect("a reference parses");
+    let failures = Violations::of(&long, Pointer::root()).expect_err("30 characters break 24");
+    assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+}
+
+/// A reference in the `uri-reference` format, which its own `FromStr` checks.
+#[derive(Schema)]
+#[schema(string, format = "uri-reference", examples("tmdb:550"))]
+struct LinkedRef(MediaId);
+
+displayed_as_title_ref!(LinkedRef);
+
+/// `format` on a `#[schema(string)]` type is the type's own claim about its
+/// text, described beside `type: string`.
+#[test]
+fn a_string_type_names_its_format() {
+    assert_eq!(
+        emitted::<LinkedRef>(),
+        serde_json::json!({
+            "type": "string",
+            "format": "uri-reference",
+            "description": "A reference in the `uri-reference` format, which its own `FromStr` checks.",
+            "examples": ["tmdb:550"],
+        })
+    );
+}
+
+/// The problem a broken [`EncodedRef`] answers with.
+const BAD_REFERENCE: kynos::schema::constraints::ConstraintProblem =
+    kynos::schema::constraints::ConstraintProblem::of_type(
+        "https://errors.example.com/bad-reference",
+    );
+
+/// A reference carried base64-encoded.
+#[derive(Schema)]
+#[schema(string, content_encoding = "base64", content_media_type = "text/plain")]
+#[schema(constraint_problem = BAD_REFERENCE)]
+struct EncodedRef(MediaId);
+
+displayed_as_title_ref!(EncodedRef);
+
+/// The content keys describe the text, and `constraint_problem` beside
+/// `string` is the type's own problem, as on any other type.
+#[test]
+fn a_string_type_describes_its_content_and_names_its_problem() {
+    assert_eq!(
+        emitted::<EncodedRef>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A reference carried base64-encoded.",
+            "contentEncoding": "base64",
+            "contentMediaType": "text/plain",
+        })
+    );
+    assert_eq!(
+        <EncodedRef as SchemaTrait>::CONSTRAINT_PROBLEM,
+        Some(BAD_REFERENCE)
+    );
+}
+
+/// A reference whose provider is lowercase letters.
+#[cfg(feature = "pattern")]
+#[derive(Schema)]
+#[schema(string, pattern = "^[a-z]+:")]
+struct PatternedRef(MediaId);
+
+#[cfg(feature = "pattern")]
+displayed_as_title_ref!(PatternedRef);
+
+/// `pattern` is described, and checked on the text `Display` writes.
+#[cfg(feature = "pattern")]
+#[test]
+fn a_string_type_checks_its_pattern_on_its_text() {
+    use kynos::schema::constraints::{Pointer, Violations};
+
+    assert_eq!(emitted::<PatternedRef>()["pattern"], "^[a-z]+:");
+    let fits: PatternedRef = "tmdb:550".parse().expect("a reference parses");
+    assert!(Violations::of(&fits, Pointer::root()).is_ok());
+    let shouted: PatternedRef = "TMDB:550".parse().expect("a reference parses");
+    let failures = Violations::of(&shouted, Pointer::root()).expect_err("uppercase breaks it");
+    assert_eq!(failures.keys().collect::<Vec<_>>(), [""]);
+}
+
+/// A side of a trade, written `buy` or `sell`.
+#[derive(Debug, PartialEq, Schema)]
+#[schema(string, examples("buy", "sell"))]
+enum TradeSide {
+    Buy,
+    Sell,
+}
+
+impl std::fmt::Display for TradeSide {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Buy => "buy",
+            Self::Sell => "sell",
+        })
+    }
+}
+
+impl std::str::FromStr for TradeSide {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        match text {
+            "buy" => Ok(Self::Buy),
+            "sell" => Ok(Self::Sell),
+            other => Err(format!("{other:?} is no side")),
+        }
+    }
+}
+
+/// An enum carrying `string` is its text, not its variants.
+#[test]
+fn a_string_enum_is_described_as_its_text() {
+    assert_eq!(
+        emitted::<TradeSide>(),
+        serde_json::json!({
+            "type": "string",
+            "description": "A side of a trade, written `buy` or `sell`.",
+            "examples": ["buy", "sell"],
+        })
+    );
+}
+
+/// What `/titles/{title}` captures: a string type as a path parameter.
+#[derive(PathParams)]
+struct ByTitle {
+    title: TitleRef,
+}
+
+/// A derived `ParamValue` on a `#[schema(string)]` type keeps the type's own
+/// `FromStr` and `Display`, so the type is a path parameter.
+#[test]
+fn a_string_type_is_a_parameter_through_its_own_text() {
+    implements_param_value::<TitleRef>();
+    implements_path_params::<ByTitle>();
+    assert_eq!(
+        "tmdb:550"
+            .parse::<TitleRef>()
+            .map(|title| title.to_string()),
+        Ok("tmdb:550".to_owned())
+    );
+}
+
+/// What `/misdescribed/{title}/{overlong}` captures: two string types whose
+/// examples their own types refuse.
+#[derive(PathParams)]
+struct ByBrokenExamples {
+    title: MisdescribedRef,
+    overlong: OverlongRef,
+}
+
+impl kynos::schema::ParamValue for MisdescribedRef {}
+impl kynos::schema::ParamValue for OverlongRef {}
+
+#[kynos::get("/misdescribed/{title}/{overlong}")]
+async fn by_broken_examples(
+    kynos::extract::params::path::Path(path): kynos::extract::params::path::Path<ByBrokenExamples>,
+) -> kynos::response::status::NoContent {
+    let _ = path;
+    kynos::response::status::NoContent
+}
+
+/// An example the type's own `FromStr` refuses, or whose value breaks the
+/// text's own bounds, is a violation located at the example, so the router
+/// refuses to build rather than publish it.
+#[test]
+fn a_router_refuses_a_string_example_its_type_does_not_carry() {
+    use kynos::router::error::ExampleRefusal;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_broken_examples]);
+    assert_eq!(
+        refused_examples(&router),
+        [
+            (
+                "#/components/schemas/MisdescribedRef/examples/0".to_owned(),
+                "MisdescribedRef",
+                "tmdb".to_owned(),
+                ExampleRefusal::Unparsed,
+            ),
+            (
+                "#/components/schemas/OverlongRef/examples/0".to_owned(),
+                "OverlongRef",
+                "tmdb:550".to_owned(),
+                ExampleRefusal::OutOfBounds {
+                    failures: vec!["must be at most 4 characters long".to_owned()],
+                },
+            ),
+        ]
+    );
+}
+
+/// Each `StringExample` violation building `router` reports: where, the
+/// type's last path segment, the example, and why.
+fn refused_examples(
+    router: &kynos::Router<()>,
+) -> Vec<(
+    String,
+    &'static str,
+    String,
+    kynos::router::error::ExampleRefusal,
+)> {
+    use kynos::router::error::RouterError;
+
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing refused examples was built");
+    };
+    violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            RouterError::StringExample {
+                schema,
+                example,
+                refusal,
+            } => Some((
+                violation.location,
+                schema.rsplit("::").next().unwrap_or(schema),
+                example,
+                refusal,
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A plain serde derive on a newtype: serde writes the member, `"550"`, while
+/// `Display` writes `ref:550`.
+#[derive(Schema, serde::Serialize, serde::Deserialize)]
+#[schema(string, examples("ref:550"))]
+struct PrefixedRef(String);
+
+/// A plain serde derive on a struct with named fields, which reads an object
+/// rather than the string; its `Serialize` is written by hand through the
+/// text.
+#[derive(Schema, serde::Deserialize)]
+#[schema(string, examples("tmdb:550"))]
+struct HalfDerivedRef {
+    provider: String,
+    id: u64,
+}
+
+/// A `Serialize` that refuses every value.
+#[derive(Schema)]
+#[schema(string, examples("tmdb:550"))]
+struct UnwritableRef(MediaId);
+
+impl serde::Serialize for HalfDerivedRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+impl serde::Serialize for UnwritableRef {
+    fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+        Err(serde::ser::Error::custom("never written"))
+    }
+}
+
+impl std::fmt::Display for PrefixedRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ref:{}", self.0)
+    }
+}
+
+impl std::str::FromStr for PrefixedRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.strip_prefix("ref:")
+            .map(|id| Self(id.to_owned()))
+            .ok_or_else(|| format!("{text:?} is no reference"))
+    }
+}
+
+impl std::fmt::Display for HalfDerivedRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.provider, self.id)
+    }
+}
+
+impl std::str::FromStr for HalfDerivedRef {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        text.parse::<TitleRef>().map(|title| Self {
+            provider: title.0.provider,
+            id: title.0.id,
+        })
+    }
+}
+
+displayed_as_title_ref!(UnwritableRef);
+
+impl kynos::schema::ParamValue for PrefixedRef {}
+impl kynos::schema::ParamValue for HalfDerivedRef {}
+impl kynos::schema::ParamValue for UnwritableRef {}
+
+/// What `/serde/{title}/{prefixed}/{half}/{unwritable}` captures: one string
+/// type serde carries as its text, and three it does not.
+#[derive(PathParams)]
+struct BySerde {
+    title: TitleRef,
+    prefixed: PrefixedRef,
+    half: HalfDerivedRef,
+    unwritable: UnwritableRef,
+}
+
+#[kynos::get("/serde/{title}/{prefixed}/{half}/{unwritable}")]
+async fn by_serde(
+    kynos::extract::params::path::Path(path): kynos::extract::params::path::Path<BySerde>,
+) -> kynos::response::status::NoContent {
+    let _ = path;
+    kynos::response::status::NoContent
+}
+
+/// A serde derive with no attribute is invisible to the `Schema` derive, so
+/// each example is put through the type's own serde: `Serialize` must write
+/// the `Display` text as a JSON string and `Deserialize` must read the example
+/// as one. `TitleRef`, converting through `String`, carries its examples.
+#[test]
+fn a_router_refuses_a_string_example_its_serde_does_not_carry_as_text() {
+    use kynos::router::error::ExampleRefusal;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_serde]);
+    let refused = refused_examples(&router);
+    let [prefixed, half, unwritable] = refused.as_slice() else {
+        panic!("three refused examples: {refused:?}");
+    };
+
+    assert_eq!(
+        prefixed,
+        &(
+            "#/components/schemas/PrefixedRef/examples/0".to_owned(),
+            "PrefixedRef",
+            "ref:550".to_owned(),
+            ExampleRefusal::Miswritten {
+                written: "\"550\"".to_owned(),
+                displayed: "ref:550".to_owned(),
+            },
+        )
+    );
+    assert!(
+        matches!(
+            half,
+            (_, "HalfDerivedRef", _, ExampleRefusal::Undeserializable { reason })
+                if reason.contains("expected struct HalfDerivedRef")
+        ),
+        "{half:?}"
+    );
+    assert!(
+        matches!(
+            unwritable,
+            (_, "UnwritableRef", _, ExampleRefusal::Unserializable { reason })
+                if reason == "never written"
+        ),
+        "{unwritable:?}"
+    );
 }
 
 /// A deprecated type says so, and says nothing about the note.
@@ -1418,6 +2129,38 @@ fn a_container_default_leaves_every_field_optional() {
     assert!(
         serde_json::from_str::<Settings>("{}").is_ok(),
         "an empty document must read under a container default"
+    );
+}
+
+/// A merge patch: one member that may be cleared, and one that may not.
+#[derive(Schema, serde::Deserialize)]
+struct EntryPatch {
+    #[serde(default)]
+    #[schema(max_length = 4)]
+    notes: kynos::schema::Nullable<String>,
+    title: Option<String>,
+}
+
+/// A `Nullable` member is described as its `Option` is, its bound applying to
+/// the value, and the `default` the derive asks of it keeps it out of
+/// `required`: a patch naming nothing reads, as RFC 7396 says it may.
+#[test]
+fn a_nullable_member_is_optional_and_bounded_by_its_value() {
+    let schema = emitted::<EntryPatch>();
+    assert_eq!(schema.get("required"), None);
+    assert_eq!(
+        schema["properties"]["notes"],
+        serde_json::json!({ "type": ["string", "null"], "maxLength": 4 })
+    );
+
+    let patch: EntryPatch = serde_json::from_str("{}").expect("an empty patch reads");
+    assert!(patch.notes.is_absent());
+    let patch: EntryPatch = serde_json::from_str(r#"{"notes":"longer"}"#).expect("the patch reads");
+    let mut violations = kynos::schema::constraints::Violations::new();
+    patch.check_constraints(kynos::schema::constraints::Pointer::root(), &mut violations);
+    assert!(
+        !violations.is_empty(),
+        "a value past `max_length` breaks it"
     );
 }
 
@@ -2132,7 +2875,6 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
         ("name=caf%E9", "name"),
         ("name=%FF%FE", "name"),
         ("name=ok&note=%FF", "note"),
-        ("name=%FF&name=ok", "name"),
         ("name=ok&sortBy=%FF", "sortBy"),
         ("na%6De=%FF", "name"),
     ] {
@@ -2158,6 +2900,42 @@ fn a_query_value_that_is_not_utf8_is_refused_naming_its_parameter() {
             Ok(decoded) => assert_eq!(decoded.name, expected, "{query}"),
             Err(rejection) => panic!("{query}: refused: {rejection}"),
         }
+    }
+}
+
+/// A declared parameter named by a second pair is refused, naming it by its
+/// wire name, whether the two values agree, differ, or one is not text: a
+/// field carries one value, and keeping either would guess at which one the
+/// client meant. A name is matched once percent-decoded, so an escaped
+/// spelling repeats it too; an undeclared name may repeat freely.
+#[test]
+fn a_query_parameter_given_twice_is_refused_naming_it() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for (query, parameter) in [
+        ("name=a&name=b", "name"),
+        ("name=a&name=a", "name"),
+        ("name=%FF&name=ok", "name"),
+        ("name=ok&note=a&note=b", "note"),
+        ("name=ok&sortBy=a&na%6De=b", "name"),
+        ("name=ok&sortBy=&sortBy", "sortBy"),
+    ] {
+        match <Named as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, detail }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert_eq!(
+                    detail, "the parameter is given more than once, and it carries one value",
+                    "{query}"
+                );
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {:?}", decoded.name),
+        }
+    }
+
+    match <Named as DecodeQuery>::decode(Some("other=1&name=x&other=2&sort=a&sort=b")) {
+        Ok(decoded) => assert_eq!(decoded.name, "x"),
+        Err(rejection) => panic!("an undeclared name repeated: refused: {rejection}"),
     }
 }
 
@@ -2347,6 +3125,696 @@ fn a_nan_query_value_is_refused_under_its_numeric_bounds() {
         Err(other) => panic!("refused for another reason: {other}"),
         Ok(decoded) => panic!("accepted as {}", decoded.ratio),
     }
+}
+
+// --- A derived query list carries several values ----------------------------
+//
+// The recorded runtime exception again: a `Vec<T>` field is one parameter of
+// several items, exploded over repeated pairs by default or delimited by commas
+// in one pair under `#[param(explode = false)]`, and the derive's decoder,
+// encoder and description must agree on which.
+
+#[derive(Schema, ParamValue, serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum Diet {
+    Vegan,
+    GlutenFree,
+}
+
+#[derive(QueryParams, Debug)]
+struct Facets {
+    /// Every pair named `diet`.
+    diet: Vec<Diet>,
+    #[param(explode = false)]
+    #[schema(max_items = 3)]
+    cuisine: Vec<String>,
+    #[param(rename = "n", explode = true)]
+    scores: Vec<Score>,
+}
+
+/// A list parameter is described as an array of its items, `required: false`
+/// because a query string carries an empty list as no pair at all, with its
+/// `style` and `explode` written out and its field's bounds on the array.
+#[test]
+fn a_query_list_is_described_as_an_array_with_its_style() {
+    assert_eq!(
+        query_parameters::<Facets>(),
+        serde_json::json!([
+            {
+                "name": "diet",
+                "in": "query",
+                "description": "Every pair named `diet`.",
+                "required": false,
+                "schema": resolved::<Vec<Diet>>(),
+                "style": "form",
+                "explode": true,
+            },
+            {
+                "name": "cuisine",
+                "in": "query",
+                "required": false,
+                "schema": bounded(resolved::<Vec<String>>(), &serde_json::json!({"maxItems": 3})),
+                "style": "form",
+                "explode": false,
+            },
+            {
+                "name": "n",
+                "in": "query",
+                "required": false,
+                "schema": resolved::<Vec<Score>>(),
+                "style": "form",
+                "explode": true,
+            },
+        ])
+    );
+}
+
+#[derive(QueryParams, Debug)]
+struct Selected {
+    #[schema(min_items = 1)]
+    id: Vec<u64>,
+}
+
+/// A list whose field requires an item is `required: true`, since its absence
+/// is its emptiness, and the decoder refuses that absence as too few items,
+/// so the document and the decoder agree on what a request must carry.
+#[test]
+fn a_query_list_requiring_an_item_is_a_required_parameter() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    assert_eq!(
+        query_parameters::<Selected>(),
+        serde_json::json!([{
+            "name": "id",
+            "in": "query",
+            "required": true,
+            "schema": bounded(resolved::<Vec<u64>>(), &serde_json::json!({"minItems": 1})),
+            "style": "form",
+            "explode": true,
+        }])
+    );
+    for query in [None, Some(""), Some("other=1")] {
+        match <Selected as DecodeQuery>::decode(query) {
+            Err(QueryRejection::Schema { name, failures, .. }) => {
+                assert_eq!(name, "id", "{query:?}");
+                assert_eq!(
+                    failures,
+                    std::collections::BTreeMap::from([(
+                        String::new(),
+                        "must hold at least 1 items".to_owned()
+                    )]),
+                    "{query:?}"
+                );
+            }
+            Err(other) => panic!("{query:?}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query:?}: accepted as {decoded:?}"),
+        }
+    }
+    match <Selected as DecodeQuery>::decode(Some("id=7")) {
+        Ok(decoded) => assert_eq!(decoded.id, [7]),
+        Err(rejection) => panic!("refused: {rejection}"),
+    }
+}
+
+/// An exploded list reads every pair naming it, in wire order, and a delimited
+/// one splits its one pair at each literal comma before decoding, so an
+/// escaped `%2C` stays inside its item. No pair is the empty list; an empty
+/// value is one empty item, as RFC 6570 reads it.
+#[test]
+fn a_query_list_decodes_each_item_in_wire_order() {
+    use kynos::extract::params::query::DecodeQuery;
+
+    for (query, diet, cuisine, scores) in [
+        (None, vec![], vec![], vec![]),
+        (Some(""), vec![], vec![], vec![]),
+        (
+            Some("diet=vegan&n=3&diet=gluten-free&n=1&diet=vegan"),
+            vec![Diet::Vegan, Diet::GlutenFree, Diet::Vegan],
+            vec![],
+            vec![Score(3), Score(1)],
+        ),
+        (
+            Some("cuisine=thai,korean"),
+            vec![],
+            vec!["thai", "korean"],
+            vec![],
+        ),
+        (
+            Some("cuisine=a%2Cb,c+d"),
+            vec![],
+            vec!["a,b", "c d"],
+            vec![],
+        ),
+        (Some("cuisine="), vec![], vec![""], vec![]),
+        (Some("cuisine=,"), vec![], vec!["", ""], vec![]),
+    ] {
+        match <Facets as DecodeQuery>::decode(query) {
+            Ok(decoded) => {
+                assert_eq!(decoded.diet, diet, "{query:?}");
+                assert_eq!(decoded.cuisine, cuisine, "{query:?}");
+                assert_eq!(decoded.scores, scores, "{query:?}");
+            }
+            Err(rejection) => panic!("{query:?}: refused: {rejection}"),
+        }
+    }
+}
+
+/// An item that is not text or does not parse is refused naming the parameter
+/// and the item's index; a delimited list is one pair, so a second is refused
+/// as a scalar's is. An item breaking its type's bound is refused at its
+/// index's pointer, and the list breaking its field's bound at the parameter's.
+#[test]
+fn a_query_list_item_is_refused_at_its_index() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for (query, parameter, expected) in [
+        (
+            "diet=vegan&diet=paleo",
+            "diet",
+            "item 1: expected one of `vegan`, `gluten-free`",
+        ),
+        (
+            "n=1&n=2&n=%FF",
+            "n",
+            "item 2: the percent-decoded value is not UTF-8",
+        ),
+        (
+            "cuisine=a,%FF",
+            "cuisine",
+            "item 1: the percent-decoded value is not UTF-8",
+        ),
+        (
+            "cuisine=a&cuisine=b",
+            "cuisine",
+            "the parameter is given more than once, and it carries one value",
+        ),
+    ] {
+        match <Facets as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, detail }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert_eq!(detail, expected, "{query}");
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {decoded:?}"),
+        }
+    }
+
+    let invalid = <Facets as DecodeQuery>::decode(Some("n=x"));
+    assert!(
+        matches!(
+            &invalid,
+            Err(QueryRejection::Invalid { name, detail })
+                if name == "n" && detail.starts_with("item 0: ")
+        ),
+        "{invalid:?}"
+    );
+
+    for (query, parameter, pointer, detail) in [
+        ("n=1&n=101", "n", "/1", "must be at most 100"),
+        (
+            "cuisine=a,b,c,d",
+            "cuisine",
+            "",
+            "must hold at most 3 items",
+        ),
+    ] {
+        match <Facets as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Schema { name, failures, .. }) => {
+                assert_eq!(name, parameter, "{query}");
+                assert_eq!(
+                    failures,
+                    std::collections::BTreeMap::from([(pointer.to_owned(), detail.to_owned())]),
+                    "{query}"
+                );
+            }
+            Err(other) => panic!("{query}: refused for another reason: {other}"),
+            Ok(decoded) => panic!("{query}: accepted as {decoded:?}"),
+        }
+    }
+}
+
+/// The encoder writes an exploded list as one pair per item and a delimited
+/// one as one pair whose items are joined by a literal comma, each item
+/// escaped so a comma inside one survives, and omits an empty list; what it
+/// writes decodes back to the group it encoded.
+#[test]
+fn a_derived_query_list_encodes_and_round_trips() {
+    use kynos::extract::params::query::{DecodeQuery, EncodeQuery};
+
+    let group = Facets {
+        diet: vec![Diet::GlutenFree, Diet::Vegan],
+        cuisine: vec!["a,b".to_owned(), String::new(), "c d".to_owned()],
+        scores: vec![],
+    };
+    let encoded = group.encode();
+
+    assert_eq!(encoded, "diet=gluten-free&diet=vegan&cuisine=a%2Cb,,c%20d");
+    let decoded = <Facets as DecodeQuery>::decode(Some(&encoded)).expect("what it encoded");
+    assert_eq!(
+        (decoded.diet, decoded.cuisine, decoded.scores),
+        (group.diet, group.cuisine, group.scores)
+    );
+    let empty = Facets {
+        diet: vec![],
+        cuisine: vec![],
+        scores: vec![],
+    };
+    assert_eq!(empty.encode(), "");
+}
+
+// --- A defaulted query parameter binds its default when absent -------------
+//
+// A recorded runtime exception for the reason the bounds one is: a field's
+// `#[param(default = ...)]` is what the decoder binds when no pair names it,
+// what the description states as the schema's `default`, and a default
+// breaking the field's bounds is refused when the router is built.
+
+/// The default `limit`, a constant the group names.
+const DEFAULT_LIMIT: u32 = 50;
+
+#[derive(Schema, ParamValue, serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Order {
+    Asc,
+    Desc,
+}
+
+#[derive(QueryParams, Debug)]
+struct Defaulted {
+    /// A number literal, typed by the field.
+    #[param(default = false)]
+    deleted: bool,
+    /// A `const` the group shares with its handlers, widened by `From`.
+    #[param(default = DEFAULT_LIMIT)]
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u64,
+    /// A unit variant.
+    #[param(default = Order::Desc)]
+    order: Order,
+    /// A string literal, through `String`'s `From<&str>`.
+    #[param(default = "en")]
+    lang: String,
+    /// A negated literal.
+    #[param(default = -1.5)]
+    offset: f64,
+}
+
+/// An absent defaulted parameter binds its default, and one a pair names
+/// binds what it carries, under the field's bounds as any other value is.
+#[test]
+fn an_absent_defaulted_query_parameter_binds_its_default() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    for query in [None, Some(""), Some("other=1")] {
+        let decoded = <Defaulted as DecodeQuery>::decode(query).expect("every parameter defaults");
+        assert_eq!(
+            (
+                decoded.deleted,
+                decoded.limit,
+                decoded.order,
+                decoded.lang.as_str(),
+                decoded.offset,
+            ),
+            (false, 50, Order::Desc, "en", -1.5),
+            "{query:?}"
+        );
+    }
+
+    let decoded =
+        <Defaulted as DecodeQuery>::decode(Some("deleted=true&limit=7&order=asc&lang=fr&offset=2"))
+            .expect("every parameter given");
+    assert_eq!(
+        (
+            decoded.deleted,
+            decoded.limit,
+            decoded.order,
+            decoded.lang.as_str(),
+            decoded.offset,
+        ),
+        (true, 7, Order::Asc, "fr", 2.0)
+    );
+
+    assert!(matches!(
+        <Defaulted as DecodeQuery>::decode(Some("limit=201")),
+        Err(QueryRejection::Schema { name, .. }) if name == "limit"
+    ));
+}
+
+/// A defaulted parameter is `required: false`, since a client may leave it
+/// out, and its schema states the default as the JSON its schema types: a
+/// number, a boolean, or the text a named string type writes.
+#[test]
+fn a_defaulted_query_parameter_states_its_default() {
+    let parameters = query_parameters::<Defaulted>();
+    let stated: Vec<(&str, &serde_json::Value, &serde_json::Value)> = parameters
+        .as_array()
+        .expect("a parameter list")
+        .iter()
+        .map(|parameter| {
+            (
+                parameter["name"].as_str().expect("a name"),
+                &parameter["required"],
+                &parameter["schema"]["default"],
+            )
+        })
+        .collect();
+    assert_eq!(
+        stated,
+        [
+            (
+                "deleted",
+                &serde_json::json!(false),
+                &serde_json::json!(false)
+            ),
+            ("limit", &serde_json::json!(false), &serde_json::json!(50)),
+            (
+                "order",
+                &serde_json::json!(false),
+                &serde_json::json!("desc")
+            ),
+            ("lang", &serde_json::json!(false), &serde_json::json!("en")),
+            (
+                "offset",
+                &serde_json::json!(false),
+                &serde_json::json!(-1.5)
+            ),
+        ]
+    );
+}
+
+/// A default `limit` above the field's own `maximum`.
+const OVERSIZED_LIMIT: u32 = 500;
+
+/// A default score above the type's own `maximum`.
+const OVERSIZED_SCORE: Score = Score(101);
+
+#[derive(QueryParams)]
+struct MisdefaultedPage {
+    #[param(default = OVERSIZED_LIMIT)]
+    #[schema(maximum = 200)]
+    limit: u32,
+    #[param(default = OVERSIZED_SCORE)]
+    #[schema(minimum = 1)]
+    score: Score,
+}
+
+#[kynos::get("/misdefaulted")]
+async fn by_misdefaulted_page(
+    kynos::extract::params::query::Query(page): kynos::extract::params::query::Query<
+        MisdefaultedPage,
+    >,
+) -> kynos::response::status::NoContent {
+    let _ = page;
+    kynos::response::status::NoContent
+}
+
+/// A default breaking its field's bounds, or its type's, is a violation
+/// located at each operation taking the group, so the router refuses to build
+/// rather than state a default the API refuses or bind a value no request
+/// could carry.
+#[test]
+fn a_router_refuses_a_default_breaking_its_parameters_bounds() {
+    use kynos::router::error::RouterError;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_misdefaulted_page]);
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing a broken default was built");
+    };
+    let refused: Vec<_> = violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            RouterError::ParameterDefault {
+                group,
+                parameter,
+                default,
+                failures,
+            } => Some((
+                violation.location,
+                group.rsplit("::").next().unwrap_or(group),
+                parameter,
+                default,
+                failures,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "#/paths/~1misdefaulted/get".to_owned(),
+                "MisdefaultedPage",
+                "limit".to_owned(),
+                "500".to_owned(),
+                vec!["must be at most 200".to_owned()],
+            ),
+            (
+                "#/paths/~1misdefaulted/get".to_owned(),
+                "MisdefaultedPage",
+                "score".to_owned(),
+                "101".to_owned(),
+                vec!["must be at most 100".to_owned()],
+            ),
+        ]
+    );
+}
+
+// --- A flattened query group's parameters are its parent's -----------------
+//
+// A recorded runtime exception for the reason the bounds one is: a
+// `#[param(flatten)]` field is decoded, described and encoded by its own
+// group, from the same query string, and a name it shares with its parent is
+// refused when the router is built.
+
+#[derive(QueryParams, Debug, PartialEq)]
+struct PageParams {
+    cursor: Option<String>,
+    #[param(default = 50)]
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+}
+
+#[derive(QueryParams, Debug, PartialEq)]
+struct ListEntries {
+    #[param(flatten)]
+    page: PageParams,
+    #[param(default = false)]
+    deleted: bool,
+    status: Option<String>,
+}
+
+/// Two levels of flattening, beside a field named `query`, which the
+/// decoder's own argument must not be shadowed by.
+#[derive(QueryParams, Debug, PartialEq)]
+struct SearchEntries {
+    query: Option<String>,
+    #[param(flatten)]
+    entries: ListEntries,
+}
+
+/// A group generic over the group it flattens.
+#[derive(QueryParams, Debug, PartialEq)]
+struct Filtered<T> {
+    #[param(flatten)]
+    inner: T,
+    tag: Vec<String>,
+}
+
+/// Each flattened field is decoded from the whole query string by its own
+/// group, nested groups included, so its defaults, its bounds and its refusal
+/// of a repeated pair hold as they do when it is the handler's own group.
+#[test]
+fn a_flattened_query_group_decodes_from_the_same_query() {
+    use kynos::{error::rejection::QueryRejection, extract::params::query::DecodeQuery};
+
+    let decoded = <SearchEntries as DecodeQuery>::decode(Some(
+        "status=open&limit=7&query=rust&cursor=c1&deleted=true",
+    ))
+    .expect("every parameter given");
+    assert_eq!(
+        decoded,
+        SearchEntries {
+            query: Some("rust".to_owned()),
+            entries: ListEntries {
+                page: PageParams {
+                    cursor: Some("c1".to_owned()),
+                    limit: 7,
+                },
+                deleted: true,
+                status: Some("open".to_owned()),
+            },
+        }
+    );
+
+    let absent = <SearchEntries as DecodeQuery>::decode(None).expect("nothing is required");
+    assert_eq!(
+        absent.entries,
+        ListEntries {
+            page: PageParams {
+                cursor: None,
+                limit: 50,
+            },
+            deleted: false,
+            status: None,
+        }
+    );
+
+    for (query, refused) in [("limit=1&limit=2", "limit"), ("limit=201", "limit")] {
+        match <SearchEntries as DecodeQuery>::decode(Some(query)) {
+            Err(QueryRejection::Invalid { name, .. } | QueryRejection::Schema { name, .. }) => {
+                assert_eq!(name, refused, "{query}");
+            }
+            other => panic!("{query}: {other:?}"),
+        }
+    }
+
+    let generic = <Filtered<PageParams> as DecodeQuery>::decode(Some("tag=a&limit=3&tag=b"))
+        .expect("a generic parent");
+    assert_eq!(
+        (generic.inner.limit, generic.tag),
+        (3, vec!["a".to_owned(), "b".to_owned()])
+    );
+}
+
+/// A flattened group's parameters are described in its field's place, in
+/// declaration order, each as its own group describes it.
+#[test]
+fn a_flattened_query_group_is_described_in_its_fields_place() {
+    let names = |parameters: serde_json::Value| -> Vec<(String, bool)> {
+        parameters
+            .as_array()
+            .expect("a parameter list")
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter["name"].as_str().expect("a name").to_owned(),
+                    parameter["required"].as_bool().expect("required"),
+                )
+            })
+            .collect()
+    };
+    let expected = |names: &[&str]| -> Vec<(String, bool)> {
+        names
+            .iter()
+            .map(|name| ((*name).to_owned(), false))
+            .collect()
+    };
+    assert_eq!(
+        names(query_parameters::<SearchEntries>()),
+        expected(&["query", "cursor", "limit", "deleted", "status"])
+    );
+    assert_eq!(
+        query_parameters::<ListEntries>()[1],
+        query_parameters::<PageParams>()[1]
+    );
+    assert_eq!(
+        names(query_parameters::<Filtered<PageParams>>()),
+        expected(&["cursor", "limit", "tag"])
+    );
+}
+
+/// The encoder writes a flattened group's pairs in its field's place, and
+/// what it writes decodes back to the group it encoded.
+#[test]
+fn a_flattened_query_group_encodes_and_round_trips() {
+    use kynos::extract::params::query::{DecodeQuery, EncodeQuery};
+
+    let group = SearchEntries {
+        query: Some("a b".to_owned()),
+        entries: ListEntries {
+            page: PageParams {
+                cursor: None,
+                limit: 9,
+            },
+            deleted: false,
+            status: Some("open".to_owned()),
+        },
+    };
+    let encoded = group.encode();
+
+    assert_eq!(encoded, "query=a%20b&limit=9&deleted=false&status=open");
+    assert_eq!(
+        <SearchEntries as DecodeQuery>::decode(Some(&encoded)).expect("what it encoded"),
+        group
+    );
+}
+
+/// A group naming `limit` beside the `PageParams` it flattens.
+#[derive(QueryParams)]
+struct LimitTwice {
+    #[param(flatten)]
+    page: PageParams,
+    limit: Option<u32>,
+}
+
+/// A group flattening `PageParams` beside a group that flattens it again.
+#[derive(QueryParams)]
+struct PagedTwice {
+    #[param(flatten)]
+    entries: ListEntries,
+    #[param(flatten)]
+    page: PageParams,
+}
+
+#[kynos::get("/limit-twice")]
+async fn by_limit_twice(
+    kynos::extract::params::query::Query(query): kynos::extract::params::query::Query<LimitTwice>,
+) -> kynos::response::status::NoContent {
+    let _ = query;
+    kynos::response::status::NoContent
+}
+
+#[kynos::get("/paged-twice")]
+async fn by_paged_twice(
+    kynos::extract::params::query::Query(query): kynos::extract::params::query::Query<PagedTwice>,
+) -> kynos::response::status::NoContent {
+    let _ = query;
+    kynos::response::status::NoContent
+}
+
+/// A name a flattened group shares with its parent, or with another group the
+/// parent flattens, is a violation located at each operation taking the
+/// parent: both fields would read the one pair, and the description carries
+/// it once.
+#[test]
+fn a_router_refuses_a_name_a_flattened_group_repeats() {
+    use kynos::router::error::RouterError;
+
+    let router = kynos::Router::<()>::new().mount(kynos::routes![by_limit_twice, by_paged_twice]);
+    let Err(kynos::Error::Invalid { violations }) = router.openapi() else {
+        panic!("a router describing a repeated name was built");
+    };
+    let refused: Vec<_> = violations
+        .into_iter()
+        .filter_map(|violation| match violation.error {
+            RouterError::DuplicateQueryParameter { group, parameter } => Some((
+                violation.location,
+                group.rsplit("::").next().unwrap_or(group),
+                parameter,
+            )),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        refused,
+        [
+            (
+                "#/paths/~1limit-twice/get".to_owned(),
+                "LimitTwice",
+                "limit".to_owned()
+            ),
+            (
+                "#/paths/~1paged-twice/get".to_owned(),
+                "PagedTwice",
+                "cursor".to_owned()
+            ),
+            (
+                "#/paths/~1paged-twice/get".to_owned(),
+                "PagedTwice",
+                "limit".to_owned()
+            ),
+        ]
+    );
 }
 
 // --- Path, header and cookie parameters keep their fields' bounds -----------
@@ -3020,18 +4488,25 @@ fn the_derived_header_decoder_reads_an_absent_optional_header_as_none() {
 
 // --- A fixed header value is sent, compared and described as one -----------
 //
-// The same recorded exception: a `()` field under `#[header(value = "...")]`
-// is written as that value, read only where it is that value, and described
-// with that value as its schema's `const`.
+// The same recorded exception: a `()` field under `#[header(value = "...")]`,
+// or a `value` naming a `&str` constant, is written as that value, read only
+// where it is that value, and described with that value as its schema's
+// `const`.
 
-/// A required fixed header, an optional one whose value has inner whitespace
-/// and delimiters, and a field carrying its own value beside them.
+/// The constant `Hardened`'s optional header names, reached by a path.
+mod policy {
+    pub(crate) const NO_STORE: &str = "no-store, max-age=0";
+}
+
+/// A required fixed header written as a literal, an optional one named by a
+/// constant whose value has inner whitespace and delimiters, and a field
+/// carrying its own value beside them.
 #[derive(Debug, HeaderParams)]
 struct Hardened {
     /// The response is not to be read as any type but its `Content-Type`.
     #[header(rename = "X-Content-Type-Options", value = "nosniff")]
     nosniff: (),
-    #[header(rename = "Cache-Control", value = "no-store, max-age=0")]
+    #[header(rename = "Cache-Control", value = policy::NO_STORE)]
     no_store: Option<()>,
     #[header(rename = "X-Request-Id")]
     request_id: String,
@@ -4900,6 +6375,39 @@ enum DefaultLookupError<T: std::fmt::Debug> {
     TenantUnknown,
 }
 
+/// `LookupError` with its `UserUnknown` renamed, publishing the same type URI
+/// by naming its `slug` under the `const` prefix rather than restating it.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = PROBLEM_BASE)]
+enum SluggedLookupError {
+    #[error("no user with that id")]
+    #[problem(status = 404, slug = "user-unknown", title = "User unknown")]
+    Missing,
+
+    #[error("no tenant with that slug")]
+    #[problem(status = 404, title = "Tenant unknown")]
+    TenantUnknown,
+}
+
+/// A struct naming its `slug` under a literal prefix.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("no user with that id")]
+#[problem(
+    base = "https://errors.example.com/",
+    slug = "user-unknown",
+    status = 404
+)]
+struct SluggedStruct;
+
+/// A variant naming its `slug` under the crate's `problem_base!`.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = default)]
+enum SluggedDefaultError {
+    #[error("no user with that id")]
+    #[problem(status = 409, slug = "user-unknown")]
+    Conflict,
+}
+
 /// Two failures answering with one status, neither naming a type and the enum
 /// declaring no `base`, so both publish `about:blank`. The schema is one
 /// branch — a `oneOf` repeating a `const` is satisfied by two at once — but
@@ -4921,6 +6429,109 @@ enum ReadError {
 #[error("the store is unavailable")]
 #[problem(status = 503)]
 struct StoreUnavailable;
+
+/// A struct under a `const` base, whose type URI is joined in `const` items.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the quota is spent")]
+#[problem(base = PROBLEM_BASE, status = 429)]
+struct QuotaExceeded;
+
+/// `QuotaExceeded` under the crate's `problem_base!`, and generic, so its
+/// `ProblemType` holds only where the parameter is `'static`.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the quota is spent")]
+#[problem(base = default, status = 429)]
+struct DefaultQuotaExceeded<T: std::fmt::Debug>(std::marker::PhantomData<T>);
+
+/// Whether `uri` is the type URI `problem` carries.
+fn carries(uri: Option<&str>, problem: &kynos::Problem) -> bool {
+    uri == Some(&*problem.type_uri)
+}
+
+/// A struct naming a type URI is the `ProblemType` of the URI its problem
+/// carries, written out, joined from a `const` or from the crate's default
+/// alike, and read in a `const`; an interceptor's refusal under it carries
+/// the same URI.
+#[test]
+fn a_struct_naming_a_type_uri_is_that_problem_type() {
+    use kynos::error::problem::{IntoProblem, ProblemType, refusal_problem};
+
+    const QUOTA: Option<&str> = QuotaExceeded::TYPE_URI;
+    assert_eq!(QUOTA, Some("https://errors.example.com/quota-exceeded"));
+    assert!(carries(QUOTA, &QuotaExceeded.into_problem()));
+    assert!(carries(
+        DefaultQuotaExceeded::<u8>::TYPE_URI,
+        &DefaultQuotaExceeded::<u8>(std::marker::PhantomData).into_problem()
+    ));
+    assert!(carries(
+        SluggedStruct::TYPE_URI,
+        &SluggedStruct.into_problem()
+    ));
+    assert!(carries(
+        ValidationFailed::TYPE_URI,
+        &ValidationFailed {
+            field: "name".to_owned()
+        }
+        .into_problem()
+    ));
+
+    let refusal = refusal_problem::<QuotaExceeded>(kynos::http::StatusCode::TOO_MANY_REQUESTS);
+    assert!(carries(QUOTA, &refusal));
+}
+
+/// An enum names each value's type URI: its variant's, `about:blank` for one
+/// naming none, the wider variant's for a subset and a `variant_of` variant,
+/// and none for a variant answering as the error it holds. Read in a `const`.
+#[test]
+fn an_enum_names_the_type_uri_each_value_carries() {
+    use kynos::error::problem::IntoProblem;
+
+    const USER: Option<&str> = LookupError::UserUnknown.type_uri();
+    const SHARED: Option<&str> = SharedLookupError::<u8>::TenantUnknown.type_uri();
+    assert_eq!(USER, Some("https://errors.example.com/user-unknown"));
+    assert!(carries(USER, &LookupError::UserUnknown.into_problem()));
+
+    let tenant = LookupError::TenantUnknown.type_uri();
+    assert_eq!(tenant, Some("https://errors.example.com/tenant-unknown"));
+    assert!(carries(tenant, &LookupError::TenantUnknown.into_problem()));
+    assert_eq!(SHARED, tenant);
+    assert_eq!(DefaultLookupError::<u8>::TenantUnknown.type_uri(), tenant);
+    assert_eq!(SluggedLookupError::Missing.type_uri(), USER);
+
+    assert_eq!(ReadError::FileNotFound.type_uri(), Some("about:blank"));
+    assert!(carries(
+        ReadError::FileNotFound.type_uri(),
+        &ReadError::FileNotFound.into_problem()
+    ));
+    assert_eq!(PauseError::AlreadyPaused.type_uri(), Some("about:blank"));
+
+    assert_eq!(
+        PauseError::Lookup(LookupError::UserUnknown).type_uri(),
+        None
+    );
+    assert_eq!(
+        HeadRejection::Lookup(LookupError::UserUnknown).type_uri(),
+        None
+    );
+
+    let wider = ChunkRejection::NotFound { id: 7 }.type_uri();
+    assert_eq!(wider, Some("https://errors.example.com/not-found"));
+    assert_eq!(HeadRejection::NotFound { id: 7 }.type_uri(), wider);
+    assert_eq!(MissingChunk::NotFound { id: 7 }.type_uri(), wider);
+    assert!(carries(
+        wider,
+        &MissingChunk::NotFound { id: 7 }.into_problem()
+    ));
+    assert_eq!(ChunkOrQuota::Missing { id: 7 }.type_uri(), wider);
+    assert!(carries(
+        wider,
+        &ChunkOrQuota::Missing { id: 7 }.into_problem()
+    ));
+    assert_eq!(
+        ChunkOrQuota::Gone(std::marker::PhantomData).type_uri(),
+        Some("about:blank")
+    );
+}
 
 /// The responses `T` declares, as JSON.
 fn emitted_responses<T: Responses>() -> serde_json::Value {
@@ -5965,6 +7576,34 @@ fn a_default_base_publishes_what_the_crate_problem_base_does() {
     );
 }
 
+/// A `slug` replaces the kebab-cased name under whichever `base` applies — a
+/// literal, a `const` or the crate's default — so a failure shares another's
+/// type URI without restating the prefix: on the wire, still borrowed, and in
+/// the description, which is the one a literal `type` of that URI writes.
+#[test]
+fn a_slug_names_the_type_uri_under_base() {
+    use kynos::error::problem::IntoProblem;
+    use std::borrow::Cow;
+
+    let joined = SluggedLookupError::Missing.into_problem();
+    assert_eq!(joined.type_uri, "https://errors.example.com/user-unknown");
+    assert!(matches!(joined.type_uri, Cow::Borrowed(_)));
+
+    assert_eq!(
+        SluggedStruct.into_problem().type_uri,
+        "https://errors.example.com/user-unknown"
+    );
+
+    let defaulted = SluggedDefaultError::Conflict.into_problem();
+    assert_eq!(defaulted.type_uri, kynos::problem_type!("user-unknown"));
+    assert!(matches!(defaulted.type_uri, Cow::Borrowed(_)));
+
+    assert_eq!(
+        emitted_responses::<SluggedLookupError>(),
+        emitted_responses::<LookupError>()
+    );
+}
+
 /// A `base` forwarded through a `macro_rules!` fragment, literal, path or
 /// `default`, is read as the one written directly.
 #[test]
@@ -6162,6 +7801,153 @@ fn error_transparent_answers_as_the_held_error_unless_a_status_opts_out() {
             "detail": "disk gone",
         })
     );
+}
+
+/// Transparent whole, and no `thiserror`: each variant answers, and the enum
+/// displays, as the error it holds. Generic, so its `Display` is implemented
+/// inside a generic `impl`; one variant holds its error in a named field.
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum SharedWhole<const N: usize> {
+    Lookup(LookupError),
+    Invalid { source: ValidationFailed },
+}
+
+/// Held errors alone, no enum `Display`: no failure of its own reads one for
+/// `detail`, so the derive asks for none.
+#[derive(Debug, ApiError)]
+enum SharedUndisplayed {
+    #[problem(transparent)]
+    Lookup(LookupError),
+}
+
+/// A transparent enum's `Display`, problem and statuses are each its held
+/// error's, and an enum of held errors alone compiles with no `Display`.
+#[test]
+fn a_transparent_enum_answers_and_displays_as_the_error_it_holds() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    let invalid = || ValidationFailed {
+        field: "name".to_owned(),
+    };
+    let whole = SharedWhole::<0>::Invalid { source: invalid() };
+    assert_eq!(whole.to_string(), invalid().to_string());
+    assert_eq!(
+        SharedWhole::<0>::Lookup(LookupError::TenantUnknown).to_string(),
+        "no tenant with that slug"
+    );
+    assert_eq!(
+        serde_json::to_value(whole.into_problem()).expect("a problem serializes"),
+        serde_json::to_value(invalid().into_problem()).expect("a problem serializes"),
+    );
+    assert_eq!(SharedWhole::<0>::STATUSES, SharedOnly::<0>::STATUSES);
+    assert_eq!(SharedUndisplayed::STATUSES, LookupError::STATUSES);
+}
+
+/// A held error with a source of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[error("the journal could not be written")]
+#[problem(status = 503)]
+struct JournalUnwritable(#[source] std::io::Error);
+
+/// Transparent whole over a held error with a source and one without.
+#[derive(Debug, ApiError)]
+#[problem(transparent)]
+enum SharedSourced {
+    Journal(JournalUnwritable),
+    Lookup(LookupError),
+}
+
+/// A transparent enum is an `Error` whose source is the held error's own,
+/// not the held error, as `thiserror`'s `#[error(transparent)]` reads: the
+/// enum is that error, so a chain walked from it never names it twice.
+#[test]
+fn a_transparent_enum_is_an_error_whose_source_is_the_held_error_s() {
+    use std::error::Error;
+
+    let sourced: Box<dyn Error> = Box::new(SharedSourced::Journal(JournalUnwritable(
+        std::io::Error::other("disk gone"),
+    )));
+    assert_eq!(sourced.to_string(), "the journal could not be written");
+    assert_eq!(
+        sourced
+            .source()
+            .expect("the held error's source")
+            .to_string(),
+        "disk gone"
+    );
+    assert!(
+        SharedSourced::Lookup(LookupError::TenantUnknown)
+            .source()
+            .is_none()
+    );
+}
+
+/// `from` on a variant `#[error(transparent)]` makes transparent, beside a
+/// failure of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum ConvertedPause {
+    #[error(transparent)]
+    #[problem(from)]
+    Lookup(LookupError),
+
+    #[error("the torrent is already paused")]
+    #[problem(status = 409)]
+    AlreadyPaused,
+}
+
+/// `from` on a transparent enum, every variant built from what it holds,
+/// one through a named field, inside a generic `impl`.
+#[derive(Debug, ApiError)]
+#[problem(transparent, from)]
+enum SharedFrom<const N: usize> {
+    Lookup(LookupError),
+    Invalid { source: ValidationFailed },
+}
+
+/// `from` on one transparent variant and not the other, without `thiserror`.
+#[derive(Debug, ApiError)]
+enum PartlyFrom {
+    #[problem(transparent, from)]
+    Lookup(LookupError),
+
+    #[problem(transparent)]
+    Invalid(ValidationFailed),
+}
+
+/// `?` carries a held error into each variant `from` builds, without
+/// `thiserror`'s `#[from]`.
+#[test]
+fn from_builds_a_transparent_variant_from_the_error_it_holds() {
+    fn lookup<E: From<LookupError>>() -> Result<(), E> {
+        Err(LookupError::TenantUnknown)?;
+        Ok(())
+    }
+
+    assert!(matches!(
+        lookup::<ConvertedPause>(),
+        Err(ConvertedPause::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        lookup::<SharedFrom<0>>(),
+        Err(SharedFrom::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        lookup::<PartlyFrom>(),
+        Err(PartlyFrom::Lookup(LookupError::TenantUnknown))
+    ));
+    assert!(matches!(
+        SharedFrom::<0>::from(ValidationFailed {
+            field: "name".to_owned(),
+        }),
+        SharedFrom::Invalid { source } if source.field == "name"
+    ));
+    assert!(matches!(
+        PartlyFrom::Invalid(ValidationFailed {
+            field: "name".to_owned()
+        }),
+        PartlyFrom::Invalid(_)
+    ));
 }
 
 /// The wider enum `subset_of` cases narrow: an extension member, a status two
@@ -6492,6 +8278,68 @@ fn a_subset_names_a_generic_or_parenthesized_wider_enum() {
     assert_eq!(
         emitted_responses::<ParenthesizedSubset>(),
         emitted_responses::<ConflictSubset>()
+    );
+}
+
+/// A second wider enum sharing two of `ChunkRejection`'s variants, each with
+/// the same statuses, and failing a way of its own.
+#[derive(Debug, thiserror::Error, ApiError)]
+enum PutChunkRejection {
+    #[error("no chunk {id}")]
+    #[problem(status = 404, title = "Chunk unknown")]
+    NotFound {
+        #[problem(extension)]
+        id: u64,
+    },
+
+    #[error("chunks are unavailable")]
+    #[problem(status = 503)]
+    Unavailable(#[problem(headers)] RetryAfter),
+
+    #[error("the chunk is too large")]
+    #[problem(status = 413)]
+    TooLarge,
+}
+
+/// A helper's failure shared by two operations' enums: a subset of both.
+#[derive(Debug, ApiError)]
+#[problem(subset_of = (ChunkRejection, PutChunkRejection))]
+enum SharedChunkLookup {
+    NotFound { id: u64 },
+    Unavailable(RetryAfter),
+}
+
+/// A subset of several enums converts into each, and answers, declares and
+/// is described as the first it names.
+#[test]
+fn a_subset_of_several_enums_converts_into_each_and_answers_as_the_first() {
+    use kynos::{error::problem::IntoProblem, response::ShortCircuit};
+
+    assert!(matches!(
+        ChunkRejection::from(SharedChunkLookup::NotFound { id: 3 }),
+        ChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        PutChunkRejection::from(SharedChunkLookup::NotFound { id: 3 }),
+        PutChunkRejection::NotFound { id: 3 }
+    ));
+    assert!(matches!(
+        PutChunkRejection::from(SharedChunkLookup::Unavailable(RetryAfter {
+            retry_after: 9
+        })),
+        PutChunkRejection::Unavailable(RetryAfter { retry_after: 9 })
+    ));
+
+    assert_eq!(SharedChunkLookup::STATUSES, &[404, 503]);
+    assert_eq!(
+        serde_json::to_value(SharedChunkLookup::NotFound { id: 3 }.into_problem())
+            .expect("a problem serializes"),
+        serde_json::to_value(ChunkRejection::NotFound { id: 3 }.into_problem())
+            .expect("a problem serializes"),
+    );
+    assert_eq!(
+        emitted_responses::<SharedChunkLookup>()["404"],
+        emitted_responses::<NotFoundAlone>()["404"]
     );
 }
 
@@ -8166,6 +10014,92 @@ mod no_prelude {
         limit: u32,
         #[provide(skip)]
         name: String,
+    }
+}
+
+// --- A tagged type names its tag as serde writes it -------------------------
+//
+// `SerdeTagged` is a derive's output read at run time, so its names are pinned
+// against serde's own: the member and value `serde_json` writes for each
+// value, and every value only once, in declaration order.
+
+mod serde_tagged {
+    use kynos::{Schema, schema::SerdeTagged};
+    use serde::Serialize;
+
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum Internal {
+        ReadingTaken {
+            value: u8,
+        },
+        #[serde(rename = "alarm")]
+        Alert(Inner),
+        Closed,
+        #[serde(skip_serializing)]
+        Retired,
+    }
+
+    #[derive(Schema, Serialize)]
+    struct Inner {
+        level: u8,
+    }
+
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "t", content = "c")]
+    enum Adjacent<T> {
+        Moved(T),
+        Stopped,
+    }
+
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "type", rename = "ping")]
+    struct Ping {
+        at: u8,
+    }
+
+    #[allow(non_camel_case_types)]
+    #[derive(Schema, Serialize)]
+    #[serde(tag = "type")]
+    struct r#pong {
+        at: u8,
+    }
+
+    /// Each value's `variant` is what serde writes under its type's `TAG`.
+    fn agrees<T: Serialize + SerdeTagged>(data: &T) {
+        let value = serde_json::to_value(data).expect("a written value serializes");
+        assert_eq!(value[T::TAG].as_str(), Some(data.variant()), "{value}");
+    }
+
+    #[test]
+    fn an_internally_tagged_enum_names_each_variant_as_serde_writes_it() {
+        agrees(&Internal::ReadingTaken { value: 1 });
+        agrees(&Internal::Alert(Inner { level: 2 }));
+        agrees(&Internal::Closed);
+        assert_eq!(Internal::VARIANTS, ["reading_taken", "alarm", "closed"]);
+    }
+
+    /// serde refuses to write it, so it is no value the tag is written with.
+    #[test]
+    fn a_variant_serde_never_writes_is_not_among_the_variants() {
+        assert!(serde_json::to_value(Internal::Retired).is_err());
+        assert_eq!(Internal::Retired.variant(), "retired");
+        assert!(!Internal::VARIANTS.contains(&"retired"));
+    }
+
+    #[test]
+    fn an_adjacently_tagged_enum_names_each_variant_as_serde_writes_it() {
+        agrees(&Adjacent::Moved(1_u8));
+        agrees(&Adjacent::<u8>::Stopped);
+        assert_eq!(Adjacent::<u8>::VARIANTS, ["Moved", "Stopped"]);
+    }
+
+    #[test]
+    fn a_tagged_struct_is_its_own_variant_under_its_serde_name() {
+        agrees(&Ping { at: 1 });
+        assert_eq!(Ping::VARIANTS, ["ping"]);
+        agrees(&r#pong { at: 1 });
+        assert_eq!(r#pong::VARIANTS, ["pong"]);
     }
 }
 

@@ -87,10 +87,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Kynos leaves the file in place when it stops.
     std::fs::remove_file(&path)?;
-    match served {
-        Err(kynos::Error::Server(error)) if error.is_requested_shutdown() => Ok(()),
-        served => Ok(served?),
-    }
+    served?;
+    Ok(())
 }
 
 /// A Unix domain socket is what this example serves on.

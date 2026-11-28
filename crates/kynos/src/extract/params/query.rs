@@ -16,8 +16,10 @@ use crate::{
 /// `T` derives `QueryParams`, which decodes each field from one parameter's
 /// value, so each field's type is a
 /// [`ParamValue`](crate::schema::ParamValue): one value, not an object the
-/// default `form` style would spread over several pairs. For a structured
-/// query such as a search filter, reach for
+/// default `form` style would spread over several pairs. A `Vec<T>` field is
+/// the one list, of `ParamValue` items, read from repeated pairs or from one
+/// comma-separated pair. For a structured query such as a search filter, reach
+/// for
 /// [`QueryString`](crate::extract::params::querystring::QueryString) under
 /// `openapi32` instead.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -39,8 +41,11 @@ pub trait QueryParams: Sized {
     /// Describes the individual OpenAPI query parameters.
     ///
     /// `#[derive(QueryParams)]` writes one per field, named and bounded as it
-    /// decodes them, `style` left at its `form`-with-`explode` default. A group
-    /// written by hand describes the parameters its [`DecodeQuery`] reads.
+    /// decodes them, `style` left at its `form`-with-`explode` default but for
+    /// a `Vec<T>` field's, which states its `style` and `explode`; a
+    /// `#[param(flatten)]` field contributes its group's. A group written by
+    /// hand describes the parameters its [`DecodeQuery`] reads, which is also
+    /// how a group flattening it learns the names it must not repeat.
     fn parameters(registry: &mut Registry) -> Vec<kynos_openapi::Parameter>;
 
     /// The problems a value breaking a bound answers with, beside

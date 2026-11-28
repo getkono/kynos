@@ -223,11 +223,17 @@ an absorbed router, an operation without the guard the rest of its group takes
 The three readers borrow and `build` consumes, so a context that needs the
 document — to serve a post-processed copy of it, say — is built between
 `openapi` and `build` on the same value. A function returning that value
-leaves the type parameters `intercept` keeps changing opaque:
-`-> Router<C, impl PanicPolicy, impl Sized, impl Sized>`. No type-erased router
-and no describe-then-finish split ships, because the language already expresses
-this; an opaque stack cannot be checked against another interceptor, so a
-router returned that way is finished, which is what such a function means.
+returns it `seal()`ed, as a `kynos::router::sealed::Sealed<C>`: the same four
+terminal methods, and a type naming only the context. Opaque parameters,
+`-> Router<C, impl PanicPolicy, impl Sized, impl Sized>`, were the earlier
+answer, and they fail once the function takes a reference: under edition 2024
+each `impl Sized` captures its lifetime, so the router borrows an argument it
+holds nothing of, and a call on a temporary is E0716 until both say `+ use<>`.
+`Sealed` erases `I` and `S` rather than hiding them, which costs nothing, since
+they are compile-time records only, and keeps the panic policy as the one fact
+`build` reads from `P`. Nothing can be added to a `Sealed`, since no stack it
+erased could be checked against another interceptor, so a sealed router is
+finished, which is what such a function means.
 
 ### Editing the description
 
@@ -250,6 +256,19 @@ the `Accept-Query` its 415 sends, so both must stay what the handler enforces. E
 set on the root router: on an absorbed one it is a
 `RouterError::NestedRouterPolicy` violation, like the policies
 [below](#application-level-policies).
+
+Edits read every response inline. A response two or more operations declare
+under the same status key, alike up to the key order of a nested free-form
+object such as an example, is moved under
+`components/responses` and `$ref`ed from each only after the last edit and
+after the description is validated, so an edit changing it at one operation
+leaves it unshared there rather than changing it everywhere, a violation the
+edit wrote into it is reported at each operation it wrote it at, and a
+response component the edit declares is never
+overwritten: a minted name passes over it, and over any name a response `$ref`
+already gives, and a response alike to it up to that order refers to it.
+[`schema.md`](schema.md#the-order-components-are-emitted-in) says how the
+minted names are chosen.
 
 No marker records that a document was mapped. The edit is the application's own
 declaration, checked like the rest of the document, which `Opaque` marks are
@@ -326,7 +345,7 @@ derived from the handler's own extractors:
 | Handler has | `relative_uri` signature |
 | --- | --- |
 | neither | `relative_uri() -> Uri` |
-| `Path<P>` | `relative_uri(path: P) -> Uri` |
+| `Path<P>`, `P` a group or one value | `relative_uri(path: P) -> Uri` |
 | `Query<Q>` | `relative_uri(query: Q) -> Uri` |
 | both | `relative_uri(path: P, query: Q) -> Uri` |
 
@@ -344,11 +363,33 @@ reason a `PathParams` field cannot be an `Option`: the derive refuses it.
 
 Three mismatches are compile errors rather than runtime 404s: a handler with
 `Path<T>` on a route with no variables, a route with variables and no `Path<T>`,
-and a `PathParams` field set that does not match the template's variables in
-declaration order — the last through a `const` assertion the attribute emits
-against `PathParams::NAMES`. Extracting `Path<T>` or `Query<T>` twice in one
-handler is also rejected, since neither the URI nor the description could say
-which one won.
+and a `Path<T>` that does not bind the template's variables — the last through
+a `const` assertion the attribute emits against `PathBinding::NAMES`.
+Extracting `Path<T>` or `Query<T>` twice in one handler is also rejected, since
+neither the URI nor the description could say which one won.
+
+### One value or a group
+
+`Path<T>` takes a [`PathInput`](../crates/kynos/src/extract/params/path.rs):
+a `PathParams` group, whose field names must match the template's variables in
+declaration order, or one `ParamValue`, which reads a template of exactly one
+variable whatever it is called. `Path(id): Path<Uuid>` on `/sessions/{id}`
+needs no one-field group, and the parameter is described under `id`, with
+`Uuid`'s schema and no description of its own; a group's field doc comment is
+where a parameter is described. A value carries no name, so a template of two
+variables is refused rather than read by position: a group names each one.
+
+The two bind through one trait because coherence allows one blanket
+implementation of it: every `ParamValue` gets `PathInput` through it, so a
+group is the one implemented directly, which `#[derive(PathParams)]` does. A
+type cannot be both a group and one value.
+
+The value's variable comes from where its template is known. The route
+attribute checks the count at compile time. The description reads the
+operation's own template, before any prefix, so a router refuses an operation
+an `EndpointBuilder` mounted at a template of other than one variable with
+`RouterError::LonePathValue`. A request reads the last variable the match
+captured, which is the operation's own because every prefix's come first.
 
 ### Links to where a route is mounted
 
@@ -373,6 +414,20 @@ links only where one is extracted.
 `operation_id = "..."` on the attribute. Override it only to keep a generated
 client's method name stable across a refactor.
 
+`Router::operation_id_case` spells every identifier the framework derived in
+one case — `OperationIdCase::LowerCamel` publishes `fn get_user` as
+`getUser`, and the HEAD a bare `head` derives as `headUser`; an asset's and a
+docs page's identifiers are derived too. An identifier written by hand,
+`operation_id = "..."`, `head = "..."` or the builder's, is never recased, so
+it stays the one exception a reader sees on the route. The default,
+`AsWritten`, publishes the function's own name: a case is a choice about the
+generated client, and a default that renamed every operation would surprise
+anyone reading the handler. Everything downstream reads the recased name — the
+document, interceptors and observers, a `Link`'s lookup — and uniqueness is
+checked after recasing, so a derived `get_user` beside a written `getUser` is
+a repeated `operationId`. Like the policies below, it is set on the root
+router only.
+
 ## Application-level policies
 
 [`FallbackPolicy`](../crates/kynos/src/router/policy.rs) and
@@ -380,8 +435,9 @@ client's method name stable across a refactor.
 the root router, and have no per-route form.
 
 Only the root router's policies apply, so a router that is nested or merged may
-not set one: each of the three below, and `trusted_proxies`
-([`http::forwarded`](../crates/kynos/src/http/forwarded.rs)), called on an
+not set one: each of the three below, `trusted_proxies`
+([`http::forwarded`](../crates/kynos/src/http/forwarded.rs)) and
+`operation_id_case` (above), called on an
 absorbed router is a `RouterError::NestedRouterPolicy` violation that fails
 `openapi` and `build`. Setting the default counts too — the root's value would
 override it just the same, and a setting that is silently dropped, a trusted
@@ -420,9 +476,23 @@ a flipped spelling that collides with one is discarded.
 
 The `Allow` header on a 405 is derived from the operations actually declared on
 that path, plus `HEAD` wherever `GET` is declared. RFC 9110 §9.3.2 defines a
-HEAD as the GET without content, so a `get` operation answers and describes
-both, and no `head` is minted into the document; a declared `head` wins. No
+HEAD as the GET without content, so a `get` operation answers both, and by
+default no `head` is minted into the document; a declared `head` wins. No
 response to a HEAD carries content, whatever answered it.
+
+`#[kynos::get(.., head)]`, or `EndpointBuilder::describe_head`, describes that
+HEAD as an operation of its own: the GET's, as the router finished it, with no
+response carrying content and every header kept. Range handling is defined for
+GET alone (RFC 9110 §14.2) and a HEAD's `Range` is ignored, so the GET's
+`Range` and `If-Range` and its 206 and 416 are left out. It is opt-in because
+a default would add an operation, and an `operationId`, for every `GET` in
+every document. A bare `head` names it after the handler (`get_file` describes
+`head_file`); beside an explicit `operation_id` it is named, `head = "..."`.
+It runs the GET's handler under the GET's chain, so `Allow`, the implemented
+set and every CORS scope read as they do for an undescribed HEAD, while
+observers and interceptors see it under its own `operationId`, as a declared
+`head` would be. A path declaring a `head` beside a GET that describes one is
+refused, `HeadDescribedTwice`: both were asked for, and one is a mistake.
 
 A method no operation in the service implements is a 501 with no `Allow`,
 decided before the 404 or 308 on an unmatched path and instead of the 405 on a
@@ -517,3 +587,22 @@ worse than the honest absence, and the honest absence costs a client nothing: a
 consumer that meets an undocumented 404 has met the HTTP default, not a
 surprise. The same reasoning is why `FallbackPolicy` chooses only the *shape* of
 the body — an RFC 9457 problem document or nothing — and not its status.
+
+### Why no served operation is left out of `paths`
+
+An operation the application would rather not publish, such as a `/metrics`
+scrape, is still one the listener serves, and a document leaving it out is no
+longer true of that listener. Recording the omission in an annotation would not
+restore that: every consumer that does not read it sees a service with one
+operation fewer than it has. So no route attribute omits a typed operation, and
+`route_unchecked`, which serves a route with no `paths` entry, stamps the whole
+document non-authoritative in exchange: it exists for routes Kynos cannot
+describe, not for one it would rather not publish.
+
+The document describes a router, so an operation leaves a document by leaving
+its router. An internal operation goes on a second router, served on a second
+listener the public cannot reach, where its own document describes it;
+[production.md](production.md#internal-operations) shows the two sharing a
+context and one shutdown. Where only one listener is available, the operation
+stays in the public document under an `internal` tag, which client generators
+can filter on.

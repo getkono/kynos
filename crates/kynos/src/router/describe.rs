@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use super::build::TrialTable;
 use super::install::{
     catches, cors_conflict, error_at, highest_version, invalid, lift, lowest_expressing,
-    path_location, placeholder_info, refuse_registry_conflicts, unique_tags,
+    path_location, placeholder_info, refuse_registry_conflicts, refused_examples, unique_tags,
 };
 use super::{
     DeclaredTag, Document, Error, OperationCx, PanicPolicy, PathItem, Paths, Registry, Result,
@@ -47,7 +47,8 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     /// 3.1 for an API using no 3.2-only construct, and 3.2 for one that does —
     /// a `QUERY` operation, an item stream such as `Sse`, an `in: querystring`
     /// parameter. The `openapi32` feature does not decide it, since Cargo
-    /// unifies features across the dependency graph.
+    /// unifies features across the dependency graph. A response several
+    /// operations declare alike is [shared](Router#responses-operations-share).
     ///
     /// # Errors
     ///
@@ -149,20 +150,15 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
     where
         C: 'static,
     {
-        let mut declared: HashSet<(&str, kynos_openapi::Method)> = self
-            .mounted
-            .iter()
-            .map(|mounted| (mounted.path.as_str(), mounted.endpoint.method()))
-            .collect();
+        let described = super::head::described_operations(&self.mounted);
+        let mut declared: HashSet<_> = described.iter().copied().collect();
 
         for route in &self.unchecked.routes {
             for method in &route.methods {
                 if declared.insert((route.pattern.as_str(), *method)) {
                     continue;
                 }
-                let described = self.mounted.iter().any(|mounted| {
-                    mounted.path.as_str() == route.pattern && mounted.endpoint.method() == *method
-                });
+                let described = described.contains(&(route.pattern.as_str(), *method));
                 // A repeat of a described operation is located at it; an
                 // unchecked pattern alone has no `paths` key.
                 let location = if described {
@@ -234,7 +230,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         self.declare_security_schemes(&mut registry, &mut violations);
         self.name_instantiations(&mut registry);
         // Before any operation describes a problem carrying them.
-        if let Some(error) = Hook::declare(self.problem_members, &mut registry) {
+        if let Some(error) = Hook::declare(self.problems, &mut registry) {
             violations.push(error_at("#", error));
         }
 
@@ -245,13 +241,14 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 
         let mut links = crate::extract::link::Resolver::default();
 
-        let mut paths = Paths::new();
+        // The `HEAD`s the `GET`s describe wait for every declared operation.
+        let (mut paths, mut heads) = (Paths::new(), super::head::Heads::default());
         for mounted in &self.mounted {
             let key = mounted.path.as_str().to_owned();
             let location = path_location(&key);
             let method = mounted.endpoint.method();
 
-            let mut cx = OperationCx::new(&mut registry);
+            let mut cx = OperationCx::at(&mut registry, mounted.endpoint.path(), self.id_case());
             mounted.endpoint.describe(&mut cx);
 
             links.record(cx.operation_id(), method, &mounted.path, cx.links());
@@ -290,7 +287,10 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
                 }
                 operation
             };
-            violations.extend(super::group::unguarded(mounted));
+            violations.extend(self.guard_refusals(mounted));
+            violations.extend(super::install::refused_params(&mut registry, &key, method));
+
+            heads.defer(mounted, method, &operation, self.id_case(), &mut violations);
 
             let item: &mut PathItem = paths.items.entry(key.clone()).or_default();
             if item.set_operation(method, operation).is_some() {
@@ -301,7 +301,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
         }
 
-        let linked = links.resolve().map_err(Box::new)?;
+        let linked = links.resolve(self.id_case()).map_err(Box::new)?;
 
         self.try_match_table(&mut violations);
 
@@ -314,6 +314,7 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
             }
         }
 
+        violations.extend(refused_examples(&registry));
         refuse_registry_conflicts(&registry)?;
 
         let mut document = Document::new(
@@ -325,30 +326,29 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
         document.paths = paths;
         document.tags = unique_tags(&tag_metadata);
         document.components = registry.into_components();
+        heads.describe(&mut document.paths, &document.components, &mut violations);
 
         // Before the version is chosen and the document validated, so both
         // read what the application publishes.
         super::map::apply(&self.document_edits, &mut document, &mut violations);
 
         // From what the document uses, never from a (unified) cargo feature.
-        let document = lowest_expressing(&document)?;
+        let mut document = lowest_expressing(&document)?;
 
         // Before validation, which rejects an unstamped opaque document.
         #[cfg(feature = "unchecked")]
-        let document = {
-            let mut document = document;
-            self.unchecked.annotate(&mut document);
-            document
-        };
-
-        let version = document.spec_version().unwrap_or_default();
+        self.unchecked.annotate(&mut document);
 
         violations.extend(
-            kynos_openapi::validate::Validator::new(version)
+            kynos_openapi::validate::Validator::new(document.spec_version().unwrap_or_default())
                 .validate(&document)
                 .into_iter()
                 .map(lift),
         );
+        // After validation, so a violation inside a response several
+        // operations share is reported at each, where it was written; sharing
+        // changes what no operation says, so it adds none.
+        super::hoist::shared_responses(&mut document.paths, &mut document.components);
 
         if self.deny_unchecked_schemas {
             for violation in &mut violations {
@@ -370,9 +370,9 @@ impl<C, P: PanicPolicy, I, S> Router<C, P, I, S> {
 pub(super) struct Described {
     document: Document,
     violations: Vec<Violation<RouterError>>,
-    /// Whether any operation extracts a `Link`, so the service records where
-    /// each operation is mounted.
-    pub(super) linked: bool,
+    /// Where each operation a `Link` names is mounted; empty where none
+    /// links, so the service records nothing.
+    pub(super) linked: crate::extract::link::Targets,
 }
 
 impl Described {

@@ -157,6 +157,121 @@ must implement `ParamValue`: the promise that the three agree on one value. An
 object or an array would be spread over several by the location's `style`, and
 one `FromStr` never reads that.
 
+A query list is the one exception, spelled by the field rather than the value:
+a `QueryParams` field typed `Vec<T>`, `T` a `ParamValue`, is one parameter of
+many items, described as an array of `T` with `style: form`.
+
+| Field | Wire form | `explode` |
+| --- | --- | --- |
+| `diet: Vec<Diet>` | `diet=vegan&diet=gluten-free` | `true` |
+| `#[param(explode = false)] cuisine: Vec<Cuisine>` | `cuisine=thai,korean` | `false` |
+
+- **No pair is the empty list.** RFC 6570 treats an empty list as undefined
+  and writes nothing for it, so absence and emptiness are one state on the
+  wire, and `Option<Vec<T>>` is refused: its `Some(vec![])` is a state no query
+  string carries. A list is `required: false` unless its field says
+  `#[schema(min_items = n)]` with `n` at least 1, which makes it
+  `required: true` and refuses its absence as too few items.
+- **A comma-delimited list is split before it is percent-decoded**, so an item
+  holding a comma travels as `%2C` and round-trips; the encoder escapes it.
+  `cuisine=` is one empty item, as RFC 6570 reads it.
+- **A refused item is named by its index**: `item 1: ...` for an item that does
+  not parse, and the JSON Pointer `/1` for one breaking its type's bounds.
+- **A field that is one value is one pair.** A declared scalar named twice is
+  refused, and so is a delimited list, rather than either value being kept.
+  `explode` on a scalar field or a path parameter is refused at compile time,
+  since OpenAPI gives it no effect there.
+
+A query parameter may carry a default, written where the field is declared so
+the decoder, the description and the handler share one value:
+
+```rust,ignore
+#[derive(QueryParams)]
+struct Page {
+    #[param(default = DEFAULT_LIMIT)]
+    #[schema(minimum = 1, maximum = 200)]
+    limit: u32,
+}
+```
+
+- **An absent parameter binds the default**, and the field is the plain type:
+  `limit: u32`, never `Option<u32>`, so a handler has no `unwrap_or` left to
+  write. An `Option` beside `default` is refused, since it would never be
+  `None`.
+- **The description states it**: the parameter is `required: false`, and its
+  schema's `default` is what the value's `Display` writes, typed as the schema
+  types it (a number, a boolean, else a string).
+- **A literal or a path**, such as `50`, `"en"`, `DEFAULT_LIMIT` or
+  `Order::Asc`. A number, `bool` or `char` literal is typed by the field; a
+  string literal or a path converts through the field type's `From`, so a
+  `const` the handlers share may be narrower than the field.
+- **A default breaking its bounds** is a `RouterError::ParameterDefault`
+  violation located at each operation taking the group, so the router refuses
+  to build rather than state a value the API refuses. It is checked when the
+  router is built, not at compile time, because a bound or a default may be a
+  `const` the derive cannot evaluate.
+- **A list takes none.** No pair is the empty list, so a default would leave no
+  query string able to send it; nor does a path parameter, which is always
+  captured.
+
+A query group shared by several operations, such as paging, is declared once
+and flattened into each group that takes it:
+
+```rust,ignore
+#[derive(QueryParams)]
+struct ListEntries {
+    #[param(flatten)]
+    page: Page,
+    status: Option<EntryStatus>,
+}
+```
+
+- **The flattened group does its own work.** It decodes from the same query
+  string with its own defaults, bounds, repeated-pair refusal and rejection
+  problem, describes its parameters in its field's place, and encodes its own
+  pairs. A group may flatten one that flattens another.
+- **`flatten` stands alone** on its field: a `rename`, `default`, `explode`,
+  `#[schema(...)]` bound or `Option` there is refused, since the group's own
+  fields say each of those.
+- **A repeated name is a build error.** A name the flattened group shares with
+  its parent, or with another flattened group, is a
+  `RouterError::DuplicateQueryParameter` violation at each operation taking
+  the parent. It is not caught at compile time because only the flattened
+  group's own `parameters` knows its names, which keeps a hand-written group
+  flattenable.
+
+A group that also derives `Schema` and serde's `Deserialize`, so a
+`QueryString<T>` reads it as a `Query<T>` does, says both keys to serde too, and
+the `Schema` derive refuses either one serde is not told (rule 52):
+
+```rust,ignore
+#[derive(QueryParams, Schema, Deserialize)]
+struct Page {
+    #[param(default = DEFAULT_LIMIT)]
+    #[serde(default = "default_limit")]
+    limit: u32,
+}
+
+#[derive(QueryParams, Schema, Deserialize)]
+struct ListEntries {
+    #[param(flatten)]
+    #[serde(flatten)]
+    page: Page,
+}
+```
+
+Without serde's keys, `QueryString<T>` would require `limit` and read `page` as
+one nested member. Only the presence of serde's default is checked: it names a
+function, which the derive cannot evaluate, so returning the same value as the
+`#[param(default)]` is the application's to keep. The refusal turns on the group
+implementing `DeserializeOwned`, which the derive cannot see, so the type checker
+raises it: a group deriving `Schema` and no serde, which no `QueryString<T>`
+reads, needs neither key, and a generic group is not checked. The keys checked
+are the ones `#[derive(Deserialize)]` reads, so a group with a hand-written
+`Deserialize` is refused with no key it could spell: derive `Deserialize`, or
+drop `Schema`. One that also derives `Serialize` can spell them and so passes,
+and its hand-written `Deserialize` must then honour them, unchecked.
+
 | Implements `ParamValue` | Feature |
 | --- | --- |
 | `bool`, `char`, `String`, `i8`–`i64`, `u8`–`u64`, `f32`, `f64` | — |
@@ -186,8 +301,30 @@ otherwise. A newtype whose
 Your own newtype or enum opts in with `impl ParamValue for UserId {}` once its
 schema describes the one value its `Display` writes, or with
 `#[derive(ParamValue)]`, which reads and writes a newtype through its field
-and a field-less enum by its variant names. A structured query, such
+and a field-less enum by its variant names. A type described with
+`#[schema(string)]`, the string its own `FromStr` and `Display` carry, keeps
+both under the derive, which adds the promise alone. A structured query, such
 as a search filter, is a whole `QueryString` under `openapi32` instead.
+
+Where such a type implements serde, each example it lists must also round-trip
+serde as that string, even if the router only ever reads it as a parameter.
+The check runs where the type's schema is described, which knows nothing of
+where the type is used, and the one component it emits is the schema every
+use names, a JSON body included. So there is no opt-out: serde that serves
+another purpose, such as a storage form, moves to a separate type. Otherwise
+carry serde through the text, with `#[serde(into = "String", try_from =
+"String")]` or by hand through `collect_str` and `FromStr`.
+
+The derived enum is also a `UnitEnum`, so a database column or a log field
+reads the same names without restating them: `status.as_str()` is the
+`&'static str` `Display` writes, and `Status::VARIANTS` lists every variant.
+They sit on a trait rather than on the type, so an `as_str` the enum already
+declares keeps compiling. The trait is not in the prelude, so it changes no
+method call until you `use kynos::schema::UnitEnum`. Once imported, its
+`as_str(&self)` beats an inherent by-value `as_str(self)` called through a
+reference, and `T::VARIANTS` is ambiguous beside strum's `VariantNames`; call
+it by path, `UnitEnum::as_str(&status)`, where a type has either. `as_str` is
+not `const`.
 
 ## Binary content
 
@@ -244,6 +381,27 @@ Neither is checked against the
 value: draft 2020-12 makes both annotations, so a validator admits a string
 that does not decode, and so does the derive's check. Decoding is the
 handler's, and `max_length` beside them still bounds the encoded text.
+
+## Merge patches
+
+RFC 7396 reads a member three ways: left out leaves the target alone, `null`
+removes it, and a value replaces it. `Option<T>` holds two of the three, so a
+member a patch may clear is a
+[`Nullable<T>`](../crates/kynos/src/schema/mod.rs): `Absent`, `Null` or
+`Value(T)`. Its schema is `Option<T>`'s, `T` widened to admit `null`, which is
+the same in `openapi31` and `openapi32`: both emit JSON Schema 2020-12's type
+union, never 3.0's `nullable: true`. A `#[schema(...)]` bound applies to the
+value alone.
+
+The field still carries `#[serde(default)]`, and the `Schema` derive refuses
+one that does not (rule 51). serde hands a missing member to its type through
+the same `deserialize_option` call a present `null` makes, so no `Deserialize`
+can tell the two apart: without the default a patch leaving the member out
+would clear it. The default fills it with `Absent`, and keeps it out of
+`required` as any defaulted field is.
+
+`Nullable` has no `Serialize`: `Absent` has nothing to write, and a response
+states every member it carries.
 
 ## Deliberately unmapped, and the remedy
 
@@ -345,6 +503,28 @@ schema, and the derive refuses each:
   writes are not checked: the derive cannot see them at expansion time, the
   limit serde's own check of an enum's internal tag has too. A flattened type
   writing a key named as the tag gets a schema serde's document does not meet.
+
+### The tag as a type
+
+The derive also implements `schema::SerdeTagged` for every type whose schema
+names a tag: an internally or adjacently tagged enum, and a tagged struct. It
+carries what the schema's tag property holds, as constants — `TAG`, the member,
+and `VARIANTS`, each value serde writes — and `variant(&self)`, the value one
+value is written with, read by a `match` rather than by serializing it.
+
+It exists so a bound can say "this type is tagged". A tag is otherwise
+invisible to the type system, and serde writes a struct whose first field is
+a string exactly as it writes a tag, so reading it from the wire cannot tell
+the two apart. An externally tagged enum names its variant as a key rather
+than a tag, so it has no `SerdeTagged`. A variant serde skips when serializing
+is left out of `VARIANTS`, since no document carries it. The name carries
+`Serde` because `middleware::cache::Tagged` is the unrelated `ETag` marker.
+
+Under `openapi32`, `Event::tagged` is bounded on it, and the `TaggedEvent` it
+makes has no name of its own to set. A stream of them is the one event stream
+whose every name is known, so its `itemSchema` describes `event` as a required
+`enum` of `VARIANTS`; a stream of `Event`s, which name themselves or not at
+all, keeps a bare optional `string`.
 
 ### Why untagged is refused
 
@@ -724,6 +904,49 @@ Everything else follows the same rule one level up: `paths` in mount order,
 `tags` in declaration order, an operation's `responses` in the order the handler
 and the interceptors covering it declared them.
 
+`components/responses` is the exception, because its names are minted rather
+than declared, and a name has to survive remounting. A response two or more
+operations declare under one status key with the same compact JSON, every
+object's keys sorted, and its own media types, headers and links in the same
+order, is
+written there once
+([`router/hoist.rs`](../crates/kynos/src/router/hoist.rs)), named for what it
+carries: the one problem type it publishes other than `about:blank`, in
+`PascalCase` from the type URI's last segment, then the schema component its
+first declared media type names (directly, as an `allOf`'s first `$ref`, or as every
+`oneOf` branch's), then the key: `OutOfStockProblemStatus409`,
+`ProblemStatus500`, `ReadingStatus200`, `Status204`, `Default`. Content, not a
+Rust type, because the type is gone by the time two operations' responses are
+compared; not a reason phrase, which the `http` crate is free to reword; and
+never a position, so adding a response or an operation renames nothing already
+shared unless it derives the very same name. When it does, every response
+deriving that name, like one whose name an application's component or `$ref`
+already holds, takes `_` and eight hex digits of the 64-bit FNV-1a hash of its
+compact JSON with every object's keys sorted, followed by its media types,
+headers and links in declared order where that is not their sorted order,
+`ProblemStatus500_1f0c9a2e`: a
+fixed algorithm rather than the standard library's hasher, and sorted keys
+rather than whatever order `serde_json/preserve_order` leaves a nested example
+or extension in, so the suffix is the same in every build, and the colliding
+responses are told apart by what they say rather than by the order they sort
+in. Where the suffixed name is taken too, the response stays inline. Shared
+responses are emitted in name order, after the application's own, so neither
+the names nor their order depend on the order operations were mounted in.
+Sameness is that same text, not equality: two responses differing in a
+description, a header, a link, or the order of their own media types, headers
+or links are not one response, and a `$ref` carries no siblings, so sharing
+changes nothing an operation says. Media type order is meaning, since
+negotiation sends the first one offered, and the response's own maps keep
+their declared order in every build. Two differing only in the key order of
+a nested free-form object (an example, a default, a `const`, an extension)
+are one response in every build, the component written as the first in
+document order declares it: keeping that order would key on the build, since
+`serde_json/preserve_order` decides it, and neither OpenAPI version gives it a
+meaning. Headers inside a
+shared response are shared with it; a header is not hoisted on its own into
+`components/headers`, since a `$ref` to one is no shorter than most headers it
+would stand for.
+
 **This is a guarantee, not an accident of the current implementation.** A
 description that changes between two builds of the same code cannot be diffed in
 review or pinned by a client generator, and a conformance-fixture corpus is only worth committing if regenerating it produces
@@ -753,7 +976,7 @@ failure at each.
 | `JsonLines<Records<T>>`, `JsonSeq<Records<T>>` | 422 per record, reading on | the record, under `/{index}` |
 | `QueryString<T, Json>` | 400, `QueryRejection::Schema` | the decoded query string |
 | `Query<T>`, `T` deriving `QueryParams` | 400, `QueryRejection::Schema`, the first parameter breaking one | the parameter's value |
-| `Path<T>`, `T` deriving `PathParams` | 400, `PathRejection::Schema`, the first parameter breaking one | the parameter's value |
+| `Path<T>`, `T` deriving `PathParams` or one `ParamValue` | 400, `PathRejection::Schema`, the first parameter breaking one | the parameter's value |
 | `Headers<T>`, `T` deriving `HeaderParams` | 400, `HeaderRejection::Schema`, the first header breaking one | the header's value |
 | `Cookies<T>`, `T` deriving `CookieParams` | 400, `CookieRejection::Schema`, the first cookie breaking one | the cookie's value |
 
@@ -776,7 +999,8 @@ no response body is.
   `Self` or a generic parameter. `pattern` and the two `content_*` keys stay
   literals, since the derive checks their text while it expands.
 - **A keyword applies to its own kind only**, as in JSON Schema: an absent
-  `Option` satisfies every bound. A bound on a type of another kind is a compile
+  `Option`, and a `Nullable` left out or sent as `null`, satisfies every
+  bound. A bound on a type of another kind is a compile
   error through `Numeric`, `Textual`, `Items` or `UniqueItems`, since a check that
   can never fire is a silent weak schema. A derived newtype takes the kinds of
   its member.
@@ -900,6 +1124,8 @@ thread that uses it.
 | 48 | A field's `content_encoding` and `content_media_type` are its `contentEncoding` and `contentMediaType`, accepted only where the field reaches `Textual`, held to their grammars by the `Schema` derive and asserted by nothing, as [Binary content](#binary-content) sets out | `a_content_annotation_is_described_and_asserted_by_neither_side` in [`tests/constraints.rs`](../crates/kynos/tests/constraints.rs), against the `jsonschema` validator; the derive's ledger and `a_content_annotation_is_held_to_its_grammar` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_content_encoding_on_bytes.rs`, `schema_content_encoding_unknown.rs` and `schema_content_media_type_malformed.rs` for the wording |
 | 49 | `MultipartForm` requires exactly the parts the `Schema` derive's `required` names, reading serde's attributes whether or not serde is derived: a field's `default`, bare or naming a function, makes its part optional and fills the field when it is left out, an `Option` without one is `None`, and a `Vec` must carry one, since an empty list is written as no part; under `deny_unknown_fields`, which closes the description under rule 32, a part no field declares is a 422 keyed by the name it was sent under, and otherwise it is ignored; a container `default`, which fills from a whole `Default` the decoder never builds, a container `tag`, described as a required property no part carries, a container `transparent`, described as the one field's schema while that field is still read as a part, and a field's `alias`, `flatten` and every `skip` key, which the description honours and a part cannot, are refused | `a_part_the_description_leaves_optional_may_be_left_out`, `an_empty_list_is_written_as_no_part_and_read_back_empty` and `a_closed_form_refuses_a_part_it_does_not_declare` in [`tests/extractors.rs`](../crates/kynos/tests/extractors.rs), against the emitted schema; the `multipart` ledger, `every_skip_is_refused` and `a_defaulted_field_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/multipart_container_default.rs`, `multipart_tag.rs`, `multipart_transparent.rs`, `multipart_alias.rs`, `multipart_skip.rs`, `multipart_flatten.rs` and `multipart_vec_without_default.rs` for the wording |
 | 50 | An instantiation `name_instantiation!` names and `Router::name_instantiation` registers, from any router nested or merged into the described one, is published under the alias's identifier wherever its mangled name would have been, wrappers sharing that name included, with the alias's doc comment as its `description` in place of the generic type's own; one instantiation named twice is a conflicting implementation at compile time, and two names for one mangled name, a name for an instantiation with none, and a `NAME` that is no component name each refuse the router as `Error::InstantiationName`; the macro refuses an alias with generic parameters, any attribute but a doc comment, and an identifier outside ASCII | the naming, the refusals and the build failure in [`registry/tests.rs`](../crates/kynos/src/schema/registry/tests.rs); `a_named_instantiation_declared_on_a_nested_router_names_its_component` in [`tests/description.rs`](../crates/kynos/tests/description.rs); the `name_instantiation` ledger and expansion in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `tests/ui/macros/name_instantiation_refusals.rs` and `tests/ui/traits/named_instantiation.rs` for the wording and `name_instantiation.rs` in the pass suite |
+| 51 | A `Nullable` named field serde reads, of a struct or an enum's struct variant, recognised by its type's last path segment as an `Option` is, carries `#[serde(default)]`, bare or naming a function, on the field or its struct, and is refused otherwise, as [Merge patches](#merge-patches) sets out; a `#[serde(transparent)]` struct's member, a positional member, a `flatten`ed member, which the `Flatten` bound refuses instead, and one `skip` or `skip_deserializing` leaves unread are left alone, since serde never reads any of them as a missing member; the default keeps it out of `required` under rule 19 | the `Nullable` row of the field ledger, `an_undefaulted_nullable_is_refused_wherever_serde_reads_it_missing` and `a_nullable_serde_never_reads_as_a_missing_null_is_accepted` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); `a_nullable_member_is_optional_and_bounded_by_its_value` in [`tests/derives.rs`](../crates/kynos/tests/derives.rs); the `merge_patch` module of [`schema/tests.rs`](../crates/kynos/src/schema/tests.rs) for what serde reads with and without the default; and `tests/ui/macros/schema_nullable_without_default.rs` for the wording, with `schema_nullable_with_default.rs` in the pass suite |
+| 52 | A named field of a non-generic type deriving `Schema` and implementing `DeserializeOwned` that carries `#[param(flatten)]` also carries `#[serde(flatten)]`, and one carrying `#[param(default = ...)]` also carries serde's `default`, bare or naming a function, on the field or its struct, and each is refused by the type checker otherwise, as [Parameter values](#parameter-values) sets out, since `Query<T>` and the `QueryString<T>` the schema describes would read the group differently; a group with no `DeserializeOwned`, which no `QueryString<T>` reads, is not refused, one whose `Deserialize` is hand-written is, since the keys checked are the ones `#[derive(Deserialize)]` reads, unless it also derives `Serialize`, which lets it spell them and pass with its hand-written `Deserialize` left to honour them unchecked, and whether serde's default returns the same value is not checked | `a_param_serde_is_not_told_is_probed` and `a_param_serde_is_also_told_is_not_probed` in [`derive/tests.rs`](../crates/kynos-macros/src/derive/tests.rs); and `tests/ui/macros/schema_query_params_unspelt_to_serde.rs` for the wording, with `schema_query_params_spelt_to_serde.rs` and `schema_query_params_without_serde.rs` in the pass suite |
 
 ## Rationale
 

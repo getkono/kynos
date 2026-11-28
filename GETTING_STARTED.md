@@ -34,6 +34,61 @@ features its [index](crates/kynos/examples/README.md) lists.
 | Serve over TLS, and shut down gracefully | [`tls`](crates/kynos/examples/tls.rs), [`graceful_shutdown`](crates/kynos/examples/graceful_shutdown.rs) |
 | Test the service, and prove its description true | [`testing`](crates/kynos/examples/testing.rs) |
 
+## Before writing it yourself
+
+What Kynos already does that an application is tempted to write. If you are
+about to write the left column, the item in the right one does it, and its API
+documentation says how. Paths are relative to `kynos`, and an item the prelude
+exports is named bare. [Migrating](docs/migrating.md) lists the same features
+by the release that shipped each, for code written before it.
+
+| If you are about to write | Reach for |
+| --- | --- |
+| An `authorization` header formatting a bearer token in a test | `test::TestRequest::bearer` |
+| The same header or cookie on every request a test sends | `test::TestClient::with_default_header` or `with_default_cookie` |
+| `get`/`post` wrappers prepending a mount prefix and a token minted mid-test | `test::TestClient::at(prefix)` or `view()`, then `bearer(&token)`: a `test::view::ClientView` whose requests the client still records |
+| A helper checking a problem response's status, type URI and members | `test::TestResponse::assert_problem`, with the base set once by `test::TestClient::with_problem_base`, then `assert_problem_extension`, or `test::TestProblem::extension` to read one |
+| A derived `ApiError`'s type URI typed out again in a test or an interceptor marker | `error::problem::ProblemType::TYPE_URI`, which a struct naming a `type` or `base` implements, or an enum's `type_uri(&self)` |
+| `assert!(resp.header(name).is_none())`, or `is_some()` | `test::TestResponse::assert_no_header`, or `assert_has_header` |
+| A substring search of a comma-separated field such as `Vary` or `Access-Control-Allow-Headers` | `test::TestResponse::assert_header_lists` |
+| `starts_with` on a `Content-Type` to skip its parameters | `test::TestResponse::assert_content_type` |
+| A `serde_json::Value` read only to index one member of a response body | `test::TestResponse::json_at`, with an RFC 6901 pointer; behind `json` |
+| A parser for a `Set-Cookie` field's attributes | `test::TestResponse::set_cookie`, `assert_cookie_set` and `assert_cookie_cleared`; behind `cookie` |
+| A `multipart/form-data` test body framed by hand | `test::TestRequest::multipart`; behind `multipart` |
+| A loopback socket to test what a configured server's timeouts answer | `test::TestClient::through_server` |
+| A raw socket sending a body that stalls, arrives short or runs long | `test::TestRequest::stalled_body`, or `body_stream` with `content_length` |
+| A raw socket sending a request head that never finishes, to test the header-read timeout | `test::TestRequest::send_stalled_head` |
+| A oneshot, a `JoinHandle` and an address struct around `serve()` | `server::BoundServer::spawn`, and `test::TestClient::connect` to its `server::Running` |
+| Response coverage merged across test clients, or held to one area of the document | `test::Coverage::for_document`, given to each client by `test::TestClient::with_coverage`, then `assert_covered`, `assert_covered_where` and `assert_conformance` |
+| The router built a second time in a test, for the document a client serves | `test::TestClient::openapi` |
+| A test comparing a committed `openapi.json` with the router's document, and regenerating it behind an environment variable | `test::document::assert_file_matches`, over `openapi::Document::to_canonical_json` |
+| A declared response no test can produce, such as a panic's 500, deleted from the document before asserting coverage | `test::Exemptions`, given to `test::Coverage::assert_declared_responses_covered_except` or `assert_covered_except` |
+| A 403 deleted from the document before asserting coverage | `#[security(forbids = false)]` on a scheme whose credential grants nothing beyond itself |
+| A scope enum's `security::Scope::name` matching on each variant to restate its serde name | `#[derive(kynos::Scope)]` |
+| A unit struct and an `impl security::auth::Scopes` per scope set | `#[derive(kynos::Scopes)]` with `#[scopes(Grant::Read, forbidden = URI)]`, the URI a `const` from `problem_type!` that the authorizer's `error::rejection::AuthRejection::forbidden_as` names too |
+| A credential carrying a store failure into every handler | `#[security(unavailable)]` on the scheme, and `error::rejection::AuthRejection::unavailable` from its authenticator, for a 503; for the application's own 500, `type Error` on the `security::Authenticator`, and `?` inside `authenticate` |
+| A `code` field and a constructor on every failure | `#[problem(extension(code = CONST))]` |
+| A `type` literal restating a `const` base, so two failures share one type URI | `#[problem(slug = "...")]` under that `base` |
+| Failure variants copied from one `ApiError` enum into another | `#[problem(transparent, from)]`, `#[problem(subset_of = Wider)]` or `#[problem(variant_of = Wider::Variant)]` |
+| A `Location` joined from a mount prefix with `format!` | `extract::link::Link<E>`, rendered into `Created::at` |
+| A function returning `Router<App, impl PanicPolicy, impl Sized + use<>, impl Sized + use<>>` | `-> router::sealed::Sealed<App>`, from `Router::seal` |
+| Several `routes!` lists, or `routes![op].0.intercept(..)` | one `routes![..]`, with `.intercept(..)` after the member it scopes to |
+| `#[tracing::instrument]` spans that carry no request id | `middleware::trace::Trace::span` |
+| An interceptor that only counts requests in flight | `middleware::Observer`'s `on_request`, then `on_response` or `on_abandoned` |
+| A literal schema bound kept equal to a `const` | `#[schema(maximum = CONST)]`, or any other numeric or count bound |
+| `FromStr`, `Display` and `schema::ParamValue` by hand for an enum or a newtype | `#[derive(kynos::ParamValue)]` |
+| A hand `impl Schema` describing a type `FromStr` and `Display` carry as one string, such as an identifier wrapping a structured value | `#[derive(Schema, ParamValue)]` and `#[schema(string, ..)]` on the type |
+| A query parameter split on `,` by hand | a `Vec<T>` field in `#[derive(QueryParams)]`, with `#[param(explode = false)]` for one comma-separated pair |
+| An `Option` query parameter and `.unwrap_or(DEFAULT)` in the handler | `#[param(default = DEFAULT)]` on the plain field, which the description states |
+| The same paging fields copied into every query group | one `QueryParams` group, and `#[param(flatten)]` on a field holding it in each |
+| A one-field `PathParams` group for a route of one variable | `Path<T>` over the `ParamValue` itself, such as `Path<Uuid>` |
+| A rate limiter keyed on the authenticated account, checked in each handler | `middleware::rate_limit::key::ByPrincipal`, behind `guard_first` |
+| A 429 of your own for a limit keyed on a body field | `RateLimit::spend` on a `middleware::rate_limit::key::ByHandler` limiter, returning its `RateLimited` through a transparent variant |
+| An enum's wire names restated in an `as_str` or an `ALL` list | `#[derive(kynos::ParamValue)]`, then `schema::UnitEnum::as_str` (not `const`) and `T::VARIANTS` with the trait imported, or `s.parse()` |
+| A parser for a trusted-proxy setting's header name and its bare host addresses | `http::forwarded::ProxyHeader`'s `FromStr`, and `http::forwarded::TrustedProxies::parse_networks`, which reads `192.0.2.7` as `192.0.2.7/32`; the policy compares with `==` |
+| A fixed header value restating a `const` | `#[header(value = CONST)]` on a `()` field |
+| An interceptor that only adds the same headers to every response | `middleware::stamp::Stamp`, mounted first |
+
 ## Getting data from middleware to a handler
 
 There is no channel for it, deliberately. A handler's arguments are its
@@ -88,7 +143,7 @@ The shapes are close; what moves is that each one must describe itself.
 | axum | Kynos |
 | --- | --- |
 | `Router::new().route("/users/{id}", get(h))` | `#[kynos::get("/users/{id}")]` on `h`, then `Router::<App>::new().mount(kynos::routes![h])` |
-| `Path<(u64,)>`, `Query<T>` | `Path<T>` over `#[derive(PathParams)]`, `Query<T>` over `#[derive(QueryParams)]`; the path's fields are checked against the template at compile time |
+| `Path<u64>`, `Path<(u64, u64)>`, `Query<T>` | `Path<u64>` on a route of one variable; `Path<T>` over `#[derive(PathParams)]` for several, `Query<T>` over `#[derive(QueryParams)]`; the path's variables are checked against the template at compile time |
 | `HeaderMap`, `TypedHeader<T>` | `Headers<T>` over `#[derive(HeaderParams)]` |
 | `Json<serde_json::Value>` | a `#[derive(Schema)]` type, or `Unchecked<Value>` where it really is arbitrary |
 | `State<T>`, `Extension<T>` | `Inject<T>` from a `#[derive(Provider)]` context, passed to `Router::build` |

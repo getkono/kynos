@@ -1,0 +1,22 @@
+error[E0277]: `QuotaExceeded` names no problem type
+  --> tests/ui/traits/problem_type.rs:12:31
+   |
+12 |     let _ = refusal_problem::<QuotaExceeded>(StatusCode::TOO_MANY_REQUESTS);
+   |                               ^^^^^^^^^^^^^ not a `ProblemType`
+   |
+help: the trait `ProblemType` is not implemented for `QuotaExceeded`
+  --> tests/ui/traits/problem_type.rs:9:1
+   |
+ 9 | struct QuotaExceeded;
+   | ^^^^^^^^^^^^^^^^^^^^
+   = note: name one with `impl ProblemType for QuotaExceeded` on a marker, or derive `ApiError` on a struct naming a `type` or a `base`; one naming neither sends `about:blank`, which names no type
+help: the trait `ProblemType` is implemented for `()`
+  --> src/error/problem.rs
+   |
+   | impl ProblemType for () {
+   | ^^^^^^^^^^^^^^^^^^^^^^^
+note: required by a bound in `refusal_problem`
+  --> src/error/problem.rs
+   |
+   | pub fn refusal_problem<T: ProblemType>(status: StatusCode) -> Problem {
+   |                           ^^^^^^^^^^^ required by this bound in `refusal_problem`

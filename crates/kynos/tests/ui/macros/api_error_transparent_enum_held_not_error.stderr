@@ -1,0 +1,29 @@
+error[E0277]: `NotDebug` doesn't implement `std::fmt::Debug`
+  --> tests/ui/macros/api_error_transparent_enum_held_not_error.rs:38:6
+   |
+38 | enum NotDebug {
+   |      ^^^^^^^^ the trait `std::fmt::Debug` is not implemented for `NotDebug`
+   |
+   = note: add `#[derive(Debug)]` to `NotDebug` or manually `impl std::fmt::Debug for NotDebug`
+note: required by a bound in `std::error::Error`
+  --> $RUST/core/src/error.rs
+   |
+   | pub trait Error: Debug + Display {
+   |                  ^^^^^ required by this bound in `Error`
+help: consider annotating `NotDebug` with `#[derive(Debug)]`
+   |
+38 + #[derive(Debug)]
+39 | enum NotDebug {
+   |
+
+error[E0277]: the trait bound `LookupError: std::error::Error` is not satisfied
+  --> tests/ui/macros/api_error_transparent_enum_held_not_error.rs:22:12
+   |
+22 |     Lookup(LookupError),
+   |            ^^^^^^^^^^^ unsatisfied trait bound
+   |
+help: the trait `std::error::Error` is not implemented for `LookupError`
+  --> tests/ui/macros/api_error_transparent_enum_held_not_error.rs:11:1
+   |
+11 | struct LookupError;
+   | ^^^^^^^^^^^^^^^^^^

@@ -45,10 +45,13 @@ mod flatten;
 pub(crate) mod instantiation;
 mod kinds;
 pub(crate) mod members;
+mod params;
 #[cfg(feature = "pattern")]
 mod pattern;
 mod refusals;
+mod serde_tagged;
 mod shape;
+mod string_form;
 
 use attributes::{
     constraints, field_read_name, is_described, is_flattened, is_open, is_phantom, is_required,
@@ -92,15 +95,25 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
         ));
     }
     let container = Container::read(input);
-    refusals::check(input, &container)?;
+    let type_schema = container::type_schema(input)?;
     // Typed, so an expression that is not a `ConstraintProblem` fails at its span.
-    let constraint_problem = container::constraint_problem(input)?.map(|named| {
+    let constraint_problem = type_schema.constraint_problem.map(|named| {
         quote! {
             const CONSTRAINT_PROBLEM: ::core::option::Option<
                 ::kynos::schema::constraints::ConstraintProblem,
             > = ::core::option::Option::Some(#named);
         }
     });
+    // A string's declaration is not described, so no rule reading it applies.
+    if let Some(form) = &type_schema.string {
+        refusals::check_string(input)?;
+        return Ok(string_form::expand(
+            input,
+            form,
+            constraint_problem.as_ref(),
+        ));
+    }
+    refusals::check(input, &container)?;
 
     let name = &input.ident;
     let generics = schema_bounded_generics(input);
@@ -148,10 +161,14 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
     let check = check::body(input, &container);
     let kinds = kinds::newtype(input, &container, &generics);
     let flatten = flatten::emit(input, &container, &generics);
+    let tagged = serde_tagged::emit(input, &container, &struct_name(input, &container));
+    let params = params::emit(input, &container);
 
     Ok(quote! {
         #flatten
         #kinds
+        #tagged
+        #params
 
         // The impl names the type, so a `#[deprecated]` type would otherwise warn
         // at its own definition (as serde's derives also allow).
@@ -191,8 +208,17 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<proc_macro2::Toke
 /// none. Beside this derive both raise one refusal at one span, which rustc
 /// reports once.
 pub(crate) fn group_attributes(input: &DeriveInput) -> syn::Result<Option<syn::Expr>> {
+    let type_schema = container::type_schema(input)?;
+    if let Some(form) = type_schema.string {
+        return Err(syn::Error::new(
+            form.span,
+            "a parameter group is read field by field, each field its own parameter, and \
+             `#[schema(string)]` describes a type as one string. Drop `string`, or give the \
+             string its own type, a field of the group deriving `ParamValue`",
+        ));
+    }
     refusals::check_grammar(input, &Container::read(input))?;
-    container::constraint_problem(input)
+    Ok(type_schema.constraint_problem)
 }
 
 /// The input's generics, with `Schema` required of each type parameter.
@@ -221,22 +247,25 @@ fn schema_bounded_generics(input: &DeriveInput) -> syn::Generics {
 /// The `schema` body for whatever shape the type has.
 fn body(input: &DeriveInput, container: &Container) -> TokenStream2 {
     let described = match &input.data {
-        Data::Struct(data) => {
-            let name = container
-                .rename
-                .clone()
-                .unwrap_or_else(|| input.ident.unraw().to_string());
-            described(
-                struct_body(&data.fields, container, &name),
-                container.doc.as_deref(),
-            )
-        }
+        Data::Struct(data) => described(
+            struct_body(&data.fields, container, &struct_name(input, container)),
+            container.doc.as_deref(),
+        ),
         Data::Enum(data) => described(enum_body(data, container), container.doc.as_deref()),
         // Refused at the top of `expand_inner`.
         Data::Union(_) => quote!(<::kynos::openapi::Schema as ::core::default::Default>::default()),
     };
 
     deprecate(described, is_deprecated(&input.attrs))
+}
+
+/// The name serde writes a struct's `#[serde(tag = "...")]` with: its
+/// container `rename`, else its identifier without a raw identifier's `r#`.
+fn struct_name(input: &DeriveInput, container: &Container) -> String {
+    container
+        .rename
+        .clone()
+        .unwrap_or_else(|| input.ident.unraw().to_string())
 }
 
 /// Marks the schema deprecated, where the item said so and the schema can say it.

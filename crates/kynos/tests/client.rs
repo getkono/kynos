@@ -108,17 +108,16 @@ async fn probe_options() -> NoContent {
 
 /// Sets two cookies, which HTTP forbids comma-joining into one field.
 #[kynos::get("/session")]
-async fn session() -> WithHeaders<NoContent, kynos::middleware::cookies::SetCookieHeaders> {
+async fn session() -> WithHeaders<NoContent, kynos::response::cookie::SetCookieHeaders> {
     WithHeaders::new(
         NoContent,
-        kynos::middleware::cookies::SetCookieHeaders {
-            cookies: vec![
-                Cookie::new("session", "abc123")
-                    .http_only()
-                    .same_site(SameSite::Strict),
-                Cookie::new("theme", "dark").path("/"),
-            ],
-        },
+        vec![
+            Cookie::new("session", "abc123")
+                .http_only()
+                .same_site(SameSite::Strict),
+            Cookie::new("theme", "dark").path("/"),
+        ]
+        .into(),
     )
 }
 
@@ -237,6 +236,17 @@ async fn any_method_can_be_sent() {
     assert_eq!(refused.status(), StatusCode::NOT_IMPLEMENTED);
 }
 
+/// A method named as text reaches the operation registered for it, as a
+/// table of cases names one.
+#[tokio::test]
+async fn a_method_named_as_text_is_sent_as_that_method() {
+    for (method, status) in [("HEAD", 204), ("OPTIONS", 204), ("PUT", 501)] {
+        let response = client().method(method, "/probe").send().await;
+        response.assert_status(status);
+        assert_eq!(response.method().as_str(), method);
+    }
+}
+
 // --- What a request can carry ---------------------------------------------
 
 #[tokio::test]
@@ -291,6 +301,45 @@ async fn client_defaults_reach_the_service_until_a_request_sets_its_own() {
     assert_eq!(own.query.as_deref(), Some("from-client"));
 }
 
+/// The client the router resolved, or `none` when it resolved none.
+#[kynos::get("/origin")]
+async fn origin(forwarded: kynos::http::forwarded::Forwarded) -> kynos::extract::body::text::Text {
+    kynos::extract::body::text::Text(
+        forwarded
+            .client()
+            .map_or_else(|| "none".to_owned(), |client| client.to_string()),
+    )
+}
+
+/// A client built `new` sends from loopback over a connection, so a policy
+/// trusting `127.0.0.1` believes the forwarding field it relays, and with
+/// none relayed resolves the loopback peer itself, as `with_peer` documents.
+#[tokio::test]
+async fn a_policy_trusting_loopback_reads_what_a_new_client_forwards() {
+    use kynos::http::forwarded::{ProxyHeader, TrustedProxies};
+
+    let client = TestClient::new(
+        Router::<()>::new()
+            .mount(kynos::routes![origin])
+            .trusted_proxies(TrustedProxies::addresses(
+                ProxyHeader::Forwarded,
+                [std::net::Ipv4Addr::LOCALHOST.into()],
+            ))
+            .build(())
+            .expect("a describable router"),
+    );
+
+    let forwarded = client
+        .get("/origin")
+        .header("forwarded", "for=203.0.113.7")
+        .send()
+        .await;
+    assert_eq!(forwarded.text(), "203.0.113.7");
+
+    let direct = client.get("/origin").send().await;
+    assert_eq!(direct.text(), "127.0.0.1");
+}
+
 // --- Through a server -----------------------------------------------------
 
 /// Through a server, a request reaches the handler with its fields, its body
@@ -316,6 +365,24 @@ async fn a_request_through_a_server_carries_its_fields_body_and_peer() {
 
     let defaulted: Seen = client.post("/echo").text("").send().await.json();
     assert_eq!(defaulted.peer, "127.0.0.1:0");
+}
+
+/// With no peer set, a request arrives from the same loopback peer whether
+/// the service is driven directly or through a server, so a test moved
+/// between the two sees one client.
+#[cfg(feature = "server")]
+#[tokio::test]
+async fn both_in_process_transports_default_to_one_loopback_peer() {
+    let direct: Seen = client().post("/echo").text("").send().await.json();
+    let served: Seen = TestClient::through_server(kynos::server::Server::new(service()))
+        .post("/echo")
+        .text("")
+        .send()
+        .await
+        .json();
+
+    assert_eq!(direct.peer, "127.0.0.1:0");
+    assert_eq!(served.peer, direct.peer);
 }
 
 /// A body ending short of its declared length breaks the message off, as a
@@ -663,6 +730,127 @@ fn a_served_client_refuses_an_idle_timeout_of_its_own() {
         .with_request_body_idle_timeout(None);
 }
 
+// --- A stalled head ----------------------------------------------------------
+
+/// `service` behind a server whose header-read timeout is `timeout`.
+#[cfg(all(feature = "server", feature = "http1"))]
+fn reading_heads_for(timeout: std::time::Duration) -> kynos::server::Server<()> {
+    kynos::server::Server::new(service()).http1(
+        kynos::server::protocol::http1::Http1Config::default().header_read_timeout(Some(timeout)),
+    )
+}
+
+/// Through a server, a head missing only its blank line is never read as
+/// complete: the server closes the connection at its header-read deadline,
+/// on the paused clock, having written nothing. Ten seconds is short of
+/// HTTP/2's 30-second idle timeout, which bounds the first head too.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test(start_paused = true)]
+async fn a_stalled_head_through_a_server_is_closed_at_its_header_read_timeout() {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+    let closed = TestClient::through_server(reading_heads_for(TIMEOUT))
+        .get("/probe")
+        .header("host", "example.test")
+        .send_stalled_head()
+        .await;
+
+    assert_answered_at(closed.after(), TIMEOUT);
+    assert!(closed.received().is_empty(), "{:?}", closed.received());
+    assert!(!closed.is_reset(), "a deadline close is an orderly one");
+}
+
+/// Over a real socket, the listener's connection is closed at the same
+/// deadline, never before it, and with nothing written.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+async fn a_stalled_head_over_a_socket_is_closed_at_its_header_read_timeout() {
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_millis(20);
+    let running = spawned(reading_heads_for(TIMEOUT)).await;
+
+    let closed = TestClient::connect(&running)
+        .get("/probe")
+        .send_stalled_head()
+        .await;
+
+    assert!(
+        closed.after() >= TIMEOUT,
+        "closed after {:?}",
+        closed.after()
+    );
+    assert!(closed.received().is_empty(), "{:?}", closed.received());
+    assert!(!closed.is_reset(), "a deadline close is an orderly one");
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+}
+
+/// A head past the server's buffer is answered `431` and hung up on with the
+/// rest of it unread, so the close is a reset rather than an orderly one: the
+/// write the server stopped reading is refused. A megabyte is past both
+/// HTTP/1's default buffer and what the duplex holds beside it.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+async fn a_stalled_head_past_the_servers_buffer_is_answered_and_reset() {
+    let closed = TestClient::through_server(kynos::server::Server::new(service()))
+        .get("/probe")
+        .header("x-padding", &"a".repeat(1 << 20))
+        .send_stalled_head()
+        .await;
+
+    assert!(closed.is_reset());
+    assert!(
+        closed
+            .received()
+            .starts_with(b"HTTP/1.1 431 Request Header Fields Too Large\r\n"),
+        "{:?}",
+        String::from_utf8_lossy(closed.received())
+    );
+}
+
+/// Once the listener is closed, the connection is refused, which is a failure
+/// rather than a close the server chose.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[tokio::test]
+#[should_panic(expected = "GET /probe: the connection failed before the server closed it: ")]
+async fn a_stalled_head_once_its_server_shut_down_is_refused() {
+    let running = spawned(kynos::server::Server::new(service())).await;
+    let client = TestClient::connect(&running);
+    running
+        .shutdown()
+        .await
+        .expect("an idle server drains cleanly");
+
+    let _ = client.get("/probe").send_stalled_head().await;
+}
+
+/// A client with no connection has no head to stall, so the request is
+/// refused rather than answered some other way.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[test]
+#[should_panic(
+    expected = "GET /probe: a client built with `TestClient::new` has no connection to stall a head on"
+)]
+fn a_stalled_head_without_a_connection_is_refused() {
+    drop(client().get("/probe").send_stalled_head());
+}
+
+/// A body never follows a head that never ends, so setting one is refused
+/// rather than silently dropped.
+#[cfg(all(feature = "server", feature = "http1"))]
+#[test]
+#[should_panic(
+    expected = "POST /echo: a stalled head never ends, so the body set on it is never sent"
+)]
+fn a_stalled_head_with_a_body_is_refused() {
+    drop(
+        TestClient::through_server(kynos::server::Server::new(service()))
+            .post("/echo")
+            .text("hello")
+            .send_stalled_head(),
+    );
+}
+
 /// A value `header` cannot spell, `obs-text` that is not UTF-8, reaches the
 /// service octet for octet.
 #[tokio::test]
@@ -703,6 +891,107 @@ async fn a_form_body_is_sent_as_a_form() {
 
     assert_eq!(seen.body, "3");
     assert_eq!(seen.query.as_deref(), Some("weekly"));
+}
+
+/// A multipart body is framed, labelled with its delimiter, and decodable by
+/// `MultipartForm`, whether assembled part by part or written from the type
+/// the handler reads; a part holding what a hand-picked delimiter would be
+/// arrives whole.
+#[cfg(feature = "multipart")]
+mod multipart {
+    use kynos::{
+        Router,
+        extract::body::multipart::{FilePart, MultipartForm},
+        prelude::*,
+        test::{TestClient, multipart::TestMultipart},
+    };
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Debug, PartialEq, Schema, kynos::MultipartForm)]
+    struct Import {
+        source: String,
+        file: FilePart,
+    }
+
+    /// What arrived, as text.
+    #[derive(Debug, PartialEq, Schema, Serialize, Deserialize)]
+    struct Received {
+        source: String,
+        file_name: Option<String>,
+        content_type: Option<String>,
+        bytes: String,
+    }
+
+    #[kynos::post("/imports")]
+    async fn import(MultipartForm(import): MultipartForm<Import>) -> Json<Received> {
+        Json(Received {
+            source: import.source,
+            file_name: import.file.file_name,
+            content_type: import.file.content_type,
+            bytes: String::from_utf8(import.file.bytes.to_vec()).expect("UTF-8 octets"),
+        })
+    }
+
+    fn client() -> TestClient<()> {
+        TestClient::new(
+            Router::<()>::new()
+                .mount(kynos::routes![import])
+                .build(())
+                .expect("a describable router"),
+        )
+    }
+
+    /// Octets that open with what the encoder's first delimiter would be.
+    const FRAMING: &str = "--kynos-boundary-0000000000000000\r\n";
+
+    #[tokio::test]
+    async fn a_multipart_body_assembled_part_by_part_is_read_by_its_decoder() {
+        let response = client()
+            .post("/imports")
+            .multipart(TestMultipart::new().text("source", "mal_xml").file(
+                "file",
+                "list.xml",
+                "application/xml",
+                FRAMING,
+            ))
+            .send()
+            .await;
+
+        response.assert_status(200);
+        assert_eq!(
+            response.json::<Received>(),
+            Received {
+                source: "mal_xml".to_owned(),
+                file_name: Some("list.xml".to_owned()),
+                content_type: Some("application/xml".to_owned()),
+                bytes: FRAMING.to_owned(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_multipart_body_written_from_its_type_is_read_by_its_decoder() {
+        let sent = Import {
+            source: "csv".to_owned(),
+            file: FilePart {
+                file_name: Some("list.csv".to_owned()),
+                content_type: Some("text/csv".to_owned()),
+                bytes: "a,b".into(),
+            },
+        };
+        let response = client().post("/imports").multipart(sent).send().await;
+
+        response.assert_status(200);
+        assert_eq!(
+            response.json::<Received>(),
+            Received {
+                source: "csv".to_owned(),
+                file_name: Some("list.csv".to_owned()),
+                content_type: Some("text/csv".to_owned()),
+                bytes: "a,b".to_owned(),
+            }
+        );
+    }
 }
 
 /// A refusal the framework renders is asserted as a problem whole, and its

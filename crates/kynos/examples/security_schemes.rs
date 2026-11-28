@@ -49,7 +49,8 @@
 //!   and `/partners/settlements` demands two together through `AllOf`: the
 //!   combination is the guard's type, so it is what runs and what is declared.
 //!   `/reports/summary` demands one scope set of either of two schemes, through
-//!   `Scoped` over an `AnyOf`.
+//!   `Scoped` over an `AnyOf`, and `/exports/reports` demands one of a single
+//!   alternative, through `Scoped` inside an `AnyOf`.
 //!
 //! The challenge is declared on the scheme rather than on the authenticator, so
 //! the `WWW-Authenticate` a client receives and the one the description
@@ -65,15 +66,20 @@
 //! `Sessions` answers neither: its store is down, so it cannot say whether the
 //! session is valid. `#[security(unavailable)]` on `SessionCookie` is what lets
 //! it return `AuthRejection::unavailable`, a 503 with `Retry-After`, and what
-//! declares that 503 on `/preferences` alone. `ServiceKey` opts the other way,
-//! out of the 403 a key that is only right or wrong cannot send.
+//! declares that 503 on `/preferences` alone. A legacy session it cannot
+//! decode is neither a verdict nor an outage, so `Sessions` fails with its own
+//! `SessionError`, whose 500 `/preferences` declares beside the 401 and 503,
+//! and which holds an `AuthRejection` transparently so both still reach it.
+//! `ServiceKey` opts the other way, out of the 403 a key that is only right or
+//! wrong cannot send.
 //!
 //! `ReadReports` says that URI a second time as `Scopes::FORBIDDEN_TYPE`, which
 //! is the only seam a document assembled from *types* has for a value chosen at
-//! run time. `/reports` then declares a 403 publishing that type or
-//! `about:blank`; every other guarded operation here names no scope set and
-//! declares the shared `Problem` component, which is the widest thing true of a
-//! refusal nothing has named.
+//! run time. `/reports` and `/reports/summary` then declare a 403 publishing
+//! that type or `about:blank`; every other guarded operation here declares the
+//! shared `Problem` component, which is the widest thing true of a refusal
+//! nothing has named. `/exports/reports` scopes its token by `ReadReports` too,
+//! but its service key names no refusal, so its 403 stays wide.
 
 use std::{collections::HashMap, net::Ipv4Addr, time::Duration};
 
@@ -82,7 +88,7 @@ use kynos::{
     prelude::*,
     security::{
         Authenticates, Authenticator, Authorizer, Head, Scope,
-        auth::{Auth, MaybeAuth, Scoped, Scopes},
+        auth::{Auth, MaybeAuth, Scoped},
         carrier::{ApiKey, BearerToken, Carries, Credentials, presented::Presented},
         requirement::{AllOf, AnyOf, Either2},
     },
@@ -246,6 +252,8 @@ impl Tokens {
 }
 
 impl<C: Sync> Authenticator<AccessToken, C> for Tokens {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<BearerToken>,
@@ -308,22 +316,50 @@ impl<C: Sync> Authorizer<AccessToken, C, Grant> for Tokens {
     }
 }
 
-/// A session store that is currently unreachable.
+/// A session store that is currently unreachable, beside its legacy rows that
+/// no longer decode.
 ///
 /// Answering 401 here would tell a browser its session is invalid, and it would
 /// sign its user out over a database blip. A 503 says nothing about the
 /// credential, and `Retry-After` says when to try again.
 struct Sessions;
 
+/// What reading a session fails with: the guard's own refusals, held
+/// transparently, and the one failure that is the application's.
+///
+/// A row that exists and will not decode is neither a verdict on the cookie
+/// nor an outage, so it is a 500, which no `AuthRejection` is. Naming this
+/// type as `Sessions`' `Error` declares its 500 on every operation a guard
+/// over `SessionCookie` covers, beside the guard's own 401 and 503.
+#[derive(Debug, thiserror::Error, ApiError)]
+#[problem(base = "https://errors.example.com/")]
+enum SessionError {
+    #[error(transparent)]
+    Rejected(#[from] AuthRejection),
+
+    #[error("the session could not be read")]
+    #[problem(status = 500, title = "Session unreadable")]
+    Unreadable,
+}
+
 impl<C: Sync> Authenticator<SessionCookie, C> for Sessions {
+    type Error = SessionError;
+
     async fn authenticate(
         &self,
         presented: Presented<ApiKey>,
         head: Head<'_>,
         context: &C,
-    ) -> Result<String, AuthRejection> {
-        let _ = (presented, head, context);
-        Err(AuthRejection::unavailable::<SessionCookie>().with_retry_after(Duration::from_secs(5)))
+    ) -> Result<String, SessionError> {
+        let _ = (head, context);
+        // `?` carries a missing or malformed cookie's 401 in through `From`.
+        let session = presented.require()?;
+        if session.as_str().starts_with("legacy-") {
+            return Err(SessionError::Unreadable);
+        }
+        Err(AuthRejection::unavailable::<SessionCookie>()
+            .with_retry_after(Duration::from_secs(5))
+            .into())
     }
 }
 
@@ -361,6 +397,8 @@ struct RequestSignature {
 struct Peers;
 
 impl<C: Sync> Authenticator<PeerToken, C> for Peers {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<(BearerToken, RequestSignature)>,
@@ -397,6 +435,8 @@ impl Authenticates<PeerToken> for App {
 struct Rejects;
 
 impl<S: Carries, C: Sync> Authenticator<S, C> for Rejects {
+    type Error = AuthRejection;
+
     async fn authenticate(
         &self,
         presented: Presented<S::Presented>,
@@ -532,20 +572,16 @@ async fn peer_sync(auth: Auth<PeerToken>) -> NoContent {
 /// operation guarded by that scheme demands, these are what this endpoint
 /// insists on besides. A `Scoped` guard on a scheme with default scopes
 /// demands both.
+///
+/// `forbidden` is the same URI `Tokens::authorize` refuses with, said once
+/// more where a description can read it. `/reports` therefore declares a 403
+/// publishing this type *or* `about:blank` -- both, because a plain
+/// `AuthRejection::forbidden()` is still something an authorizer may return,
+/// and a document naming only this URI would promise less than the operation
+/// sends.
+#[derive(kynos::Scopes)]
+#[scopes(Grant::ReadReports, forbidden = INSUFFICIENT_SCOPE)]
 struct ReadReports;
-
-impl Scopes for ReadReports {
-    type Scope = Grant;
-    const REQUIRED: &'static [Grant] = &[Grant::ReadReports];
-
-    // The same URI `Tokens::authorize` refuses with, said once more where a
-    // description can read it. `/reports` therefore declares a 403 publishing
-    // this type *or* `about:blank` -- both, because a plain
-    // `AuthRejection::forbidden()` is still something an authorizer may return,
-    // and a document naming only this URI would promise less than the operation
-    // sends.
-    const FORBIDDEN_TYPE: Option<&'static str> = Some(INSUFFICIENT_SCOPE);
-}
 
 /// Only a caller holding `reports:read` may see this.
 ///
@@ -592,6 +628,23 @@ async fn exports(caller: Auth<AnyOf<(ServiceKey, AccessToken)>>) -> NoContent {
     NoContent
 }
 
+/// Exports reports for an integration, or for a person whose token holds
+/// `reports:read`.
+///
+/// A scope set written on one alternative scopes that alternative alone:
+/// `[{ServiceKey: []}, {AccessToken: [reports:read]}]`. The key is trusted as
+/// it is, so no second scheme type is needed to give the token its set.
+#[kynos::get("/exports/reports")]
+async fn report_exports(
+    caller: Auth<AnyOf<(ServiceKey, Scoped<AccessToken, ReadReports>)>>,
+) -> NoContent {
+    match caller.into_inner() {
+        Either2::First(key) => drop(key),
+        Either2::Second(claims) => drop(claims.subject),
+    }
+    NoContent
+}
+
 /// Settles a partner's account, which needs both its certificate and a token.
 ///
 /// `AllOf` declares the single requirement
@@ -619,6 +672,7 @@ async fn main() -> kynos::Result<()> {
         reports,
         report_summary,
         exports,
+        report_exports,
         settlement,
     ]);
 
@@ -633,5 +687,6 @@ async fn main() -> kynos::Result<()> {
     Server::new(router.build(context)?)
         .bind((Ipv4Addr::UNSPECIFIED, 3000))
         .serve()
-        .await
+        .await?;
+    Ok(())
 }

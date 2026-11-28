@@ -503,6 +503,18 @@ mod schema {
                 "reads the map empty",
             ),
             case(
+                "a `Nullable` field serde reads with no `default`, which serde reads left out \
+                 as `null`",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(default)]
+                        notes: Nullable<String>,
+                        title: Nullable<String>,
+                    }
+                ),
+                "this `Nullable` reads as `Nullable::Null` when the member is left out",
+            ),
+            case(
                 "a constraint written twice, across two lists, when the second would replace \
                  the first",
                 quote::quote!(
@@ -572,6 +584,102 @@ mod schema {
         ]
     }
 
+    /// The serde probes `expand_inner` emits for `input`, by the refusing
+    /// function each names.
+    fn param_probes(input: TokenStream2) -> Vec<&'static str> {
+        let input = syn::parse2(input).expect("the case itself must parse");
+        let expanded = expand_inner(&input)
+            .expect("a `#[param(...)]` serde is not told is the type checker's to refuse")
+            .to_string();
+        ["flatten_agrees", "default_agrees"]
+            .into_iter()
+            .filter(|probe| expanded.contains(probe))
+            .collect()
+    }
+
+    /// Each `#[param(...)]` serde is not also told is probed, for the type
+    /// checker to refuse where serde reads the group, which no derive input
+    /// shows.
+    #[test]
+    fn a_param_serde_is_not_told_is_probed() {
+        for (description, unspelt, probe) in [
+            (
+                "`#[param(flatten)]` on a field serde reads nested",
+                quote::quote!(
+                    struct Listing {
+                        #[param(flatten)]
+                        page: Page,
+                    }
+                ),
+                "flatten_agrees",
+            ),
+            (
+                "`#[param(default = ...)]` on a field serde requires",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        limit: u32,
+                    }
+                ),
+                "default_agrees",
+            ),
+        ] {
+            assert_eq!(param_probes(unspelt), [probe], "{description}");
+        }
+    }
+
+    /// Each `#[param(...)]` serde is also told, on the field or, for a
+    /// default, on the struct, is not probed, nor is a generic group, on which
+    /// the probe's specialization cannot resolve.
+    #[test]
+    fn a_param_serde_is_also_told_is_not_probed() {
+        for (description, accepted) in [
+            (
+                "a generic group",
+                quote::quote!(
+                    struct Page<T> {
+                        #[param(default = 50)]
+                        limit: u32,
+                        #[param(flatten)]
+                        rest: T,
+                    }
+                ),
+            ),
+            (
+                "both `flatten`s",
+                quote::quote!(
+                    struct Listing {
+                        #[param(flatten)]
+                        #[serde(flatten)]
+                        page: Page,
+                    }
+                ),
+            ),
+            (
+                "a field `default` naming a function",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        #[serde(default = "fifty")]
+                        limit: u32,
+                    }
+                ),
+            ),
+            (
+                "the struct's `default`",
+                quote::quote!(
+                    #[serde(default)]
+                    struct Page {
+                        #[param(default = 0)]
+                        offset: u32,
+                    }
+                ),
+            ),
+        ] {
+            assert!(param_probes(accepted).is_empty(), "{description}");
+        }
+    }
+
     /// The refusal a split `rename` raises where serde writes a member under
     /// one name and reads it under another.
     ///
@@ -625,7 +733,7 @@ mod schema {
                         total: u32,
                     }
                 ),
-                "a type's `#[schema(...)]` takes only `constraint_problem = ...`",
+                "a type's `#[schema(...)]` takes `constraint_problem = ...`",
             ),
             case(
                 "`constraint_problem` written twice",
@@ -640,10 +748,117 @@ mod schema {
         ]
     }
 
+    /// The refusals of `#[schema(string)]`: its own keys, what its type may
+    /// declare, and the serde attributes saying it travels as no string.
+    fn string_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`string` given a value",
+                quote::quote!(
+                    #[schema(string = true)]
+                    struct Slug(Inner);
+                ),
+                "`string` is a flag",
+            ),
+            case(
+                "`examples` listing nothing",
+                quote::quote!(
+                    #[schema(string, examples())]
+                    struct Slug(Inner);
+                ),
+                "`examples(...)` lists the strings a reader is shown",
+            ),
+            case(
+                "a text bound on a type that is no string",
+                quote::quote!(
+                    #[schema(max_length = 8)]
+                    struct Slug(Inner);
+                ),
+                "`max_length` on a type describes the text of a `#[schema(string)]` type",
+            ),
+            case(
+                "a type parameter on a string",
+                quote::quote!(
+                    #[schema(string)]
+                    struct Slug<T>(Inner<T>);
+                ),
+                "a `#[schema(string)]` type is one component named by its identifier",
+            ),
+            case(
+                "a member's own `#[schema(...)]` on a string",
+                quote::quote!(
+                    #[schema(string)]
+                    struct Slug(#[schema(max_length = 8)] Inner);
+                ),
+                "no member it declares is described",
+            ),
+            case(
+                "`format` naming no format",
+                quote::quote!(
+                    #[schema(string, format = "")]
+                    struct Slug(Inner);
+                ),
+                "`format` names the format the text is in",
+            ),
+            case(
+                "a type key written twice",
+                quote::quote!(
+                    #[schema(string, string)]
+                    struct Slug(Inner);
+                ),
+                "`string` is already set, and a type's `#[schema(...)]` takes each key once",
+            ),
+            case(
+                "a transparent string",
+                quote::quote!(
+                    #[schema(string)]
+                    #[serde(transparent)]
+                    struct Slug(Inner);
+                ),
+                "`#[serde(transparent)]` makes serde write and read this type as its field",
+            ),
+            case(
+                "a string converted through another type",
+                quote::quote!(
+                    #[schema(string)]
+                    #[serde(into = "u64", try_from = "String")]
+                    struct Slug(Inner);
+                ),
+                "`into = \"u64\"` makes serde carry this type as `u64`",
+            ),
+            case(
+                "a string serde derives from its declaration",
+                quote::quote!(
+                    #[schema(string)]
+                    #[serde(into = "String")]
+                    struct Slug(Inner);
+                ),
+                "a serde derive carries this type as what it declares",
+            ),
+        ]
+    }
+
+    /// The refusal of `#[schema(string)]` on a parameter group, which the
+    /// group derives raise from `schema.rs`.
+    fn group_ledger() -> Vec<Case> {
+        vec![case(
+            "a parameter group declared a string",
+            quote::quote!(
+                #[schema(string)]
+                struct ByPath {
+                    id: u32,
+                }
+            ),
+            "a parameter group is read field by field",
+        )]
+    }
+
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
         each_case_is_refused(container_ledger(), expand_inner);
+        each_case_is_refused(string_ledger(), expand_inner);
+        each_case_is_refused(group_ledger(), crate::derive::path_params::expand_inner);
         each_case_is_refused(number_ledger(), expand_inner);
         each_case_is_refused(content_ledger(), expand_inner);
         each_case_is_refused(described_as_ledger(), expand_inner);
@@ -706,8 +921,136 @@ mod schema {
         );
     }
 
-    /// The row refusing a key written twice, which `attribute::Keys` raises.
-    const IN_ATTRIBUTE: usize = 1;
+    /// The `Nullable` refusal reaches an enum's struct variant as it does a
+    /// struct, and a member serde does read without a default whatever else
+    /// it carries.
+    ///
+    /// Beside the ledger rather than in it: the ledger's row proves the site
+    /// fires, and these prove where its edge is.
+    #[test]
+    fn an_undefaulted_nullable_is_refused_wherever_serde_reads_it_missing() {
+        let expects = "this `Nullable` reads as `Nullable::Null` when the member is left out";
+        each_case_is_refused(
+            vec![
+                case(
+                    "a `Nullable` in an enum's struct variant with no `default`",
+                    quote::quote!(
+                        enum Edit {
+                            Retitle { title: Nullable<String> },
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "a renamed `Nullable` with no `default`, whose other serde keys fill nothing",
+                    quote::quote!(
+                        struct EntryPatch {
+                            #[serde(rename = "note")]
+                            notes: Nullable<String>,
+                        }
+                    ),
+                    expects,
+                ),
+                case(
+                    "a `Nullable` reached through a path, with no `default`",
+                    quote::quote!(
+                        struct EntryPatch {
+                            notes: kynos::schema::Nullable<String>,
+                        }
+                    ),
+                    expects,
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
+    /// A `Nullable` serde fills when it is missing, never reads, or never
+    /// reads as a missing member, is accepted.
+    #[test]
+    fn a_nullable_serde_never_reads_as_a_missing_null_is_accepted() {
+        for (description, declaration) in [
+            (
+                "a container `default`",
+                quote::quote!(
+                    #[serde(default)]
+                    struct EntryPatch {
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+            (
+                "a field `default` naming a function",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(default = "Nullable::default")]
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+            (
+                "an enum's struct variant whose field carries `default`",
+                quote::quote!(
+                    enum Edit {
+                        Retitle {
+                            #[serde(default)]
+                            title: Nullable<String>,
+                        },
+                    }
+                ),
+            ),
+            (
+                "an enum's tuple variant, read whole",
+                quote::quote!(
+                    enum Edit {
+                        Retitle(Nullable<String>),
+                    }
+                ),
+            ),
+            (
+                "a transparent struct, read whole",
+                quote::quote!(
+                    #[serde(transparent)]
+                    struct Notes {
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+            (
+                "a tuple struct, whose short array serde refuses",
+                quote::quote!(
+                    struct Pair(String, Nullable<String>);
+                ),
+            ),
+            (
+                "a flattened member, left to the `Flatten` bound",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(flatten)]
+                        notes: Nullable<Notes>,
+                    }
+                ),
+            ),
+            (
+                "a member serde never reads",
+                quote::quote!(
+                    struct EntryPatch {
+                        #[serde(skip_deserializing)]
+                        notes: Nullable<String>,
+                    }
+                ),
+            ),
+        ] {
+            let input: DeriveInput = syn::parse2(declaration).expect("the case itself must parse");
+            if let Err(error) = expand_inner(&input) {
+                panic!("{description} was refused: {error}");
+            }
+        }
+    }
+
+    /// The rows refusing a key written twice, on a field and on the type,
+    /// which `attribute::Keys` raises.
+    const IN_ATTRIBUTE: usize = 2;
 
     #[test]
     fn every_schema_diagnostic_has_a_case() {
@@ -720,6 +1063,7 @@ mod schema {
                 include_str!("schema.rs"),
                 include_str!("schema/container.rs"),
                 include_str!("schema/refusals.rs"),
+                include_str!("schema/refusals/absence.rs"),
                 include_str!("schema/refusals/grammar.rs"),
                 include_str!("schema/refusals/naming.rs"),
                 include_str!("schema/refusals/object_keys.rs"),
@@ -730,6 +1074,8 @@ mod schema {
             .concat(),
             ledger().len()
                 + container_ledger().len()
+                + string_ledger().len()
+                + group_ledger().len()
                 + number_ledger().len()
                 + content_ledger().len()
                 + described_as_ledger().len()
@@ -4807,12 +5153,116 @@ mod attribute {
     /// status, whose rows the `reply` and `api_error` ledgers keep.
     const STATUS_SITES: usize = 2;
 
+    /// The `#[param(...)]` keys only a parameter group reads, driven through
+    /// the `QueryParams` derive.
+    fn param_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`explode` written as a string, which would read as a flag it is not",
+                quote::quote!(
+                    struct Search {
+                        #[param(explode = "false")]
+                        diet: Vec<String>,
+                    }
+                ),
+                "`explode` is `true` or `false`, written as a literal",
+            ),
+            case(
+                "`default` computed, where the description states a settled value",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 25 * 2)]
+                        limit: u32,
+                    }
+                ),
+                "`default` is a literal or a path to a constant",
+            ),
+        ]
+    }
+
+    /// `default` is the `#[param]` grammar's alone, as `explode` is.
+    #[test]
+    fn default_is_no_header_or_cookie_key() {
+        let header: DeriveInput = syn::parse_quote!(
+            struct Traced {
+                #[header(default = "x")]
+                id: String,
+            }
+        );
+        let cookie: DeriveInput = syn::parse_quote!(
+            struct Session {
+                #[cookie(default = "x")]
+                id: String,
+            }
+        );
+        for (input, expand, grammar) in [
+            (
+                header,
+                crate::derive::headers::expand_inner as fn(&DeriveInput) -> _,
+                "`#[header(...)]`",
+            ),
+            (cookie, expand_inner, "`#[cookie(...)]`"),
+        ] {
+            let Err(error) = expand(&input) else {
+                panic!("{grammar} accepted `default`");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("`default` is not part of the {grammar} grammar")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn each_param_key_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(param_ledger(), crate::derive::query_params::expand_inner);
+    }
+
+    /// `explode` is the `#[param]` grammar's alone: a header or a cookie is
+    /// one value, so neither grammar holds the key.
+    #[test]
+    fn explode_is_no_header_or_cookie_key() {
+        let header: DeriveInput = syn::parse_quote!(
+            struct Traced {
+                #[header(explode = false)]
+                id: Vec<String>,
+            }
+        );
+        let cookie: DeriveInput = syn::parse_quote!(
+            struct Session {
+                #[cookie(explode = false)]
+                id: Vec<String>,
+            }
+        );
+        for (input, expand, grammar) in [
+            (
+                header,
+                crate::derive::headers::expand_inner as fn(&DeriveInput) -> _,
+                "`#[header(...)]`",
+            ),
+            (cookie, expand_inner, "`#[cookie(...)]`"),
+        ] {
+            let Err(error) = expand(&input) else {
+                panic!("{grammar} accepted `explode`");
+            };
+            assert!(
+                error
+                    .to_string()
+                    .contains(&format!("`explode` is not part of the {grammar} grammar")),
+                "{error}"
+            );
+        }
+    }
+
     #[test]
     fn every_attribute_diagnostic_has_a_case() {
         every_diagnostic_has_a_case(
             "attribute.rs",
             include_str!("attribute.rs"),
-            ledger().len() + group_ledger().len() - SHARED_TWICE + STATUS_SITES,
+            ledger().len() + group_ledger().len() + param_ledger().len() - SHARED_TWICE
+                + STATUS_SITES,
         );
     }
 }
@@ -4831,17 +5281,6 @@ mod api_error {
                     }
                 ),
                 "cannot describe a union",
-            ),
-            case(
-                "a status on the enum, where variants answer with their own",
-                quote::quote!(
-                    #[problem(status = 404)]
-                    enum StoreError {
-                        #[problem(status = 404)]
-                        NotFound,
-                    }
-                ),
-                "a status belongs on each variant",
             ),
             case(
                 "a variant that never says what status it produces",
@@ -4938,6 +5377,322 @@ mod api_error {
             ),
             "the field `title` would be published as a member RFC 9457 defines",
         )]
+    }
+
+    /// The refusals of a key naming one failure written on the enum, where no
+    /// variant would read it; apart, so [`ledger`] stays one a reader can
+    /// hold.
+    fn enum_position_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a status on the enum, where variants answer with their own",
+                quote::quote!(
+                    #[problem(status = 404)]
+                    enum StoreError {
+                        #[problem(status = 404)]
+                        NotFound,
+                    }
+                ),
+                "a status belongs on each variant",
+            ),
+            case(
+                "a type URI on the enum, which no variant publishes",
+                quote::quote!(
+                    #[problem(type = "https://errors.example.com/store")]
+                    enum StoreError {
+                        #[problem(status = 410)]
+                        Gone,
+                    }
+                ),
+                "a `title` or `type` names one failure, so it belongs on each variant",
+            ),
+        ]
+    }
+
+    /// The refusals of `slug`, each a `slug` that would otherwise be dropped
+    /// or publish no type URI; apart, so [`ledger`] stays one a reader can
+    /// hold.
+    fn slug_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a `slug` holding a character no URI path admits",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "user removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "a non-empty run of the characters a URI path admits",
+            ),
+            case(
+                "a `slug` opening with the `/` its `base` carries",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "/removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Drop the leading `/`",
+            ),
+            case(
+                "a `slug` ending in `/`",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "removed/")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Drop the trailing `/`",
+            ),
+            case(
+                "a `slug` with an empty segment",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "moderation//removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "Write a single `/` between segments",
+            ),
+            case(
+                "a `slug` with a dot segment",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "moderation/../removed")]
+                    #[problem(status = 410)]
+                    struct Removed;
+                ),
+                "are dot segments",
+            ),
+            case(
+                "a `slug` on the enum, when each variant names its own",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/", slug = "removed")]
+                    enum ModerationError {
+                        #[problem(status = 410)]
+                        Removed,
+                    }
+                ),
+                "so it belongs on each variant publishing under it",
+            ),
+            case(
+                "a `slug` beside the `type` it would be the tail of",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/")]
+                    enum ModerationError {
+                        #[problem(
+                            status = 409,
+                            slug = "removed",
+                            type = "https://errors.example.com/removed"
+                        )]
+                        RemovedConflict,
+                    }
+                ),
+                "`type` is the whole URI and `slug` its part after `base`",
+            ),
+            case(
+                "a `slug` with no `base` to hang it under",
+                quote::quote!(
+                    enum ModerationError {
+                        #[problem(status = 409, slug = "removed")]
+                        RemovedConflict,
+                    }
+                ),
+                "`RemovedConflict` has no `base` to hang it under",
+            ),
+            case(
+                "a name whose kebab case no URI path admits, under a `base`",
+                quote::quote!(
+                    #[error("sold out")]
+                    #[problem(base = "https://errors.example.com/", status = 410)]
+                    struct Café;
+                ),
+                "name its type URI with `#[problem(slug = \"...\")]`",
+            ),
+        ]
+    }
+
+    /// A raw identifier publishes the name it spells, not its `r#` prefix,
+    /// whose `#` would open a fragment; and a non-ASCII name publishes nothing
+    /// until a `slug` names it, on a variant as on a struct, while with no
+    /// `base` it publishes nothing and so compiles.
+    #[test]
+    fn a_kebab_cased_name_is_held_to_the_slug_rule() {
+        let raw: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[problem(base = "https://errors.example.com/")]
+            enum Keyword {
+                #[error("reserved")]
+                #[problem(status = 400)]
+                r#type,
+            }
+        ))
+        .expect("the case parses");
+        let expanded = expand_inner(&raw)
+            .expect("a raw identifier is read")
+            .to_string();
+        assert!(
+            expanded.contains("\"https://errors.example.com/type\""),
+            "{expanded}"
+        );
+        assert!(!expanded.contains("example.com/r#"), "{expanded}");
+
+        each_case_is_refused(
+            vec![case(
+                "a variant whose kebab case no URI path admits",
+                quote::quote!(
+                    #[problem(base = "https://errors.example.com/")]
+                    enum Menu {
+                        #[error("sold out")]
+                        #[problem(status = 410)]
+                        Café,
+                    }
+                ),
+                "name its type URI with `#[problem(slug = \"...\")]`",
+            )],
+            expand_inner,
+        );
+
+        let slugged: syn::DeriveInput = syn::parse2(quote::quote!(
+            #[problem(base = "https://errors.example.com/")]
+            enum Menu {
+                #[error("sold out")]
+                #[problem(status = 410, slug = "cafe")]
+                Café,
+            }
+        ))
+        .expect("the case parses");
+        assert!(expand_inner(&slugged).is_ok(), "a `slug` names it");
+
+        let baseless: syn::DeriveInput = syn::parse2(quote::quote!(
+            enum Menu {
+                #[error("sold out")]
+                #[problem(status = 410)]
+                Café,
+            }
+        ))
+        .expect("the case parses");
+        assert!(
+            expand_inner(&baseless).is_ok(),
+            "with no `base` the name publishes nothing, so nothing refuses it"
+        );
+    }
+
+    /// An empty `slug`, or a `%` opening no percent-encoded octet, is refused
+    /// as a character no URI path admits is; one a path does admit is read.
+    #[test]
+    fn a_slug_admits_exactly_the_characters_of_a_uri_path() {
+        for slug in ["", "%", "%2", "%zz", "a b", "é", "a#b", "a?b"] {
+            each_case_is_refused(
+                vec![case(
+                    "a `slug` no URI path spells",
+                    quote::quote!(
+                        #[problem(base = "https://errors.example.com/", slug = #slug)]
+                        #[problem(status = 410)]
+                        struct Removed;
+                    ),
+                    "a non-empty run of the characters a URI path admits",
+                )],
+                expand_inner,
+            );
+        }
+        for slug in [
+            "removed",
+            "moderation/removed",
+            "a%2Fb",
+            "-._~!$&'()*+,;=:@",
+            "v1.2/...",
+            "a%2Eb/%2E%2E%2E",
+        ] {
+            let input = syn::parse2(quote::quote!(
+                #[problem(base = "https://errors.example.com/", slug = #slug)]
+                #[problem(status = 410)]
+                #[error("removed")]
+                struct Removed;
+            ))
+            .expect("the case parses");
+            assert!(expand_inner(&input).is_ok(), "`{slug}` was refused");
+        }
+    }
+
+    /// Beyond the ledger's one row each: a bare `/` is refused as leading, and
+    /// a dot segment wherever it sits, whichever dot is percent-encoded and in
+    /// either case, since RFC 3986 decodes `%2E` before resolving it.
+    #[test]
+    fn a_slug_refuses_a_dot_segment_however_spelled() {
+        for (slug, expects) in [
+            ("/", "Drop the leading `/`"),
+            (".", "are dot segments"),
+            ("..", "are dot segments"),
+            ("moderation/./removed", "are dot segments"),
+            ("%2E", "are dot segments"),
+            ("moderation/%2e%2E", "are dot segments"),
+            (".%2E/removed", "are dot segments"),
+        ] {
+            each_case_is_refused(
+                vec![case(
+                    "a `slug` whose segments name another URI",
+                    quote::quote!(
+                        #[problem(base = "https://errors.example.com/", slug = #slug)]
+                        #[problem(status = 410)]
+                        struct Removed;
+                    ),
+                    expects,
+                )],
+                expand_inner,
+            );
+        }
+    }
+
+    /// A `slug` is part of a type, so every variant answering with another's
+    /// type refuses it, as it refuses `type`.
+    #[test]
+    fn a_variant_answering_as_another_refuses_a_slug() {
+        for (variant, fragment) in [
+            (
+                quote::quote!(
+                    #[problem(transparent, slug = "removed")]
+                    Held(Inner)
+                ),
+                "its status, title and type are that error's",
+            ),
+            (
+                quote::quote!(
+                    #[error(transparent)]
+                    #[problem(slug = "removed")]
+                    Held(Inner)
+                ),
+                "whose title, type and extension members are that error's",
+            ),
+            (
+                quote::quote!(
+                    #[problem(variant_of = Wide::Removed, slug = "removed")]
+                    Removed
+                ),
+                "of its own",
+            ),
+        ] {
+            each_case_is_refused(
+                vec![case(
+                    "a variant answering as another, with a `slug`",
+                    quote::quote!(
+                        #[problem(base = "https://errors.example.com/")]
+                        enum ModerationError {
+                            #variant,
+                        }
+                    ),
+                    fragment,
+                )],
+                expand_inner,
+            );
+        }
+        each_case_is_refused(
+            vec![case(
+                "a subset with a `slug`",
+                quote::quote!(
+                    #[problem(subset_of = Wide, slug = "removed")]
+                    enum ModerationError {
+                        Removed,
+                    }
+                ),
+                "`slug`, `base`",
+            )],
+            expand_inner,
+        );
     }
 
     /// A field is checked against RFC 9457's members by the name it is
@@ -5491,12 +6246,34 @@ mod api_error {
     fn transparent_ledger() -> Vec<Case> {
         vec![
             case(
-                "`transparent` on the type, when it hands over one variant",
+                "`transparent` on a struct, which has no variant to hand over",
                 quote::quote!(
                     #[problem(transparent)]
                     struct StoreError(LookupError);
                 ),
-                "belongs on a variant of an enum",
+                "a struct has no variant to hand over",
+            ),
+            case(
+                "a transparent enum beside `thiserror`, which would display it and be an `Error` twice",
+                quote::quote!(
+                    #[problem(transparent)]
+                    enum StoreError {
+                        #[error(transparent)]
+                        Lookup(LookupError),
+                    }
+                ),
+                "would implement `Display` and `Error` a second time",
+            ),
+            case(
+                "a variant of a transparent enum saying `transparent` again",
+                quote::quote!(
+                    #[problem(transparent)]
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup(LookupError),
+                    }
+                ),
+                "the enum is transparent, so variant `Lookup` already answers",
             ),
             case(
                 "a transparent variant that also declares a status",
@@ -5675,7 +6452,28 @@ mod api_error {
                         NotFound,
                     }
                 ),
-                "takes no `status`, `title`, `type`, `base` or `extension` of its own",
+                "takes no `status`, `title`, `type`, `slug`, `base`, `extension`, `describe`, \
+                 `transparent` or `from` of its own",
+            ),
+            case(
+                "`subset_of` naming an empty list",
+                quote::quote!(
+                    #[problem(subset_of = ())]
+                    enum HeadRejection {
+                        NotFound,
+                    }
+                ),
+                "names no wider enum",
+            ),
+            case(
+                "`subset_of` naming one wider enum twice",
+                quote::quote!(
+                    #[problem(subset_of = (ChunkRejection, PutRejection, ChunkRejection))]
+                    enum HeadRejection {
+                        NotFound,
+                    }
+                ),
+                "already names `ChunkRejection`",
             ),
             case(
                 "`subset_of` naming the subset's generic parameter",
@@ -5697,6 +6495,75 @@ mod api_error {
                     }
                 ),
                 "answers as the wider enum's variant `NotFound`",
+            ),
+        ]
+    }
+
+    /// The refusals of `#[problem(describe(...))]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn describe_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`describe` on a variant, when it is what the whole enum says",
+                quote::quote!(
+                    enum OriginRefused {
+                        #[problem(status = 403, describe(403 = "Not allowed"))]
+                        CrossOrigin,
+                    }
+                ),
+                "belongs on the enum rather than on one variant",
+            ),
+            case(
+                "`describe` on a struct, whose `title` already describes its status",
+                quote::quote!(
+                    #[problem(status = 403, describe(403 = "Not allowed"))]
+                    struct CrossOrigin;
+                ),
+                "a struct fails one way",
+            ),
+            case(
+                "an empty `describe(...)`",
+                quote::quote!(
+                    #[problem(describe())]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "`describe(...)` names no status",
+            ),
+            case(
+                "one status described twice",
+                quote::quote!(
+                    #[problem(describe(403 = "Not allowed", 403 = "Refused"))]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "already writes the description of 403",
+            ),
+            case(
+                "a description saying nothing",
+                quote::quote!(
+                    #[problem(describe(403 = "  "))]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "the description of 403 is empty",
+            ),
+            case(
+                "a status no variant answers with",
+                quote::quote!(
+                    #[problem(describe(409 = "Conflicting origin"))]
+                    enum OriginRefused {
+                        #[problem(status = 403)]
+                        CrossOrigin,
+                    }
+                ),
+                "answers with 409, so `describe` has no response of it",
             ),
         ]
     }
@@ -5723,7 +6590,8 @@ mod api_error {
                         Unavailable,
                     }
                 ),
-                "takes no `status`, `title`, `type`, `transparent` or `extension` of its own",
+                "takes no `status`, `title`, `type`, `slug`, `transparent` or `extension` of its \
+                 own",
             ),
             case(
                 "a `variant_of` variant's field marked as the wider field is",
@@ -5824,14 +6692,18 @@ mod api_error {
     #[test]
     fn each_case_raises_the_diagnostic_it_names() {
         each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(enum_position_ledger(), expand_inner);
         each_case_is_refused(transparent_ledger(), expand_inner);
+        each_case_is_refused(from_ledger(), expand_inner);
         each_case_is_refused(subset_ledger(), expand_inner);
         each_case_is_refused(variant_of_ledger(), expand_inner);
         each_case_is_refused(headers_ledger(), expand_inner);
+        each_case_is_refused(slug_ledger(), expand_inner);
         each_case_is_refused(retry_after_ledger(), expand_inner);
         each_case_is_refused(keys_ledger(), expand_inner);
         each_case_is_refused(constants_ledger(), expand_inner);
         each_case_is_refused(field_names_ledger(), expand_inner);
+        each_case_is_refused(describe_ledger(), expand_inner);
     }
 
     /// One diagnostic site refuses three keys, so the ledger's single row per
@@ -5865,6 +6737,179 @@ mod api_error {
         );
     }
 
+    /// The refusals of `#[problem(from)]`, apart for the reason
+    /// [`transparent_ledger`] is.
+    fn from_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "`from` on an enum that is not transparent whole",
+                quote::quote!(
+                    #[problem(from)]
+                    enum StoreError {
+                        #[problem(transparent)]
+                        Lookup(LookupError),
+                    }
+                ),
+                "needs `transparent` beside it",
+            ),
+            case(
+                "`from` on a variant declaring a failure of its own",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(status = 503, from)]
+                        Store(std::io::Error),
+                    }
+                ),
+                "variant `Store` is not transparent",
+            ),
+            case(
+                "`from` beside `thiserror`'s `#[from]`, which implements the same `From`",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(from)]
+                        Lookup(#[from] LookupError),
+                    }
+                ),
+                "`thiserror`'s `#[from]` implements the `From`",
+            ),
+            case(
+                "two variants built from one type",
+                quote::quote!(
+                    #[problem(transparent, from)]
+                    enum StoreError {
+                        User(LookupError),
+                        Tenant(LookupError),
+                    }
+                ),
+                "variant `User` is already built from `LookupError`",
+            ),
+        ]
+    }
+
+    /// `from` reaches the refusals `transparent` shares with it, and a
+    /// `from` on a variant taking a wider variant is no transparent one.
+    #[test]
+    fn from_is_refused_wherever_transparent_is_or_says_it_twice() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "`from` on a struct",
+                    quote::quote!(
+                        #[problem(status = 404, from)]
+                        struct StoreError(LookupError);
+                    ),
+                    "a struct has no variant to hand over",
+                ),
+                case(
+                    "`from` on a variant of an enum saying `from` already",
+                    quote::quote!(
+                        #[problem(transparent, from)]
+                        enum StoreError {
+                            #[problem(from)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "the enum is transparent, so variant `Lookup` already answers",
+                ),
+                case(
+                    "`from` on a variant taking a wider variant",
+                    quote::quote!(
+                        enum StoreError {
+                            #[problem(variant_of = Wide::Lookup, from)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "variant `Lookup` is not transparent",
+                ),
+                case(
+                    "`from` beside `subset_of`",
+                    quote::quote!(
+                        #[problem(subset_of = Wide, from)]
+                        enum StoreError {
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "`transparent` or `from` of its own",
+                ),
+            ],
+            expand_inner,
+        );
+
+        for (description, accepted) in [
+            (
+                "`from` on an explicitly transparent variant",
+                quote::quote!(
+                    enum StoreError {
+                        #[problem(transparent, from)]
+                        Lookup(LookupError),
+                    }
+                ),
+            ),
+            (
+                "`from` on a variant `#[error(transparent)]` makes transparent",
+                quote::quote!(
+                    enum StoreError {
+                        #[error(transparent)]
+                        #[problem(from)]
+                        Lookup(LookupError),
+                    }
+                ),
+            ),
+        ] {
+            let input = syn::parse2(accepted).expect("the case itself must parse");
+            assert!(
+                expand_inner(&input).is_ok(),
+                "{description} must be accepted"
+            );
+        }
+    }
+
+    /// A transparent enum's refusals each cover more than their ledger row:
+    /// a variant taking a wider variant, one declaring a status, and an
+    /// `#[error(...)]` on the enum rather than a variant.
+    #[test]
+    fn a_transparent_enum_refuses_what_each_variant_would_contradict() {
+        each_case_is_refused(
+            vec![
+                case(
+                    "a variant of a transparent enum taking a wider variant",
+                    quote::quote!(
+                        #[problem(transparent)]
+                        enum StoreError {
+                            #[problem(variant_of = Wide::Lookup)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "the enum is transparent, so variant `Lookup` already answers",
+                ),
+                case(
+                    "a variant of a transparent enum declaring a status",
+                    quote::quote!(
+                        #[problem(transparent)]
+                        enum StoreError {
+                            #[problem(status = 404)]
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "answers as the error it holds",
+                ),
+                case(
+                    "a transparent enum with `thiserror`'s `#[error(...)]` on itself",
+                    quote::quote!(
+                        #[problem(transparent)]
+                        #[error("store failed")]
+                        enum StoreError {
+                            Lookup(LookupError),
+                        }
+                    ),
+                    "would implement `Display` and `Error` a second time",
+                ),
+            ],
+            expand_inner,
+        );
+    }
+
     /// The rows refusing a key written twice and a key outside the grammar,
     /// for the item and for a field, which `attribute::Keys::read` and
     /// `attribute::unknown` raise, and a status out of range and a second
@@ -5880,13 +6925,17 @@ mod api_error {
                 include_str!("api_error/args.rs"),
                 include_str!("api_error/emit.rs"),
                 include_str!("api_error/fields.rs"),
+                include_str!("api_error/transparent.rs"),
                 include_str!("api_error/outcomes.rs"),
                 include_str!("api_error/subset.rs"),
                 include_str!("api_error/variant_of.rs"),
+                include_str!("api_error/written.rs"),
             ]
             .concat(),
             ledger().len()
+                + enum_position_ledger().len()
                 + transparent_ledger().len()
+                + from_ledger().len()
                 + subset_ledger().len()
                 + variant_of_ledger().len()
                 + headers_ledger().len()
@@ -5894,6 +6943,8 @@ mod api_error {
                 + keys_ledger().len()
                 + constants_ledger().len()
                 + field_names_ledger().len()
+                + slug_ledger().len()
+                + describe_ledger().len()
                 - IN_ATTRIBUTE,
         );
     }
@@ -7296,6 +8347,16 @@ mod headers {
                 "contains '\\n'",
             ),
             case(
+                "a fixed value computed rather than written or named",
+                quote::quote!(
+                    struct Versioned {
+                        #[header(rename = "X-Api-Version", value = concat!("v", "1"))]
+                        version: (),
+                    }
+                ),
+                "a string literal or a path to a `&str` constant",
+            ),
+            case(
                 "a bound on a fixed value",
                 quote::quote!(
                     struct Sniffing {
@@ -7678,7 +8739,7 @@ mod parameter_groups {
                         limit: u32,
                     }
                 ),
-                "a type's `#[schema(...)]` takes only `constraint_problem = ...`",
+                "a type's `#[schema(...)]` takes `constraint_problem = ...`",
             ),
         ]
     }
@@ -7702,15 +8763,47 @@ mod path_params {
     use crate::derive::path_params::expand_inner;
 
     fn ledger() -> Vec<Case> {
-        vec![case(
-            "an optional field, when a captured variable is always present",
-            quote::quote!(
-                struct ReportPath {
-                    name: Option<String>,
-                }
+        vec![
+            case(
+                "an optional field, when a captured variable is always present",
+                quote::quote!(
+                    struct ReportPath {
+                        name: Option<String>,
+                    }
+                ),
+                "a path parameter is always present",
             ),
-            "a path parameter is always present",
-        )]
+            case(
+                "`explode`, which says how a query list is carried",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(explode = false)]
+                        name: String,
+                    }
+                ),
+                "a path parameter is one value",
+            ),
+            case(
+                "`default`, which a captured variable never reads",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(default = 1)]
+                        id: u64,
+                    }
+                ),
+                "a path parameter is always captured, so a `default` would never be read",
+            ),
+            case(
+                "`flatten`, where each variable is one the template names",
+                quote::quote!(
+                    struct ReportPath {
+                        #[param(flatten)]
+                        page: Page,
+                    }
+                ),
+                "no group can be flattened into a path group",
+            ),
+        ]
     }
 
     #[test]
@@ -7725,6 +8818,136 @@ mod path_params {
             include_str!("path_params.rs"),
             ledger().len(),
         );
+    }
+}
+
+mod query_params {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::query_params::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "an optional list, whose `Some` of no items no query string carries",
+                quote::quote!(
+                    struct Search {
+                        diet: Option<Vec<String>>,
+                    }
+                ),
+                "a list parameter is absent exactly when it has no items",
+            ),
+            case(
+                "`explode` on a field that is one value, where it has no effect",
+                quote::quote!(
+                    struct Search {
+                        #[param(explode = false)]
+                        diet: String,
+                    }
+                ),
+                "this field is one value",
+            ),
+            case(
+                "`default` on an `Option`, which would then never be `None`",
+                quote::quote!(
+                    struct Page {
+                        #[param(default = 50)]
+                        limit: Option<u32>,
+                    }
+                ),
+                "a defaulted parameter is never absent once decoded",
+            ),
+            case(
+                "`default` on a list, which would leave the empty list unsendable",
+                quote::quote!(
+                    struct Search {
+                        #[param(default = DIET)]
+                        diet: Vec<String>,
+                    }
+                ),
+                "a default would leave no query string able to send the empty list",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_query_params_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "query_params.rs",
+            include_str!("query_params.rs"),
+            ledger().len(),
+        );
+    }
+
+    /// A flattened field says `flatten` alone: its group's own fields say
+    /// each parameter's name, default, carriage and bounds.
+    fn flatten_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "another `#[param]` key beside `flatten`, which would say nothing",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten, rename = "p")]
+                        page: Page,
+                    }
+                ),
+                "`rename` beside `flatten` would say nothing",
+            ),
+            case(
+                "a bound on a flattened group, which is no one value",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten)]
+                        #[schema(minimum = 1)]
+                        page: Page,
+                    }
+                ),
+                "`#[schema(...)]` beside `flatten` would bound nothing",
+            ),
+            case(
+                "an `Option` around a flattened group, which is never absent",
+                quote::quote!(
+                    struct Search {
+                        #[param(flatten)]
+                        page: Option<Page>,
+                    }
+                ),
+                "a flattened group is never absent",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_flatten_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(flatten_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_flatten_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case(
+            "query_params/flatten.rs",
+            include_str!("query_params/flatten.rs"),
+            flatten_ledger().len(),
+        );
+    }
+
+    /// A flattened field names no parameter, so its identifier may be one
+    /// of the group's own parameters' names.
+    #[test]
+    fn a_flattened_fields_identifier_is_no_parameter_name() {
+        let input: syn::DeriveInput = syn::parse_quote!(
+            struct Search {
+                #[param(flatten)]
+                page: Page,
+                #[param(rename = "page")]
+                number: u32,
+            }
+        );
+        assert!(expand_inner(&input).is_ok());
     }
 }
 
@@ -8056,6 +9279,297 @@ mod tag {
             ledger().len() + usize::from(!version_gated_ledger().is_empty()) + UNREACHABLE_HERE
                 - IN_ATTRIBUTE;
         every_diagnostic_has_a_case("tag.rs", include_str!("tag.rs"), covered);
+    }
+}
+
+mod scope {
+    use super::{Case, TokenStream2, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::scope::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a struct, which has no variants to name",
+                quote::quote!(
+                    struct Grant;
+                ),
+                "derive it on a field-less enum",
+            ),
+            case(
+                "a variant carrying data",
+                quote::quote!(
+                    enum Grant {
+                        Read(u8),
+                    }
+                ),
+                "make every variant a unit",
+            ),
+            case(
+                "a generic enum, on which the serde probe cannot resolve",
+                quote::quote!(
+                    enum Grant<const N: usize> {
+                        Admin,
+                    }
+                ),
+                "derive it on an enum without generic parameters",
+            ),
+            case(
+                "a `rename_all` style serde does not take",
+                quote::quote!(
+                    #[scope(rename_all = "snake-case")]
+                    enum Grant {
+                        ReadReports,
+                    }
+                ),
+                "`rename_all` takes a style serde's does",
+            ),
+            case(
+                "a `rename_all` beside serde's, a second source of every name",
+                quote::quote!(
+                    #[serde(rename_all = "kebab-case")]
+                    #[scope(rename_all = "snake_case")]
+                    enum Grant {
+                        ReadReports,
+                    }
+                ),
+                "already names its scopes",
+            ),
+            case(
+                "a `rename` beside serde's, a second name for one scope",
+                quote::quote!(
+                    enum Grant {
+                        #[serde(rename = "read")]
+                        #[scope(rename = "reports:read")]
+                        ReadReports,
+                    }
+                ),
+                "already names its scope",
+            ),
+            case(
+                "a `rename` under serde's `rename_all`, a name serde does not read",
+                quote::quote!(
+                    #[serde(rename_all = "kebab-case")]
+                    enum Grant {
+                        #[scope(rename = "reports:read")]
+                        ReadReports,
+                    }
+                ),
+                "write `#[serde(rename)]` instead",
+            ),
+            case(
+                "a name holding a space, which splits it in a token's scope list",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "reports read")]
+                        ReadReports,
+                    }
+                ),
+                "is an RFC 6749 `scope-token`",
+            ),
+            case(
+                "two variants naming one scope",
+                quote::quote!(
+                    #[scope(rename_all = "lowercase")]
+                    enum Grant {
+                        Admin,
+                        #[scope(rename = "admin")]
+                        Root,
+                    }
+                ),
+                "two variants name the scope `admin`",
+            ),
+        ]
+    }
+
+    /// The rows refusing a key outside the grammar, on the enum and on a
+    /// variant, and a key written twice, which `attribute::unknown` and
+    /// `attribute::Keys::read` raise, so `scope.rs` holds none of their sites.
+    fn keys_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a variant's key on the enum",
+                quote::quote!(
+                    #[scope(rename = "grant")]
+                    enum Grant {
+                        Admin,
+                    }
+                ),
+                "is not part of the `#[scope(...)]` grammar on an enum",
+            ),
+            case(
+                "the enum's key on a variant",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename_all = "lowercase")]
+                        Admin,
+                    }
+                ),
+                "is not part of the `#[scope(...)]` grammar on a variant",
+            ),
+            case(
+                "`rename` written twice, the second replacing the first",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "admin")]
+                        #[scope(rename = "root")]
+                        Admin,
+                    }
+                ),
+                "`rename` is already set",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(keys_ledger(), expand_inner);
+    }
+
+    /// An empty name is refused at the site a non-`NQCHAR` is, naming what
+    /// it is rather than a character it holds.
+    #[test]
+    fn an_empty_name_is_no_scope_token() {
+        each_case_is_refused(
+            vec![case(
+                "an empty name",
+                quote::quote!(
+                    enum Grant {
+                        #[scope(rename = "")]
+                        Admin,
+                    }
+                ),
+                "this scope is empty",
+            )],
+            expand_inner,
+        );
+    }
+
+    /// How many `#[scope(...)]` keys `expand_inner` probes serde at.
+    fn probes(input: TokenStream2) -> usize {
+        let input = syn::parse2(input).expect("the case itself must parse");
+        expand_inner(&input)
+            .expect("a key on an enum serde names is the type checker's to refuse")
+            .to_string()
+            .matches("named_once")
+            .count()
+    }
+
+    /// Each `#[scope(...)]` key is probed, for the type checker to refuse
+    /// where serde names the enum, which no derive input shows; an enum
+    /// carrying none is not.
+    #[test]
+    fn each_scope_key_is_probed() {
+        for (description, input, expected) in [
+            (
+                "no key, the name serde's",
+                quote::quote!(
+                    enum Grant {
+                        Admin,
+                    }
+                ),
+                0,
+            ),
+            (
+                "`rename_all` on the enum and `rename` on a variant",
+                quote::quote!(
+                    #[scope(rename_all = "lowercase")]
+                    enum Grant {
+                        Admin,
+                        #[scope(rename = "root")]
+                        Root,
+                    }
+                ),
+                2,
+            ),
+        ] {
+            assert_eq!(probes(input), expected, "{description}");
+        }
+    }
+
+    #[test]
+    fn every_scope_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("scope.rs", include_str!("scope.rs"), ledger().len());
+    }
+}
+
+mod scopes {
+    use super::{Case, case, each_case_is_refused, every_diagnostic_has_a_case};
+    use crate::derive::scopes::expand_inner;
+
+    fn ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a bare scope, whose type the set cannot read",
+                quote::quote!(
+                    #[scopes(Audit)]
+                    struct Bare;
+                ),
+                "name each scope by its type, as `ScopeType::Audit`",
+            ),
+            case(
+                "a scope listed twice, demanded once",
+                quote::quote!(
+                    #[scopes(Grant::Admin, Grant::Admin)]
+                    struct Twice;
+                ),
+                "`Grant::Admin` is already required by this set",
+            ),
+            case(
+                "a set requiring nothing, which is a plain `Auth<S>`",
+                quote::quote!(
+                    #[scopes(forbidden = INSUFFICIENT_SCOPE)]
+                    struct Nothing;
+                ),
+                "a scope set requires at least one scope",
+            ),
+            case(
+                "`forbidden` written twice, the second replacing the first",
+                quote::quote!(
+                    #[scopes(Grant::Admin, forbidden = INSUFFICIENT_SCOPE)]
+                    #[scopes(forbidden = NOT_AN_ADMIN)]
+                    struct TwoTypes;
+                ),
+                "`forbidden` is already set",
+            ),
+        ]
+    }
+
+    /// The rows refusing a key outside the grammar, which
+    /// `attribute::unknown` raises, and a field-bearing struct, which
+    /// `common::unit_struct` does.
+    fn shared_ledger() -> Vec<Case> {
+        vec![
+            case(
+                "a misspelt `forbidden`, which would otherwise read as no key",
+                quote::quote!(
+                    #[scopes(Grant::Admin, fobidden = INSUFFICIENT_SCOPE)]
+                    struct Misspelt;
+                ),
+                "`fobidden` is not part of the `#[scopes(...)]` grammar",
+            ),
+            case(
+                "a struct with fields, which a set has no use for",
+                quote::quote!(
+                    #[scopes(Grant::Admin)]
+                    struct Admin {
+                        grant: Grant,
+                    }
+                ),
+                "`Scopes` marks a type that names a set of scopes, so it carries no fields",
+            ),
+        ]
+    }
+
+    #[test]
+    fn each_case_raises_the_diagnostic_it_names() {
+        each_case_is_refused(ledger(), expand_inner);
+        each_case_is_refused(shared_ledger(), expand_inner);
+    }
+
+    #[test]
+    fn every_scopes_diagnostic_has_a_case() {
+        every_diagnostic_has_a_case("scopes.rs", include_str!("scopes.rs"), ledger().len());
     }
 }
 

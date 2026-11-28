@@ -1,12 +1,13 @@
 //! What a built endpoint does once mounted: describes its operation and serves
 //! its requests, apart from the setters that assemble it.
 
-use std::{future::Future, pin::Pin};
+use std::{borrow::Cow, future::Future, pin::Pin};
 
 use kynos_openapi::{Method, PathTemplate};
 
-use super::EndpointBuilder;
+use super::{EndpointBuilder, Named};
 use crate::{
+    error::members::Installed,
     handler::Handler,
     http::{Parts, Request, Response, body::Body},
     middleware::{
@@ -16,7 +17,7 @@ use crate::{
         dispatch,
         endpoint::{self, Endpoint},
         install,
-        operation::{OperationCx, Route},
+        operation::{OperationCx, OperationIdCase, Route},
     },
 };
 
@@ -44,8 +45,10 @@ where
             interceptor.describe(operation);
         }
 
-        if let Some(id) = self.operation_id {
-            operation.set_operation_id(id);
+        match self.operation_id {
+            Some(Named::Written(id)) => operation.set_operation_id(id),
+            Some(Named::Derived(id)) => operation.set_derived_operation_id(id),
+            None => {}
         }
         if let Some(summary) = self.summary {
             operation.set_summary(summary);
@@ -71,10 +74,12 @@ where
         let (mut parts, body) = request.into_parts();
         async move {
             if install::catches::<P>() {
+                // Read before the head moves into what may unwind.
+                let problems = Installed::on(&parts.extensions);
                 // Boxed by `recover`, so it costs this future a pointer.
                 return match dispatch::recovery::recover(self.serve(parts, body, context)).await {
                     Ok(response) => response,
-                    Err(payload) => dispatch::recovery::recovered_response(payload),
+                    Err(payload) => dispatch::recovery::recovered_response(payload, problems),
                 };
             }
 
@@ -101,6 +106,24 @@ where
         H::__GUARDED
     }
 
+    fn __guard_type(&self) -> Option<crate::__private::GuardType> {
+        H::__guard_type()
+    }
+
+    fn __admitted_readers(&self) -> Vec<crate::__private::AdmittedReader> {
+        self.interceptors
+            .iter()
+            .flat_map(|interceptor| {
+                interceptor.reads_admitted().into_iter().map(|guard| {
+                    crate::__private::AdmittedReader {
+                        interceptor: interceptor.name(),
+                        guard,
+                    }
+                })
+            })
+            .collect()
+    }
+
     fn __public(&self) -> bool {
         self.public
     }
@@ -113,6 +136,10 @@ where
                 .interceptors
                 .iter()
                 .any(|interceptor| interceptor.reads_body())
+    }
+
+    fn __described_head(&self, case: OperationIdCase) -> Option<Cow<'static, str>> {
+        self.head.map(|head| head.cased(case))
     }
 
     // This operation's recovery covers its guard wherever the guard runs.
@@ -152,11 +179,45 @@ where
         request: Request,
         context: &'a C,
     ) -> impl Future<Output = Continued<()>> + Send + 'a {
-        // The key routing matched, prefixes included; this endpoint's own
-        // template only when driven without a router.
-        let path = dispatch::mounted_path(&request).unwrap_or(self.path.as_str());
-        let route = Route::new(path, self.operation_id.unwrap_or_default(), self.method);
-        Next::new(&self.interceptors, self, context, Some(route)).run(request)
+        // The key routing matched, prefixes included, and the name the router
+        // published, recased; this endpoint's own only when driven without a
+        // router.
+        let matched = dispatch::matched(&request);
+        let path = matched.map_or(self.path.as_str(), |matched| matched.path.0);
+        let routed = matched.map(|matched| matched.operation_id);
+        // The `HEAD` this describes is the operation a HEAD request reaches.
+        let route = match self.head {
+            Some(head) if request.method() == crate::http::Method::HEAD => {
+                Route::new(path, routed.unwrap_or(head.as_str()), Method::Head)
+            }
+            _ => Route::new(
+                path,
+                routed.unwrap_or(self.operation_id.map_or("", Named::as_str)),
+                self.method,
+            ),
+        };
+        // Its refusals are rendered under the policy the router installed.
+        let problems = Installed::on(request.extensions());
+        Next::new(&self.interceptors, self, context, Some(route))
+            .with_problems(problems)
+            .run(request)
+    }
+}
+
+impl Named {
+    /// The identifier as written or derived, before any case applies.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Written(id) | Self::Derived(id) => id,
+        }
+    }
+
+    /// The identifier a router spelling derived ones in `case` publishes.
+    fn cased(self, case: OperationIdCase) -> Cow<'static, str> {
+        match self {
+            Self::Written(id) => Cow::Borrowed(id),
+            Self::Derived(id) => case.apply(id),
+        }
     }
 }
 

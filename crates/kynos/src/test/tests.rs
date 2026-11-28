@@ -1,6 +1,9 @@
 //! The request body a `TestRequest` sends: what it yields, and what it tells a
 //! reader about its end and its length before the reader polls. And, in
-//! [`assertions`], how each `TestResponse::assert_*` helper fails, and in
+//! [`assertions`], how each `TestResponse::assert_*` helper fails, in
+//! [`shared_conformance`], what a shared `Coverage` holds a response to, in
+//! [`strict`], what a strict client checks as each response arrives, in
+//! [`view`], what a `ClientView` adds to its client's defaults, and in
 //! `connected`, what a client built `connect` reaches and refuses.
 //!
 //! `tests/client.rs` holds what a service reads from it; the end and length
@@ -16,6 +19,38 @@ use bytes::Bytes;
 use http_body::Body as HttpBody;
 
 use super::body::{Framed, RequestBody};
+
+std::thread_local! {
+    static LOCATION: std::cell::Cell<Option<(String, u32)>> = const { std::cell::Cell::new(None) };
+}
+
+/// The file and line `fail` panicked at, as the panic hook reads them.
+pub(super) fn location(fail: impl FnOnce()) -> (String, u32) {
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|info| {
+        let location = info.location().expect("a panic raised here has a location");
+        LOCATION.set(Some((location.file().to_owned(), location.line())));
+    }));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(fail));
+    std::panic::set_hook(hook);
+    assert!(outcome.is_err(), "the statement did not panic");
+    LOCATION.take().expect("the hook read the panic")
+}
+
+/// Asserts the statement panics, reported at the line it is written on, as
+/// `#[track_caller]` carries a failure out of the helper that raised it.
+macro_rules! fails_here {
+    ($($statement:tt)*) => {
+        assert_eq!(
+            $crate::test::tests::location(|| { $($statement)*; }),
+            (file!().to_owned(), line!()),
+            "`{}` reports another location",
+            stringify!($($statement)*)
+        )
+    };
+}
+
+pub(super) use fails_here;
 
 fn framed(bytes: &'static str, remaining: Option<u64>) -> Framed {
     Framed {
@@ -93,6 +128,41 @@ fn an_undeclared_length_promises_nothing() {
     assert_eq!(next(&mut body), Some(Ok(Bytes::from_static(b"hello"))));
     assert!(!body.is_end_stream());
     assert_eq!(next(&mut body), None);
+}
+
+/// `TestMultipart` keeps its parts in order, a text field stating no media
+/// type as a browser's does and a file stating its name and media type.
+/// `tests/client.rs` holds the body a decoder reads from them.
+#[cfg(feature = "multipart")]
+#[test]
+fn a_multipart_body_holds_its_parts_as_a_browser_writes_them() {
+    use crate::{
+        extract::body::multipart::Part, response::codec::multipart::IntoMultipart,
+        test::multipart::TestMultipart,
+    };
+
+    let parts = TestMultipart::new()
+        .text("source", "mal_xml")
+        .file("file", "list.xml", "application/xml", "<list/>")
+        .into_parts();
+
+    assert_eq!(
+        parts,
+        [
+            Part {
+                name: "source".to_owned(),
+                file_name: None,
+                content_type: None,
+                bytes: Bytes::from_static(b"mal_xml"),
+            },
+            Part {
+                name: "file".to_owned(),
+                file_name: Some("list.xml".to_owned()),
+                content_type: Some("application/xml".to_owned()),
+                bytes: Bytes::from_static(b"<list/>"),
+            },
+        ]
+    );
 }
 
 /// `TestRequest::stalled_body`: a framed body owed one octet that never
@@ -173,6 +243,63 @@ mod stalled_body {
             request.headers.get(header::CONTENT_TYPE),
             Some(&HeaderValue::from_static("application/json"))
         );
+    }
+}
+
+/// `TestRequest::send_stalled_head`'s head: every octet a complete one has
+/// but the blank line that ends it. `tests/client.rs` holds how a server
+/// closes it.
+#[cfg(all(feature = "server", feature = "http1"))]
+mod stalled_head {
+    use crate::{Router, test::TestClient};
+
+    /// The request line, then the client's default field and the request's
+    /// own, then the `Cookie` field its jar assembles, each ended by CRLF and
+    /// no further CRLF after the last.
+    #[test]
+    fn the_head_carries_every_field_and_stops_short_of_its_blank_line() {
+        let client = TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        )
+        .with_default_header("x-default", "a")
+        .with_default_cookie("session", "s1");
+        let head = client
+            .get("/health?probe=1")
+            .header("host", "example.test")
+            .header_bytes("x-opaque", b"\xff")
+            .cookie("theme", "dark")
+            .stalled_head();
+
+        assert_eq!(
+            &head[..],
+            b"GET /health?probe=1 HTTP/1.1\r\n\
+              x-default: a\r\n\
+              host: example.test\r\n\
+              x-opaque: \xff\r\n\
+              cookie: session=s1; theme=dark\r\n"
+        );
+    }
+
+    /// Each refusal is reported at the test's line, not inside the client,
+    /// a request a view begins included.
+    #[test]
+    fn a_stalled_heads_refusal_points_at_its_caller() {
+        let direct = TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        );
+        let served = TestClient::through_server(crate::server::Server::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        ));
+        fails_here!(drop(direct.get("/").send_stalled_head()));
+        fails_here!(drop(direct.view().get("/").send_stalled_head()));
+        fails_here!(drop(served.post("/").text("hello").send_stalled_head()));
+        fails_here!(drop(served.get("/a b").send_stalled_head()));
     }
 }
 
@@ -324,6 +451,392 @@ mod defaults {
     fn a_bearer_token_no_field_can_carry_panics() {
         let client = client();
         let _ = client.get("/a").bearer("a\nb");
+    }
+
+    /// The connection both in-process transports insert: from loopback where
+    /// nothing names a peer, to loopback, and a connection rather than the
+    /// no-socket sentinel, as `connect`'s real one is.
+    #[test]
+    fn a_request_naming_no_peer_arrives_on_a_loopback_connection() {
+        let loopback = SocketAddr::from(([127, 0, 0, 1], 0));
+
+        let defaulted = crate::test::connection_from(None);
+        assert_eq!(defaulted.peer_addr(), Some(loopback));
+        assert_eq!(defaulted.local_addr(), Some(loopback));
+        assert!(!defaulted.is_in_process());
+
+        let named = crate::test::connection_from(Some(address(40000)));
+        assert_eq!(named.peer_addr(), Some(address(40000)));
+        assert_eq!(named.local_addr(), Some(loopback));
+        assert!(!named.is_in_process());
+    }
+
+    /// The base reaches every response the client receives, and the last
+    /// one set is the one joined.
+    #[tokio::test]
+    async fn a_problem_base_reaches_every_response() {
+        let service = crate::router::service::Service::<()>::new(
+            kynos_openapi::Document::new(
+                kynos_openapi::SpecVersion::V3_1,
+                kynos_openapi::Info::new("Test", "1"),
+            ),
+            |_| async {
+                let mut response = crate::http::Response::new(crate::http::body::Body::from_bytes(
+                    bytes::Bytes::from_static(br#"{"type":"https://errors.example.com/gone"}"#),
+                ));
+                *response.status_mut() = crate::http::StatusCode::GONE;
+                response.headers_mut().insert(
+                    header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/problem+json"),
+                );
+                response
+            },
+        );
+        let client = TestClient::new(service)
+            .with_problem_base("https://elsewhere.example/")
+            .with_problem_base("https://errors.example.com/");
+
+        for _ in 0..2 {
+            client.get("/a").send().await.assert_problem(410, "gone");
+        }
+        client
+            .get("/a")
+            .send_streaming()
+            .await
+            .finish()
+            .await
+            .assert_problem(410, "gone");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "`errors.example.com/` is not a problem base: one begins with a URI \
+                               scheme, as `https://errors.example.com/` does"
+    )]
+    fn a_problem_base_with_no_scheme_panics() {
+        let _ = client().with_problem_base("errors.example.com/");
+    }
+
+    /// A request's own cookies join the client's rather than replacing them,
+    /// and one it names itself is sent instead of the client's, once.
+    #[test]
+    fn default_cookies_join_a_requests_own_which_win_by_name() {
+        let client = client()
+            .with_default_cookie("session", "abc123")
+            .with_default_cookie("theme", "light");
+        let request = client
+            .get("/a")
+            .cookie("theme", "dark")
+            .cookie("lang", "en");
+
+        assert_eq!(
+            request.cookie_field().as_deref(),
+            Some("session=abc123; theme=dark; lang=en")
+        );
+        assert_eq!(
+            client.get("/b").cookie_field().as_deref(),
+            Some("session=abc123; theme=light")
+        );
+    }
+
+    /// A second default under one name replaces the first where it stood.
+    #[test]
+    fn a_second_default_cookie_for_a_name_replaces_the_first() {
+        let client = client()
+            .with_default_cookie("a", "1")
+            .with_default_cookie("b", "2")
+            .with_default_cookie("a", "3");
+
+        assert_eq!(client.get("/a").cookie_field().as_deref(), Some("a=3; b=2"));
+    }
+
+    /// A `Cookie` field the request writes itself is sent as written, and a
+    /// request with no cookies anywhere sends none.
+    #[test]
+    fn a_requests_own_cookie_field_wins_over_default_cookies() {
+        let client = client().with_default_cookie("session", "abc123");
+        let request = client.get("/a").header("cookie", "raw=1");
+
+        assert_eq!(request.cookie_field(), None);
+        assert_eq!(
+            request.headers.get(header::COOKIE),
+            Some(&HeaderValue::from_static("raw=1"))
+        );
+        assert_eq!(self::client().get("/a").cookie_field(), None);
+    }
+
+    /// Either default would silently replace the other, so the second one
+    /// given is refused, in both orders.
+    #[test]
+    #[should_panic(
+        expected = "`with_default_cookie` would replace the client's `Cookie` \
+                               default header"
+    )]
+    fn a_default_cookie_beside_a_default_cookie_header_panics() {
+        let _ = client()
+            .with_default_header("Cookie", "session=abc123")
+            .with_default_cookie("theme", "dark");
+    }
+
+    #[test]
+    #[should_panic(expected = "a `Cookie` default header would replace the client's \
+                               `with_default_cookie`s")]
+    fn a_default_cookie_header_beside_a_default_cookie_panics() {
+        let _ = client()
+            .with_default_cookie("theme", "dark")
+            .with_default_header("cookie", "session=abc123");
+    }
+
+    #[test]
+    #[should_panic(expected = "`a=b\nc` is not a header value")]
+    fn a_default_cookie_no_field_can_carry_panics() {
+        let _ = client().with_default_cookie("a", "b\nc");
+    }
+}
+
+/// What a `ClientView` adds to its client's defaults, read off the request
+/// `send` would assemble, and that what it sends reaches the client's records.
+mod view {
+    use std::net::SocketAddr;
+
+    use crate::{
+        Router,
+        http::{HeaderValue, Request, Response, StatusCode, body::Body, header},
+        router::service::Service,
+        test::{Coverage, TestClient, TestRequest},
+    };
+
+    fn client() -> TestClient<()> {
+        TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        )
+    }
+
+    fn address(port: u16) -> SocketAddr {
+        SocketAddr::from(([192, 0, 2, 10], port))
+    }
+
+    /// Every `Authorization` the request would send.
+    fn credentials<'r, C>(request: &'r TestRequest<'_, C>) -> Vec<&'r HeaderValue> {
+        request
+            .headers
+            .get_all(header::AUTHORIZATION)
+            .iter()
+            .collect()
+    }
+
+    /// Prefixes join in the order they were given, and the path follows
+    /// them verbatim: a path of its own, a query on the prefix, or nothing.
+    #[test]
+    fn a_view_joins_its_prefixes_before_every_path() {
+        let client = client();
+        let api = client.at("/api").at("/v1");
+
+        assert_eq!(api.get("/reports").path, "/api/v1/reports");
+        assert_eq!(api.get("?page=2").path, "/api/v1?page=2");
+        assert_eq!(api.get("").path, "/api/v1");
+        assert_eq!(client.at("/api").get("/reports").path, "/api/reports");
+    }
+
+    /// A view without a prefix sends the path as the client does, any
+    /// request target included.
+    #[test]
+    fn a_view_without_a_prefix_sends_the_path_as_written() {
+        let client = client();
+
+        assert_eq!(client.view().options("*").path, "*");
+        assert_eq!(client.view().get("/reports").path, "/reports");
+    }
+
+    /// The nearest setting wins, by name: the request's over the view's,
+    /// the view's over the client's, and a client default the view does
+    /// not name still goes.
+    #[test]
+    fn a_view_field_replaces_the_clients_and_a_requests_own_replaces_the_views() {
+        let client = client()
+            .with_default_header("authorization", "Bearer default")
+            .with_default_header("x-trace", "on");
+        let admin = client.view().bearer("admin");
+
+        let request = admin.get("/a");
+        assert_eq!(
+            credentials(&request),
+            [&HeaderValue::from_static("Bearer admin")]
+        );
+        assert_eq!(
+            request.headers.get("x-trace"),
+            Some(&HeaderValue::from_static("on"))
+        );
+
+        let own = admin.get("/a").bearer("own");
+        assert_eq!(credentials(&own), [&HeaderValue::from_static("Bearer own")]);
+
+        let named = admin.header("Authorization", "Basic YTpi").get("/a");
+        assert_eq!(
+            credentials(&named),
+            [&HeaderValue::from_static("Basic YTpi")]
+        );
+    }
+
+    /// A setter leaves the view it was called on as it was, so the view a
+    /// credential was layered on, and the client, still send none.
+    #[test]
+    fn a_setter_leaves_its_view_unchanged() {
+        let client = client();
+        let api = client.at("/api");
+        let admin = api.bearer("admin");
+        let _ = api.at("/v1").header("x-trace", "on").peer(address(1));
+
+        assert!(admin.get("/a").headers.get("x-trace").is_none());
+        let request = api.get("/a");
+        assert_eq!(request.path, "/api/a");
+        assert!(request.headers.is_empty());
+        assert_eq!(request.peer, None);
+        assert!(client.get("/a").headers.is_empty());
+    }
+
+    /// The peer is the request's, else the view's, else the client's.
+    #[test]
+    fn a_view_peer_replaces_the_clients_and_a_requests_own_replaces_the_views() {
+        let client = client().with_peer(address(1));
+
+        assert_eq!(client.view().get("/a").peer, Some(address(1)));
+        let view = client.view().peer(address(2));
+        assert_eq!(view.get("/a").peer, Some(address(2)));
+        assert_eq!(view.get("/a").peer(address(3)).peer, Some(address(3)));
+    }
+
+    /// The client's default cookies reach a view's requests, joined by the
+    /// request's own as they are on the client's.
+    #[test]
+    fn a_view_sends_the_clients_default_cookies() {
+        let client = client().with_default_cookie("session", "abc123");
+        let request = client.at("/api").get("/a").cookie("theme", "dark");
+
+        assert_eq!(
+            request.cookie_field().as_deref(),
+            Some("session=abc123; theme=dark")
+        );
+    }
+
+    /// The issue's case: credentials minted mid-test, interleaved through
+    /// two views of one client. Each request carries its own view's, and
+    /// every exchange reaches the client's record and the shared coverage.
+    #[tokio::test]
+    async fn interleaved_views_send_their_own_credentials_into_one_record() {
+        let document = kynos_openapi::Document::new(
+            kynos_openapi::SpecVersion::V3_1,
+            kynos_openapi::Info::new("Test", "1"),
+        );
+        let service = Service::<()>::new(document, |request: Request| async move {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::NO_CONTENT;
+            let seen = format!(
+                "{} {}",
+                request.uri(),
+                request
+                    .headers()
+                    .get(header::AUTHORIZATION)
+                    .map_or("-", |value| value.to_str().expect("a test's token"))
+            );
+            response
+                .headers_mut()
+                .insert("x-seen", seen.parse().expect("a field value"));
+            response
+        });
+        let coverage = Coverage::new();
+        let client = TestClient::new(service).with_coverage(&coverage);
+        let api = client.at("/api/v1");
+        let admin = api.bearer("admin");
+        let user = api.bearer("user");
+
+        let mut seen = Vec::new();
+        for (view, path) in [
+            (&admin, "/takedowns"),
+            (&user, "/reports"),
+            (&admin, "/reports"),
+        ] {
+            let response = view.get(path).send().await;
+            seen.push(response.header("x-seen").expect("echoed").to_owned());
+        }
+        seen.push(
+            api.get("/health")
+                .send()
+                .await
+                .header("x-seen")
+                .expect("echoed")
+                .to_owned(),
+        );
+
+        assert_eq!(
+            seen,
+            [
+                "/api/v1/takedowns Bearer admin",
+                "/api/v1/reports Bearer user",
+                "/api/v1/reports Bearer admin",
+                "/api/v1/health -",
+            ]
+        );
+        let recorded: Vec<String> = client
+            .recorded()
+            .iter()
+            .map(|observed| observed.target.clone())
+            .collect();
+        assert_eq!(
+            recorded,
+            [
+                "/api/v1/takedowns",
+                "/api/v1/reports",
+                "/api/v1/reports",
+                "/api/v1/health"
+            ]
+        );
+        assert_eq!(
+            coverage
+                .exchanges
+                .lock()
+                .expect("an unpoisoned record")
+                .len(),
+            4
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "`api` is not a mount prefix: one begins with `/`")]
+    fn a_prefix_not_beginning_with_a_slash_panics() {
+        let _ = client().at("api");
+    }
+
+    /// Each would double a separator or put the path in a query, so each is
+    /// refused.
+    #[test]
+    fn a_prefix_ending_in_a_slash_or_carrying_a_query_panics() {
+        for prefix in ["/", "/api/", "/api?v=1", "/api#top"] {
+            let refused = std::panic::catch_unwind(|| {
+                let _ = client().at(prefix);
+            });
+            assert!(refused.is_err(), "`{prefix}` was taken as a mount prefix");
+        }
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "`reports` is not a path under the view's `/api/v1`: begin it \
+                               with `/`"
+    )]
+    fn a_relative_path_under_a_prefix_panics() {
+        let client = client();
+        let _ = client.at("/api/v1").get("reports");
+    }
+
+    #[test]
+    #[should_panic(expected = "a `Cookie` header on a view would replace the client's \
+                               `with_default_cookie`s")]
+    fn a_view_cookie_header_beside_a_default_cookie_panics() {
+        let client = client().with_default_cookie("session", "abc123");
+        let _ = client.view().header("cookie", "raw=1");
     }
 }
 
@@ -488,6 +1001,97 @@ mod assertions {
             path: "/things".to_owned(),
             response,
             body,
+            problem_base: None,
+        }
+    }
+
+    /// What `fail` panicked with, for a table of cases each refused in its
+    /// own words.
+    fn panic_message(fail: impl FnOnce()) -> String {
+        let Err(payload) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(fail)) else {
+            panic!("the statement did not panic")
+        };
+        payload
+            .downcast_ref::<String>()
+            .cloned()
+            .expect("a formatted panic message")
+    }
+
+    /// `received`, from a client built with `with_problem_base(base)`.
+    fn based(base: &str, status: StatusCode, body: &'static [u8]) -> TestResponse {
+        TestResponse {
+            problem_base: Some(base.into()),
+            ..received(status, &[PROBLEM], body)
+        }
+    }
+
+    /// A slug is joined to the base verbatim, as `problem_type!` joins one,
+    /// and a type with a scheme is compared as given.
+    #[test]
+    fn a_slug_is_joined_to_the_problem_base_and_a_uri_is_not() {
+        let response = based(
+            "https://errors.example.com/",
+            StatusCode::FORBIDDEN,
+            br#"{"type":"https://errors.example.com/insufficient-scope","status":403}"#,
+        );
+        response
+            .assert_problem(403, "insufficient-scope")
+            .assert_problem_type("insufficient-scope")
+            .assert_problem(403, "https://errors.example.com/insufficient-scope");
+
+        based("https://errors.example.com/", StatusCode::NOT_FOUND, b"{}")
+            .assert_problem(404, "about:blank")
+            .assert_problem_type("about:blank");
+    }
+
+    /// The failure names the type the slug was joined into, which is what the
+    /// body was compared against.
+    #[test]
+    #[should_panic(expected = "GET /things -> 403: expected problem type \
+                    `https://errors.example.com/insufficient-scope`, received `urn:example:other`")]
+    fn assert_problem_names_the_joined_type_it_expected() {
+        based(
+            "https://errors.example.com/",
+            StatusCode::FORBIDDEN,
+            br#"{"type":"urn:example:other"}"#,
+        )
+        .assert_problem(403, "insufficient-scope");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 403: expected problem type \
+                    `https://errors.example.com/insufficient-scope`, received `about:blank`")]
+    fn assert_problem_type_names_the_joined_type_it_expected() {
+        based("https://errors.example.com/", StatusCode::FORBIDDEN, b"{}")
+            .assert_problem_type("insufficient-scope");
+    }
+
+    /// Without a base a slug is compared as written, as every type was.
+    #[test]
+    #[should_panic(expected = "expected problem type `insufficient-scope`")]
+    fn a_slug_without_a_base_is_compared_as_written() {
+        received(
+            StatusCode::FORBIDDEN,
+            &[PROBLEM],
+            br#"{"type":"https://errors.example.com/insufficient-scope"}"#,
+        )
+        .assert_problem(403, "insufficient-scope");
+    }
+
+    /// RFC 3986 section 3.1's scheme, and section 4.2's relative references,
+    /// which never open with one.
+    #[test]
+    fn a_scheme_is_what_rfc_3986_says_opens_an_absolute_uri() {
+        for absolute in [
+            "about:blank",
+            "urn:example:x",
+            "https://e.example/",
+            "a+b-c.d:x",
+        ] {
+            assert!(crate::test::has_scheme(absolute), "{absolute}");
+        }
+        for relative in ["slug", "a/b:c", "1x:y", ":x", "", "./a:b", "-a:b"] {
+            assert!(!crate::test::has_scheme(relative), "{relative}");
         }
     }
 
@@ -498,6 +1102,33 @@ mod assertions {
     )]
     fn assert_status_fails_on_another_status_and_shows_the_body() {
         received(StatusCode::NOT_FOUND, &[], b"gone").assert_status(StatusCode::OK);
+    }
+
+    /// The reason follows the exchange, so the message still opens with the
+    /// request, and the body still follows the statuses.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: a revoked token is dead: expected 401 Unauthorized, \
+                    received 200 OK\nbody: welcome"
+    )]
+    fn assert_status_because_fails_naming_the_reason_and_shows_the_body() {
+        received(StatusCode::OK, &[], b"welcome")
+            .assert_status_because(401, "a revoked token is dead");
+    }
+
+    #[test]
+    fn assert_status_because_passes_on_the_status_and_chains() {
+        received(StatusCode::UNAUTHORIZED, &[("x-id", "7")], b"")
+            .assert_status_because(StatusCode::UNAUTHORIZED, "unused")
+            .assert_header("x-id", "7");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: rows are numbered: `1000` is not a status code, which is 100 to 999"
+    )]
+    fn assert_status_because_names_the_reason_for_a_number_no_status_has() {
+        received(StatusCode::OK, &[], b"").assert_status_because(1000, "rows are numbered");
     }
 
     /// The response comes back whole, so it stays readable after the
@@ -677,6 +1308,302 @@ mod assertions {
     fn assert_problem_fails_on_a_status_member_the_status_line_disagrees_with() {
         received(StatusCode::NOT_FOUND, &[PROBLEM], br#"{"status":410}"#)
             .assert_problem(404, "about:blank");
+    }
+
+    /// The member is compared as JSON, so a string and a number are each
+    /// written as the Rust value they are.
+    #[test]
+    fn assert_problem_extension_passes_on_the_member_as_json() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[PROBLEM],
+            br#"{"code":"quota_exceeded","quota":3}"#,
+        )
+        .assert_problem_extension("code", "quota_exceeded")
+        .assert_problem_extension("quota", 3);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: expected the problem's `code` to be `\"quota_exceeded\"`, \
+                    received `\"rate_limited\"`"
+    )]
+    fn assert_problem_extension_fails_on_another_value() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[PROBLEM],
+            br#"{"code":"rate_limited"}"#,
+        )
+        .assert_problem_extension("code", "quota_exceeded");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: expected the problem's `code` to be `\"quota_exceeded\"`, \
+                    and the document carries no `code`"
+    )]
+    fn assert_problem_extension_fails_on_an_absent_member() {
+        received(StatusCode::TOO_MANY_REQUESTS, &[PROBLEM], b"{}")
+            .assert_problem_extension("code", "quota_exceeded");
+    }
+
+    /// A JSON body carrying the member is not a problem to a client that
+    /// dispatches on the media type, which is what a hand-rolled check
+    /// reading `body["code"]` alone would let through.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: expected `Content-Type: application/problem+json`, \
+                    received `Content-Type: application/json`"
+    )]
+    fn assert_problem_extension_fails_on_another_media_type() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[("content-type", "application/json")],
+            br#"{"code":"quota_exceeded"}"#,
+        )
+        .assert_problem_extension("code", "quota_exceeded");
+    }
+
+    /// A registered member is read from its field, so as an extension it
+    /// would always read as absent.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 429: `detail` is a member RFC 9457 registers, not an extension"
+    )]
+    fn assert_problem_extension_refuses_a_registered_member() {
+        received(
+            StatusCode::TOO_MANY_REQUESTS,
+            &[PROBLEM],
+            br#"{"detail":"no"}"#,
+        )
+        .assert_problem_extension("detail", "no");
+    }
+
+    #[test]
+    fn assert_has_header_passes_on_any_value() {
+        received(StatusCode::OK, &[("x-id", "")], b"")
+            .assert_has_header("x-id")
+            .assert_has_header("X-Id");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `x-id` is not on the response")]
+    fn assert_has_header_fails_on_an_absent_field() {
+        received(StatusCode::OK, &[], b"").assert_has_header("x-id");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `x id` is not a header name")]
+    fn assert_has_header_refuses_a_name_no_field_has() {
+        received(StatusCode::OK, &[], b"").assert_has_header("x id");
+    }
+
+    /// The essence alone is compared, in any case (RFC 9110 section 8.3.1).
+    #[test]
+    fn assert_content_type_passes_on_the_essence_whatever_its_parameters() {
+        received(
+            StatusCode::OK,
+            &[("content-type", "Text/Plain ; charset=utf-8")],
+            b"",
+        )
+        .assert_content_type("text/plain")
+        .assert_content_type("TEXT/PLAIN");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: expected `Content-Type: text/plain`, \
+                    received `Content-Type: text/plainer`")]
+    fn assert_content_type_fails_on_another_essence_sharing_its_prefix() {
+        received(StatusCode::OK, &[("content-type", "text/plainer")], b"")
+            .assert_content_type("text/plain");
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: expected `Content-Type: text/plain`, and the response \
+                    carries none"
+    )]
+    fn assert_content_type_fails_on_an_absent_field() {
+        received(StatusCode::OK, &[], b"").assert_content_type("text/plain");
+    }
+
+    /// Parameters given here would be ignored, so passing on a `charset`
+    /// the response does not carry: refused rather than read as checked.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: `text/plain; charset=utf-8` is not a media type's \
+                    `type/subtype`"
+    )]
+    fn assert_content_type_refuses_an_essence_with_parameters() {
+        received(StatusCode::OK, &[("content-type", "text/plain")], b"")
+            .assert_content_type("text/plain; charset=utf-8");
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `text` is not a media type's `type/subtype`")]
+    fn assert_content_type_refuses_a_type_without_a_subtype() {
+        received(StatusCode::OK, &[("content-type", "text/plain")], b"")
+            .assert_content_type("text");
+    }
+
+    /// Every field line is one list (RFC 9110 section 5.6.1), its elements
+    /// trimmed of whitespace, its empty ones ignored, and a field name
+    /// matched in any case.
+    #[test]
+    fn assert_header_lists_reads_every_line_as_one_list() {
+        received(
+            StatusCode::OK,
+            &[
+                (
+                    "access-control-allow-headers",
+                    " , Content-Type,\tX-Trace ,",
+                ),
+                ("access-control-allow-headers", "Authorization"),
+            ],
+            b"",
+        )
+        .assert_header_lists("access-control-allow-headers", "content-type")
+        .assert_header_lists("access-control-allow-headers", "x-trace")
+        .assert_header_lists("access-control-allow-headers", "authorization");
+    }
+
+    /// The substring check this replaces would pass here.
+    #[test]
+    #[should_panic(
+        expected = "GET /things -> 200: expected `access-control-allow-headers` to list \
+                    `authorization`, received `access-control-allow-headers: X-Authorization, \
+                    Authorization-Token`"
+    )]
+    fn assert_header_lists_compares_whole_elements() {
+        received(
+            StatusCode::OK,
+            &[(
+                "access-control-allow-headers",
+                "X-Authorization, Authorization-Token",
+            )],
+            b"",
+        )
+        .assert_header_lists("access-control-allow-headers", "authorization");
+    }
+
+    /// A comma inside a `quoted-string` separates nothing.
+    #[test]
+    fn assert_header_lists_keeps_a_quoted_comma_inside_its_element() {
+        received(
+            StatusCode::OK,
+            &[("if-none-match", r#""a, b", W/"c""#)],
+            b"",
+        )
+        .assert_header_lists("if-none-match", r#""a, b""#)
+        .assert_header_lists("if-none-match", r#"W/"c""#);
+    }
+
+    #[test]
+    #[should_panic(expected = "expected `if-none-match` to list `\"A, B\"`")]
+    fn assert_header_lists_compares_a_quoted_element_octet_for_octet() {
+        received(StatusCode::OK, &[("if-none-match", r#""a, b""#)], b"")
+            .assert_header_lists("if-none-match", r#""A, B""#);
+    }
+
+    /// An element with a parameter is no `token`, so its value's case holds.
+    #[test]
+    #[should_panic(expected = "expected `cache-control` to list `Max-Age=60`")]
+    fn assert_header_lists_compares_an_element_with_a_parameter_octet_for_octet() {
+        let response = received(
+            StatusCode::OK,
+            &[("cache-control", "public, max-age=60")],
+            b"",
+        );
+        response.assert_header_lists("cache-control", "max-age=60");
+        response.assert_header_lists("cache-control", "Max-Age=60");
+    }
+
+    /// Methods are case-sensitive (RFC 9110 section 9.1), where the tokens
+    /// of most other lists are not.
+    #[test]
+    fn assert_header_lists_compares_methods_case_sensitively() {
+        for name in ["allow", "access-control-allow-methods"] {
+            let response = received(StatusCode::OK, &[(name, "GET, HEAD")], b"");
+            response.assert_header_lists(name, "GET");
+            let message = panic_message(|| {
+                response.assert_header_lists(name, "get");
+            });
+            assert!(
+                message.contains(&format!("expected `{name}` to list `get`")),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `vary` is not on the response")]
+    fn assert_header_lists_fails_on_an_absent_field() {
+        received(StatusCode::OK, &[], b"").assert_header_lists("vary", "origin");
+    }
+
+    /// No element could equal a member holding a separator or padding, so
+    /// the check would fail whatever the response listed.
+    #[test]
+    fn assert_header_lists_refuses_a_member_that_is_not_one_element() {
+        let response = received(StatusCode::OK, &[("vary", "origin, accept")], b"");
+        for member in ["origin, accept", " origin", "", ","] {
+            let message = panic_message(|| {
+                response.assert_header_lists("vary", member);
+            });
+            assert!(
+                message.contains(&format!("`{member}` is not one list element")),
+                "{message}"
+            );
+        }
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    fn json_at_reads_the_value_a_pointer_names() {
+        let response = received(
+            StatusCode::OK,
+            &[],
+            br#"{"token":"t","items":[{"id":7}],"a/b":{"~":true}}"#,
+        );
+        assert_eq!(response.json_at::<String>("/token"), "t");
+        assert_eq!(response.json_at::<u32>("/items/0/id"), 7);
+        assert!(response.json_at::<bool>("/a~1b/~0"));
+        assert_eq!(
+            response.json_at::<serde_json::Value>("")["token"],
+            serde_json::json!("t")
+        );
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `/items/1` names nothing in the body")]
+    fn json_at_fails_on_a_pointer_naming_nothing() {
+        let _: u32 = received(StatusCode::OK, &[], br#"{"items":[7]}"#).json_at("/items/1");
+    }
+
+    #[cfg(feature = "json")]
+    #[test]
+    #[should_panic(expected = "GET /things -> 200: `/token` is not a `u32`")]
+    fn json_at_fails_on_a_value_of_another_type() {
+        let _: u32 = received(StatusCode::OK, &[], br#"{"token":"t"}"#).json_at("/token");
+    }
+
+    /// A pointer without its leading `/`, or with an escape RFC 6901 does not
+    /// define, names nothing; refused as the mistake it is rather than read
+    /// as an absent member.
+    #[cfg(feature = "json")]
+    #[test]
+    fn json_at_refuses_what_is_not_a_json_pointer() {
+        let response = received(StatusCode::OK, &[], br#"{"token":"t","~2":1}"#);
+        for pointer in ["token", "/~2", "/a~"] {
+            let message = panic_message(|| {
+                let _: serde_json::Value = response.json_at(pointer);
+            });
+            assert!(
+                message.contains(&format!("`{pointer}` is not a JSON pointer (RFC 6901)")),
+                "{message}"
+            );
+        }
     }
 
     /// Every registered member is read into its field, and only the rest are
@@ -926,6 +1853,480 @@ mod assertions {
     fn json_fails_on_a_body_that_is_not_the_type_and_names_the_request() {
         let _: u8 = received(StatusCode::OK, &[], b"\"x\"").json();
     }
+
+    /// How a `Set-Cookie` field reads, and how the cookie assertions tell a
+    /// live cookie from a removal.
+    #[cfg(feature = "cookie")]
+    mod set_cookie {
+        use std::time::{Duration, SystemTime};
+
+        use super::received;
+        use crate::{
+            http::StatusCode,
+            response::cookie::{Cookie, SameSite},
+            test::{TestResponse, cookie::TestSetCookie},
+        };
+
+        fn setting(fields: &[&str]) -> TestResponse {
+            let headers: Vec<(&str, &str)> =
+                fields.iter().map(|field| ("set-cookie", *field)).collect();
+            received(StatusCode::OK, &headers, b"")
+        }
+
+        fn encoded(cookie: &Cookie) -> String {
+            cookie
+                .encode()
+                .expect("a representable cookie")
+                .to_str()
+                .expect("an ASCII field")
+                .to_owned()
+        }
+
+        /// Every attribute the writer can spell reads back as it was set.
+        #[test]
+        fn every_attribute_the_writer_spells_reads_back() {
+            let field = encoded(
+                &Cookie::new("session", "abc123")
+                    .path("/app")
+                    .domain(".example.com")
+                    .max_age(Duration::from_secs(3600))
+                    .http_only()
+                    .same_site(SameSite::Strict)
+                    .partitioned(),
+            );
+            let response = setting(&[&field]);
+
+            assert_eq!(
+                response.set_cookie("session"),
+                Some(TestSetCookie {
+                    name: "session",
+                    value: "abc123",
+                    path: Some("/app"),
+                    domain: Some("example.com"),
+                    max_age: Some(Duration::from_secs(3600)),
+                    expires: None,
+                    secure: true,
+                    http_only: true,
+                    same_site: Some(SameSite::Strict),
+                    partitioned: true,
+                })
+            );
+        }
+
+        /// RFC 6265 section 5.2: attribute names in any case, the last of a
+        /// repeated one winning, and one a user agent ignores read as absent.
+        #[test]
+        fn attributes_read_as_a_user_agent_reads_them() {
+            let response = setting(&[
+                " a = 1 ;path=/x; PATH=/y; max-age=10; MAX-AGE=1e3; samesite=lax; \
+                 SameSite=bogus; domain=; HTTPONLY; Expires=Sun, 06 Nov 1994 08:49:37 GMT",
+                "b=2; Path=relative; Max-Age=99999999999999999999999",
+            ]);
+
+            let a = response.set_cookie("a").expect("`a` is set");
+            assert_eq!((a.name, a.value), ("a", "1"));
+            assert_eq!(a.path, Some("/y"));
+            assert_eq!(a.max_age, Some(Duration::from_secs(10)));
+            assert_eq!(a.same_site, None);
+            assert_eq!(a.domain, None);
+            assert!(a.http_only && !a.secure && !a.partitioned);
+            assert_eq!(
+                a.expires,
+                Some(SystemTime::UNIX_EPOCH + Duration::from_secs(784_111_777))
+            );
+
+            let b = response.set_cookie("b").expect("`b` is set");
+            assert_eq!(b.path, None);
+            assert_eq!(b.max_age, Some(Duration::from_secs(u64::MAX)));
+        }
+
+        /// A removal is a `Max-Age` of zero or less, or a past `Expires`
+        /// where no `Max-Age` overrides it; an empty value alone is not one.
+        #[test]
+        fn a_removal_is_told_from_an_empty_cookie() {
+            let removal = encoded(&Cookie::removal("sid"));
+            let response = setting(&[
+                &removal,
+                "negative=x; Max-Age=-1",
+                "expired=x; Expires=Sun, 06 Nov 1994 08:49:37 GMT",
+                "kept=x; Max-Age=60; Expires=Sun, 06 Nov 1994 08:49:37 GMT",
+                "later=x; Expires=Fri, 31 Dec 9999 23:59:59 GMT",
+                "empty=",
+            ]);
+            let removed = |name| {
+                response
+                    .set_cookie(name)
+                    .unwrap_or_else(|| panic!("`{name}` is set"))
+                    .is_removal()
+            };
+
+            assert_eq!(response.set_cookie("sid").map(|sid| sid.value), Some(""));
+            assert!(removed("sid"));
+            assert!(removed("negative"));
+            assert!(removed("expired"));
+            assert!(!removed("kept"));
+            assert!(!removed("later"));
+            assert!(!removed("empty"));
+        }
+
+        /// `Expires` reads as RFC 6265 section 5.1.1's cookie-date, so the
+        /// dashed date a removal is commonly written with reads as one, and
+        /// a date that algorithm refuses reads as absent.
+        #[test]
+        fn expires_reads_as_a_cookie_date() {
+            let response = setting(&[
+                "dashed=; Expires=Thu, 01-Jan-1970 00:00:00 GMT",
+                "loose=x; Expires=1 JAN 2000 1:2:3",
+                "two-digit=x; Expires=Wed, 09 Jun 21 10:18:14 GMT",
+                "rfc850=x; Expires=Sunday, 06-Nov-94 08:49:37 GMT",
+                "last-2000s=x; Expires=Tue, 01 Jan 69 00:00:00 GMT",
+                "first-1900s=x; Expires=Thu, 01 Jan 70 00:00:00 GMT",
+                "earliest=x; Expires=Mon, 01 Jan 1601 00:00:00 GMT",
+                "too-early=x; Expires=Sun, 31 Dec 1600 23:59:59 GMT",
+                "leap-second=x; Expires=Thu, 01 Jan 1970 00:00:60 GMT",
+                "no-such-day=x; Expires=Tue, 31 Feb 2026 00:00:00 GMT",
+                "no-time=x; Expires=Thu, 01 Jan 1970",
+            ]);
+            let expires = |name| {
+                response
+                    .set_cookie(name)
+                    .unwrap_or_else(|| panic!("`{name}` is set"))
+                    .expires
+            };
+            let at = |seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds);
+
+            assert_eq!(expires("dashed"), Some(SystemTime::UNIX_EPOCH));
+            response.assert_cookie_cleared("dashed");
+            assert_eq!(expires("loose"), Some(at(946_684_800 + 3723)));
+            assert_eq!(expires("two-digit"), Some(at(1_623_233_894)));
+            assert_eq!(expires("rfc850"), Some(at(784_111_777)));
+            assert_eq!(expires("last-2000s"), Some(at(3_124_224_000)));
+            assert_eq!(expires("first-1900s"), Some(SystemTime::UNIX_EPOCH));
+            assert_eq!(
+                expires("earliest"),
+                SystemTime::UNIX_EPOCH.checked_sub(Duration::from_secs(11_644_473_600))
+            );
+            assert_eq!(expires("too-early"), None);
+            assert_eq!(expires("leap-second"), None);
+            assert_eq!(expires("no-such-day"), None);
+            assert_eq!(expires("no-time"), None);
+        }
+
+        /// Of several fields naming one cookie, the last is the one a user
+        /// agent is left holding; a field naming no cookie is skipped.
+        #[test]
+        fn the_last_field_naming_a_cookie_is_the_one_read() {
+            let response = setting(&["sid=old", "sid=; Max-Age=0", "sid=new", "no-pair", "=x"]);
+
+            assert_eq!(response.set_cookie("sid").map(|sid| sid.value), Some("new"));
+            assert_eq!(response.set_cookie("no-pair"), None);
+            assert_eq!(response.set_cookie(""), None);
+            assert_eq!(response.set_cookie("SID"), None);
+        }
+
+        #[test]
+        fn assert_cookie_set_passes_on_a_live_cookie_and_chains() {
+            setting(&["sid=; Max-Age=0", "sid=r4nd0m; HttpOnly", "theme="])
+                .assert_cookie_set("sid")
+                .assert_cookie_set("theme");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: expected cookie `sid` set, the response cleared it: \
+                        `Set-Cookie: sid=; Max-Age=0`"
+        )]
+        fn assert_cookie_set_fails_on_a_removal() {
+            setting(&["sid=; Max-Age=0"]).assert_cookie_set("sid");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: no `Set-Cookie` names `sid`; the response set [\"theme\"]"
+        )]
+        fn assert_cookie_set_fails_on_a_cookie_never_set_and_names_the_ones_that_were() {
+            setting(&["theme=dark", "not a cookie"]).assert_cookie_set("sid");
+        }
+
+        #[test]
+        fn assert_cookie_cleared_passes_on_a_removal_and_chains() {
+            setting(&["sid=; Max-Age=0", "theme=; Max-Age=0"])
+                .assert_cookie_cleared("sid")
+                .assert_cookie_cleared("theme");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: expected cookie `sid` cleared, the response set it: \
+                        `Set-Cookie: sid=; Path=/`"
+        )]
+        fn assert_cookie_cleared_fails_on_an_empty_live_cookie() {
+            setting(&["sid=; Path=/"]).assert_cookie_cleared("sid");
+        }
+
+        #[test]
+        #[should_panic(
+            expected = "GET /things -> 200: no `Set-Cookie` names `sid`; the response set []"
+        )]
+        fn assert_cookie_cleared_fails_on_a_cookie_never_set() {
+            setting(&[]).assert_cookie_cleared("sid");
+        }
+    }
+
+    /// Each assertion's failure points at the line of the test that made it,
+    /// which an editor and a backtrace-free report jump to, rather than into
+    /// this module.
+    mod located {
+        use super::{PROBLEM, received};
+        use crate::{http::StatusCode, router::service::Service, test::Coverage};
+
+        #[test]
+        fn a_failed_response_assertion_points_at_its_caller() {
+            let missing = received(StatusCode::NOT_FOUND, &[], b"not here");
+            fails_here!(missing.assert_status(200));
+            fails_here!(missing.assert_status(StatusCode::OK));
+            fails_here!(missing.assert_status(99));
+            fails_here!(missing.assert_status_because(200, "listed"));
+            fails_here!(let _ = received(StatusCode::NOT_FOUND, &[], b"").expect_status(200));
+            fails_here!(missing.assert_problem_type("about:blank"));
+            fails_here!(missing.assert_problem(404, "about:blank"));
+            fails_here!(let _ = missing.problem());
+            fails_here!(missing.assert_header("location", "/"));
+            fails_here!(missing.assert_no_header("a b"));
+            fails_here!(missing.assert_cookie("sid", "1"));
+            fails_here!(missing.assert_redirect("/"));
+            fails_here!(missing.assert_part(0, 1, 2));
+
+            let typed = received(
+                StatusCode::NOT_FOUND,
+                &[PROBLEM],
+                br#"{"type":1,"status":1}"#,
+            );
+            fails_here!(typed.assert_problem_type("about:blank"));
+            fails_here!(let _ = typed.problem());
+            let numbered = received(StatusCode::NOT_FOUND, &[PROBLEM], br#"{"status":1}"#);
+            fails_here!(let _ = numbered.problem());
+        }
+
+        #[cfg(feature = "cookie")]
+        #[test]
+        fn a_failed_cookie_assertion_points_at_its_caller() {
+            let cleared = received(StatusCode::OK, &[("set-cookie", "sid=; Max-Age=0")], b"");
+            fails_here!(cleared.assert_cookie_set("sid"));
+            fails_here!(cleared.assert_cookie_set("theme"));
+            fails_here!(cleared.assert_cookie_cleared("theme"));
+        }
+
+        /// A client and a coverage record fail where they are asserted on,
+        /// not where they recorded.
+        #[tokio::test]
+        async fn a_failed_description_assertion_points_at_its_caller() {
+            let document: kynos_openapi::Document = serde_json::from_value(serde_json::json!({
+                "openapi": "3.1.0",
+                "info": { "title": "Test", "version": "1" },
+                "paths": { "/things": { "get": { "responses": { "200": { "description": "" } } } } }
+            }))
+            .expect("a description");
+            let service = Service::<()>::new(document.clone(), |_| async {
+                let mut response = crate::http::Response::new(crate::http::body::Body::empty());
+                *response.status_mut() = StatusCode::NOT_FOUND;
+                response
+            });
+            let coverage = Coverage::new();
+            let bound = Coverage::for_document(document.clone());
+            let client = crate::test::TestClient::new(service.clone()).with_coverage(&coverage);
+            client.get("/things").send().await;
+            let into_bound = crate::test::TestClient::new(service).with_coverage(&bound);
+            into_bound.get("/things").send().await;
+
+            fails_here!(client.assert_conformance());
+            fails_here!(client.assert_declared_responses_covered());
+            fails_here!(coverage.assert_declared_responses_covered(&document));
+            fails_here!(coverage.assert_covered());
+            fails_here!(coverage.assert_declared_responses_covered_where(&document, |_| true));
+            fails_here!(coverage.assert_declared_responses_covered_where(&document, |_| false));
+            fails_here!(coverage.assert_covered_where(|_| true));
+            fails_here!(coverage.assert_conformance_to(&document));
+            fails_here!(coverage.assert_conformance());
+            fails_here!(bound.assert_covered());
+            fails_here!(bound.assert_covered_where(|_| true));
+            fails_here!(bound.assert_covered_where(|_| false));
+            fails_here!(bound.assert_conformance());
+        }
+    }
+}
+
+/// A test's own mistake, an argument HTTP cannot carry or a response read as
+/// what it is not, is reported at the test's line, as a failed assertion is.
+mod misuse_located {
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
+
+    use bytes::Bytes;
+
+    use crate::{
+        Router,
+        http::{Method, StatusCode},
+        test::{Coverage, IntoStatus, TestClient, TestResponse},
+    };
+
+    fn client() -> TestClient<()> {
+        TestClient::new(
+            Router::<()>::new()
+                .build(())
+                .expect("an empty router is describable"),
+        )
+    }
+
+    /// A stream that ends at once.
+    struct Ended;
+
+    impl futures_core::Stream for Ended {
+        type Item = Bytes;
+
+        fn poll_next(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Option<Bytes>> {
+            Poll::Ready(None)
+        }
+    }
+
+    #[test]
+    fn a_client_given_what_http_cannot_carry_points_at_its_caller() {
+        fails_here!(let _ = client().with_default_header("a b", "x"));
+        fails_here!(let _ = client().with_default_cookie("a", "b\nc"));
+        fails_here!(let _ = client().with_problem_base("errors/"));
+        fails_here!(let _ = client().method("a b", "/"));
+        fails_here!(let _ = client().method("post", "/"));
+        fails_here!(let _ = 1000.into_status());
+        fails_here!(Coverage::new().record(&Method::GET, "a b", StatusCode::OK));
+    }
+
+    #[test]
+    fn a_view_given_what_it_cannot_carry_points_at_its_caller() {
+        let client = client();
+        fails_here!(let _ = client.at("api"));
+        fails_here!(let _ = client.view().at("/api/"));
+        fails_here!(let _ = client.view().header("a b", "x"));
+        fails_here!(let _ = client.view().bearer("a\nb"));
+        fails_here!(let _ = client.at("/api").get("reports"));
+        fails_here!(let _ = client.at("/api").method("GET", "reports"));
+        fails_here!(let _ = client.view().method("post", "/"));
+    }
+
+    #[test]
+    fn a_request_given_what_http_cannot_carry_points_at_its_caller() {
+        let client = client();
+        fails_here!(let _ = client.get("/").header("a b", "x"));
+        fails_here!(let _ = client.get("/").header("a", "b\nc"));
+        fails_here!(let _ = client.get("/").bearer("a\nb"));
+        fails_here!(let _ = client.get("/").header_bytes("a b", b"x"));
+        fails_here!(let _ = client.get("/").header_bytes("a", b"b\nc"));
+        fails_here!(let _ = client.get("/").body("a\nb", ""));
+        fails_here!(let _ = client.get("/").body_stream("a\nb", Ended));
+        // A map keyed by what JSON cannot key, and a form value nested past
+        // what a form encodes.
+        #[cfg(feature = "json")]
+        let unkeyed = std::collections::BTreeMap::from([((), 1)]);
+        #[cfg(feature = "json")]
+        fails_here!(let _ = client.get("/").json(&unkeyed));
+        #[cfg(feature = "form")]
+        let nested = [("a", [[1]])];
+        #[cfg(feature = "form")]
+        fails_here!(let _ = client.get("/").query_string(&nested));
+        #[cfg(feature = "form")]
+        fails_here!(let _ = client.get("/").form(&nested));
+    }
+
+    #[cfg(feature = "server")]
+    #[test]
+    fn a_server_setting_a_server_refuses_points_at_its_caller() {
+        let zero = Some(std::time::Duration::ZERO);
+        fails_here!(let _ = client().with_request_body_idle_timeout(zero));
+        let server = crate::server::Server::new(client().service().clone());
+        let refused = server.request_body_idle_timeout(zero);
+        fails_here!(let _ = TestClient::through_server(refused));
+
+        let client = client();
+        fails_here!(let _ = client.get("/").stalled_body("a\nb"));
+        fails_here!(let _ = client.get("/").stalled_after("a\nb", ""));
+    }
+
+    #[test]
+    fn a_response_read_as_what_it_is_not_points_at_its_caller() {
+        let response = TestResponse {
+            method: Method::GET,
+            path: "/things".to_owned(),
+            response: crate::http::Response::new(crate::http::body::Body::empty()),
+            body: Bytes::from_static(b"\xff"),
+            problem_base: None,
+        };
+        fails_here!(let _ = response.text());
+        fails_here!(let _ = response.events());
+        #[cfg(feature = "json")]
+        fails_here!(let _ = response.json::<u8>());
+        #[cfg(feature = "json")]
+        fails_here!(let _ = crate::test::TestEvent::default().json::<u8>());
+
+        let problem = TestResponse {
+            body: Bytes::from_static(br#"{"count":"many"}"#),
+            ..response
+        }
+        .problem();
+        fails_here!(let _ = problem.extension::<u8>("type"));
+        fails_here!(let _ = problem.extension::<u8>("count"));
+    }
+}
+
+/// What `TestClient::method` reads a method from: a name as the method it
+/// spells, case and all, and a typed one as itself.
+mod methods {
+    use crate::{http::Method, test::IntoMethod};
+
+    #[test]
+    fn a_name_is_the_method_it_spells() {
+        assert_eq!("POST".into_method(), Method::POST);
+        assert_eq!("QUERY".into_method().as_str(), "QUERY");
+        // An extension method no registry names is sent as written.
+        assert_eq!("PURGE".into_method().as_str(), "PURGE");
+    }
+
+    #[test]
+    fn a_typed_method_is_itself() {
+        assert_eq!(Method::PATCH.into_method(), Method::PATCH);
+        assert_eq!((&Method::DELETE).into_method(), Method::DELETE);
+    }
+
+    #[test]
+    #[should_panic(expected = "`GE T` is not a method, which is a token (RFC 9110 section 9.1)")]
+    fn a_name_that_is_not_a_token_panics() {
+        let _ = "GE T".into_method();
+    }
+
+    #[test]
+    #[should_panic(expected = "`` is not a method")]
+    fn an_empty_name_panics() {
+        let _ = "".into_method();
+    }
+
+    /// Section 9.1 makes `post` another method than `POST`, which a test
+    /// spelling it so almost never means to send.
+    #[test]
+    #[should_panic(
+        expected = "`post` is not `POST`: a method is case-sensitive (RFC 9110 section 9.1); \
+                    write `POST`, or pass `Method::from_bytes(b\"post\")` to send the \
+                    extension method `post`"
+    )]
+    fn a_registered_method_in_another_case_panics() {
+        let _ = "post".into_method();
+    }
+
+    /// The typed method stays the way to send that extension method.
+    #[test]
+    fn a_typed_method_in_another_case_is_sent_as_written() {
+        let method = Method::from_bytes(b"post").expect("a token");
+        assert_eq!(method.into_method().as_str(), "post");
+    }
 }
 
 /// Witnesses a type that crosses a task boundary, and is shared across one.
@@ -950,6 +2351,156 @@ const _: fn(&super::TestClient<()>) = |client| assert_send(&client.get("/").send
 /// shared client. Compiled, never run.
 const _: fn(&super::TestClient<()>) = |client| assert_send(&client.get("/").send_streaming());
 
+/// What a shared `Coverage` holds a client's response to: its fields and its
+/// body, as the client's own `assert_conformance` does, which only a service
+/// answering against its own description can show.
+mod shared_conformance {
+    use crate::{
+        http::{Response, StatusCode, body::Body, header::CONTENT_TYPE},
+        router::service::Service,
+        test::{Coverage, TestClient},
+    };
+
+    /// A body breaking the declared schema and a declared required header
+    /// left out are both reported from the shared record, for the client
+    /// that received them.
+    #[tokio::test]
+    #[should_panic(expected = "2 responses did not conform to the description:\n  \
+                               GET /things -> 200: the declared required header `x-trace` \
+                               was not sent\n  GET /things -> 200: ")]
+    async fn a_shared_coverage_holds_the_fields_and_body_each_client_received() {
+        let document: kynos_openapi::Document = serde_json::from_value(serde_json::json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1" },
+            "paths": { "/things": { "get": { "responses": { "200": {
+                "description": "",
+                "headers": { "x-trace": { "required": true, "schema": { "type": "string" } } },
+                "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": { "id": { "type": "integer" } }
+                } } }
+            } } } } }
+        }))
+        .expect("a description");
+        let service = Service::<()>::new(document.clone(), |_| async {
+            let mut response = Response::new(Body::from_bytes(bytes::Bytes::from_static(
+                br#"{"id":"one"}"#,
+            )));
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, "application/json".parse().unwrap());
+            *response.status_mut() = StatusCode::OK;
+            response
+        });
+        let coverage = Coverage::for_document(document);
+        TestClient::new(service)
+            .with_coverage(&coverage)
+            .get("/things")
+            .send()
+            .await;
+
+        coverage.assert_conformance();
+    }
+}
+
+/// What a `strict` client checks as each response arrives, and when.
+mod strict {
+    use crate::{
+        http::{Response, StatusCode, body::Body, header::CONTENT_TYPE},
+        router::service::Service,
+        test::TestClient,
+    };
+
+    /// A strict client of a service declaring `GET /things` as a JSON object
+    /// whose `id` is an integer, which it answers with a string `id` when
+    /// asked with the query `bad`, and every other target with a conforming
+    /// one.
+    fn client() -> TestClient<()> {
+        let document: kynos_openapi::Document = serde_json::from_value(serde_json::json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1" },
+            "paths": { "/things": { "get": { "responses": { "200": {
+                "description": "",
+                "content": { "application/json": { "schema": {
+                    "type": "object",
+                    "properties": { "id": { "type": "integer" } }
+                } } }
+            } } } } }
+        }))
+        .expect("a description");
+        let service = Service::<()>::new(document, |request| async move {
+            let body: &'static [u8] = if request.uri().query() == Some("bad") {
+                br#"{"id":"one"}"#
+            } else {
+                br#"{"id":1}"#
+            };
+            let mut response = Response::new(Body::from_bytes(bytes::Bytes::from_static(body)));
+            response
+                .headers_mut()
+                .insert(CONTENT_TYPE, "application/json".parse().unwrap());
+            *response.status_mut() = StatusCode::OK;
+            response
+        });
+        TestClient::new(service).strict()
+    }
+
+    /// The panic is the `send` that received the response: it reports that
+    /// one alone, and nothing sent after it is reached.
+    #[tokio::test]
+    #[should_panic(expected = "1 response did not conform to the description:\n  \
+                               GET /things?bad -> 200: the body does not match the declared \
+                               schema")]
+    async fn a_strict_client_panics_at_the_send_that_does_not_conform() {
+        let client = client();
+        client.get("/things").send().await;
+        client.get("/things?bad").send().await;
+        client.get("/nowhere").send().await;
+    }
+
+    /// A conforming response passes, through a view and a stream read to its
+    /// end too, and is still recorded for the client's own assertions.
+    #[tokio::test]
+    async fn a_strict_client_passes_and_records_every_conforming_response() {
+        let client = client();
+        client.get("/things").send().await.assert_status(200);
+        client.view().get("/things").send().await;
+        client.get("/things").send_streaming().await.finish().await;
+
+        client.assert_conformance();
+        client.assert_declared_responses_covered();
+    }
+
+    /// A stream's status is checked as its head arrives, before any of its
+    /// body is read.
+    #[tokio::test]
+    #[should_panic(expected = "1 response did not conform to the description:\n  \
+                               GET /nowhere -> 200: no declared path matches this request")]
+    async fn a_strict_stream_is_checked_as_its_head_arrives() {
+        let _ = client().get("/nowhere").send_streaming().await;
+    }
+
+    /// A stream dropped before its body ends is held to its head alone, as
+    /// `assert_conformance` holds it, since its octets are not all known.
+    #[tokio::test]
+    async fn a_strict_stream_dropped_before_its_end_is_held_to_its_head() {
+        let client = client();
+        drop(client.get("/things?bad").send_streaming().await);
+
+        client.assert_conformance();
+    }
+
+    /// A stream's body is checked once the stream reads it to its end.
+    #[tokio::test]
+    #[should_panic(expected = "1 response did not conform to the description:\n  \
+                               GET /things?bad -> 200: the body does not match the declared \
+                               schema")]
+    async fn a_strict_stream_is_checked_once_its_body_ends() {
+        let client = client();
+        let stream = client.get("/things?bad").send_streaming().await;
+        stream.finish().await;
+    }
+}
+
 /// How a `TestStream` reads a body that arrives in frames: what each read
 /// returns, and when the body is filed for `assert_conformance`.
 mod streaming {
@@ -963,7 +2514,7 @@ mod streaming {
             HeaderMap, HeaderValue, Method, Response, StatusCode, Uri,
             body::{Body, BoxError},
         },
-        test::{Observed, TestEvent, TestStream},
+        test::{Exchange, Observed, TestEvent, TestStream},
     };
 
     /// Frames handed out one per poll, in order.
@@ -1005,6 +2556,9 @@ mod streaming {
             read: 0,
             observed,
             record: 0,
+            coverage: None,
+            problem_base: Some("https://errors.example.com/".into()),
+            strict: None,
         }
     }
 
@@ -1139,6 +2693,32 @@ mod streaming {
         );
     }
 
+    /// A shared coverage is given the body when the client's own record is,
+    /// once it ends, so its conformance holds the same octets.
+    #[tokio::test]
+    async fn the_body_is_filed_in_a_shared_coverage_once_it_ends() {
+        let observed = record();
+        let shared = Mutex::new(vec![Exchange::Received(
+            observed.lock().unwrap()[0].clone(),
+        )]);
+        let mut stream = stream(framed("data: a\n\ndata: b\n\n", &[9]), &observed);
+        stream.coverage = Some((&shared, 0));
+        let filed = |shared: &Mutex<Vec<Exchange>>| {
+            shared.lock().unwrap()[0]
+                .received()
+                .and_then(|observed| observed.body.clone())
+        };
+
+        assert!(stream.next_event().await.is_some());
+        assert_eq!(filed(&shared), None);
+        assert!(stream.next_event().await.is_some());
+        assert_eq!(stream.next_event().await, None);
+        assert_eq!(
+            filed(&shared),
+            Some(Bytes::from_static(b"data: a\n\ndata: b\n\n"))
+        );
+    }
+
     /// `finish` returns every octet, the ones already read included, and
     /// files them.
     #[tokio::test]
@@ -1155,6 +2735,20 @@ mod streaming {
             observed.lock().unwrap()[0].body,
             Some(Bytes::from_static(FEED.as_bytes()))
         );
+    }
+
+    /// The finished response keeps the client's problem base, as a sent one
+    /// does.
+    #[tokio::test]
+    async fn finish_keeps_the_problem_base() {
+        let observed = record();
+        stream(
+            framed(r#"{"type":"https://errors.example.com/gone"}"#, &[]),
+            &observed,
+        )
+        .finish()
+        .await
+        .assert_problem_type("gone");
     }
 
     /// A body failing part-way fails the read, naming the exchange.
@@ -1316,6 +2910,17 @@ mod connected {
     async fn a_connected_client_refuses_an_idle_timeout_of_its_own() {
         let running = spawned(Server::new(answering())).await;
         let _ = TestClient::connect(&running).with_request_body_idle_timeout(None);
+    }
+
+    /// Each refusal is reported at the test's line, not inside the client.
+    #[tokio::test]
+    async fn a_connected_clients_refusal_points_at_its_caller() {
+        let running = spawned(Server::new(answering())).await;
+        let peer = address("192.0.2.7:80");
+        fails_here!(let _ = TestClient::connect(&running).with_peer(peer));
+        fails_here!(let _ = TestClient::connect(&running).get("/").peer(peer));
+        fails_here!(let _ = TestClient::connect(&running).view().peer(peer));
+        fails_here!(let _ = TestClient::connect(&running).with_request_body_idle_timeout(None));
     }
 
     #[tokio::test]

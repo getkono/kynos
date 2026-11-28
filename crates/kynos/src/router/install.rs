@@ -81,6 +81,37 @@ pub(super) fn refuse_registry_conflicts(registry: &Registry) -> Result<()> {
     Ok(())
 }
 
+/// Each example a `#[schema(string)]` type lists and does not carry, as the
+/// violation located at it.
+pub(super) fn refused_examples(
+    registry: &Registry,
+) -> impl Iterator<Item = Violation<RouterError>> + '_ {
+    registry
+        .example_refusals()
+        .iter()
+        .map(|(location, error)| error_at(location.as_str(), error.clone()))
+}
+
+/// What the parameters of the `method` operation at the `paths` key `path`
+/// recorded wrong on `registry`, as violations located at the operation, taken
+/// so the next operation starts from none.
+pub(super) fn refused_params(
+    registry: &mut Registry,
+    path: &str,
+    method: kynos_openapi::Method,
+) -> Vec<Violation<RouterError>> {
+    let operation = format!(
+        "{}/{}",
+        path_location(path),
+        method.as_wire_str().to_lowercase()
+    );
+    registry
+        .take_parameter_refusals()
+        .into_iter()
+        .map(|error| error_at(operation.as_str(), error))
+        .collect()
+}
+
 /// The visibly placeholder `info` block a router that declared none emits.
 pub(super) fn placeholder_info() -> Info {
     Info::new("API", "0.0.0")
@@ -264,7 +295,7 @@ pub(super) fn install_preflight<C: Send + Sync + 'static>(
 
         entry.operations.push(dispatch::Served {
             method: kynos_openapi::Method::Options,
-            operation_id: String::new(),
+            matched: dispatch::Matched::intern(&entry.matched, None),
             terminal: Arc::new(dispatch::PreflightTerminal::new(preflight)),
             interceptors: Vec::new(),
             catch_panics: false,

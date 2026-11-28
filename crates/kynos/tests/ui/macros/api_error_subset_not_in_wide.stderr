@@ -1,16 +1,16 @@
-error[E0599]: no variant, associated function, or constant named `__KYNOS_PROBLEM_STATUSES_Gone` found for enum `ChunkRejection` in the current scope
+error[E0599]: no variant, associated function, or constant named `__KYNOS_PROBLEM_VARIANT_Gone` found for enum `ChunkRejection` in the current scope
   --> tests/ui/macros/api_error_subset_not_in_wide.rs:29:5
    |
 11 | enum ChunkRejection {
-   | ------------------- variant, associated function, or constant `__KYNOS_PROBLEM_STATUSES_Gone` not found for this enum
+   | ------------------- variant, associated function, or constant `__KYNOS_PROBLEM_VARIANT_Gone` not found for this enum
 ...
 29 |     Gone,
    |     ^^^^ variant, associated function, or constant not found in `ChunkRejection`
    |
-help: there is an associated constant `__KYNOS_PROBLEM_STATUSES_Conflict` with a similar name
+help: there is an associated constant `__KYNOS_PROBLEM_VARIANT_Conflict` with a similar name
    |
 29 -     Gone,
-29 +     __KYNOS_PROBLEM_STATUSES_Conflict,
+29 +     __KYNOS_PROBLEM_VARIANT_Conflict,
    |
 
 error[E0599]: no variant named `Gone` found for enum `ChunkRejection`

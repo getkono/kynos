@@ -42,7 +42,28 @@ use proc_macro::TokenStream;
 ///
 /// Accepts `operation_id = "..."` and `tag = SomeTag` after the path. The tag
 /// becomes `EndpointMeta::TAGS` and may be named once; `Router::tag`,
-/// `Group::tag` and `EndpointBuilder::tag` add the rest.
+/// `Group::tag` and `EndpointBuilder::tag` add the rest. Without
+/// `operation_id` the handler's name is the `operationId`, which
+/// `Router::operation_id_case` may recase; a written one is published as
+/// written.
+///
+/// `head` describes the `HEAD` this `GET` already answers (RFC 9110 section
+/// 9.3.2) as an operation of its own, so a generated client can call it
+/// without a second handler: the `GET`'s operation with no response carrying
+/// content or range handling, its headers kept, run by this handler, as
+/// `EndpointBuilder::describe_head` says. A bare `head` names it
+/// after the handler, `get_file` describing `head_file` and any other name `n`
+/// describing `head_n`; beside an explicit `operation_id` it must be named,
+/// with `head = "headFile"`. Only `GET` takes it, and a path that also declares
+/// a `#[kynos::head]` operation refuses to build.
+///
+/// ```ignore
+/// /// Download one file.
+/// #[kynos::get("/files/{id}", head)]
+/// async fn get_file(Path(id): Path<FileId>, conditions: Conditions) -> Delivery<OctetStream> {
+///     todo!()
+/// }
+/// ```
 #[proc_macro_attribute]
 pub fn get(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("GET", attribute, item)
@@ -75,8 +96,9 @@ pub fn delete(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// Declares a `HEAD` operation. See [`macro@get`] for the syntax.
 ///
 /// Rarely needed: a `HEAD` is answered from the corresponding `GET` unless one
-/// is declared, per RFC 9110. Declare it only when the description should say
-/// so explicitly.
+/// is declared, per RFC 9110, and the `GET`'s `head` argument describes that
+/// one (see [`macro@get`]). Declare it only when the `HEAD` should run a
+/// handler of its own.
 #[proc_macro_attribute]
 pub fn head(attribute: TokenStream, item: TokenStream) -> TokenStream {
     route::expand("HEAD", attribute, item)
@@ -180,6 +202,8 @@ pub fn public(attribute: TokenStream, item: TokenStream) -> TokenStream {
 /// ```ignore
 /// Router::new().mount(routes![users::list, users::create, users::get]);
 /// ```
+///
+/// It takes any number of operations, so one list holds a whole service's.
 ///
 /// `.intercept(..)` after an operation scopes an interceptor to that operation
 /// alone, as `EndpointBuilder::intercept` does: the first call is the
@@ -297,7 +321,11 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// `const` is the struct's serde name: its container `rename`, the serialize
 /// side where the rename is split, otherwise its identifier, which `rename_all`
 /// does not reach. It carries no `discriminator`, a struct having no branches
-/// to tell apart, and a `transparent` struct writes no tag. A tuple is the
+/// to tell apart, and a `transparent` struct writes no tag. A type whose
+/// schema names a tag, an internally or adjacently tagged enum or a tagged
+/// named struct, also implements
+/// [`SerdeTagged`](https://docs.rs/kynos/latest/kynos/schema/trait.SerdeTagged.html),
+/// carrying the same names. A tuple is the
 /// array of the members serde does not skip both ways, and a newtype variant
 /// whose member serde skips is the unit variant serde writes, provided serde
 /// also reads it back. A newtype, and each
@@ -407,9 +435,10 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// or a parameter field decodes into answers with it — its `type`, and the
 /// title, status and detail it names. The value is any expression of type
 /// `kynos::schema::constraints::ConstraintProblem`, typically a `const` from
-/// the application's problem catalogue. It is the only key a type's
-/// `#[schema(...)]` takes, and is taken once; a bound written on the type is
-/// refused, since it goes on the field whose value it holds.
+/// the application's problem catalogue. It is taken once. Beside `string`,
+/// below, it is the only key a type's `#[schema(...)]` takes; any other bound
+/// written on the type is refused, since it goes on the field whose value it
+/// holds.
 ///
 /// ```ignore
 /// mod problems {
@@ -429,6 +458,49 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///     magnet: String,
 /// }
 /// ```
+///
+/// `#[schema(string)]` on the type describes it as the one string its
+/// `Display` writes and its `FromStr` reads, such as an identifier wrapping a
+/// structured value: `type: string` under the type's prose and component name,
+/// whatever it declares. It requires both traits, reported at the key. Beside
+/// it, the type's `#[schema(...)]` takes the text's `min_length`, `max_length`,
+/// `pattern`, `content_encoding` and `content_media_type`, under the field
+/// grammar's rules, and `examples("...", ...)`. The bounds are described and
+/// checked on the text `Display` writes for the decoded value, so a `FromStr`
+/// that normalizes is bounded on what it normalizes to. An example `FromStr`
+/// refuses, or whose value breaks the bounds, is a `StringExample` violation
+/// located at it, so the router refuses to build rather than mislead a reader.
+/// `format = "..."` names the format the text is in, such as `uuid`: refused on
+/// a field, whose type makes that claim, it is the type's own claim here,
+/// which its `FromStr` enforces, and any non-empty name is taken, as JSON
+/// Schema allows a format it does not define. No member is
+/// described, so a member's `#[schema(...)]`, a type or const parameter, and a
+/// derived kind are not either.
+///
+/// ```ignore
+/// /// A title reference, `<provider>:<id>`.
+/// #[derive(kynos::Schema, kynos::ParamValue, serde::Serialize, serde::Deserialize)]
+/// #[schema(string, min_length = 3, examples("tmdb:550"))]
+/// #[serde(into = "String", try_from = "String")]
+/// struct TitleRef(MediaId); // with `FromStr`, `Display` and both conversions
+/// ```
+///
+/// serde must carry the type as that string. A `#[serde(...)]` attribute
+/// anywhere on the type belongs to a serde derive, which writes the
+/// declaration unless the type converts through the text, so it is refused
+/// unless the type carries `into = "String"` and `from` or `try_from =
+/// "String"`; `transparent`, and a conversion through any other type, are
+/// refused outright. `Serialize` and `Deserialize` written by hand, through
+/// `serializer.collect_str(self)` and `FromStr`, need no attribute. A serde
+/// derive carrying no attribute at all is invisible to this derive, since Rust
+/// hands a derive its item without the `#[derive(...)]` attributes before it,
+/// and writes a newtype as its member and any other struct as an object. So
+/// each example is also put through the type's own serde where it has it:
+/// `Serialize` must write the value `FromStr` reads as the JSON string its
+/// `Display` writes, and `Deserialize` must read the example as a JSON
+/// string, or the example is a `StringExample` violation. A type listing no
+/// example has nothing to put through serde, so list one. A parameter group's
+/// derive refuses `string`.
 ///
 /// A concrete type takes its identifier as its component name, and a field
 /// referring back to it is a `$ref`. A generic type's instantiation takes its
@@ -502,8 +574,9 @@ pub fn assets(item: TokenStream) -> TokenStream {
 /// - `#[serde(into = ...)]`, `from` or `try_from` on the type itself, struct or
 ///   enum. serde then writes or reads the type they name, which the declared
 ///   fields or variants no longer predict. Implement `Schema` by hand, describing
-///   the type serde converts through. `#[serde(remote = ...)]` is accepted,
-///   since its fields mirror the type it names.
+///   the type serde converts through, or add `#[schema(string)]` where that
+///   type is `String`. `#[serde(remote = ...)]` is accepted, since its fields
+///   mirror the type it names.
 /// - `#[serde(transparent)]` on a struct serde writes through one field and
 ///   reads through another. serde writes through the field without `skip` or
 ///   `skip_serializing` and reads through the field without `skip`,
@@ -607,6 +680,15 @@ pub fn assets(item: TokenStream) -> TokenStream {
 ///   `field_identifier` or `variant_identifier` enum's container rule is not
 ///   refused: serde only reads the enum, so its deserialize side names every
 ///   variant.
+/// - A parameter group's `#[param(flatten)]` on a field serde reads nested,
+///   lacking serde's own `flatten`, and its `#[param(default = ...)]` on a
+///   field serde requires, lacking serde's own `default` on the field or its
+///   struct, where the group implements `DeserializeOwned`: `Query<T>` would
+///   read the group one way and `QueryString<T>`, which this derive
+///   describes, another. Say each to serde too; serde's default names a
+///   function, so returning the same value is the application's to keep. A
+///   group with no serde, which no `QueryString<T>` reads, and a generic one
+///   are not refused.
 #[proc_macro_derive(Schema, attributes(schema))]
 pub fn derive_schema(item: TokenStream) -> TokenStream {
     derive::run_typed(item, derive::schema::expand_inner)
@@ -678,8 +760,29 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// error at `default` in a crate declaring none. A type without `base` stays
 /// at `about:blank`.
 ///
+/// Under `base`, a variant, or a struct, publishes its kebab-cased name, a raw
+/// identifier's `r#` dropped, or the `slug` it names, so two failures can share
+/// one type URI without either restating the prefix:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// #[error("this post was removed")]
+/// #[problem(base = PROBLEM_BASE, slug = "removed", status = 409, title = "Removed")]
+/// struct RemovedConflict;
+/// ```
+///
+/// A `slug` is joined verbatim, as `kynos::problem_type!` joins one, so it is
+/// written in URI path characters, percent-encoded, as `/`-separated segments
+/// none of which is empty or a dot segment, since `base` carries the separator
+/// and a client resolving `.` or `..` reads another URI. Beside `type`, which names
+/// the whole URI, on an enum rather than its variants, or on a type with no
+/// `base` to hang it under, it is a compile error rather than dropped. The
+/// kebab-cased name is held to the same rule, so a non-ASCII name needs a
+/// `slug`.
+///
 /// The error's `Display` supplies each problem's `detail`, so `thiserror`'s `#[error("...")]` is the sentence an API consumer receives.
-/// A type without a `Display` is rejected at the derive.
+/// A type declaring a failure of its own without a `Display` is rejected at
+/// the derive; one whose every variant is transparent reads none.
 ///
 /// With the `trace` feature, a failure declaring a 5xx is logged as it is
 /// turned into a response: one `ERROR` event on the `kynos::error` target with
@@ -803,6 +906,74 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// refused, since the held error's would replace it. A held type that is no
 /// `ApiError` is reported as such, naming both ways out.
 ///
+/// An enum of held errors alone says `#[problem(transparent)]` once, on the
+/// enum, and needs no `thiserror`: every variant is transparent, and the
+/// derive implements `Display` delegating to the error each holds, and
+/// `std::error::Error` whose `source` is that error's own, as `thiserror`'s
+/// `#[error(transparent)]` would:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(transparent)]
+/// enum AddItemError {
+///     ListNotFound(ListNotFound),
+///     Internal(Internal),
+/// }
+/// ```
+///
+/// The enum must then be `Debug` and each held error an `Error`; one that is
+/// not, such as a refusal Kynos ships, is held by a variant marked
+/// `transparent` instead. A variant saying `transparent` again or taking a
+/// `variant_of`, and an `#[error(...)]`, which would implement `Display` and
+/// `Error` a second time, are refused; an `Error` written by hand beside it
+/// conflicts with the derive's. A struct has no variant to hand over, so takes
+/// no `transparent`.
+///
+/// `from` beside a variant's `transparent`, or on a variant `#[error(transparent)]`
+/// makes transparent, generates `From` the error it holds, so `?` carries that
+/// error in; beside `transparent` on the enum, every variant's:
+///
+/// ```ignore
+/// #[derive(Debug, ApiError)]
+/// #[problem(transparent, from)]
+/// enum AddItemError {
+///     ListNotFound(ListNotFound),
+///     Internal(Internal),
+/// }
+/// ```
+///
+/// It is refused on a variant that is not transparent, on an enum that is not
+/// transparent whole, beside `thiserror`'s `#[from]`, which implements the
+/// same `From`, and on two variants holding one type.
+///
+/// A status's description joins the `title` of every variant answering with
+/// it, in declaration order. An enum writes its own with `describe`, which
+/// leaves each variant's `title` on the wire and on its branch of the schema:
+///
+/// ```ignore
+/// #[derive(Debug, thiserror::Error, ApiError)]
+/// #[problem(describe(403 = "The request's origin is not allowed"))]
+/// enum OriginRejected {
+///     #[error("cross-origin request rejected")]
+///     #[problem(status = 403, title = "Cross-origin request rejected")]
+///     CrossOrigin,
+///
+///     #[error("malformed Origin header")]
+///     #[problem(status = 403, title = "Malformed Origin header")]
+///     Malformed,
+/// }
+/// ```
+///
+/// It is what the whole enum says of the status, so it replaces what a
+/// transparent variant's held error would join to it, and may describe a
+/// status only that error answers with; a subset of the enum is described by
+/// it too. Each status is written once and says something, and one no variant
+/// answers with is refused, at the derive or, where only a held error could
+/// answer with it, in a `const`. A struct has no `describe`: its `title` is its
+/// status's description. Where another type on the same operation answers with
+/// the status too, the two descriptions join, each saying what its own
+/// failures mean.
+///
 /// An operation that fails only some of a derived enum's ways returns a
 /// subset of it, so it declares no status it cannot send:
 ///
@@ -824,6 +995,13 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// declares only its variants' statuses, each described as the wider enum
 /// describes the variants it keeps. The wider enum is a derived `ApiError`
 /// enum, a subset included, and cannot name the subset's generic parameters.
+///
+/// A helper's failure shared by several operations' enums is a subset of
+/// each: `#[problem(subset_of = (PutEntryError, LogPlaysError))]` generates
+/// `From` into every enum listed, each once. It answers and is described as
+/// the first, and each variant must answer with the same statuses in every
+/// enum listed, which a `const` asserts, so where it is converted to cannot
+/// change what it declares.
 ///
 /// One variant shared with a wider enum, in an enum that also fails its own
 /// ways, says `#[problem(variant_of = Wide::Variant)]`:
@@ -852,6 +1030,26 @@ pub fn name_instantiation(item: TokenStream) -> TokenStream {
 /// `Error = Wide`, over every variant taken from `Wide` this way, handing any
 /// other wider value back unchanged; two variants taking one wider variant
 /// are refused.
+///
+/// The type URI each failure carries is published, so nothing retypes it. A
+/// struct naming one, through `type` or `base`, implements
+/// `kynos::error::problem::ProblemType` with it, for a test and an
+/// interceptor's refusal alike:
+///
+/// ```ignore
+/// assert_eq!(body["type"], QuotaExceeded::TYPE_URI.unwrap());
+/// let limit = BodySize::new(MAX_BYTES).problem_type::<PayloadTooLarge>();
+/// ```
+///
+/// A struct naming none sends `about:blank` and implements no `ProblemType`.
+/// An enum has `const fn type_uri(&self) -> Option<&'static str>`: the
+/// variant's URI, `about:blank` for one naming none, `None` for a transparent
+/// variant, whose held error names it, and the wider variant's for a subset
+/// or a `variant_of` variant. The derive owns both, so the URI has one
+/// source: a hand-written `ProblemType` on a struct naming a `type` or
+/// `base` conflicts with the derived impl, and an inherent `type_uri` on a
+/// derived enum with the derived method. Delete the impl, or rename the
+/// method.
 ///
 /// Also emits the `IntoResponse` and `Responses` implementations, so the
 /// statuses the error produces and the description advertises cannot diverge.
@@ -916,7 +1114,8 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 
 /// Makes a field-less enum or a newtype a `kynos::schema::ParamValue`,
 /// emitting its `Display` and `FromStr`: an enum's from the variant names the
-/// [`Schema`](macro@Schema) derive publishes, a newtype's through its field.
+/// [`Schema`](macro@Schema) derive publishes, with its `UnitEnum` listing
+/// them, and a newtype's through its field.
 ///
 /// ```ignore
 /// #[derive(Serialize, Deserialize, Schema, ParamValue)]
@@ -936,6 +1135,13 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// serde never writes, `Display`s each variant under the name serde reads it
 /// by, the deserialize side of a split `rename` or `rename_all`.
 ///
+/// The enum is also a `kynos::schema::UnitEnum`, imported by that path since
+/// `kynos::prelude` leaves it out: `as_str()` returns the `&'static str`
+/// `Display` writes, and `Phase::VARIANTS` lists every variant in declaration
+/// order. A trait rather than inherent items, so an `as_str` or `VARIANTS` the
+/// enum declares itself still compiles, and code that does not import the
+/// trait resolves exactly as before.
+///
 /// Every serde attribute the `Schema` derive refuses is refused here too, so
 /// the names a decoder reads are never ones that derive would not publish.
 ///
@@ -950,6 +1156,11 @@ pub fn derive_reply(item: TokenStream) -> TokenStream {
 /// #[derive(Clone, Copy, Schema, ParamValue)]
 /// struct PageLimit(#[schema(maximum = 1000)] u32);
 /// ```
+///
+/// A type carrying `#[schema(string)]` keeps the `FromStr` and `Display` it
+/// already implements, which its `Schema` derive requires, so only the
+/// `ParamValue` impl is emitted, whatever it declares, and none of the
+/// refusals below applies: its text is its own.
 ///
 /// # Rejected, because a parameter is one value
 ///
@@ -1012,6 +1223,84 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// `kynos::extract::params::querystring::QueryString<T, M>` describes the whole
 /// query string under `openapi32`.
 ///
+/// A field typed `Vec<T>`, recognised syntactically as `Option` is, is the one
+/// parameter of several values, each `T` a `ParamValue`: described as an array
+/// of `T` with `style: form`, read from every pair naming it
+/// (`tag=a&tag=b`, `explode: true`), or under `#[param(explode = false)]` from
+/// one pair whose items are split at each literal comma before they are
+/// percent-decoded (`tag=a,b`), so an item holding `%2C` keeps its comma. No
+/// pair is the empty list, which RFC 6570 writes as nothing, so a list is
+/// `required: false` unless its `#[schema(min_items = ...)]` is at least 1, and
+/// an `Option<Vec<T>>`, whose `Some(vec![])` no query string carries, is
+/// refused. An item that does not decode is refused naming its index, as
+/// `item 1: ...`, and one breaking its type's bounds at the pointer `/1`; the
+/// field's own bounds are the array's, such as `max_items`.
+///
+/// ```ignore
+/// #[derive(kynos::QueryParams)]
+/// struct Search {
+///     /// `?diet=vegan&diet=gluten-free`
+///     diet: Vec<Diet>,
+///     /// `?cuisine=thai,korean`
+///     #[param(explode = false)]
+///     cuisine: Vec<Cuisine>,
+/// }
+/// ```
+///
+/// A field one value under `#[param(default = ...)]` binds that value when no
+/// pair names it, so it is the plain type rather than an `Option`, and is
+/// described `required: false` with the value as its schema's `default`,
+/// written by its `Display` and typed as the schema types it. The value is a
+/// literal, typed by the field, or a path such as a `const` or a unit
+/// variant; a string literal or a path converts through the field type's
+/// `From`. A default breaking the field's bounds, or its type's, is a
+/// `RouterError::ParameterDefault` violation when the router is built. It is
+/// refused on an `Option`, which would never be `None`, and on a list, whose
+/// absence is already its emptiness.
+///
+/// ```ignore
+/// const DEFAULT_LIMIT: u32 = 50;
+///
+/// #[derive(kynos::QueryParams)]
+/// struct Page {
+///     /// Absent: 50.
+///     #[param(default = DEFAULT_LIMIT)]
+///     #[schema(minimum = 1, maximum = 200)]
+///     limit: u32,
+///     #[param(default = false)]
+///     deleted: bool,
+/// }
+/// ```
+///
+/// A field under `#[param(flatten)]` holds another query group, whose
+/// parameters become this group's in the field's place: decoded from the same
+/// query string by that group's own `DecodeQuery`, with its own defaults,
+/// bounds, refusals and rejection problem, described by its own
+/// `QueryParams::parameters` and written by its own `EncodeQuery`. A
+/// flattened group may flatten others, and a group may be generic over the
+/// group it flattens; each impl is bounded on the field's type implementing
+/// the trait it delegates to. `flatten` stands alone: another `#[param]` key,
+/// a `#[schema(...)]` bound or an `Option` around the group is refused, since
+/// the group's own fields say each parameter's name, default, carriage and
+/// bounds. A name a flattened group shares with this group, or with another
+/// group it flattens, is a `RouterError::DuplicateQueryParameter` violation
+/// when the router is built, since only the flattened group knows its names.
+///
+/// ```ignore
+/// #[derive(kynos::QueryParams)]
+/// struct ListEntries {
+///     #[param(flatten)]
+///     page: Page,
+///     status: Option<EntryStatus>,
+/// }
+/// ```
+///
+/// A group that also derives [`Schema`](macro@Schema) and serde's
+/// `Deserialize`, to be read as a `QueryString<T>` too, says each of these to
+/// serde as well: the `Schema` derive refuses a `default` whose field serde
+/// would require, and a `flatten` serde would read nested, so the two
+/// extractors cannot read one group differently.
+///
 /// A field's wire name is its `#[param(rename)]`, else serde's `rename`, else
 /// its identifier under the struct's `rename_all`, cased as the
 /// [`Schema`](macro@Schema) derive cases a property, so a field no Kynos
@@ -1027,6 +1316,9 @@ pub fn derive_path_params(item: TokenStream) -> TokenStream {
 /// A declared parameter whose percent-decoded value is not UTF-8 is refused
 /// with the group's `QueryRejection`, naming it, as a value that fails to parse
 /// is; a parameter the group does not declare is ignored, whatever its octets.
+/// A declared parameter named by more than one pair is refused the same way,
+/// a delimited list included, since a field carries one value and keeping
+/// either would guess at which.
 ///
 /// The parameter derives read `#[schema(...)]` as the [`Schema`](macro@Schema)
 /// derive does, and register it themselves, so a group carries bounds with
@@ -1101,12 +1393,27 @@ pub fn derive_query_params(item: TokenStream) -> TokenStream {
 /// }
 /// ```
 ///
+/// `value` is a string literal, or a path to a `&str` constant the application
+/// already defines, so the value is stated once:
+///
+/// ```ignore
+/// pub const API_VERSION: &str = "2026-11-01";
+///
+/// #[derive(HeaderParams)]
+/// struct Versioned {
+///     #[header(rename = "X-Api-Version", value = API_VERSION)]
+///     version: (),
+/// }
+/// ```
+///
 /// It is written as that value, read only where a request carries exactly that
 /// value, octet for octet, else refused as `HeaderRejection::Invalid`, and
 /// described as a string whose `const` is that value. The value is printable
-/// ASCII with no leading or trailing whitespace, checked at the derive; a
-/// `()` field without one, a `value` on any other type, and a
-/// `#[schema(...)]` bound beside one are refused.
+/// ASCII with no leading or trailing whitespace: a literal is checked at the
+/// derive, and a constant by a `const` assertion the derive emits, a compile
+/// error at the path either way. Any other expression, a `()` field without a
+/// `value`, a `value` on any other type, and a `#[schema(...)]` bound beside
+/// one are refused.
 ///
 /// # Undescribed groups
 ///
@@ -1288,6 +1595,84 @@ pub fn derive_tag(item: TokenStream) -> TokenStream {
 #[proc_macro_derive(SecurityScheme, attributes(security))]
 pub fn derive_security_scheme(item: TokenStream) -> TokenStream {
     derive::run(item, derive::security_scheme::expand_inner)
+}
+
+/// Names each variant of a field-less enum as one
+/// `kynos::security::Scope`.
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Serialize, Deserialize, Scope)]
+/// #[serde(rename_all = "snake_case")]
+/// enum Grant {
+///     ReadReports, // "read_reports"
+///     #[serde(rename = "admin:all")]
+///     Admin,
+/// }
+/// ```
+///
+/// A scope's name is the one serde writes the variant under, read as the
+/// `Schema` and `ParamValue` derives read it, so on an enum deriving serde the
+/// scopes a configuration parses are the ones a description and a token
+/// carry. Without a serde attribute that is the variant's identifier, `r#`
+/// stripped, as derived serde's is.
+/// An enum serde does not name says the same with its own attribute:
+///
+/// ```ignore
+/// #[derive(Clone, Copy, Scope)]
+/// #[scope(rename_all = "snake_case")]
+/// enum Grant {
+///     ReadReports, // "read_reports"
+///     #[scope(rename = "admin:all")]
+///     Admin,
+/// }
+/// ```
+///
+/// `rename_all` takes the styles serde's does. Either key is refused on an
+/// enum implementing `Serialize` or `DeserializeOwned`, derived or written by
+/// hand, as `rename` is under `#[serde(rename_all)]`, since a second name for a
+/// scope would be one serde does not read. Without a key, an enum whose serde
+/// is written by hand still derives, under its identifiers, which the derive
+/// cannot compare with the names that implementation writes and reads; such
+/// an enum implements `Scope` by hand to match them. Refused too: a struct or
+/// a union, a generic enum, on which that check cannot resolve, a variant
+/// with fields, a name that is not an RFC 6749 section 3.3 `scope-token`
+/// (empty, or holding a space, `"` or `\`, which a token's space-separated
+/// `scope` list cannot carry), and two variants naming one scope. `Clone`,
+/// `Send` and `Sync` are the enum's to derive, as the trait requires them.
+#[proc_macro_derive(Scope, attributes(scope))]
+pub fn derive_scope(item: TokenStream) -> TokenStream {
+    derive::run(item, derive::scope::expand_inner)
+}
+
+/// Declares a unit struct as a `kynos::security::auth::Scopes` set.
+///
+/// ```ignore
+/// kynos::problem_base!("https://errors.example.com/");
+///
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
+///
+/// #[derive(Scopes)]
+/// #[scopes(Grant::ReadReports, Grant::Audit)]
+/// struct Auditor;
+///
+/// #[derive(Scopes)]
+/// #[scopes(Grant::Admin, forbidden = INSUFFICIENT_SCOPE)]
+/// struct Admin;
+/// ```
+///
+/// Each scope is written as `Type::Variant`, or `Type::CONST`, and the set's
+/// `Scope` type is the path before the last segment, so every scope a set
+/// lists is of one type and a set over another than its scheme's does not
+/// compile. A bare name is refused, as is a set listing no scope (an
+/// operation demanding none takes `Auth<S>`) and a scope listed twice.
+///
+/// `forbidden` is the set's `FORBIDDEN_TYPE`: any `&'static str` expression,
+/// typically the `const` an authorizer also passes to
+/// `AuthRejection::forbidden_as`, so the 403 the set declares and the one the
+/// authorizer sends are named by one item. Without it the set names none.
+#[proc_macro_derive(Scopes, attributes(scopes))]
+pub fn derive_scopes(item: TokenStream) -> TokenStream {
+    derive::run(item, derive::scopes::expand_inner)
 }
 
 /// Declares an application context, emitting one `Provides` implementation per

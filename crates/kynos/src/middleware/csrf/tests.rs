@@ -235,6 +235,37 @@ fn a_trusted_origin_does_not_trust_anything_beneath_it() {
     ));
 }
 
+/// `trusting_origins` adds to the list rather than replacing it: every origin
+/// named by either form, in any call, is trusted, and nothing else is.
+#[test]
+fn trusting_origins_accumulates_with_every_earlier_call() {
+    let csrf = Csrf::new()
+        .trusting_origin("https://a.example")
+        .trusting_origins(["https://b.example", "https://c.example"])
+        .trusting_origins(vec![String::from("https://d.example")]);
+    let from = |origin| {
+        permits(
+            &csrf,
+            &Method::POST,
+            &[
+                ("sec-fetch-site", "cross-site"),
+                ("origin", origin),
+                ("host", "api.example.com"),
+            ],
+        )
+    };
+
+    for trusted in [
+        "https://a.example",
+        "https://b.example",
+        "https://c.example",
+        "https://d.example",
+    ] {
+        assert!(from(trusted), "{trusted}");
+    }
+    assert!(!from("https://e.example"));
+}
+
 /// A version-2 request states its authority on the target, not in a field.
 ///
 /// RFC 9113 section 8.3.1 replaces `Host` with the `:authority` pseudo-header,

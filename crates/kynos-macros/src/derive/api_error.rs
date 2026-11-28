@@ -2,12 +2,20 @@
 //!
 //! ```text
 //! #[problem( base = <prefix> )]                    on the type, optional
+//! #[problem( describe( <code> = "<text>" [, <code> = "<text>"]* ) )]
+//!                                                  on an enum, optional
 //! #[problem( subset_of = <type> )]                 on an enum, alone, instead of
-//!                                                  every list below it
+//!                                                  every list below it; or
+//!                                                  `( <type> [, <type>]* )`, each
+//!                                                  once, answering as the first
+//! #[problem(transparent)]                          on an enum, instead of each
+//!                                                  variant's, which displays as it
 //! #[problem( <member> [, <member>]* )]             on each variant, or on a struct
 //! #[problem(transparent)]                          on a one-field variant, instead;
 //!                                                  implied by `#[error(transparent)]`
 //!                                                  on a variant with no `status`
+//! #[problem(from)]                                 on a transparent variant, or
+//!                                                  beside `transparent` on an enum
 //! #[problem( variant_of = <path>::<variant> )]     on a variant, alone, instead
 //! #[problem(extension)]                            on a named field, optional
 //! #[problem(headers)]                              on one field, optional
@@ -19,6 +27,7 @@
 //! member := status = <400..=599>                   required, exactly once
 //!         | title = "<human-readable summary>"
 //!         | type = "<absolute URI>"
+//!         | slug = "<URI path>"                    under `base`, never beside `type`
 //!         | extension( <name> = <value> [, <name> = <value>]* )
 //! value  := <string, number or boolean literal>
 //!         | <path to a `const` whose type is `Serialize`>
@@ -29,8 +38,15 @@
 //!
 //! `status` is read once into `statuses()`, the `ShortCircuit` const and the
 //! `Responses` keys, so the three agree. `base` is the prefix a variant without
-//! its own `type` hangs its slug under; a literal is joined here, a `const`
-//! in the expansion's own `const` items. `detail` comes from `Display`.
+//! its own `type` hangs its slug under, its `slug` or else its kebab-cased
+//! name; a literal is joined here, a `const` in the expansion's own `const`
+//! items. A `slug` with no `base` to hang under is refused rather than dropped:
+//! `base = default` is written out, so its absence is known here. `detail` comes from `Display`.
+//!
+//! A struct naming a type URI implements `ProblemType` with it, and an enum
+//! publishes each value's through `type_uri`, as [`type_uri`] says.
+//!
+//! `describe` writes a status's description as [`written`] says.
 //!
 //! An `extension` field is sent through `kynos::__private::problem::to_member`,
 //! its type's `Serialize`, and declared by its type's `Schema` on its failure's
@@ -65,7 +81,8 @@
 //! so the headers the held error sends reach the wire. Each is read through
 //! `kynos::__private::problem::HeldError`, so a held type that is no
 //! `ApiError` is reported as that, at the field, rather than once per trait
-//! each use needs.
+//! each use needs. What makes a variant transparent, and what else the held
+//! error gives the enum, is [`transparent`]'s.
 //!
 //! A `subset_of` enum's variants are some of the derived enum `<type>` names,
 //! by name and fields; it converts into that enum and answers and is described
@@ -82,12 +99,16 @@ mod describe;
 mod emit;
 mod fields;
 mod outcomes;
+mod slug;
 mod subset;
+mod transparent;
+mod type_uri;
 mod variant_of;
+mod written;
 
-use proc_macro2::TokenStream as TokenStream2;
-use quote::{ToTokens, quote, quote_spanned};
-use syn::{Data, DeriveInput, ExprPath, Ident, Member, Type, ext::IdentExt, spanned::Spanned};
+use proc_macro2::{Span, TokenStream as TokenStream2};
+use quote::quote;
+use syn::{Data, DeriveInput, Ident, Member, Type, ext::IdentExt, spanned::Spanned};
 
 use args::{Constant, Position, parse_problem};
 use describe::responses;
@@ -125,20 +146,10 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         .collect();
     let statuses = distinct_statuses(&failures);
     let codes = codes(&outcomes, &statuses);
-    let name = &input.ident;
-    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
-
-    // `detail` comes from `Display`; asserted here rather than bounded so the
-    // diagnostic lands on the error type, not the handler returning it.
-    let display = quote! {
-        const _: () = {
-            #[allow(dead_code)]
-            fn detail_comes_from_display #impl_generics () #where_clause {
-                fn is_display<T: ::core::fmt::Display + ?::core::marker::Sized>() {}
-                is_display::<#name #ty_generics>();
-            }
-        };
-    };
+    let described = args.described.as_ref();
+    let answered = written::answered(input, described, &statuses, &delegates, &codes)?;
+    let described = described.map_or(&[][..], |(described, _)| described);
+    let display = transparent::display(input, args.transparent.is_some(), &failures, &delegates);
 
     let problem = into_problem(&failures, &delegates);
     let response = into_response(&failures, &delegates);
@@ -153,11 +164,15 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
                     .variant
                     .clone()
                     .expect("an enum's failures are its variants");
-                (variant, quote!(&[#status]))
+                (variant, quote!(&[#status]), type_uri::declared(failure))
             }
-            Outcome::Transparent(delegate) => (delegate.variant.clone(), delegate.statuses()),
+            Outcome::Transparent(delegate) => (
+                delegate.variant.clone(),
+                delegate.statuses(),
+                delegate.type_uri(),
+            ),
         });
-        let body = responses(&failures, &statuses, &delegates, true);
+        let body = responses(&failures, &statuses, &delegates, described, true);
         (
             quote!(Self::__kynos_problem_responses(
                 registry,
@@ -167,20 +182,25 @@ pub(crate) fn expand_inner(input: &DeriveInput) -> syn::Result<TokenStream2> {
         )
     } else {
         (
-            responses(&failures, &statuses, &delegates, false),
+            responses(&failures, &statuses, &delegates, described, false),
             TokenStream2::new(),
         )
     };
 
     let impls = impls(input, &problem, &response, &responses, &codes);
+    let problem_type = type_uri::problem_type(input, &failures);
     let back = variant_of::conversions_back(input, &delegates)?;
+    let from = transparent::conversions(input, &delegates)?;
 
     // `Responses` and `into_problem` come from the same declarations.
     Ok(quote! {
         #display
+        #answered
         #impls
+        #problem_type
         #handles
         #back
+        #from
     })
 }
 
@@ -269,6 +289,8 @@ struct Transparent {
     /// For `variant_of`, the wider variant, whose statuses and description
     /// are its own rather than the whole wider enum's.
     of: Option<Ident>,
+    /// Where `from` asks for `From` the held error, its own or its enum's.
+    from: Option<Span>,
 }
 
 impl Transparent {
@@ -280,6 +302,7 @@ impl Transparent {
             held: quote!(inner),
             ty,
             of: None,
+            from: None,
         }
     }
 }
@@ -306,7 +329,7 @@ struct Failure {
     retry_after: Option<Box<HeaderField>>,
 
     status: u16,
-    type_uri: Option<TypeUri>,
+    type_uri: Option<type_uri::TypeUri>,
     title: Option<String>,
 
     /// The prose a reader already wrote, used where no `title` was given.
@@ -345,43 +368,5 @@ impl Failure {
         let path = &self.path;
         let bindings = self.extensions.iter().map(|extension| &extension.name);
         quote!(#path { #(#bindings,)* .. })
-    }
-}
-
-/// A failure's type URI, as the `&'static str` expression the expansion
-/// writes.
-enum TypeUri {
-    /// Known here, so emitted as a literal.
-    Literal(String),
-
-    /// A `const` prefix and a slug, joined at compile time by `const` items
-    /// the expansion declares, so the URI stays a borrowed `&'static str`.
-    Joined { base: ExprPath, slug: String },
-}
-
-impl ToTokens for TypeUri {
-    fn to_tokens(&self, tokens: &mut TokenStream2) {
-        match self {
-            Self::Literal(uri) => uri.to_tokens(tokens),
-            Self::Joined { base, slug } => {
-                // Spanned to the path, so a `const` that is not a `&str`
-                // is reported where `base` names it. The names are prefixed
-                // because these items shadow the module's: a user `const
-                // BASE` would otherwise be defined as itself.
-                let prefix =
-                    quote_spanned!(base.span()=> const __KYNOS_PROBLEM_BASE: &str = #base;);
-                tokens.extend(quote! {{
-                    #prefix
-                    const __KYNOS_PROBLEM_LEN: usize = __KYNOS_PROBLEM_BASE.len() + #slug.len();
-                    const __KYNOS_PROBLEM_BYTES: &[u8] = &::kynos::__private::problem::join::<
-                        __KYNOS_PROBLEM_LEN,
-                    >(__KYNOS_PROBLEM_BASE, #slug);
-                    // A `const`, so the UTF-8 check runs once, at compile time.
-                    const __KYNOS_PROBLEM_URI: &str =
-                        ::kynos::__private::problem::utf8(__KYNOS_PROBLEM_BYTES);
-                    __KYNOS_PROBLEM_URI
-                }});
-            }
-        }
     }
 }

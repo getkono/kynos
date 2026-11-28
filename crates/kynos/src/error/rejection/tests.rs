@@ -797,56 +797,110 @@ fn a_named_403_survives_the_challenge_pass_and_still_sends_none() {
     assert_eq!(unauthenticated.type_uri, "about:blank");
 }
 
-/// A scope refusal's challenge is the 403's own: set on a 403 it is reported
-/// and sent, with the named type kept; it never reaches a 401, and replacing
-/// it with `None` sends none.
+/// A guard's challenges are written by status: the 401's on a 401, the scope
+/// refusal's on a 403 with the named type kept, and neither anywhere else.
+/// Each replaces whatever the error sent, so a 403 owing none sends none.
 #[test]
-fn a_scope_challenge_is_set_on_a_403_alone() {
-    use crate::{http::header, response::IntoResponse};
+fn a_guard_writes_the_challenge_its_status_owes() {
+    use std::time::Duration;
+
+    use crate::{
+        error::rejection::GuardRejection,
+        http::{HeaderValue, Response, body::Body, header},
+        response::IntoResponse,
+    };
 
     const BANNED: &str = "https://example.test/problems/account-banned";
     const INSUFFICIENT: &str = "Bearer error=\"insufficient_scope\"";
 
-    let refused = AuthRejection::forbidden_as(BANNED).with_scope_challenge(Some(INSUFFICIENT));
-    assert_eq!(refused.challenge(), Some(INSUFFICIENT));
+    /// An error that appends two challenges to its 401.
+    struct TwoChallenges;
 
-    let response = refused.into_response();
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert_eq!(response.headers()[header::WWW_AUTHENTICATE], INSUFFICIENT);
+    impl IntoResponse for TwoChallenges {
+        fn into_response(self) -> Response {
+            let mut response = Response::new(Body::empty());
+            *response.status_mut() = StatusCode::UNAUTHORIZED;
+            let headers = response.headers_mut();
+            headers.append(header::WWW_AUTHENTICATE, HeaderValue::from_static("Basic"));
+            headers.append(header::WWW_AUTHENTICATE, HeaderValue::from_static("Digest"));
+            response
+        }
+    }
 
-    let named = AuthRejection::forbidden_as(BANNED)
-        .with_scope_challenge(Some(INSUFFICIENT))
-        .into_problem();
-    assert_eq!(named.type_uri, BANNED);
-
-    // Replaced, not kept: a guard's 403 carries exactly what it declares.
-    let cleared = AuthRejection::forbidden()
-        .with_scope_challenge(Some(INSUFFICIENT))
-        .with_scope_challenge(None);
-    assert_eq!(cleared.challenge(), None);
-    assert!(
-        !cleared
-            .into_response()
+    let sent = |rejection: GuardRejection| {
+        let response = rejection.into_response();
+        let challenge = response
             .headers()
-            .contains_key(header::WWW_AUTHENTICATE)
+            .get(header::WWW_AUTHENTICATE)
+            .map(|value| value.to_str().expect("a visible challenge").to_owned());
+        (response.status(), challenge)
+    };
+    let owing = |error: AuthRejection| {
+        GuardRejection::new(error)
+            .with_challenge(Some("Bearer"))
+            .with_scope_challenge(Some(INSUFFICIENT))
+    };
+
+    assert_eq!(
+        sent(owing(AuthRejection::unauthenticated())),
+        (StatusCode::UNAUTHORIZED, Some("Bearer".to_owned()))
+    );
+    assert_eq!(
+        sent(owing(AuthRejection::forbidden_as(BANNED))),
+        (StatusCode::FORBIDDEN, Some(INSUFFICIENT.to_owned()))
+    );
+    assert_eq!(
+        owing(AuthRejection::forbidden_as(BANNED))
+            .into_inner()
+            .into_problem()
+            .type_uri,
+        BANNED
     );
 
-    let unauthenticated = AuthRejection::unauthenticated()
+    // An outage asks nothing of the credential, and keeps its `Retry-After`.
+    let down = owing(
+        AuthRejection::Unavailable { retry_after: None }.with_retry_after(Duration::from_secs(5)),
+    )
+    .into_response();
+    assert_eq!(down.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!down.headers().contains_key(header::WWW_AUTHENTICATE));
+    assert_eq!(down.headers()[header::RETRY_AFTER], "5");
+
+    // Replaced, not kept: a 403 a credential was declined with sends none,
+    // even where the error set one, and a 401 sends the guard's.
+    let declined = GuardRejection::new(AuthRejection::Forbidden {
+        type_uri: None,
+        challenge: Some(INSUFFICIENT),
+    });
+    assert_eq!(sent(declined), (StatusCode::FORBIDDEN, None));
+    let replaced =
+        GuardRejection::new(AuthRejection::unauthenticated().with_challenge(Some("Basic")))
+            .with_challenge(Some("Bearer"));
+    assert_eq!(
+        sent(replaced),
+        (StatusCode::UNAUTHORIZED, Some("Bearer".to_owned()))
+    );
+
+    // Every value the error appended is replaced, not only the first.
+    let response = GuardRejection::new(TwoChallenges)
         .with_challenge(Some("Bearer"))
-        .with_scope_challenge(Some(INSUFFICIENT));
-    assert_eq!(unauthenticated.challenge(), Some("Bearer"));
+        .into_response();
+    let challenges: Vec<_> = response
+        .headers()
+        .get_all(header::WWW_AUTHENTICATE)
+        .iter()
+        .collect();
+    assert_eq!(challenges, [HeaderValue::from_static("Bearer")]);
 }
 
 /// An unreachable store's 503 is the `about:blank` problem with the reason
-/// phrase as its title, and neither challenge pass gives it a
-/// `WWW-Authenticate`: an outage asks nothing of the credential.
+/// phrase as its title, and no challenge reaches it: an outage asks nothing of
+/// the credential.
 #[test]
 fn an_unavailable_store_is_a_503_no_challenge_reaches() {
     use crate::{http::header, response::IntoResponse};
 
-    let down = AuthRejection::Unavailable { retry_after: None }
-        .with_challenge(Some("Bearer"))
-        .with_scope_challenge(Some("Bearer error=\"insufficient_scope\""));
+    let down = AuthRejection::Unavailable { retry_after: None }.with_challenge(Some("Bearer"));
     assert_eq!(down.challenge(), None);
     assert_eq!(down.retry_after(), None);
 
@@ -967,11 +1021,10 @@ fn the_403_is_left_out_only_where_no_scheme_forbids() {
 /// only exists in that build.
 ///
 /// It counts the `pub enum`s, which is what a *failure* is here: a variant, a
-/// status and a sentence. `ScopedRejection<R>` is a struct wrapping one of
+/// status and a sentence. `GuardRejection<E>` is a struct wrapping one of
 /// them and declares no variant, no status and no sentence of its own, so it
 /// has nothing this sweep or the ledger below could hold it to — what it adds
-/// is a description, and
-/// `a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice` is where
+/// is a challenge, and `a_guard_writes_the_challenge_its_status_owes` is where
 /// that is held.
 #[cfg(feature = "cookie")]
 #[test]
@@ -1554,8 +1607,8 @@ fn every_rejection_declares_the_type_its_problems_carry() {
 /// such field and narrows like the rest.
 ///
 /// This is the rejection *type* speaking for itself, which is all it can do: it
-/// carries no scope set, so it has no URI to name. `ScopedRejection<R>` below
-/// is the one that does, and it narrows.
+/// carries no scope set, so it has no URI to name. A guard demanding a scope
+/// set is the one that does, and it narrows, below.
 #[test]
 fn the_403_an_authorizer_may_name_is_the_one_status_left_wide() {
     let declared = declared_types::<AuthRejection>(&[]);
@@ -1583,13 +1636,13 @@ fn the_403_an_authorizer_may_name_is_the_one_status_left_wide() {
 
 /// And the scope set that closes it, at the one seam a type can reach.
 ///
-/// `ScopedRejection<R>` is the same two failures read against `R`, so the 403 a
-/// scope set named narrows to a choice between that URI and `about:blank` while
-/// the 401 beside it is untouched. Asserted here rather than only over an
-/// emitted document because this is the contributor that *decides* the status:
-/// a `Responses` returning the wide entry wins the union outright, so a
-/// regression here would silently un-narrow every scoped operation while every
-/// document still validated.
+/// A guard demanding scope set `R` declares the same two failures read against
+/// `R`, so the 403 a scope set named narrows to a choice between that URI and
+/// `about:blank` while the 401 beside it is untouched. Asserted here rather
+/// than only over an emitted document because this is the contributor that
+/// *decides* the status: one returning the wide entry wins the union outright,
+/// so a regression here would silently un-narrow every scoped operation while
+/// every document still validated.
 #[test]
 fn a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice() {
     /// Names one.
@@ -1610,10 +1663,16 @@ fn a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice() {
         const REQUIRED: &'static [Self::Scope] = &[];
     }
 
+    use crate::security::auth::Scopes;
+
     let mut registry = crate::schema::registry::Registry::new();
-    let named = serde_json::to_value(
-        <super::ScopedRejection<Named> as crate::response::Responses>::responses(&mut registry),
-    )
+    let named = serde_json::to_value(super::auth_responses(
+        &mut registry,
+        Named::FORBIDDEN_TYPE,
+        true,
+        false,
+        false,
+    ))
     .expect("a set of responses serializes");
 
     let published: Vec<&str> =
@@ -1644,9 +1703,13 @@ fn a_scope_set_that_names_its_refusal_narrows_the_403_to_a_choice() {
 
     // Naming none declares what `AuthRejection` declares, which is what every
     // guard declared before a scope set could name anything.
-    let unnamed = serde_json::to_value(
-        <super::ScopedRejection<Unnamed> as crate::response::Responses>::responses(&mut registry),
-    )
+    let unnamed = serde_json::to_value(super::auth_responses(
+        &mut registry,
+        Unnamed::FORBIDDEN_TYPE,
+        true,
+        false,
+        false,
+    ))
     .expect("a set of responses serializes");
 
     assert_eq!(

@@ -3,21 +3,30 @@
 use super::presented::{Malformed, MalformedReason, Presented};
 use crate::http::Parts;
 
-/// The first value of `name` in the request target's query string.
+/// The value of the one pair naming `name` in the request target's query
+/// string, form-decoded as a derived
+/// [`Query`](crate::extract::params::query::Query) parameter of the same name
+/// is.
 ///
-/// Read exactly as a derived [`Query`](crate::extract::params::query::Query)
-/// parameter of the same name: form-decoded, from the first pair naming it. A
-/// later pair never stands in for one that could not be read.
+/// [`Malformed`](Presented::Malformed) with [`MalformedReason::Repeated`] when
+/// two or more pairs name it, whatever their values, as a derived parameter
+/// refuses a second pair: choosing either would let whatever appends a pair
+/// pick the credential. Otherwise [`MalformedReason::NotText`] when the value's
+/// octets are not UTF-8.
 ///
-/// [`Malformed`](Presented::Malformed) when that first value's octets are not
-/// UTF-8.
+/// Only the one pair's value is decoded, as in the derived decoder: every other
+/// pair costs its name's decoding alone.
 pub(super) fn value(parts: &Parts, name: &str) -> Presented<String> {
-    let Some((_, value)) = crate::__private::uri::query_pairs(parts.uri.query())
-        .find(|(key, _)| **key == *name.as_bytes())
-    else {
+    let mut named = crate::__private::uri::query_names(parts.uri.query())
+        .filter(|(key, _)| **key == *name.as_bytes())
+        .map(|(_, value)| value);
+    let Some(value) = named.next() else {
         return Presented::Absent;
     };
-    match String::from_utf8(value.into_owned()) {
+    if named.next().is_some() {
+        return Presented::Malformed(Malformed::new(MalformedReason::Repeated));
+    }
+    match String::from_utf8(crate::__private::uri::decode_query_component(value).into_owned()) {
         Ok(value) => Presented::Present(value),
         Err(_) => Presented::Malformed(Malformed::new(MalformedReason::NotText)),
     }

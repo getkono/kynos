@@ -146,9 +146,9 @@ pub use crate::{
 
 #[cfg(feature = "macros")]
 pub use kynos_macros::{
-    ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
-    SecurityScheme, Tag, delete, get, head, name_instantiation, operation, options, patch, path,
-    post, public, put, routes, trace,
+    ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema, Scope,
+    Scopes, SecurityScheme, Tag, delete, get, head, name_instantiation, operation, options, patch,
+    path, post, public, put, routes, trace,
 };
 
 // Gated with the trait each derives, so a missing feature reports a missing
@@ -217,7 +217,9 @@ macro_rules! problem_base {
 /// [`Scopes::FORBIDDEN_TYPE`](crate::security::auth::Scopes::FORBIDDEN_TYPE)
 /// or [`AuthRejection::forbidden_as`](crate::error::rejection::AuthRejection::forbidden_as)'s,
 /// cannot drift from the prefix. `slug` is joined verbatim, as a variant's
-/// `type` is sent.
+/// `type` is sent, so it is held to the rule `#[problem(slug = "...")]` is:
+/// one or more `/`-separated segments of the characters a URI path admits,
+/// percent-encoded, none empty and none a dot segment.
 ///
 /// ```
 /// use kynos::error::rejection::AuthRejection;
@@ -242,6 +244,50 @@ macro_rules! problem_base {
 /// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope");
 /// # fn main() {}
 /// ```
+///
+/// Nor does a `slug` breaking that rule, as each of these does:
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("/insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient-scope/");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("auth//insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("auth/../insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("auth/%2E%2E/insufficient-scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("insufficient scope");
+/// # fn main() {}
+/// ```
+///
+/// ```compile_fail
+/// # kynos::problem_base!("https://errors.example.com/");
+/// const INSUFFICIENT_SCOPE: &str = kynos::problem_type!("");
+/// # fn main() {}
+/// ```
 // `crate` is the caller's on purpose, as in `problem_base!`.
 #[expect(clippy::crate_in_macro_def)]
 #[macro_export]
@@ -250,7 +296,10 @@ macro_rules! problem_type {
         const __KYNOS_PROBLEM_LEN: usize = crate::__KYNOS_PROBLEM_BASE.len() + $slug.len();
         const __KYNOS_PROBLEM_BYTES: &[u8] = &$crate::__private::problem::join::<
             __KYNOS_PROBLEM_LEN,
-        >(crate::__KYNOS_PROBLEM_BASE, $slug);
+        >(
+            crate::__KYNOS_PROBLEM_BASE,
+            $crate::__private::problem::slug::checked($slug),
+        );
         // A `const`, so the UTF-8 check runs once, at compile time.
         const __KYNOS_PROBLEM_URI: &str = $crate::__private::problem::utf8(__KYNOS_PROBLEM_BYTES);
         __KYNOS_PROBLEM_URI
@@ -271,7 +320,10 @@ pub mod prelude {
         router::{Router, group::Group},
         // Unaliased: rustc names a trait by its shortest visible path in
         // diagnostics. The derive shares the name from the macro namespace.
-        schema::{ParamValue, Schema},
+        // Not `UnitEnum`: a glob import of it would capture a by-value
+        // inherent `as_str` called through a reference, and make a
+        // `VARIANTS` from another imported trait ambiguous.
+        schema::{Nullable, ParamValue, Schema},
         security::auth::{Auth, Scoped},
     };
 
@@ -281,8 +333,8 @@ pub mod prelude {
     #[cfg(feature = "macros")]
     pub use crate::{
         ApiError, HeaderParams, ParamValue, PathParams, Provider, QueryParams, Reply, Schema,
-        SecurityScheme, Tag, delete, get, head, operation, options, patch, path, post, put, routes,
-        trace,
+        Scope, Scopes, SecurityScheme, Tag, delete, get, head, operation, options, patch, path,
+        post, put, routes, trace,
     };
 
     #[cfg(feature = "cookie")]

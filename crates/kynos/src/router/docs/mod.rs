@@ -43,7 +43,8 @@
 //!
 //! `Server::prepare` and `Service::into_tower_unchecked` edit a built
 //! service's document, and each edit renders the reference again, so the bytes
-//! served always equal what `Service::openapi` reports.
+//! served always equal what `Service::openapi` reports. A clone of the service
+//! serves the same reference, so either edit is refused while one lives.
 
 mod endpoint;
 mod page;
@@ -271,6 +272,9 @@ impl<M> Docs<M> {
     ///
     /// Each identifier is derived from the unprefixed path it serves, so two
     /// references nested under different prefixes need different prefixes here.
+    /// Being derived, it is recased by the router's
+    /// [`OperationIdCase`](crate::router::operation::OperationIdCase), prefix
+    /// included.
     #[must_use]
     pub fn operation_id_prefix(mut self, prefix: impl Into<Cow<'static, str>>) -> Self {
         self.operation_id_prefix = prefix.into();

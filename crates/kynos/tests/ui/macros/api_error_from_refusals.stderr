@@ -1,0 +1,23 @@
+error: `from` builds a transparent variant from the one error it holds, and variant `Store` is not transparent; mark it `transparent`, or write the `From` it needs by hand
+  --> tests/ui/macros/api_error_from_refusals.rs:20:29
+   |
+20 |     #[problem(status = 503, from)]
+   |                             ^^^^
+
+error: `from` on an enum builds every variant from the error it holds, so it needs `transparent` beside it; mark each transparent variant `#[problem(from)]` instead
+  --> tests/ui/macros/api_error_from_refusals.rs:25:11
+   |
+25 | #[problem(from)]
+   |           ^^^^
+
+error: `thiserror`'s `#[from]` implements the `From` that `#[problem(from)]` does; drop one of them
+  --> tests/ui/macros/api_error_from_refusals.rs:35:14
+   |
+35 |     Lookup(#[from] LookupError),
+   |              ^^^^
+
+error: variant `User` is already built from `LookupError`, and one `From` builds one variant; drop `from` from one of them
+  --> tests/ui/macros/api_error_from_refusals.rs:39:24
+   |
+39 | #[problem(transparent, from)]
+   |                        ^^^^
