@@ -51,9 +51,11 @@ use crate::{
 /// extractor's or guard's refusal, the short circuit of an interceptor mounted
 /// inside this one, a panic an endpoint's own `catch_panics` recovered, and,
 /// mounted on the router, its answer where no operation matched. A response answered
-/// outside it never reaches it: an interceptor's mounted before it, and a
-/// panic a router's or group's `catch_panics` recovers, around every
-/// interceptor of both scopes. Mount it first, outermost.
+/// outside it never reaches it: an interceptor's mounted before it, a panic a
+/// router's or group's `catch_panics` recovers, around every interceptor of
+/// both scopes, and a guard's refusal or recovered panic where a
+/// `guard_first()` called before this is mounted runs that guard outside it.
+/// Mount it first, outermost.
 ///
 /// The description says the same: the group is filed on every response a
 /// covered operation declares, a Kynos refusal's included, and on none of

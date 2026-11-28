@@ -319,8 +319,10 @@ pub trait Interceptor<C: Sync + 'static>: Send + Sync + 'static {
 /// The 500 of a panic recovered around the interceptor never passes through
 /// it, so no placement files the header on that 500: a router's or group's
 /// `catch_panics` wraps every interceptor of both scopes, and an endpoint's
-/// wraps its own. Where the operation also declares a 500 that does pass
-/// through, the header is declared on it without `required`.
+/// wraps its own and, for a guard a scope's `guard_first` runs ahead, every
+/// interceptor mounted after that point. Where something else answering the
+/// operation's 500 does pass through, the header is declared on it without
+/// `required`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum Placement {

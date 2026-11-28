@@ -103,7 +103,10 @@ guard argument, so a request is checked once.
 
 - **The guard is still the only door.** The handler's argument still declares
   it, so the description is the same with or without the call, and an
-  operation taking no guard is left as it was.
+  operation taking no guard is left as it was. The one difference: under the
+  endpoint's own `catch_panics`, a panic in the guard is answered at the
+  point, so a header an interceptor applied after it places on the
+  operation's 500 is declared without `required`.
 - **Where the call sits is the point.** An interceptor applied before it wraps
   the refusal: a `RequestId` or a `Cors` meant to reach the 401 goes first, a
   `BodySize` after.

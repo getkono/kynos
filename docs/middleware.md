@@ -181,13 +181,17 @@ with different headers. A `$ref` the application writes itself is left alone;
 The one response they leave out is the 500 of a panic recovered around the
 interceptor, which never passes through it: a router's or group's
 `catch_panics` wraps every interceptor of both scopes, and an endpoint's wraps
-its own. Its header is left off that 500, or declared without `required` where
-the operation declares a 500 of its own, which does pass through.
+its own. Under a scope's `guard_first`, an endpoint's also answers a panic in
+its guard at the guard's point, so that 500 misses every interceptor mounted
+after `guard_first()` as well. Its header is left off that 500, or declared
+without `required` where another 500 the operation answers with, its own or
+the handler's recovered one, does pass through.
 
 Beyond that 500, `Every` and `Problems` are claims, and the framework does not
 narrow them to what passes through the interceptor. They overstate by any response its
 `with_headers` never sees and it writes nothing onto itself — an outer
-interceptor's short circuit, for one — as `Success` understates by every
+interceptor's short circuit, for one, or the refusal of a guard a
+`guard_first()` before it runs ahead — as `Success` understates by every
 failure the group rides.
 
 A body is declared nowhere at all — `Continued::take_body` and
@@ -1833,9 +1837,10 @@ everything that passes through it, so every response beneath it carries the
 group: the handler's, an extractor's or guard's refusal, an inner
 interceptor's short circuit, the 500 of a panic an endpoint's own
 `catch_panics` recovered, and the router's own 404. What is answered outside
-it goes without: an interceptor mounted before it, and a panic recovered by a
+it goes without: an interceptor mounted before it, a panic recovered by a
 router's or group's `catch_panics`, whose recovery wraps every interceptor of
-both scopes. So mount it with the first `intercept` call. `tests/middleware.rs`
+both scopes, and a guard that a `guard_first()` called before the stamp runs
+outside it, its refusal and its recovered panic alike. So mount it with the first `intercept` call. `tests/middleware.rs`
 holds both sides.
 
 The description says the same: the group, with each fixed field's `const`, on
