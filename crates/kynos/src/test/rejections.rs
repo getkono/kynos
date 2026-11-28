@@ -2,11 +2,14 @@
 //! template by [`TestClient::assert_body_rejections`].
 
 use bytes::Bytes;
-use kynos_openapi::{Document, Method, Operation, RefOr, RequestBody, model::body::mime_names};
+use kynos_openapi::{Document, Method, Operation, RefOr, RequestBody};
 use serde_json::{Value, json};
 
 use crate::{
-    http::{HeaderValue, Method as HttpMethod, StatusCode, Uri, header},
+    http::{
+        HeaderValue, Method as HttpMethod, StatusCode, Uri, header,
+        media::{is_json, split_essence},
+    },
     test::{
         TestClient, TestRequest,
         body::RequestBody as SentBody,
@@ -168,7 +171,7 @@ pub(super) fn plan(
 
     let json = content
         .keys()
-        .find(|key| is_json(&essence(key)))
+        .find(|key| is_sendable_json(key))
         .map(|key| sendable(key));
     let media_type = json
         .clone()
@@ -292,15 +295,15 @@ fn refused_candidate(
 
 /// A `content` key's media type, lowercased and without its parameters.
 fn essence(key: &str) -> String {
-    let (media_type, _) = key.split_once(';').unwrap_or((key, ""));
-    media_type.trim().to_ascii_lowercase()
+    std::str::from_utf8(split_essence(key.as_bytes()).0)
+        .expect("a `str` split at an ASCII byte")
+        .to_ascii_lowercase()
 }
 
-/// Whether `essence` is a JSON media type: `application/json`, or one with
-/// the `+json` structured syntax suffix (RFC 6839 section 3.1).
-fn is_json(essence: &str) -> bool {
-    essence == mime_names::APPLICATION_JSON
-        || (essence.ends_with("+json") && !essence.contains('*'))
+/// Whether `key` names a JSON media type a request can carry as written:
+/// `application/json` or a `+json` type, and no range.
+fn is_sendable_json(key: &str) -> bool {
+    is_json(key) && !essence(key).contains('*')
 }
 
 /// A media type a request can carry under `key`: the key itself, a concrete
