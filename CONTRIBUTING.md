@@ -12,7 +12,8 @@ Participation is under the [code of conduct](CODE_OF_CONDUCT.md).
 ## Setup
 
 Prerequisites: [rustup](https://rustup.rs/) and [mise](https://mise.jdx.dev/).
-mise pins the toolchain and every tool the gates use.
+rustup installs the toolchain `rust-toolchain.toml` names, the latest stable;
+mise pins every other tool the gates use.
 
 ```bash
 mise install

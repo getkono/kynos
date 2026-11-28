@@ -1,5 +1,5 @@
 name: Set up
-description: Install the pinned toolchain and restore this job's Cargo cache.
+description: Install the toolchain and tools, and restore this job's Cargo cache.
 
 inputs:
   cargo-cache-key:
@@ -39,6 +39,14 @@ runs:
             echo "CARGO_INCREMENTAL=0"
           fi
         } >> "$GITHUB_ENV"
+
+    # The toolchain `rust-toolchain.toml` names, with its components: the
+    # latest stable, so the Cargo cache below, which keys on `rustc -V`, turns
+    # over when a new stable ships. `MSRV` and the nightly tasks install their
+    # own toolchain beside it.
+    - name: Install the Rust toolchain
+      shell: bash
+      run: rustup toolchain install
 
     - name: Install tools
       uses: jdx/mise-action@v4

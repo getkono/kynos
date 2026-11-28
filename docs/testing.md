@@ -803,20 +803,23 @@ A `.stderr` snapshot is the exact text `rustc` printed. Recording one is
 mechanical — run the suite, inspect what `trybuild` wrote under `wip/`, and
 promote it — but two things about it are not.
 
-**The toolchain must be pinned.** [`mise.toml`](../mise.toml) pins rust to
-1.97.1, and every snapshot in the tree is a snapshot of *that* compiler.
-rustc rewords diagnostics between releases, so an unpinned toolchain turns a
-UI suite into a source of failures that carry no information about the change
-that triggered them. Bumping the pin and re-recording the snapshots is one
-commit whose diff is reviewed as a diff.
+**The toolchain floats, so snapshots follow it.**
+[`rust-toolchain.toml`](../rust-toolchain.toml) names the latest stable, and
+every snapshot in the tree is a snapshot of the stable current when it was
+last recorded. rustc rewords diagnostics between releases, so a new stable can
+turn the suite red with no change here. That failure carries no information
+about the pull request it lands on; it is cleared by re-recording the
+snapshots under the new stable, in a commit of its own whose diff is reviewed
+as a diff.
 
-**So must its components.** A `const` assertion that fails — the interceptor
+**Its components are fixed.** A `const` assertion that fails — the interceptor
 collision checks in [`middleware/stack.rs`](../crates/kynos/src/middleware/stack.rs)
 are the ones in this tree — surfaces with its primary span in `core`'s own
 `panic.rs`. rustc prints that line when it can read it and degrades to a bare
 `note:` when it cannot, so whether `rust-src` is installed changes the recorded
-text. `mise.toml` therefore lists it: a snapshot suite that passes on the
-machine that recorded it and fails everywhere else is testing the environment.
+text. `rust-toolchain.toml` therefore lists it: a snapshot suite that passes
+on the machine that recorded it and fails everywhere else is testing the
+environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
 Every trait that carries `#[diagnostic::on_unimplemented]` replaces the

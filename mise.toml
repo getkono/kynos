@@ -5,15 +5,7 @@ config_roots = ["."]
 lockfile = true
 
 [tools]
-# `rust-src` changes how rustc renders a failed `const` assertion, which the
-# `ui` snapshots record (docs/testing.md#snapshots).
-rust = { version = "1.97.1", profile = "minimal", components = [
-  "clippy",
-  "llvm-tools",
-  "rust-analyzer",
-  "rust-src",
-  "rustfmt",
-] }
+# Rust is not here: rustup installs the toolchain `rust-toolchain.toml` names.
 hk = "1.53.0"
 # Upstream release binaries rather than `cargo:`, which compiles from source.
 "github:taiki-e/cargo-llvm-cov" = "0.8.7"
