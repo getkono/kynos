@@ -98,7 +98,7 @@ jobs:
       - name: Build documentation
         run: mise run docs:check
 
-  # Its own job and cache: rustdoc on `KYNOS_NIGHTLY`, whose artifacts no other
+  # Its own job and cache: rustdoc on `KYNOS_API_NIGHTLY`, whose artifacts no other
   # job's toolchain can reuse.
   api:
     name: Public API

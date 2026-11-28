@@ -433,9 +433,9 @@ def main(architecture=None, listings=None, recorded=None, overwrite=None, root=R
     if overwrite is None:
         overwrite = os.environ.get("KYNOS_PUBLIC_API") == "overwrite"
     if listings is None:
-        toolchain = os.environ.get("KYNOS_NIGHTLY")
+        toolchain = os.environ.get("KYNOS_API_NIGHTLY")
         if not toolchain:
-            print("public-api: KYNOS_NIGHTLY is unset; run this through mise", file=sys.stderr)
+            print("public-api: KYNOS_API_NIGHTLY is unset; run this through mise", file=sys.stderr)
             return 1
         listings = {}
         # Idempotent; the task installed the toolchain, this adds the target.

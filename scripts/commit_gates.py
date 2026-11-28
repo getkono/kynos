@@ -56,6 +56,7 @@ BUILD_INPUTS = (
     "crates/*",
     "Cargo.toml",
     ".cargo/config.toml",
+    "rust-toolchain.toml",
     "mise.toml",
     "mise.lock",
 )

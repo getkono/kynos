@@ -370,7 +370,7 @@ def c_compiler(host, environ=None):
 
 
 def llvm_size(host):
-    """`llvm-size` from the pinned toolchain, never the runner's binutils.
+    """`llvm-size` from the active toolchain, never the runner's binutils.
 
     Deliberately no fallback to GNU `size`. The two disagree about what they
     print, and switching instruments partway through a trend is exactly the

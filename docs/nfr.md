@@ -44,7 +44,7 @@ Currently wired: `cargo-nextest`, `cargo-llvm-cov`, `cargo-hack`, `convco`,
 `gungraun` over Valgrind, `cargo-fuzz`, rustdoc with
 `missing_docs = "deny"`, and `cargo-semver-checks` — the last through both
 release-plz, at default features and fail-open, and `mise run semver:check`, at
-every feature — `cargo-deny`, `cargo-public-api` on `KYNOS_NIGHTLY`'s
+every feature — `cargo-deny`, `cargo-public-api` on `KYNOS_API_NIGHTLY`'s
 rustdoc, and `cargo-edit`'s `cargo upgrade`, as a report. Not yet present:
 `cargo-udeps`. `criterion` is not on this list and will not be: benchmarks live
 in `kynos-bench`.

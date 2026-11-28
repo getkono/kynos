@@ -37,7 +37,7 @@ jobs:
           fetch-depth: 0
           # Release-plz uses the API, so no credential goes on disk.
           persist-credentials: false
-      # The pinned toolchain every other job uses: `cargo publish` builds the
+      # The toolchain every other job uses: `cargo publish` builds the
       # tarball with all features.
       - &setup
         name: Set up

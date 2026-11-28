@@ -1,0 +1,12 @@
+# The development toolchain floats on the latest stable: CI and every checkout
+# build on whatever stable is current, and breakage a new release brings (a
+# lint, a reworded `ui` snapshot) is fixed here when it lands. `rust-version`
+# in Cargo.toml is the floor users get, which `msrv:check` builds on its own.
+#
+# `rust-src` changes how rustc renders a failed `const` assertion, which the
+# `ui` snapshots record (docs/testing.md#snapshots); `llvm-tools` is the
+# `llvm-size` and `llvm-cov` the cost sweep and coverage run.
+[toolchain]
+channel = "stable"
+profile = "minimal"
+components = ["clippy", "llvm-tools", "rust-analyzer", "rust-src", "rustfmt"]

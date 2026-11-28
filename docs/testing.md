@@ -14,7 +14,7 @@ these are asked to enforce; this document is about the mechanics.
 | UI snapshot | `crates/kynos/tests/ui/` | `trybuild` | the exact text of a diagnostic | in use |
 | Property | `crates/kynos-openapi/tests/`, over `support/`'s generators | `proptest` | round-tripping, determinism and totality over generated documents | in use |
 | Conformance | a harness over a fixture app | `TestClient` over live responses | against a running service, that each observed status is declared, its body validates against the declared schema or is absent where none is declared, and every declared required header was sent — undeclared headers are not reported | in use |
-| Fuzz | [`fuzz/fuzz_targets/`](../fuzz/fuzz_targets/), over a committed corpus | `cargo fuzz`, on a pinned nightly | that a parser of untrusted input neither panics nor breaks its round trip or oracle on inputs nobody wrote — see [Fuzzing](#fuzzing) | in use |
+| Fuzz | [`fuzz/fuzz_targets/`](../fuzz/fuzz_targets/), over a committed corpus | `cargo fuzz`, on the latest nightly | that a parser of untrusted input neither panics nor breaks its round trip or oracle on inputs nobody wrote — see [Fuzzing](#fuzzing) | in use |
 
 Tests move to a sibling `tests.rs` once a module passes ~400 lines, whether or
 not that module also becomes a directory — the two halves of the layout rule are
@@ -759,8 +759,8 @@ finds the input a hand-written parser of request fields was never shown.
 | `mise run fuzz:check` | builds every target and replays [`fuzz/corpus/`](../fuzz/corpus/) | [`full.yml`](../.github/workflows/full.yml): the release pull request, one labelled `ci:full`, and master |
 
 [`fuzz/`](../fuzz/) is a workspace of its own: `cargo fuzz` needs a nightly
-toolchain, pinned by date in both tasks, and a member would break every stable
-`--workspace` gate. A parser with a public path is fuzzed through it; the rest
+toolchain, the floating `KYNOS_NIGHTLY` in both tasks, and a member would
+break every stable `--workspace` gate. A parser with a public path is fuzzed through it; the rest
 are reached through `kynos::__private::fuzz`, which exists only under the
 `cfg(fuzzing)` `cargo fuzz` sets.
 
@@ -803,20 +803,23 @@ A `.stderr` snapshot is the exact text `rustc` printed. Recording one is
 mechanical — run the suite, inspect what `trybuild` wrote under `wip/`, and
 promote it — but two things about it are not.
 
-**The toolchain must be pinned.** [`mise.toml`](../mise.toml) pins rust to
-1.97.1, and every snapshot in the tree is a snapshot of *that* compiler.
-rustc rewords diagnostics between releases, so an unpinned toolchain turns a
-UI suite into a source of failures that carry no information about the change
-that triggered them. Bumping the pin and re-recording the snapshots is one
-commit whose diff is reviewed as a diff.
+**The toolchain floats, so snapshots follow it.**
+[`rust-toolchain.toml`](../rust-toolchain.toml) names the latest stable, and
+every snapshot in the tree is a snapshot of the stable current when it was
+last recorded. rustc rewords diagnostics between releases, so a new stable can
+turn the suite red with no change here. That failure carries no information
+about the pull request it lands on; it is cleared by re-recording the
+snapshots under the new stable, in a commit of its own whose diff is reviewed
+as a diff.
 
-**So must its components.** A `const` assertion that fails — the interceptor
+**Its components are fixed.** A `const` assertion that fails — the interceptor
 collision checks in [`middleware/stack.rs`](../crates/kynos/src/middleware/stack.rs)
 are the ones in this tree — surfaces with its primary span in `core`'s own
 `panic.rs`. rustc prints that line when it can read it and degrades to a bare
 `note:` when it cannot, so whether `rust-src` is installed changes the recorded
-text. `mise.toml` therefore lists it: a snapshot suite that passes on the
-machine that recorded it and fails everywhere else is testing the environment.
+text. `rust-toolchain.toml` therefore lists it: a snapshot suite that passes
+on the machine that recorded it and fails everywhere else is testing the
+environment.
 
 **`on_unimplemented` attributes must land before any snapshot is recorded.**
 Every trait that carries `#[diagnostic::on_unimplemented]` replaces the
